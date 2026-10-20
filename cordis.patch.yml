@@ -1,0 +1,9 @@
+- insert:
+    - id: dsh-team-mode-scope
+      name: cordis:group
+      group: true
+      isolate:
+        agentTeams: true
+      config:
+        - id: dsh-team-mode
+          name: '@limeng/dsh-team-mode'
