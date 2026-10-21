@@ -397,3 +397,33 @@ DSH 全局设置了 `corner-shape: superellipse(1.5)`，所以即使 `border-rad
 - 默认「冒险家」；切换后下一次生成使用对应风格。
 - 仍取回 SVG 并转 data URL 保存；实测切到「手绘」生成后预览为 9.4KB SVG、`naturalWidth=150`。
 - 风格选择只影响自动生成，不改变已选头像。
+
+---
+
+## 三十二、头像选择改为弹窗
+
+- 编辑器头像行只保留「选择头像 / 移除头像」，点击打开「选择头像」弹窗。
+- 弹窗内容：
+  - AionUI 内置 20 个头像；
+  - DiceBear 7 个风格（机器人 Bottts、浮雕 Cameo、黏土 Clay、小动物 Critters、凝视 Gaze、情绪 Moods、点赞 Thumbs），每个风格一行、每行 8 个 Preview；
+  - 底部「随机一个」按钮，随机风格 + 随机 seed；
+  - 顶部「本地上传」，沿用 PNG/JPEG/WebP ≤256KB 限制。
+- 点击 Preview 时取回 SVG 并以 data URL 写入头像，随后关闭弹窗；随机按钮同样处理。
+- 实测：7 行、每行 8 个、共 56 个 Preview；20 个内置头像；随机/上传按钮存在；点选后预览为 data SVG（150×150）。
+
+截图：`docs/assets/ui-review/assistant-avatar-picker.png`。
+
+---
+
+## 三十三、桌面端启动失败修复（dsh-auth Cookie 累积）
+
+- 现象：`DeepSeek Harness` 启动时报 `desktop welcome: Web authentication failed`，窗口停在欢迎页。
+- 原因：每次重启宿主都会写入一个新的 `dsh-auth-*` Cookie（以 token 命名），反复重启后 `127.0.0.1` 下累积了大量过期 Cookie；欢迎请求携带多个同名前缀 Cookie，宿主无法匹配当前 token，返回非 2xx。
+- 修复：退出应用后清理该 profile 的 `dsh-auth-*` Cookie，再启动生成唯一的新 Cookie：
+
+```bash
+sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
+  "delete from cookies where host_key='127.0.0.1' and name like 'dsh-auth-%';"
+```
+
+- 验证：清理后应用正常进入工作区，CDP 页面可访问，未再新增 crash-host 日志。

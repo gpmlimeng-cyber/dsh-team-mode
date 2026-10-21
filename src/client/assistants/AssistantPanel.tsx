@@ -2,17 +2,19 @@ import type { FormEvent } from 'react'
 import { BUILTIN_ASSISTANT_AVATARS } from '../assistant-avatars.js'
 
 const DICEBEAR_STYLES = [
-  { id: 'adventurer', label: '冒险家' },
-  { id: 'avataaars', label: '卡通' },
-  { id: 'big-smile', label: '笑脸' },
-  { id: 'lorelei', label: '手绘' },
-  { id: 'micah', label: '极简' },
-  { id: 'notionists', label: '线稿' },
-  { id: 'open-peeps', label: '简笔' },
-  { id: 'personas', label: '人物' },
-  { id: 'pixel-art', label: '像素' },
+  { id: 'bottts', label: '机器人' },
+  { id: 'cameo', label: '浮雕' },
+  { id: 'clay', label: '黏土' },
+  { id: 'critters', label: '小动物' },
+  { id: 'gaze', label: '凝视' },
+  { id: 'moods', label: '情绪' },
   { id: 'thumbs', label: '点赞' },
 ] as const
+
+
+function dicebearUrl(style: string, seed: string): string {
+  return `https://api.dicebear.com/10.x/${style}/svg?seed=${encodeURIComponent(seed)}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`
+}
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Button,
@@ -922,8 +924,8 @@ function AssistantForm({
   const permissions = catalog?.permissionPresets ?? []
   const [name, setName] = useState(assistant?.name ?? '')
   const [avatar, setAvatar] = useState(assistant?.avatar ?? '')
-  const [generatingAvatar, setGeneratingAvatar] = useState(false)
-  const [avatarStyle, setAvatarStyle] = useState('adventurer')
+  const [pickingAvatar, setPickingAvatar] = useState(false)
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false)
   const [description, setDescription] = useState(assistant?.description ?? '')
   const [instructions, setInstructions] = useState(assistant?.instructions ?? '')
   const [promptsText, setPromptsText] = useState((assistant?.prompts ?? []).join('\n'))
@@ -1040,27 +1042,33 @@ function AssistantForm({
       if (typeof reader.result === 'string') {
         setAvatar(reader.result)
         setError(undefined)
+        setAvatarPickerOpen(false)
       }
     }
     reader.readAsDataURL(file)
   }
 
-  async function generateAvatar(): Promise<void> {
-    if (generatingAvatar) return
-    setGeneratingAvatar(true)
+  async function applyGeneratedAvatar(style: string, seed: string): Promise<void> {
+    if (pickingAvatar) return
+    setPickingAvatar(true)
     setError(undefined)
     try {
-      const seed = `${name.trim() || 'assistant'}-${Math.random().toString(36).slice(2, 8)}`
-      const url = `https://api.dicebear.com/9.x/${avatarStyle}/svg?seed=${encodeURIComponent(seed)}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`
-      const response = await fetch(url)
+      const response = await fetch(dicebearUrl(style, seed))
       if (!response.ok) throw new Error(`头像服务返回 ${response.status}`)
       const svg = await response.text()
       setAvatar(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`)
+      setAvatarPickerOpen(false)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
-      setGeneratingAvatar(false)
+      setPickingAvatar(false)
     }
+  }
+
+  function randomizeAvatar(): void {
+    const style = DICEBEAR_STYLES[Math.floor(Math.random() * DICEBEAR_STYLES.length)]
+    if (style === undefined) return
+    void applyGeneratedAvatar(style.id, `${name.trim() || 'assistant'}-${Date.now().toString(36)}`)
   }
 
   async function submit(event: FormEvent): Promise<void> {
@@ -1111,59 +1119,16 @@ function AssistantForm({
         <Field label="头像（可选，图片）">
           <div className={css.avatarField}>
             {avatar !== '' && <img className={css.avatarPreview} src={avatar} alt="头像预览" />}
-            <label className={css.avatarUpload}>
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                className={css.avatarFileInput}
-                onChange={event => {
-                  const file = event.target.files?.[0]
-                  if (file !== undefined) readAvatar(file)
-                }}
-              />
-              {avatar === '' ? '上传图片' : '更换图片'}
-            </label>
-            <button
-              type="button"
-              className={css.avatarGenerate}
-              disabled={generatingAvatar}
-              onClick={() => { void generateAvatar() }}
-            >
-              {generatingAvatar ? '生成中…' : '自动生成'}
+            <button type="button" className={css.avatarUpload} onClick={() => { setAvatarPickerOpen(true) }}>
+              选择头像
             </button>
-            <select
-              className={css.avatarStyleSelect}
-              value={avatarStyle}
-              aria-label="头像风格"
-              onChange={event => { setAvatarStyle(event.target.value) }}
-            >
-              {DICEBEAR_STYLES.map(style => (
-                <option key={style.id} value={style.id}>{style.label}</option>
-              ))}
-            </select>
             {avatar !== '' && (
               <button type="button" className={css.assistantRemoveAvatar} onClick={() => { setAvatar('') }}>
                 移除头像
               </button>
             )}
           </div>
-          <span className={css.avatarBuiltinLabel}>内置头像</span>
-          <div className={css.avatarBuiltinGrid}>
-            {BUILTIN_ASSISTANT_AVATARS.map(item => (
-              <button
-                key={item.id}
-                type="button"
-                className={css.avatarBuiltinItem}
-                aria-pressed={avatar === item.data}
-                aria-label={`使用${item.label}头像`}
-                title={item.label}
-                onClick={() => { setAvatar(item.data) }}
-              >
-                <img src={item.data} alt="" />
-              </button>
-            ))}
-          </div>
-          <span className={css.hint}>PNG/JPEG/WebP，≤256KB；也可自动生成或选择内置头像；没有头像时显示名称首字母。</span>
+          <span className={css.hint}>内置 AionUI 头像、DiceBear 生成或本地上传；没有头像时显示名称首字母。</span>
         </Field>
         <Field label="说明"><input value={description} onChange={event => { setDescription(event.target.value) }} className={css.input} /></Field>
         <Field label="启用">
@@ -1342,6 +1307,82 @@ function AssistantForm({
         </div>
       </div>
       {error && <div role="alert" className={css.inlineError}>{error}</div>}
+      <AnimatedModal
+        open={avatarPickerOpen}
+        onClose={() => { setAvatarPickerOpen(false) }}
+        title="选择头像"
+        closeLabel="关闭"
+        description="从 AionUI 内置头像、DiceBear 风格中选择，或上传本地图片。"
+        className={css.avatarPickerDialog ?? ''}
+        contentClassName={css.avatarPickerDialogContent ?? ''}
+      >
+        <div className={css.avatarPickerToolbar}>
+          <label className={css.avatarUpload}>
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              className={css.avatarFileInput}
+              onChange={event => {
+                const file = event.target.files?.[0]
+                if (file !== undefined) readAvatar(file)
+              }}
+            />
+            本地上传
+          </label>
+          {pickingAvatar && <span className={css.hint}>生成中…</span>}
+          {error !== undefined && <span className={css.avatarPickerError}>{error}</span>}
+        </div>
+        <div className={css.avatarPickerScroll}>
+          <div className={css.avatarPickerHeading}>AionUI 内置</div>
+          <div className={css.avatarBuiltinGrid}>
+            {BUILTIN_ASSISTANT_AVATARS.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                className={css.avatarBuiltinItem}
+                aria-pressed={avatar === item.data}
+                aria-label={`使用${item.label}头像`}
+                title={item.label}
+                onClick={() => { setAvatar(item.data); setAvatarPickerOpen(false) }}
+              >
+                <img src={item.data} alt="" />
+              </button>
+            ))}
+          </div>
+          <div className={css.avatarPickerHeading}>DiceBear 风格</div>
+          {DICEBEAR_STYLES.map(style => (
+            <div key={style.id} className={css.avatarStyleRow}>
+              <div className={css.avatarStyleMeta}>
+                <strong>{style.label}</strong>
+                <span>{style.id}</span>
+              </div>
+              <div className={css.avatarStyleGrid}>
+                {Array.from({ length: 8 }, (_, index) => {
+                  const seed = `${name.trim() || 'assistant'}-${style.id}-${index}`
+                  return (
+                    <button
+                      key={index}
+                      type="button"
+                      className={css.avatarStyleThumb}
+                      disabled={pickingAvatar}
+                      aria-label={`使用${style.label}头像 ${index + 1}`}
+                      onClick={() => { void applyGeneratedAvatar(style.id, seed) }}
+                    >
+                      <img src={dicebearUrl(style.id, seed)} alt="" loading="lazy" />
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className={css.avatarPickerFooter}>
+          <span className={css.hint}>PNG/JPEG/WebP，≤256KB</span>
+          <button type="button" className={css.avatarRandom} disabled={pickingAvatar} onClick={randomizeAvatar}>
+            {pickingAvatar ? '生成中…' : '随机一个'}
+          </button>
+        </div>
+      </AnimatedModal>
     </form>
   )
 }
