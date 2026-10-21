@@ -10,7 +10,7 @@ export interface TeamLocaleService {
 
 const zh: Record<string, string> = {
   'view.label': '视图',
-  'view.parallel': '并行',
+  'view.parallel': '群聊',
   'view.board': '看板',
   'member.add': '添加成员',
   'member.retry': '重试',

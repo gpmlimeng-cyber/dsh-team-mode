@@ -5,7 +5,7 @@ import css from './TeamManage.module.css'
 import type { TeamView } from '../transport/contracts.js'
 
 export const TEAM_MANAGE_VIEW_ID = 'team-manage'
-export const TEAM_MANAGE_VIEW_LABEL = '团队管理'
+export const TEAM_MANAGE_VIEW_LABEL = '详情'
 export const TEAM_MANAGE_VIEW_ORDER = 8
 
 function teamForSession(teams: readonly TeamView[], sessionId: string | undefined): TeamView | undefined {

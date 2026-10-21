@@ -682,3 +682,15 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 团队分组右侧的新建按钮从项目/加号组合图标改为纯 `IconPlusOutlineRegular`（16px）。
 - tooltip 与 aria-label 仍为“新建团队”；点击行为不变。
 - 截图：`docs/assets/ui-review/team-add-plus.png`
+
+---
+
+## 五十五、团队页签重命名
+
+- 对话 → 单聊
+- 并行 → 群聊（registration label 与 locale 同步）
+- 团队管理 → 详情（registration label 同步）
+- 看板、轨迹保持不变。
+- 原生「对话」标签由 `TeamTriggerEnhancer` 在检测到同组存在「看板」标签时做文本替换，仅作用于团队页签栏；普通会话不会改名。
+- 实测页签：单聊 / 群聊 / 看板 / 详情 / 轨迹。
+- 截图：`docs/assets/ui-review/team-tabs-renamed.png`

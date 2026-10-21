@@ -114,7 +114,7 @@ export function apply(ctx: AgentTeamClientContext): void {
         }, component))
         if (typeof dispose === 'function') disposers.push(dispose)
       }
-      register('team-parallel', '并行', 6, TeamParallelView as never)
+      register('team-parallel', '群聊', 6, TeamParallelView as never)
       register(TEAM_BOARD_VIEW_ID, TEAM_BOARD_VIEW_LABEL, TEAM_BOARD_VIEW_ORDER, TeamBoardView as never)
       register(TEAM_MANAGE_VIEW_ID, TEAM_MANAGE_VIEW_LABEL, TEAM_MANAGE_VIEW_ORDER, TeamManageView as never)
       return () => { for (const dispose of disposers) dispose() }

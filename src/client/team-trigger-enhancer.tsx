@@ -284,8 +284,27 @@ export function TeamTriggerEnhancer(): null {
       }, 80)
     }
 
+    const renameTeamTabs = (): void => {
+      const labels = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+        .filter(button => ['对话', '并行', '看板', '团队管理', '轨迹', '单聊', '群聊', '详情'].includes((button.textContent ?? '').trim()))
+      if (!labels.some(button => (button.textContent ?? '').trim() === '看板')) return
+      const mapping: Record<string, string> = { 对话: '单聊', 并行: '群聊', 团队管理: '详情' }
+      for (const button of labels) {
+        const text = (button.textContent ?? '').trim()
+        const next = mapping[text]
+        if (next === undefined) continue
+        for (const node of Array.from(button.childNodes)) {
+          if (node.nodeType === Node.TEXT_NODE && (node.textContent ?? '').trim() === text) {
+            node.textContent = next
+            break
+          }
+        }
+      }
+    }
+
     const scan = (): void => {
       if (disposed) return
+      renameTeamTabs()
       document.querySelectorAll<HTMLElement>('[data-turn-trigger]').forEach(decorate)
     }
 
