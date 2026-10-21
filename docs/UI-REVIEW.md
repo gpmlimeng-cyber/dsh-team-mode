@@ -622,3 +622,11 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 侧栏团队行左侧恢复 `IconUsersOutlineRegular`（16px），与团队名间距 8px。
 - 保留右侧置顶、更多按钮；行高 34px 不变。
 - 截图：`docs/assets/ui-review/sidebar-team-icon.png`
+
+---
+
+## 四十九、成员标题与气泡间距
+
+- 自定义标题行（头像 + 名称 + 时间）与气泡之间增加 8px 间距。
+- 实测 `header.bottom` 到气泡 `top`：8px。
+- 截图：`docs/assets/ui-review/team-bubble-header-gap.png`

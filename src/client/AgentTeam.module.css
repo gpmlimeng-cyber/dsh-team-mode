@@ -6182,6 +6182,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   align-items: center;
   gap: 6px;
   padding: 2px 0 0;
+  margin-bottom: 8px;
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   line-height: 16px;
