@@ -473,3 +473,14 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 实测：7 个分类行仍为 8 个 Preview，职业 20 个；预览上下间距均为 10px。
 
 截图更新：`docs/assets/ui-review/assistant-avatar-picker.png`。
+
+---
+
+## 三十八、助手身份区布局压缩
+
+- 名称不再独占整行，改为与「说明」同排两列；名称宽度减半。
+- 第二行：左侧头像选择，右侧把「启用」「团队可用」纵向排列，填掉原来头像旁的大片空白。
+- 头像提示文字保留在头像下方，右侧两个开关与头像顶部对齐。
+- 整体身份区从 4 行压缩为 2 行（+提示文字），后续「推荐提示词」「引擎与默认配置」整体上移。
+
+截图：`docs/assets/ui-review/assistant-editor-identity.png`。

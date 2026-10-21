@@ -6082,3 +6082,11 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 .teamModal [class*="header"]:has(+ [class*="description"]) {
   padding-bottom: 2px;
 }
+
+
+.assistantToggleColumn {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}

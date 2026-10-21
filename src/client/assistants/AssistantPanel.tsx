@@ -1127,7 +1127,8 @@ function AssistantForm({
           <span className={css.assistantFormSectionHint}>改动立即生效</span>
         </div>
         <div className={css.formGrid}>
-        <Field label="名称" className={css.fullWidth ?? ''}><input required value={name} onChange={event => { setName(event.target.value) }} className={css.input} /></Field>
+        <Field label="名称"><input required value={name} onChange={event => { setName(event.target.value) }} className={css.input} /></Field>
+        <Field label="说明"><input value={description} onChange={event => { setDescription(event.target.value) }} className={css.input} /></Field>
         <Field label="头像（可选，图片）">
           <div className={css.avatarField}>
             {avatar !== '' && <img className={css.avatarPreview} src={avatar} alt="头像预览" />}
@@ -1142,19 +1143,20 @@ function AssistantForm({
           </div>
           <span className={css.hint}>内置 AionUI 头像、DiceBear 生成或本地上传；没有头像时显示名称首字母。</span>
         </Field>
-        <Field label="说明"><input value={description} onChange={event => { setDescription(event.target.value) }} className={css.input} /></Field>
-        <Field label="启用">
-          <label className={css.muted}>
-            <input type="checkbox" checked={enabled} onChange={event => { setEnabled(event.target.checked) }} />
-            {' '}在助手库与选择器中显示
-          </label>
-        </Field>
-        <Field label="团队可用">
-          <label className={css.muted}>
-            <input type="checkbox" checked={teamSelectable} onChange={event => { setTeamSelectable(event.target.checked) }} />
-            {' '}允许被拉入团队（关闭后仅用于单聊）
-          </label>
-        </Field>
+        <div className={css.assistantToggleColumn}>
+          <Field label="启用">
+            <label className={css.muted}>
+              <input type="checkbox" checked={enabled} onChange={event => { setEnabled(event.target.checked) }} />
+              {' '}在助手库与选择器中显示
+            </label>
+          </Field>
+          <Field label="团队可用">
+            <label className={css.muted}>
+              <input type="checkbox" checked={teamSelectable} onChange={event => { setTeamSelectable(event.target.checked) }} />
+              {' '}允许被拉入团队（关闭后仅用于单聊）
+            </label>
+          </Field>
+        </div>
       </div>
       </div>
       <div className={css.assistantFormSection}>
