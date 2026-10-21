@@ -9,7 +9,7 @@ import {
 } from './components.js'
 import { SidebarPortal } from './sidebar.js'
 import { TeamModeDialogs } from './team-dialogs.js'
-import { TeamParallelHost, TeamParallelView } from './team-parallel.js'
+import { TeamParallelHost, TeamParallelView, TeamSingleView } from './team-parallel.js'
 import { TEAM_MANAGE_VIEW_ID, TEAM_MANAGE_VIEW_LABEL, TEAM_MANAGE_VIEW_ORDER, TeamManageView } from './team-manage.js'
 import { TeamSessionHider } from './team-session-hider.js'
 import { TeamParallelPane } from './team-pane.js'
@@ -113,6 +113,7 @@ export function apply(ctx: AgentTeamClientContext): void {
         if (typeof dispose === 'function') disposers.push(dispose)
       }
       register('team-parallel', '并行', 6, TeamParallelView as never)
+      register('team-single', '单聊', 7, TeamSingleView as never)
       register(TEAM_BOARD_VIEW_ID, TEAM_BOARD_VIEW_LABEL, TEAM_BOARD_VIEW_ORDER, TeamBoardView as never)
       register(TEAM_MANAGE_VIEW_ID, TEAM_MANAGE_VIEW_LABEL, TEAM_MANAGE_VIEW_ORDER, TeamManageView as never)
       return () => { for (const dispose of disposers) dispose() }
