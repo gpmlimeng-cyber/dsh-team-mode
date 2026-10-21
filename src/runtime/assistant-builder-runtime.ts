@@ -713,7 +713,7 @@ export class AssistantBuilderRuntime {
             '必须等待用户在新的消息中明确同意当前助手配置',
           )
         }
-        const assistant = await this.service.createAssistant(pending.input)
+        const assistant = await this.service.createAssistant(pending.input, 'generated')
         if (this.pendingDrafts.get(sessionId) === pending) this.pendingDrafts.delete(sessionId)
         return { id: assistant.id, name: assistant.name, revision: assistant.revision }
       },

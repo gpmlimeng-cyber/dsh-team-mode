@@ -772,6 +772,9 @@ function AssistantCard({
               {assistant.enabled ? '仅单聊' : assistant.teamSelectable ? '已停用' : '已停用 · 仅单聊'}
             </span>
           )}
+          {assistant.source !== 'user' && (
+            <span className={css.muted}>{assistant.source === 'generated' ? 'AI 生成' : '内置'}</span>
+          )}
           <span className={css.muted}>{assistant.provider} / {assistant.model}</span>
           <span className={css.muted}>
             Preset: {assistant.agentPresetId} · 权限: {PERMISSION_LABELS[assistant.permissionPresetId] ?? assistant.permissionPresetId} · 思考模式：{assistant.reasoningEffort ?? '模型默认'}

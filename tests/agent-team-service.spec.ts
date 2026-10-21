@@ -92,6 +92,7 @@ describe('AgentTeamService', () => {
       teamSelectable: true,
       sortOrder: 0,
       prompts: [],
+      source: 'user' as const,
       revision: 1,
     }
     await store.putAssistant({
@@ -116,13 +117,14 @@ describe('AgentTeamService', () => {
   })
 
   it('defaults new assistants to enabled and team-selectable and applies explicit sort order', async () => {
-    const { service } = createHarness()
+    const { service, store } = createHarness()
     const first = await service.createAssistant({ ...assistantInput(), name: 'First' })
     const second = await service.createAssistant({ ...assistantInput(), name: 'Second' })
 
     expect(first.enabled).toBe(true)
     expect(first.teamSelectable).toBe(true)
     expect(first.sortOrder).toBe(0)
+    expect(first.source).toBe('user')
     expect(second.sortOrder).toBe(1)
 
     const disabled = await service.updateAssistant(first.id, { enabled: false, teamSelectable: false })
@@ -132,6 +134,13 @@ describe('AgentTeamService', () => {
     const moved = await service.updateAssistant(first.id, { sortOrder: 2 })
     expect(moved.sortOrder).toBe(2)
     expect(service.listAssistants().items.map(assistant => assistant.id)).toEqual([second.id, first.id])
+
+    const generated = await service.createAssistant(assistantInput(), 'generated')
+    expect(generated.source).toBe('generated')
+    await store.putAssistant({ ...first, id: 'builtin-assistant', name: 'Builtin assistant', source: 'builtin' })
+    await expect(service.deleteAssistant('builtin-assistant')).rejects.toMatchObject({
+      code: 'ASSISTANT_BUILTIN_READONLY',
+    })
   })
 
   it('normalizes recommended prompts and carries them into member snapshots', async () => {

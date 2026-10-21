@@ -41,6 +41,8 @@ export const assistantTemplateSchema = z.object({
   sortOrder: z.int().nonnegative().default(0),
   /** Suggestions shown on the member's empty-session hero. */
   prompts: z.array(nonEmpty).default([]),
+  /** Provenance: manual template, AI-generated template, or shipped built-in. */
+  source: z.enum(['builtin', 'generated', 'user']).default('user'),
   revision: z.int().positive(),
   createdAt: isoDate,
   updatedAt: isoDate,

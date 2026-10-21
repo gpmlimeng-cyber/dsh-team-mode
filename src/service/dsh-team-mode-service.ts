@@ -324,7 +324,7 @@ export class AgentTeamService extends Service {
       .reduce((max, assistant) => Math.max(max, assistant.sortOrder), -1) + 1
   }
 
-  async createAssistant(raw: CreateAssistantInput): Promise<AssistantTemplate> {
+  async createAssistant(raw: CreateAssistantInput, source: AssistantTemplate['source'] = 'user'): Promise<AssistantTemplate> {
     const input = await this.validateAssistantDraft(raw)
     const now = new Date().toISOString()
     const assistant: AssistantTemplate = {
@@ -335,6 +335,7 @@ export class AgentTeamService extends Service {
       teamSelectable: input.teamSelectable ?? true,
       sortOrder: this.nextAssistantSortOrder(),
       prompts: uniqueOrdered(input.prompts ?? []).slice(0, 12),
+      source,
       revision: 1,
       createdAt: now,
       updatedAt: now,
@@ -390,6 +391,9 @@ export class AgentTeamService extends Service {
 
   async deleteAssistant(id: string): Promise<void> {
     const assistant = requireAssistant(this.store, id)
+    if (assistant.source === 'builtin') {
+      throw new AgentTeamError('ASSISTANT_BUILTIN_READONLY', 'Built-in assistants cannot be deleted')
+    }
     const references = this.store.listTeams()
       .filter(team => Object.values(team.members).some(member => member.assistantId === id))
       .map(team => ({ id: team.id, name: team.name }))
