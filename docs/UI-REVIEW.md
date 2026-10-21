@@ -498,3 +498,16 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 保留 `请输入助手名称` / `帮你解决什么问题` 占位提示。
 
 截图更新：`docs/assets/ui-review/assistant-editor-identity.png`。
+
+---
+
+## 四十、团队行改为平铺行
+
+- 去掉团队行左侧的展开箭头，点击团队不再向下展开任务列表。
+- 右侧只保留两个操作：置顶、更多（管理）；归档移到「管理」弹窗内。
+- 图标改用工作区会话同款线性图标：`IconPinOutlineRegular` / `IconPinFillRegular`、`IconEllipsisOutlineRegular`；置顶后常显实心 pin。
+- 视图菜单移除「展开全部 / 收起全部」，保留筛选（待确认、显示归档）与排序。
+- 任务列表相关状态（expandedTeams、activeTaskId、openTask）一并删除。
+
+实测：行内 3 个按钮（团队、置顶、管理），无 Chevron，无 task list。
+截图：`docs/assets/ui-review/sidebar-team-row.png`。

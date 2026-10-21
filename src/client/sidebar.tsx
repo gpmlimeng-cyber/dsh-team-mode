@@ -3,11 +3,12 @@ import { createPortal } from 'react-dom'
 import {
   IconUsersOutlineRegular,
   IconChevronRightOutlineRegular,
-  IconChevronUpOutlineRegular,
   IconChevronsUpDownOutlineRegular,
   IconClockOutlineRegular,
   IconCloseFillRegular,
   IconEllipsisOutlineRegular,
+  IconPinFillRegular,
+  IconPinOutlineRegular,
   IconProjectAddOutlineRegular,
   IconPlusOutlineRegular,
   IconSearchOutlineRegular,
@@ -70,9 +71,7 @@ export function SidebarTeamSection({
   const t = useTeamText()
   const [teams, setTeams] = useState<TeamView[]>([])
   const [expanded, setExpanded] = useState(readExpanded)
-  const [expandedTeams, setExpandedTeams] = useState<Set<string>>(() => new Set())
   const [activeSessionId, setActiveSessionId] = useState<string>()
-  const [activeTaskId, setActiveTaskId] = useState<string>()
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -98,24 +97,10 @@ export function SidebarTeamSection({
     }, () => { void load() })
   }, [load])
 
-  useEffect(() => {
-    if (teams.length === 0) return
-    setExpandedTeams(current => current.size > 0 ? current : new Set(teams.map(team => team.id)))
-  }, [teams])
-
   const toggle = (): void => {
     setExpanded(current => {
       const next = !current
       writeExpanded(next)
-      return next
-    })
-  }
-
-  const toggleTeam = (teamId: string): void => {
-    setExpandedTeams(current => {
-      const next = new Set(current)
-      if (next.has(teamId)) next.delete(teamId)
-      else next.add(teamId)
       return next
     })
   }
@@ -140,20 +125,8 @@ export function SidebarTeamSection({
 
   const openTeam = (team: TeamView): void => {
     selectTeam(team.id)
-    setActiveTaskId(undefined)
-    setExpandedTeams(current => new Set(current).add(team.id))
+    setActiveSessionId(undefined)
     openTeamPage(team.id)
-  }
-
-  const openTask = (team: TeamView, task: TeamView['tasks'][string]): void => {
-    const owner = task.ownerSlotId === undefined ? undefined : team.members[task.ownerSlotId]
-    const sessionId = owner?.sessionId ?? team.members[team.leaderSlotId]?.sessionId
-    if (sessionId === undefined) return
-    selectTeam(team.id)
-    setActiveTaskId(task.id)
-    setActiveSessionId(sessionId)
-    setExpandedTeams(current => new Set(current).add(team.id))
-    openSession(sessionId)
   }
 
   return (
@@ -219,10 +192,6 @@ export function SidebarTeamSection({
                 dense
                 portal
                 items={[
-                  { type: 'label', id: 'members-label', text: t('sidebar.members') },
-                  { id: 'expand-all', label: t('sidebar.expandAll'), icon: <IconChevronsUpDownOutlineRegular /> },
-                  { id: 'collapse-all', label: t('sidebar.collapseAll'), icon: <IconChevronUpOutlineRegular /> },
-                  { type: 'separator', id: 'members-separator' },
                   { type: 'label', id: 'filter-label', text: t('sidebar.filter') },
                   { id: 'only-pending', label: t('sidebar.onlyPending'), icon: <IconWarningOutlineRegular /> },
                   { id: 'show-archived', label: t('sidebar.showArchived'), icon: <IconClockOutlineRegular /> },
@@ -237,9 +206,7 @@ export function SidebarTeamSection({
                   sortMode === 'name' ? 'sort-name' : 'sort-updated',
                 ].filter((id): id is string => id !== undefined)}
                 onSelect={id => {
-                  if (id === 'expand-all') setExpandedTeams(new Set(teams.map(team => team.id)))
-                  else if (id === 'collapse-all') setExpandedTeams(new Set())
-                  else if (id === 'only-pending') setOnlyPending(value => !value)
+                  if (id === 'only-pending') setOnlyPending(value => !value)
                   else if (id === 'show-archived') setShowArchived(value => !value)
                   else if (id === 'sort-updated' || id === 'sort-name') setSortMode(id === 'sort-name' ? 'name' : 'updated')
                   setMenuOpen(false)
@@ -295,27 +262,9 @@ export function SidebarTeamSection({
               const members = Object.values(team.members)
               const waiting = waitingCount(team)
               const active = selectedTeamId === team.id
-              const teamExpanded = expandedTeams.has(team.id)
               return (
                 <div key={team.id} className={css.sidebarTeamGroup}>
                   <div className={`${css.sidebarTeamRowWrap} ${active ? css.sidebarTeamRowWrapActive : ''}`}>
-                    <button
-                      type="button"
-                      className={css.sidebarTeamSlot}
-                      onClick={() => { toggleTeam(team.id) }}
-                      aria-label={teamExpanded ? `收起 ${team.name} 的成员` : `展开 ${team.name} 的成员`}
-                      aria-expanded={teamExpanded}
-                    >
-                      <span className={css.sidebarTeamSlotUsers} aria-hidden="true">
-                        <IconUsersOutlineRegular size={16} />
-                      </span>
-                      <span className={css.sidebarTeamSlotChevron} aria-hidden="true">
-                        <IconChevronRightOutlineRegular
-                          size={11}
-                          className={teamExpanded ? css.sidebarTeamSlotChevronOpen : undefined}
-                        />
-                      </span>
-                    </button>
                     <button
                       type="button"
                       className={css.sidebarTeamRow}
@@ -335,7 +284,7 @@ export function SidebarTeamSection({
                     <Tooltip label={team.pinned === true ? t('sidebar.unpin') : t('sidebar.pin')} delayMs={400}>
                       <button
                         type="button"
-                        className={css.sidebarTeamManage}
+                        className={`${css.sidebarTeamManage} ${team.pinned === true ? css.sidebarTeamManagePinned : ''}`}
                         onClick={() => {
                           void callAgentTeam('team.pin', {
                             teamId: team.id,
@@ -346,28 +295,9 @@ export function SidebarTeamSection({
                         }}
                         aria-label={team.pinned === true ? `取消置顶 ${team.name}` : `置顶 ${team.name}`}
                       >
-                        {team.pinned === true ? '★' : '☆'}
-                      </button>
-                    </Tooltip>
-                    <Tooltip label={team.archivedAt === undefined ? t('sidebar.archive') : t('sidebar.restore')} delayMs={400}>
-                      <button
-                        type="button"
-                        className={css.sidebarTeamManage}
-                        disabled={team.archivedAt === undefined && team.state !== 'draft'}
-                        title={team.archivedAt === undefined && team.state !== 'draft'
-                          ? '运行中的团队需先解散，才能归档'
-                          : undefined}
-                        onClick={() => {
-                          void callAgentTeam('team.archive', {
-                            teamId: team.id,
-                            archived: team.archivedAt === undefined,
-                          }, team.revision).catch(cause => {
-                            setError(cause instanceof Error ? cause.message : String(cause))
-                          })
-                        }}
-                        aria-label={team.archivedAt === undefined ? `归档 ${team.name}` : `恢复 ${team.name}`}
-                      >
-                        {team.archivedAt === undefined ? '⌄' : '↺'}
+                        {team.pinned === true
+                          ? <IconPinFillRegular size={14} />
+                          : <IconPinOutlineRegular size={14} />}
                       </button>
                     </Tooltip>
                     <Tooltip label={t('sidebar.manage')} delayMs={400}>
@@ -377,44 +307,10 @@ export function SidebarTeamSection({
                         onClick={() => { openManageTeamDialog(team.id) }}
                         aria-label={`管理 ${team.name}`}
                       >
-                        <IconEllipsisOutlineRegular size={13} />
+                        <IconEllipsisOutlineRegular size={14} />
                       </button>
                     </Tooltip>
                   </div>
-                  {teamExpanded && (
-                    <div className={css.sidebarTaskList}>
-                      {Object.values(team.tasks)
-                        .filter(task => task.status !== 'cancelled')
-                        .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-                        .map(task => {
-                          const owner = task.ownerSlotId === undefined ? undefined : team.members[task.ownerSlotId]
-                          const taskActive = activeTaskId === task.id
-                          const pending = task.status === 'pending' || task.status === 'assigned'
-                          const running = task.status === 'running'
-                          const done = task.status === 'completed'
-                          return (
-                            <button
-                              key={task.id}
-                              type="button"
-                              className={`${css.sidebarTaskRow} ${taskActive ? css.sidebarTaskRowActive : ''}`}
-                              onClick={() => { openTask(team, task) }}
-                              aria-current={taskActive ? 'page' : undefined}
-                              title={`${task.title} · ${task.status}${owner === undefined ? '' : ` · ${owner.displayName}`}`}
-                            >
-                              <span
-                                className={`${css.sidebarTaskDot} ${running ? css.sidebarTaskDotRunning : ''} ${pending ? css.sidebarTaskDotPending : ''} ${done ? css.sidebarTaskDotDone : ''}`}
-                                aria-hidden="true"
-                              />
-                              <span className={css.sidebarTaskTitle}>{task.title}</span>
-                              {owner !== undefined && <span className={css.sidebarTaskOwner}>{owner.displayName}</span>}
-                            </button>
-                          )
-                        })}
-                      {Object.values(team.tasks).filter(task => task.status !== 'cancelled').length === 0 && (
-                        <div className={css.sidebarTaskEmpty}>暂无任务</div>
-                      )}
-                    </div>
-                  )}
                 </div>
               )
             })}

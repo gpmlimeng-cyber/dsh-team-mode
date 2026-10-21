@@ -6170,3 +6170,8 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
 }
+
+
+.sidebarTeamManagePinned {
+  display: inline-flex;
+}
