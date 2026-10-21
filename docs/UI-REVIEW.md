@@ -244,3 +244,11 @@
 - 标题栏保持透明，渐变从顶部透出；输入区落在白色段，保证文字对比度。
 
 验证：标题栏模型按钮宽 106px、`aria-label=选择模型，当前 DeepSeek-V4.1-Flash，推理等级 High`；三个 composer 的 model 槽已空（子节点 0）；pane `background-image` 为渐变。
+
+---
+
+## 二十、并行成员名加粗
+
+- 标题栏成员名：`font-size 13→14px`，`font-weight 500→600`，加 `letter-spacing: 0.01em`，颜色继续用成员色。
+- 实测计算样式：`600 / 14px / rgb(77,147,248)`（Leader 列）。
+- 其余标题栏元素（状态点、模型、最大化）不变。

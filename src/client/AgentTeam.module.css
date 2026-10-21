@@ -4398,8 +4398,9 @@ textarea.input {
   color: var(--team-pane-color, var(--dsw-alias-label-primary));
   flex: 0 1 auto;
   overflow: hidden;
-  font-size: 13px;
-  font-weight: 500;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
   line-height: 20px;
   text-overflow: ellipsis;
   white-space: nowrap;
