@@ -5046,3 +5046,18 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
   color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
   opacity: 0.75;
 }
+
+.activityToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
+}
+
+.activityHint {
+  margin: 0;
+  padding: 0 12px 6px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
+}

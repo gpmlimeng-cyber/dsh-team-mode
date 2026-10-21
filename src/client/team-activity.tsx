@@ -37,6 +37,8 @@ export function TeamActivityBoard({ team }: { team: TeamView }): JSX.Element {
   const [filter, setFilter] = useState<ActivityFilter>('all')
   const [sort, setSort] = useState<ActivitySort>('newest')
   const [member, setMember] = useState<string>('all')
+  const [showSystem, setShowSystem] = useState(false)
+  const [showCompleted, setShowCompleted] = useState(false)
 
   const load = useCallback(async () => {
     try {
@@ -62,6 +64,7 @@ export function TeamActivityBoard({ team }: { team: TeamView }): JSX.Element {
     const list: ActivityItem[] = []
     if (filter !== 'tasks') {
       for (const message of messages) {
+        if (!showSystem && message.type === 'system') continue
         list.push({
           kind: 'message',
           id: `m:${message.id}`,
@@ -74,6 +77,7 @@ export function TeamActivityBoard({ team }: { team: TeamView }): JSX.Element {
     if (filter !== 'messages') {
       for (const task of Object.values(team.tasks)) {
         if (task.status === 'cancelled') continue
+        if (!showCompleted && task.status === 'completed') continue
         list.push({
           kind: 'task',
           id: `t:${task.id}`,
@@ -85,7 +89,7 @@ export function TeamActivityBoard({ team }: { team: TeamView }): JSX.Element {
     }
     list.sort((a, b) => (sort === 'newest' ? b.at - a.at : a.at - b.at))
     return list.filter(item => member === 'all' || item.lane === member)
-  }, [filter, member, messages, sort, team])
+  }, [filter, member, messages, showCompleted, showSystem, sort, team])
 
   const lanes = useMemo(() => {
     const ids = new Set<string>(Object.keys(team.members))
@@ -96,7 +100,7 @@ export function TeamActivityBoard({ team }: { team: TeamView }): JSX.Element {
   }, [items, team.members])
 
   return (
-    <section className={css.activityBoard} aria-label="团队活动看板">
+    <section className={css.activityBoard} aria-label="团队动态（简版）">
       <div className={css.activityToolbar}>
         <div className={css.activityFilterGroup} role="group" aria-label="排序">
           <span className={css.activityFilterLabel}>排序</span>
@@ -119,10 +123,19 @@ export function TeamActivityBoard({ team }: { team: TeamView }): JSX.Element {
             <option value={FALLBACK_LANE}>未分配 / 外部</option>
           </select>
         </label>
+        <label className={css.activityToggle}>
+          <input type="checkbox" checked={showSystem} onChange={event => { setShowSystem(event.target.checked) }} />
+          系统消息
+        </label>
+        <label className={css.activityToggle}>
+          <input type="checkbox" checked={showCompleted} onChange={event => { setShowCompleted(event.target.checked) }} />
+          已完成任务
+        </label>
         <button type="button" className={css.activityRefresh} onClick={() => { void load() }} disabled={loading}>
           {loading ? '刷新中…' : '刷新'}
         </button>
       </div>
+      <p className={css.activityHint}>简版看板；完整看板（含任务状态分组）在会话顶部「看板」标签。</p>
       {error !== undefined && <div className={css.workbenchError} role="alert">{error}</div>}
       <div className={css.activityLanes}>
         {lanes.map(lane => (
