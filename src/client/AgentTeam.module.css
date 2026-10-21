@@ -5786,8 +5786,11 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  justify-self: center;
+  width: 100%;
+  max-width: 44px;
+  height: auto;
+  aspect-ratio: 1 / 1;
   padding: 0;
   overflow: hidden;
   corner-shape: superellipse(1);
@@ -5865,7 +5868,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 }
 
 .avatarPickerDialog {
-  width: min(780px, calc(100vw - 48px));
+  width: min(720px, calc(100vw - 48px));
 }
 
 .avatarPickerDialogContent {
@@ -5881,7 +5884,8 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  padding: 2px 0 6px;
+  margin-top: -14px;
+  padding: 0 0 10px;
 }
 
 .avatarPickerError {
@@ -5935,16 +5939,19 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 .avatarStyleGrid {
   display: grid;
-  grid-template-columns: repeat(8, 40px);
-  gap: 6px;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 8px;
 }
 
 .avatarStyleThumb {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
+  justify-self: center;
+  width: 100%;
+  max-width: 44px;
+  height: auto;
+  aspect-ratio: 1 / 1;
   padding: 0;
   overflow: hidden;
   corner-shape: superellipse(1);
@@ -6064,4 +6071,14 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   align-items: center;
   gap: 8px;
   margin-left: auto;
+}
+
+
+/* Compact modal header: title and description sit closer together. */
+.teamModal > [class*="content"] {
+  gap: 4px;
+}
+
+.teamModal [class*="header"]:has(+ [class*="description"]) {
+  padding-bottom: 2px;
 }

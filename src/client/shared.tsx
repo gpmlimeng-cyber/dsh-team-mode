@@ -31,6 +31,7 @@ export function AnimatedModal(props: ComponentProps<typeof Modal>): JSX.Element 
   const activeProps = props.open ? props : latestOpenProps.current
   const className = [
     css.animatedDialog,
+    css.teamModal,
     closing ? css.animatedDialogClosing : '',
     activeProps.className ?? '',
   ].filter(Boolean).join(' ')

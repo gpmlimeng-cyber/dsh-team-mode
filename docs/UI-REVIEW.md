@@ -462,3 +462,14 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 实测：预览 64px 左侧，两个按钮并排右侧，间距 8px。
 
 截图更新：`docs/assets/ui-review/assistant-avatar-picker.png`。
+
+---
+
+## 三十七、弹窗标题紧凑 + 预览区上下等距 + 头像矩阵铺满
+
+- 所有插件弹窗统一加 `.teamModal`：标题与副标题间距从 18px 收紧到 **8px**（头部 padding-bottom 2、内容 gap 4），其他页面同步生效。
+- 头像弹窗预览区：副标题→预览 10px、预览→分类列表 10px，上下一致（header margin-top -14、padding-bottom 10）。
+- 8 列头像从固定 40px 改为 `minmax(0,1fr)` 铺满行宽，头像 44px 居中；窄宽度下头像等比缩小，不再出现右侧大片空白或溢出。
+- 实测：7 个分类行仍为 8 个 Preview，职业 20 个；预览上下间距均为 10px。
+
+截图更新：`docs/assets/ui-review/assistant-avatar-picker.png`。
