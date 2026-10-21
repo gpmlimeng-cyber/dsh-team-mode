@@ -59,7 +59,7 @@ export function TeamModeDialogs({
       <AnimatedModal
         open
         onClose={closeTeamDialog}
-        title={team.name}
+        title="团队管理"
         description="成员、模型、上下文与团队生命周期。"
         closeLabel="关闭"
         className={css.teamManageDialog ?? ''}

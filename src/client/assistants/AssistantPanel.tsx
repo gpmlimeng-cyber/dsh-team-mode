@@ -770,25 +770,27 @@ function AssistantCard({
             ? <img className={css.assistantAvatar} src={assistant.avatar} alt="" />
             : null}
           <strong>{assistant.icon ? `${assistant.icon} ${assistant.name}` : assistant.name}</strong>
-          {(!assistant.enabled || !assistant.teamSelectable) && (
-            <span className={css.muted}>
-              {assistant.enabled ? '仅单聊' : assistant.teamSelectable ? '已停用' : '已停用 · 仅单聊'}
-            </span>
+          {(!assistant.enabled || !assistant.teamSelectable || assistant.source !== 'user') && (
+            <div className={css.assistantCardBadges}>
+              {!assistant.enabled && <span className={css.assistantBadge}>已停用</span>}
+              {assistant.enabled && !assistant.teamSelectable && <span className={css.assistantBadge}>仅单聊</span>}
+              {assistant.source !== 'user' && (
+                <span className={css.assistantBadge}>{assistant.source === 'generated' ? 'AI 生成' : '内置'}</span>
+              )}
+            </div>
           )}
-          {assistant.source !== 'user' && (
-            <span className={css.muted}>{assistant.source === 'generated' ? 'AI 生成' : '内置'}</span>
-          )}
-          <span className={css.muted}>{assistant.provider} / {assistant.model}</span>
-          <span className={css.muted}>
-            Preset: {assistant.agentPresetId} · 权限: {PERMISSION_LABELS[assistant.permissionPresetId] ?? assistant.permissionPresetId} · 思考模式：{assistant.reasoningEffort ?? '模型默认'}
+          <span className={css.assistantCardModel} title={`${assistant.provider} / ${assistant.model}`}>
+            {assistant.provider} / {assistant.model}
           </span>
-          <span className={css.muted}>
-            Skills: {assistant.skillAllowlist.length > 0 ? assistant.skillAllowlist.join('、') : '未选择'}
+          <span className={css.assistantCardMeta}>
+            Preset {assistant.agentPresetId} · 权限 {PERMISSION_LABELS[assistant.permissionPresetId] ?? assistant.permissionPresetId} · 思考 {assistant.reasoningEffort ?? '模型默认'}
           </span>
-          <span className={css.muted}>
-            MCP: {assistant.mcpServers.length > 0 ? assistant.mcpServers.join('、') : '未选择'}
+          <span
+            className={css.assistantCardMeta}
+            title={`Skills: ${assistant.skillAllowlist.join('、') || '未选择'}；MCP: ${assistant.mcpServers.join('、') || '未选择'}`}
+          >
+            Skills {assistant.skillAllowlist.length} · MCP {assistant.mcpServers.length} · 提示词 {assistant.prompts.length}
           </span>
-          {assistant.prompts.length > 0 && <span className={css.muted}>推荐提示词：{assistant.prompts.length} 条</span>}
           {assistant.description && <p className={css.description}>{assistant.description}</p>}
         </div>
         <div className={css.actions}>
@@ -803,21 +805,23 @@ function AssistantCard({
           </label>
           <button
             type="button"
-            className={css.secondaryButton}
+            className={css.assistantIconButton}
             disabled={busy || !reorderEnabled || !canMoveUp}
             aria-label={`上移助手 ${assistant.name}`}
+            title="上移"
             onClick={onMoveUp}
           >
-            上移
+            ↑
           </button>
           <button
             type="button"
-            className={css.secondaryButton}
+            className={css.assistantIconButton}
             disabled={busy || !reorderEnabled || !canMoveDown}
             aria-label={`下移助手 ${assistant.name}`}
+            title="下移"
             onClick={onMoveDown}
           >
-            下移
+            ↓
           </button>
           <button type="button" className={css.secondaryButton} disabled={busy} onClick={onEdit}>编辑</button>
           <button type="button" className={css.secondaryButton} disabled={busy} onClick={() => { void clone() }}>复制</button>
@@ -1084,14 +1088,18 @@ function AssistantForm({
         <Field label="头像（可选，图片）">
           <div className={css.avatarField}>
             {avatar !== '' && <img className={css.avatarPreview} src={avatar} alt="头像预览" />}
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              onChange={event => {
-                const file = event.target.files?.[0]
-                if (file !== undefined) readAvatar(file)
-              }}
-            />
+            <label className={css.avatarUpload}>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className={css.avatarFileInput}
+                onChange={event => {
+                  const file = event.target.files?.[0]
+                  if (file !== undefined) readAvatar(file)
+                }}
+              />
+              {avatar === '' ? '上传图片' : '更换图片'}
+            </label>
             {avatar !== '' && (
               <button type="button" className={css.assistantRemoveAvatar} onClick={() => { setAvatar('') }}>
                 移除头像

@@ -1099,7 +1099,7 @@ export function TeamCard({
                   {memberStatusLabel(member.lastRuntimeState)}
                 </span>
               </span>
-              <span className={css.memberTileActions}>
+              <span className={css.memberTileTools}>
                 <button
                   type="button"
                   className={css.memberEditButton}
@@ -1110,26 +1110,6 @@ export function TeamCard({
                 >
                   <IconEditOutlineRegular size={13} />
                 </button>
-                <button
-                  type="button"
-                  className={css.memberRoleAction}
-                  disabled={busy || renameBusy}
-                  title={t('member.reconnect')}
-                  onClick={() => { void reconnectMember(member.id) }}
-                >
-                  {t('member.reconnect')}
-                </button>
-                {member.role !== 'leader' && (
-                  <button
-                    type="button"
-                    className={css.memberRoleAction}
-                    disabled={busy || renameBusy}
-                    title={t('member.resetContext')}
-                    onClick={() => { setContextTarget({ slotId: member.id, displayName: member.displayName }) }}
-                  >
-                    {t('member.resetContext')}
-                  </button>
-                )}
                 {member.role !== 'leader' && (
                   <>
                     <button
@@ -1151,6 +1131,28 @@ export function TeamCard({
                       ↓
                     </button>
                   </>
+                )}
+              </span>
+              <span className={css.memberTileActions}>
+                <button
+                  type="button"
+                  className={css.memberRoleAction}
+                  disabled={busy || renameBusy}
+                  title={t('member.reconnect')}
+                  onClick={() => { void reconnectMember(member.id) }}
+                >
+                  {t('member.reconnect')}
+                </button>
+                {member.role !== 'leader' && (
+                  <button
+                    type="button"
+                    className={css.memberRoleAction}
+                    disabled={busy || renameBusy}
+                    title={t('member.resetContext')}
+                    onClick={() => { setContextTarget({ slotId: member.id, displayName: member.displayName }) }}
+                  >
+                    {t('member.resetContext')}
+                  </button>
                 )}
                 {member.role === 'leader'
                   ? <span className={`${css.memberRole} ${css.memberRoleLeader}`}>{t('member.leader')}</span>

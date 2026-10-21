@@ -440,7 +440,7 @@
 
 .cardGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 12px;
 }
 
@@ -510,7 +510,7 @@
   background: var(--dsw-alias-bg-module-platform);
   color: var(--dsw-alias-brand-primary);
   font-size: 13px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .assistantBuilderCopy {
@@ -607,12 +607,16 @@
   gap: 8px;
 }
 
+.sectionHeaderActions > input {
+  width: min(260px, 40vw);
+}
+
 .primaryButton,
 .secondaryButton,
 .dangerButton {
-  min-height: 32px;
+  min-height: 30px;
   padding: 0 12px;
-  border-radius: 16px;
+  border-radius: 8px;
   font: inherit;
   font-size: 13px;
   cursor: pointer;
@@ -646,6 +650,13 @@
 
 .dangerButton:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover-danger);
+}
+
+.card .actions .secondaryButton,
+.card .actions .dangerButton {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .primaryButton:disabled,
@@ -729,8 +740,8 @@
 }
 
 .assistantManagementDialog {
-  width: min(1240px, calc(100vw - 32px));
-  height: min(880px, calc(100vh - 32px));
+  width: min(1040px, calc(100vw - 40px));
+  height: min(560px, calc(100vh - 48px));
   gap: 0;
   padding-bottom: 0;
 }
@@ -876,7 +887,7 @@
   background: var(--dsw-alias-interactive-bg-hover-danger);
   color: var(--dsw-alias-state-error-primary);
   font-size: 18px;
-  font-weight: 700;
+  font-weight: 500;
 }
 
 .teamDissolveConfirm strong {
@@ -1450,7 +1461,7 @@
   padding: 8px;
   overflow-y: auto;
   border-radius: var(--dsw-radius-md);
-  background: #F7F8FA;
+  background: var(--dsw-alias-bg-layer-2);
   --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
   --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
@@ -1919,8 +1930,8 @@
 }
 
 .input {
-  min-height: 36px;
-  padding: 7px 10px;
+  min-height: 34px;
+  padding: 6px 10px;
 }
 
 textarea.input {
@@ -2147,11 +2158,12 @@ textarea.input {
 
 .memberGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
 }
 
 .memberTile {
+  position: relative;
   min-width: 0;
   min-height: 72px;
   display: grid;
@@ -2161,10 +2173,10 @@ textarea.input {
     'actions actions';
   align-items: center;
   gap: 8px 10px;
-  padding: 10px 11px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-2);
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 .memberTileLeader {
@@ -2222,8 +2234,9 @@ textarea.input {
 }
 
 .memberTileActions {
-  align-items: flex-end;
-  gap: 5px;
+  align-items: center;
+  gap: 6px;
+  row-gap: 6px;
 }
 
 .memberRole {
@@ -2241,8 +2254,19 @@ textarea.input {
 }
 
 .memberRoleAction {
-  border: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
   font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -2257,14 +2281,18 @@ textarea.input {
 }
 
 .memberRemoveButton {
-  padding: 1px 4px;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 6px;
   border: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
   font: inherit;
-  font-size: 10px;
-  line-height: 15px;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -2423,10 +2451,11 @@ textarea.input {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 13px 14px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-2);
+  padding: 14px 0;
+  border: 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 0;
+  background: transparent;
 }
 
 .contextResetCopy {
@@ -2454,8 +2483,8 @@ textarea.input {
 }
 
 .dissolvePanel {
-  border-color: var(--dsw-alias-state-error-secondary);
-  background: var(--dsw-alias-interactive-bg-hover-danger);
+  border-color: var(--dsw-alias-border-l1);
+  background: transparent;
 }
 
 .warning {
@@ -4173,7 +4202,7 @@ textarea.input {
 .teamViewToggleButtonActive {
   color: var(--dsw-alias-text-1);
   background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+  box-shadow: var(--dsw-alias-shadow-l1);
 }
 
 .teamParallelMemberChip[draggable='true'] {
@@ -4523,8 +4552,8 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
   border-radius: var(--dsw-radius-sm);
@@ -4801,13 +4830,13 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 14px;
   background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 12px 40px rgb(0 0 0 / 12%);
+  box-shadow: var(--dsw-alias-shadow-l1);
   text-align: center;
 }
 
 .teamWarmupTitle {
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--dsw-alias-text-1);
 }
 
@@ -4845,19 +4874,6 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
 .teamWarmupRetry:hover,
 .teamPaneRetry:hover {
   background: var(--dsw-alias-bg-layer-3);
-}
-
-.teamParallelPendingBadge {
-  flex: none;
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--dsw-alias-brand-primary);
-  color: #fff;
-  font-size: 10px;
-  line-height: 16px;
-  text-align: center;
 }
 
 .teamCardHeaderTrailing {
@@ -5039,12 +5055,16 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
 }
 
 .assistantFormSectionHint {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 8px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 999px;
-  padding: 1px 7px;
-  font-size: 11px;
+  background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
-  opacity: 0.75;
+  font-size: 11px;
+  line-height: 1;
 }
 
 .activityToggle {
@@ -5093,4 +5113,153 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
   color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
   text-decoration: underline;
   cursor: pointer;
+}
+
+
+.avatarUpload {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.avatarUpload:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.avatarUpload:focus-within {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.avatarFileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+
+.assistantCardBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.assistantBadge {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
+  font-size: 10px;
+  line-height: 1;
+}
+
+.assistantCardModel {
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.assistantCardMeta {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+
+.memberTileTools {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.memberTile:hover .memberTileTools,
+.memberTile:focus-within .memberTileTools {
+  opacity: 1;
+}
+
+.memberTileActions .memberRemoveButton {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.memberTileCopy {
+  padding-right: 84px;
+}
+
+.memberTileTools {
+  padding-left: 4px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.memberTileTools .memberRoleAction {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+}
+
+
+.assistantIconButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.assistantIconButton:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.assistantIconButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+
+.memberRoleAction:focus-visible,
+.memberRemoveButton:focus-visible,
+.memberEditButton:focus-visible,
+.assistantIconButton:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.avatarUpload:focus-within {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
 }
