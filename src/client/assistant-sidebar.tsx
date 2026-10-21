@@ -10,11 +10,16 @@ import {
   IconPinOutlineRegular,
   IconPlusOutlineRegular,
   IconSearchOutlineRegular,
+  IconSlidersTwoOutlineRegular,
   Menu,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import { AssistantCreateDialog } from './assistant-dialogs.js'
+import {
+  setAssistantDisplayMode,
+  useAssistantDisplayMode,
+} from './assistant-display-mode.js'
 import { AssistantSettingsDialog } from './assistant-settings-dialog.js'
 import { AssistantTaskDialog } from './assistant-task-dialog.js'
 import {
@@ -23,9 +28,15 @@ import {
   assistantRowActivity,
   assistantRowStatusText,
   assistantRowStatusTitle,
+  assistantTaskStatusLabel,
+  assistantThreadTasks,
   relativeAssistantTime,
   visibleAssistantInstances,
 } from './assistant-instances.js'
+import {
+  readAssistantThreadExpanded,
+  writeAssistantThreadExpanded,
+} from './assistant-thread-state.js'
 import { MemberAvatar } from './member-avatar.js'
 import css from './AgentTeam.module.css'
 import type { AssistantInstance, AssistantSession } from '../domain/types.js'
@@ -48,6 +59,13 @@ function writeAssistantExpanded(expanded: boolean): void {
   }
 }
 
+/** Status pill styling for the inline task threads. */
+function taskStatusClass(status: AssistantSession['status']): string {
+  if (status === 'needs_input') return css.assistantTaskStatusWaiting ?? ''
+  if (status === 'running') return css.assistantTaskStatusRunning ?? ''
+  return css.assistantTaskStatusIdle ?? ''
+}
+
 /**
  * The “单聊” section: one row per Assistant instance. Opening a row ensures the
  * instance's main Session in the Host and hands off to the shipped conversation
@@ -60,10 +78,14 @@ export function AssistantSidebarSection({
 }): JSX.Element {
   const [instances, setInstances] = useState<AssistantInstance[]>([])
   const [tasks, setTasks] = useState<AssistantSession[]>([])
+  const mode = useAssistantDisplayMode()
   const [expanded, setExpanded] = useState(readAssistantExpanded)
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [query, setQuery] = useState('')
+  const [modeMenuOpen, setModeMenuOpen] = useState(false)
+  const [threadOpenById, setThreadOpenById] = useState<Record<string, boolean>>({})
   const [openingId, setOpeningId] = useState<string>()
+  const [openingTaskId, setOpeningTaskId] = useState<string>()
   const [menuOpenId, setMenuOpenId] = useState<string>()
   const [taskAssistantId, setTaskAssistantId] = useState<string>()
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
@@ -72,6 +94,7 @@ export function AssistantSidebarSection({
   const [createOpen, setCreateOpen] = useState(false)
   const [listError, setListError] = useState<string>()
   const [error, setError] = useState<string>()
+  const [threadError, setThreadError] = useState<{ assistantId: string; message: string }>()
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -158,6 +181,33 @@ export function AssistantSidebarSection({
     }
   }
 
+  function toggleThreads(instance: AssistantInstance, open: boolean): void {
+    const next = !open
+    writeAssistantThreadExpanded(instance.id, next)
+    setThreadOpenById(current => ({ ...current, [instance.id]: next }))
+    setThreadError(current => (current?.assistantId === instance.id ? undefined : current))
+  }
+
+  async function openThreadTask(
+    instance: AssistantInstance,
+    task: AssistantSession,
+  ): Promise<void> {
+    if (openingTaskId !== undefined) return
+    setOpeningTaskId(task.id)
+    setThreadError(undefined)
+    try {
+      const result = await callAgentTeam('assistant.task.open', { taskId: task.id })
+      openSession(result.sessionId)
+    } catch (cause) {
+      setThreadError({
+        assistantId: instance.id,
+        message: `任务打开失败：${cause instanceof Error ? cause.message : String(cause)}`,
+      })
+    } finally {
+      setOpeningTaskId(undefined)
+    }
+  }
+
   const message = error ?? listError
 
   return (
@@ -165,6 +215,7 @@ export function AssistantSidebarSection({
       className={`${css.sidebarTeamSection} ${css.sidebarAssistantSection}`}
       aria-label="单聊"
       data-dsh-assistant-section
+      data-dsh-assistant-display-mode={mode}
     >
       <div className={css.sidebarTeamHeader} data-dsh-assistant-header>
         {searchExpanded
@@ -222,6 +273,39 @@ export function AssistantSidebarSection({
                 </Tooltip>
               </div>
               <div className={css.sidebarTeamHeaderActions}>
+                <Menu
+                  open={modeMenuOpen}
+                  onClose={() => { setModeMenuOpen(false) }}
+                  align="end"
+                  dense
+                  portal
+                  items={[
+                    { type: 'label', id: 'display-mode-label', text: '显示方式' },
+                    { id: 'mode-simple', label: '简洁：每个助手一行' },
+                    { id: 'mode-advanced', label: '进阶：显示任务线程' },
+                  ]}
+                  selectedIds={[mode === 'simple' ? 'mode-simple' : 'mode-advanced']}
+                  onSelect={id => {
+                    setModeMenuOpen(false)
+                    if (id === 'mode-simple') setAssistantDisplayMode('simple')
+                    else if (id === 'mode-advanced') setAssistantDisplayMode('advanced')
+                  }}
+                  anchor={(
+                    <Tooltip label="显示方式" delayMs={400}>
+                      <button
+                        type="button"
+                        className={css.sidebarTeamIconButton}
+                        aria-label="显示方式"
+                        aria-haspopup="menu"
+                        aria-expanded={modeMenuOpen}
+                        data-dsh-assistant-display-options
+                        onClick={() => { setModeMenuOpen(current => !current) }}
+                      >
+                        <IconSlidersTwoOutlineRegular size={14} />
+                      </button>
+                    </Tooltip>
+                  )}
+                />
                 <Tooltip label="新建单聊助手" delayMs={400}>
                   <button
                     type="button"
@@ -278,12 +362,44 @@ export function AssistantSidebarSection({
                     : activity.status === 'queued'
                       ? css.sidebarAssistantStatusQueued
                       : css.sidebarAssistantStatusIdle
+                // Advanced mode only: the persisted disclosure is read lazily so
+                // simple mode never touches thread storage at all.
+                const threadTasks = mode === 'advanced'
+                  ? assistantThreadTasks(tasks, instance)
+                  : []
+                const hasThreads = threadTasks.length > 0
+                const threadsOpen = hasThreads
+                  && (threadOpenById[instance.id] ?? readAssistantThreadExpanded(instance.id))
+                const threadErrorForRow = threadError?.assistantId === instance.id
+                  ? threadError.message
+                  : undefined
                 return (
                   <div key={instance.id} className={css.sidebarTeamGroup}>
                     <div
                       className={`${css.sidebarTeamRowWrap} ${css.sidebarAssistantRowWrap} ${menuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
                       data-dsh-assistant-row
                     >
+                      {hasThreads && (
+                        <button
+                          type="button"
+                          className={css.sidebarAssistantThreadToggle}
+                          aria-expanded={threadsOpen}
+                          aria-controls={threadsOpen
+                            ? `dsh-team-mode-assistant-threads-${instance.id}`
+                            : undefined}
+                          aria-label={threadsOpen
+                            ? `收起 ${name} 的任务线程`
+                            : `展开 ${name} 的任务线程`}
+                          title={threadsOpen ? '收起任务线程' : '展开任务线程'}
+                          data-dsh-assistant-thread-toggle
+                          onClick={() => { toggleThreads(instance, threadsOpen) }}
+                        >
+                          <IconChevronRightOutlineRegular
+                            size={12}
+                            className={`${css.sidebarAssistantThreadChevron} ${threadsOpen ? css.sidebarAssistantThreadChevronOpen : ''}`}
+                          />
+                        </button>
+                      )}
                       <button
                         type="button"
                         className={`${css.sidebarTeamRow} ${css.sidebarAssistantRow}`}
@@ -382,6 +498,47 @@ export function AssistantSidebarSection({
                         )}
                       />
                     </div>
+                    {threadsOpen && (
+                      <div
+                        id={`dsh-team-mode-assistant-threads-${instance.id}`}
+                        className={css.sidebarAssistantThreads}
+                        data-dsh-assistant-threads
+                      >
+                        {threadErrorForRow !== undefined && (
+                          <div className={css.sidebarAssistantThreadError} role="alert">
+                            {threadErrorForRow}
+                          </div>
+                        )}
+                        {threadTasks.map(task => {
+                          const openingTask = openingTaskId === task.id
+                          return (
+                            <button
+                              key={task.id}
+                              type="button"
+                              className={css.sidebarAssistantThreadRow}
+                              data-dsh-assistant-task={task.id}
+                              data-dsh-assistant-task-status={task.status}
+                              title={`${task.title} · ${assistantTaskStatusLabel(task.status)}`}
+                              disabled={openingTask}
+                              aria-busy={openingTask}
+                              onClick={() => { void openThreadTask(instance, task) }}
+                            >
+                              <span className={css.sidebarAssistantThreadCopy}>
+                                <span className={css.sidebarAssistantThreadTitle}>{task.title}</span>
+                                <span className={css.sidebarAssistantThreadMeta}>
+                                  <span className={`${css.assistantTaskStatus} ${taskStatusClass(task.status)}`}>
+                                    {assistantTaskStatusLabel(task.status)}
+                                  </span>
+                                  <span className={css.sidebarAssistantThreadTime}>
+                                    {openingTask ? '打开中' : relativeAssistantTime(task.updatedAt)}
+                                  </span>
+                                </span>
+                              </span>
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
                   </div>
                 )
               })}

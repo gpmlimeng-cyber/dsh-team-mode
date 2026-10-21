@@ -15,6 +15,7 @@ import {
   assistantRowStatusTitle,
   assistantTaskStatusLabel,
   assistantTasksFor,
+  assistantThreadTasks,
   relativeAssistantTime,
   visibleAssistantInstances,
 } from '../src/client/assistant-instances.js'
@@ -166,6 +167,41 @@ describe('assistantTasksFor', () => {
 
   it('returns an empty list for an unknown assistant', () => {
     expect(assistantTasksFor([task('assistant-a', 'running')], 'assistant-b')).toEqual([])
+  })
+})
+
+describe('assistantThreadTasks', () => {
+  it('orders thread rows newest first and never repeats the main session', () => {
+    const owner = instance('assistant-a', 'A', '2026-01-01T00:00:00Z', {
+      mainSessionId: 'session-main',
+    })
+    const older = task('assistant-a', 'completed', 'a-old', {
+      sessionId: 'session-old',
+      updatedAt: '2026-01-01T00:00:00Z',
+    })
+    const newer = task('assistant-a', 'running', 'a-new', {
+      sessionId: 'session-new',
+      updatedAt: '2026-03-01T00:00:00Z',
+    })
+    const staleMain = task('assistant-a', 'running', 'a-main', {
+      sessionId: 'session-main',
+      updatedAt: '2026-04-01T00:00:00Z',
+    })
+    expect(assistantThreadTasks([older, staleMain, newer], owner).map(item => item.id))
+      .toEqual(['a-new', 'a-old'])
+  })
+
+  it('keeps tasks while the assistant has no main session yet', () => {
+    const owner = instance('assistant-a', 'A', '2026-01-01T00:00:00Z')
+    const value = task('assistant-a', 'needs_input')
+    expect(assistantThreadTasks([value], owner).map(item => item.id)).toEqual([value.id])
+  })
+
+  it('ignores tasks belonging to another assistant', () => {
+    const owner = instance('assistant-a', 'A', '2026-01-01T00:00:00Z', {
+      mainSessionId: 'session-main',
+    })
+    expect(assistantThreadTasks([task('assistant-b', 'running')], owner)).toEqual([])
   })
 })
 

@@ -3675,6 +3675,129 @@ textarea.input {
   min-width: 0;
 }
 
+/* Advanced mode: one disclosure chevron at the row's left edge and the
+   newest-first task threads it reveals below the assistant row. */
+.sidebarAssistantThreadToggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 20px;
+  flex: none;
+  margin-left: -2px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.sidebarAssistantThreadToggle:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.sidebarAssistantThreadToggle:focus-visible,
+.sidebarAssistantThreadRow:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+.sidebarAssistantThreadChevronOpen {
+  transform: rotate(90deg);
+}
+
+.sidebarAssistantThreads {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding: 0 8px 2px 30px;
+}
+
+.sidebarAssistantThreadRow {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebarAssistantThreadRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sidebarAssistantThreadRow:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.sidebarAssistantThreadCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.sidebarAssistantThreadTitle {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarAssistantThreadMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 15px;
+}
+
+.sidebarAssistantThreadTime {
+  flex: none;
+  margin-left: auto;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.sidebarAssistantThreadError {
+  margin: 1px 0;
+  padding: 4px 6px;
+  border-radius: var(--dsw-radius-xs);
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sidebarAssistantThreadToggle,
+  .sidebarAssistantThreadRow {
+    transition: background-color 120ms var(--ds-ease-in-out), color 120ms var(--ds-ease-in-out);
+  }
+
+  .sidebarAssistantThreadChevron {
+    transition: transform 120ms var(--ds-ease-in-out);
+  }
+}
+
 .assistantCreateDialog {
   width: min(520px, 100%);
 }

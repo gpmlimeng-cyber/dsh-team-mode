@@ -163,6 +163,19 @@ export function assistantTasksFor(
 }
 
 /**
+ * Rows rendered inline under one Assistant in advanced mode. The list keeps the
+ * dialog's newest-first ordering but never repeats the assistant's main Session
+ * as a task, even if a stale task record points at it.
+ */
+export function assistantThreadTasks(
+  tasks: readonly AssistantSession[],
+  instance: Pick<AssistantInstance, 'id' | 'mainSessionId'>,
+): AssistantSession[] {
+  return assistantTasksFor(tasks, instance.id)
+    .filter(task => instance.mainSessionId === undefined || task.sessionId !== instance.mainSessionId)
+}
+
+/**
  * Archived instances are never listed. Pinned rows lead, then the most recent
  * activity; the id tie-break keeps the order stable across SSE refreshes.
  */
