@@ -39,6 +39,7 @@ Grok Bot 是 xAI 的常驻 Agent 产品，不是普通聊天框。
 | --- | --- | --- | --- | --- |
 | Grok Bot | 商业产品 | 闭源 | — | 产品形态基准 |
 | DS Bot / DeepSeek-Bot | DSH Bot 插件 | Apache-2.0 | 2.7k | 最接近的 DSH 原生竞品 |
+| OpenMausBot | 开源 Grok Bot 替代 | Apache-2.0 | 5.3k | 产品/运行时最接近的开源实现 |
 | OpenBot | 自托管 Bot 平台 | MIT | 31 | 最接近的运行时/编排参考 |
 | LibreChat | Agent 聊天平台 | MIT | 46k | Agent 目录、会话、管理 UX 参考 |
 | Letta | Stateful Agent 平台 | Apache-2.0 | 25k | 长期记忆/状态参考 |
@@ -82,7 +83,58 @@ Grok Bot 是 xAI 的常驻 Agent 产品，不是普通聊天框。
 
 来源：https://github.com/Fei2411/DeepSeek-Bot
 
-### 3.2 OpenBot（最接近的运行时参考）
+### 3.2 OpenMausBot（最接近的开源 Grok Bot 替代）
+
+**是什么**：Apache-2.0、TypeScript/Electron/React 的开源 Grok Bot 替代。定位就是“聊天应用里的一队 AI Bot”，本机已安装 `OpenMausBot.app 0.1.108`。
+
+核心形态与 Grok Bot 高度一致：
+
+- 侧栏每个 Bot 是一个真实 Agent（Claude / Codex / Grok CLI），有自己的性格、模型、云电脑、连接应用。
+- 像联系人一样聊天；Bot 在后台工作，审批/提问以卡片回到聊天。
+- 每个 Bot 有独立 thread、长期记忆、工作目录、模型和 Computer。
+- Channels：Work / Personal / 项目分频道，各自有 transcript、共享指令、工作目录、响应规则、Bot 名单。
+- Rooms/群聊：多个 Bot 在同一房间协作，可 @ 指定 Bot；未 @ 的消息由 **Decision model（Jev）** 在几百毫秒内选出合适 Bot，失败回退到 room lead。
+- 审批：shell、文件编辑、问题都以 inline card 出现，Allow / Deny / 回答。
+- 连接应用：Composio 市场，OAuth 一次，多个 Bot 共用。
+- 团队/预设可打包为 Markdown 分享导入；有 MCP server 供外部编排。
+
+工程架构（公开文档）：
+
+```text
+React/Electron App
+   │ HTTP commands + 单条 SSE 事件流
+   ▼
+Harness server (127.0.0.1:8799)
+   ├─ Driver registry: Claude / Codex / Grok CLI
+   ├─ Permission broker
+   ├─ 持久 thread / NDJSON 事件日志
+   ├─ Cloud Computer (Boat) / 本地 Computer
+   └─ Composio connectors
+```
+
+更关键的是它有一套 **job runtime contract**：
+
+- 每个“一个 Bot 交给另一个 Bot 的工作”都是一条 `Assignment` 记录。
+- `rootId/parentId/depth` 形成工作树；`origin` 记录来源（人/例程/外部）。
+- `mode`: `work` / `consult` / `notify`。
+- `reply`: `resume` / `poll` / `none`。
+- 有 status/outcome、executions/restarts、result/evidence、重启恢复。
+- 所有唤醒、交接、例程、webhook 统一到一条生命周期，不再各自维护时钟和状态。
+
+记忆：每个 Bot 一个私有 workspace，`MEMORY.md` 每轮加载，`memory/<topic>.md` 按需读取，daily log 记录当天工作；支持查看/编辑/撤销，自动脱敏凭证。
+
+**对我们的价值**：这是产品形态 + 运行时契约 + Bot 目录 UX 的最完整开源参考，而且许可证允许 deepfork。它验证了：
+
+1. “Bot 是联系人，不是会话列表”的 UI 可行。
+2. 每个 Bot 拥有独立 thread、记忆、Computer、工具。
+3. 把“交给另一个 Bot 的工作”统一成 Assignment 树，是避免多套唤醒/交接逻辑的关键。
+4. 决策模型只做“选谁”，不做实际工作；失败回退固定 lead。
+
+**差异**：它是独立 Electron 应用，直接驱动 Claude/Codex/Grok CLI；我们是 DSH 插件，必须落到 DSH Session/Agent 上。可借产品模型和 runtime contract，不能直接搬 driver/computer 层。
+
+来源：https://github.com/milind-soni/OpenMausBot
+
+### 3.3 OpenBot（最接近的运行时参考）
 
 **是什么**：自托管、多 Bot、持久化 Actor 平台。
 
@@ -104,7 +156,7 @@ Grok Bot 是 xAI 的常驻 Agent 产品，不是普通聊天框。
 
 来源：https://github.com/regnull/openbot
 
-### 3.3 LibreChat（Agent 目录与聊天 UX 参考）
+### 3.4 LibreChat（Agent 目录与聊天 UX 参考）
 
 **是什么**：开源 AI 聊天平台，带 Agents（Agent 管理 API、文件、Skills、工作区、后台工具、子 Agent）。
 
@@ -120,7 +172,7 @@ Grok Bot 是 xAI 的常驻 Agent 产品，不是普通聊天框。
 
 来源：https://github.com/LibreChat-AI/LibreChat
 
-### 3.4 Letta（长期记忆参考）
+### 3.5 Letta（长期记忆参考）
 
 **是什么**：Stateful Agent 平台（前 MemGPT），强调记忆、身份、跨设备持续。
 
@@ -134,7 +186,7 @@ Grok Bot 是 xAI 的常驻 Agent 产品，不是普通聊天框。
 
 来源：https://github.com/letta-ai/letta
 
-### 3.5 OpenHands Agent Canvas（任务/自动化参考）
+### 3.6 OpenHands Agent Canvas（任务/自动化参考）
 
 **是什么**：自托管 Agent 控制中心，运行 OpenHands/Claude Code/Codex 等，支持多后端、自动化、任务分解。
 
@@ -147,7 +199,7 @@ Grok Bot 是 xAI 的常驻 Agent 产品，不是普通聊天框。
 
 来源：https://github.com/OpenHands/OpenHands
 
-### 3.6 CrewAI / AutoGen（编排模式参考）
+### 3.7 CrewAI / AutoGen（编排模式参考）
 
 - CrewAI：角色、任务、流程（sequential/hierarchical）编排；适合看“任务分配/角色协作”抽象。
 - AutoGen：对话式多 Agent、群聊、handoff；适合看“多 Agent 消息循环”。
@@ -158,7 +210,7 @@ Grok Bot 是 xAI 的常驻 Agent 产品，不是普通聊天框。
 - https://github.com/crewAIInc/crewAI
 - https://github.com/microsoft/autogen
 
-### 3.7 Grok Bot 非官方项目
+### 3.8 Grok Bot 非官方项目
 
 - `xianyu110/grok-bot-0.18-reconstructed`：非官方重构，**无 License**。只能做行为理解，不能进入重建。
 - `codeaashu/grokbot-shim`：ISC。把 Grok Bot UI 接到本地 host/runtime，支持本地 Computer、模型代理、noVNC 接管。适合看宿主协议、Computer 沙箱、桌面接管，不适合直接做产品。
@@ -194,7 +246,7 @@ Grok Bot 是 xAI 的常驻 Agent 产品，不是普通聊天框。
 
 **结论**：
 
-- 产品形态：Grok Bot 是基准，DS Bot 是最接近的 DSH 实现。
+- 产品形态：Grok Bot 是基准，**OpenMausBot 是最接近的开源实现**，DS Bot 是最接近的 DSH 原生实现。
 - 运行时：OpenBot 的 actor/inbox/thread 模型最适合映射到 DSH Session。
 - UX：LibreChat 的 Agent 管理/详情最值得抄结构，不抄视觉。
 - 记忆：Letta 做后续增强参考，不进首版。
@@ -206,37 +258,34 @@ Grok Bot 是 xAI 的常驻 Agent 产品，不是普通聊天框。
 ### 方案 A：产品形态组（推荐）
 
 - **Grok Bot**：REA 分析本地 `Grok Bot.app 0.70.2`，看 Bot/DM/任务/审批/记忆/Computer 的真实交互。
-- **DS Bot**：deepfork，重点看 Bot→Session 映射、群聊、记忆、重启恢复。
-- **OpenBot**：deepfork，重点看 actor/inbox/thread、handoff、并发、审批。
-- **LibreChat**：只 deepfork Agent 目录/详情/会话管理子系统，不整仓。
+- **OpenMausBot**：deepfork（Apache-2.0），重点看 Bot roster、thread、channels/rooms、Assignment runtime、Decision model、审批卡片。
+- **DS Bot**：deepfork（Apache-2.0），重点看 DSH 上的 Bot→Session 映射、群聊、记忆、重启恢复。
+- **LibreChat**（可选，只拆 Agent 目录/详情/会话管理子系统）。
 
-产出：产品形态 + 运行时 + Agent UX 的完整落地方案。
+产出：产品形态 + 运行时契约 + DSH 落点的完整方案。
 
-估算：REA 1 天 + deepfork 2–3 天 + 方案 1 天。
+估算：REA 1 天 + deepfork 2–3 天 + 方案 1 天，约 **4–5 天**。
 
 ### 方案 B：运行时/编排组
 
-- DS Bot + OpenBot + OpenHands + Letta。
-- 重点：worker 生命周期、任务状态、记忆、自动化。
-- 弱化 Grok Bot UI 和 LibreChat UX。
+- OpenMausBot + OpenBot + Letta + OpenHands。
+- 重点：worker/assignment 生命周期、任务状态、记忆、自动化。
+- 弱化 Grok Bot UI 和 DS Bot 的 DSH 适配。
 
-估算：2–3 天。
+估算：**2–3 天**。
 
 ### 方案 C：最小对标
 
-- DS Bot + OpenBot。
-- 只回答“DSH 上如何做 Bot 常驻 + 隐藏 worker”。
-- 最快，但产品交互参考不足。
-
-估算：1–2 天。
-
----
+- OpenMausBot + DS Bot。
+- 只回答“Grok Bot 形态如何在 DSH 上落地”，最快。
+- 估算：**2–3 天**。
 
 ## 6. 确定范围后 REA + deepfork 的分工
 
 | 目标 | 工具 | 产出 |
 | --- | --- | --- |
 | Grok Bot 0.70.2 | REA（asar/JS 应用图、协议、UI 结构） | Bot 入口、DM、任务/审批、Computer 行为模型 |
+| OpenMausBot 0.1.108 | deepfork（Apache-2.0）+ 可选 REA | Bot roster、thread、channels/rooms、Assignment runtime、Decision model、审批 |
 | DS Bot | deepfork（Apache-2.0） | Bot→Session 映射、群聊、记忆、恢复、UI 槽位 |
 | OpenBot | deepfork（MIT） | actor/inbox/thread、handoff、并发、审批、记忆 |
 | LibreChat | deepfork 子系统（MIT） | Agent 目录、详情、会话管理、Subagent/后台工具 |
@@ -244,7 +293,7 @@ Grok Bot 是 xAI 的常驻 Agent 产品，不是普通聊天框。
 
 License gate：
 
-- 可重建：DS Bot、OpenBot、LibreChat、Letta、OpenHands、CrewAI、grokbot-shim。
+- 可重建：OpenMausBot、DS Bot、OpenBot、LibreChat、Letta、OpenHands、CrewAI、grokbot-shim。
 - 仅理解：Grok Bot（闭源）、grok-bot reconstructed（无 License）。
 - AutoGen 仓库元数据为 CC-BY-4.0，建议只做概念参考，不进入重建。
 
@@ -263,6 +312,7 @@ License gate：
 - Grok Bot 设计文章：https://x.ai/news/designing-grok-bot
 - Grok Bot 发布报道：https://www.infoq.com/news/2026/08/grok-bot-agent/
 - DS Bot：https://github.com/Fei2411/DeepSeek-Bot
+- OpenMausBot：https://github.com/milind-soni/OpenMausBot
 - OpenBot：https://github.com/regnull/openbot
 - LibreChat：https://github.com/LibreChat-AI/LibreChat
 - Letta：https://github.com/letta-ai/letta
