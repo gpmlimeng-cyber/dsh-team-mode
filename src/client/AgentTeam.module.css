@@ -4358,8 +4358,8 @@ textarea.input {
   border-radius: 0;
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--team-pane-color, var(--dsw-alias-bg-base)) 4%, var(--dsw-alias-bg-base)) 0%,
-    color-mix(in srgb, var(--team-pane-color, var(--dsw-alias-bg-base)) 2%, var(--dsw-alias-bg-base)) 68%,
+    var(--team-pane-tint, var(--dsw-alias-bg-base)) 0%,
+    color-mix(in srgb, var(--team-pane-tint, var(--dsw-alias-bg-base)) 55%, var(--dsw-alias-bg-base)) 70%,
     var(--dsw-alias-bg-base) 94%
   );
 }

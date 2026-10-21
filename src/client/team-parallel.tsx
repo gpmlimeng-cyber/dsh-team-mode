@@ -81,6 +81,10 @@ function memberStatus(member: TeamView['members'][string]): 'running' | 'waiting
   return 'idle'
 }
 
+// Near-white tints sampled from AionUI's parallel panes; the member identity
+// color stays on the name/avatar only, never on the canvas.
+const PANE_TINTS = ['#F9F9F8', '#F9FBFB', '#FCFAF9', '#FAF9FC']
+
 function initial(name: string): string {
   return name.trim().slice(0, 1).toLocaleUpperCase() || '?'
 }
@@ -297,14 +301,14 @@ export function TeamParallelHost({
         className={css.teamParallelGrid}
         style={{ '--team-pane-count': renderedMembers.length } as CSSProperties}
       >
-        {renderedMembers.map(member => {
+        {renderedMembers.map((member, index) => {
           const status = memberStatus(member)
           const active = member.sessionId === activeSessionId
           return (
             <section
               key={member.id}
               className={`${css.teamParallelPane} ${active ? css.teamParallelPaneActive : ''}`}
-              style={{ '--team-pane-color': colorOf(member.id) } as CSSProperties}
+              style={{ '--team-pane-color': colorOf(member.id), '--team-pane-tint': PANE_TINTS[index % PANE_TINTS.length] } as CSSProperties}
               data-team-pane={member.id}
             >
               <header className={css.teamParallelPaneHeader}>
