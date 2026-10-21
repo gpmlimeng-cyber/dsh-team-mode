@@ -4649,6 +4649,7 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   width: 20px;
   height: 20px;
   flex: none;
+  corner-shape: superellipse(1);
   border-radius: 50%;
   background: var(--dsw-alias-bg-module-platform);
   color: var(--dsw-alias-label-secondary);
@@ -5746,6 +5747,9 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  /* DSH sets corner-shape: superellipse(1.5) globally, which turns 50% into a
+     squircle. The sidebar profile avatar opts back into a true circle. */
+  corner-shape: superellipse(1);
   border-radius: 50% !important;
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent);
   color: var(--dsw-alias-label-secondary);

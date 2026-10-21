@@ -327,3 +327,21 @@
 - 底色使用账号头像的 `color-mix(label-primary 4%, transparent)`（实测 `rgba(15,17,21,0.04)`），不再是深色块。
 - 标题栏 24px，初始化 hero 44px；有自定义头像时直接显示圆形图片，否则显示成员首字母。
 - 实测：24/44px、`radius=50%`、`overflow=hidden`、背景 `rgba(15,17,21,0.04)`。
+
+---
+
+## 二十七、头像不是圆形的根因
+
+DSH 全局设置了 `corner-shape: superellipse(1.5)`，所以即使 `border-radius: 50%`，浏览器也会把角渲染成“圆角方块”（squircle），单独调圆角当然无效。
+
+左栏账号头像之所以是正圆，是因为它的组件显式设置了 `corner-shape: superellipse(1)`。现已照抄：
+
+```css
+.memberAvatar {
+  corner-shape: superellipse(1);
+  border-radius: 50% !important;
+  overflow: hidden;
+}
+```
+
+标题栏 24px、hero 44px 均为正圆；截图放大验证为圆形而非 squircle。团队会话顶部的成员切换头像也同步加上。
