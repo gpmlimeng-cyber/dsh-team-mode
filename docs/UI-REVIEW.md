@@ -590,3 +590,27 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
   - Markdown 节点：5 个段落 / 8 个列表项 / 3 个标题
 - 截图：`docs/assets/ui-review/native-team-bubble.png`
 - 注意：依赖原生 turn-trigger DOM 与「收到团队消息」文案；DSH 升级若改结构需同步维护。
+
+---
+
+## 四十七、原生团队气泡充分实测
+
+- 修复新成员会话 `sessions.retain: unknown session`：retain 失败时先调用 `sessions.refresh()` 刷新客户端会话目录，再重试一次；实测新增成员 pane 正常加载，错误数为 0。
+- 气泡正文去掉 relay 的 `Summary:` 重复首行。
+- 实测矩阵（DSH 0.2.1-rc.2，3 成员团队）：
+  - 3 个 pane，21 个 `[data-team-bubble]`，发送者 5 类（团队消息 / Leader / 老周 / 阿岚 / Aion CLI）
+  - 自定义 header 每个气泡恰好 1 个，无重复
+  - 同一 pane 宽度 245–246px，无横向溢出
+  - Markdown 渲染 21/21；标题 / 有序无序列表 / 引用 / 行内代码 / 加粗斜体均覆盖
+  - `<script>` 未执行（script 元素 0），作为文本转义
+  - `scrollHeight <= clientHeight`，无内容裁切
+  - 对话 ↔ 并行切换后 19 个气泡保持增强，无重复 header
+  - 页面刷新后重新增强 19 个，全部 Markdown
+  - 新增消息实时增强：19 → 21，旧气泡保持 Markdown，无 raw `##` 泄漏
+  - 窄视口 900px：气泡宽度 813px，无溢出
+  - 深色主题：气泡底色深色、正文 `rgb(249,250,251)`、muted header 正常
+- 未覆盖：非团队类原生 trigger（当前测试数据里没有 goal/webhook 等 trigger）。
+- 截图：
+  - `docs/assets/ui-review/native-team-bubble-final.png`
+  - `docs/assets/ui-review/native-team-bubble-narrow.png`
+  - `docs/assets/ui-review/native-team-bubble-dark.png`

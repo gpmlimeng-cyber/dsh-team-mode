@@ -26,6 +26,7 @@ interface ParallelHostProps {
     retain: (sessionId: string, options: { source: string; signal: AbortSignal }) => {
       release: () => void
     }
+    refresh?: () => Promise<void>
   }
   SessionProvider?: ComponentType<{ session: unknown; children: ReactNode }>
   renderSlot?: (name: string, payload?: Record<string, unknown>) => ReactNode
@@ -175,18 +176,38 @@ function RetainedPane({
 
   useEffect(() => {
     const controller = new AbortController()
-    try {
-      const next = sessions.retain(member.sessionId, { source: 'teamParallel', signal: controller.signal })
-      setReference(next)
-      return () => {
-        controller.abort()
-        next.release()
-        setReference(undefined)
+    let active = true
+    let reference: { release: () => void } | undefined
+
+    const acquire = (retried: boolean): void => {
+      try {
+        const next = sessions.retain(member.sessionId, { source: 'teamParallel', signal: controller.signal })
+        reference = next
+        setReference(next)
+        setFailure(undefined)
+      } catch (cause) {
+        // A member added while the workbench is already open has a brand-new
+        // Session that the client catalog has not listed yet. Refresh the
+        // catalog once and retry before surfacing the retain failure.
+        if (!retried && sessions.refresh !== undefined) {
+          void sessions.refresh().then(() => {
+            if (active && !controller.signal.aborted) acquire(true)
+          }).catch(() => {
+            if (active) setFailure(cause instanceof Error ? cause.message : String(cause))
+          })
+          return
+        }
+        if (active) setFailure(cause instanceof Error ? cause.message : String(cause))
       }
-    } catch (cause) {
-      setFailure(cause instanceof Error ? cause.message : String(cause))
     }
-    return () => { controller.abort() }
+
+    acquire(false)
+    return () => {
+      active = false
+      controller.abort()
+      reference?.release()
+      setReference(undefined)
+    }
   }, [member.sessionId, sessions])
 
   if (failure !== undefined) return <div className={css.teamPaneError}>{failure}</div>

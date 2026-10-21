@@ -24,7 +24,9 @@ function renderInline(text: string): string {
 
 /** Small, dependency-free Markdown renderer for relayed team messages. */
 function renderMarkdown(source: string): string {
-  const lines = source.split('\n')
+  // The relay body repeats its own summary as the first line; the bubble shows
+  // the actual message content, so drop that preview line.
+  const lines = source.replace(/^Summary: [^\n]*\n?/, '').split('\n')
   const html: string[] = []
   let list: 'ul' | 'ol' | undefined
   const closeList = (): void => {
