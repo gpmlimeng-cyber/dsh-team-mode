@@ -261,7 +261,7 @@
 .teamMessageCard {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 6px;
   flex: none;
   box-sizing: border-box;
@@ -270,8 +270,9 @@
 }
 
 .teamMessageBubble {
-  width: 100%;
+  width: auto;
   max-width: 100%;
+  align-self: stretch;
   padding: 9px 12px 10px;
   border-radius: 12px;
   background: color-mix(in srgb, var(--team-message-color, var(--dsw-alias-bg-layer-2)) 10%, var(--dsw-alias-bg-layer-2));

@@ -533,3 +533,18 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - `.teamMessageText` 去掉 `pre-wrap`，避免与 Markdown 块级排版冲突；仍保留 `word-break`。
 
 对应变更：`ConversationColumn.tsx`、`ConversationColumn.module.css`。
+
+---
+
+## 四十三、气泡宽度真正统一
+
+- 之前 `width:100%` 在 `align-items:flex-start` 的列容器里仍被内容宽度压回；改为：
+  - `.teamMessageCard { align-items: stretch; }`
+  - `.teamMessageBubble { width:auto; align-self:stretch; }`
+- 用实际 CSS 注入测试（真实 hashed 类名）短消息与长消息：
+  - short = 546px
+  - long = 546px
+  - equal = true
+- 应用已重启加载新构建；不再随内容长短收缩。
+
+截图：`/tmp/ui-bubble-equal.png`（临时验证图，未入库）。
