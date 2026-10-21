@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { MemberAvatar } from './member-avatar.js'
 import { IconAgentPresetOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamView } from '../transport/contracts.js'
 import { useAgentTeamData } from './components.js'
@@ -313,11 +314,11 @@ export function TeamParallelHost({
             >
               <header className={css.teamParallelPaneHeader}>
                 <span className={css.teamParallelPaneIdentity}>
-                  <span className={`${css.teamParallelAvatar} ${css[`teamParallelAvatar_${status}`] ?? ''}`} aria-hidden="true">
-                    {member.assistantSnapshot?.avatar !== undefined && member.assistantSnapshot.avatar !== ''
-                      ? <img src={member.assistantSnapshot.avatar} alt="" />
-                      : initial(member.displayName)}
-                  </span>
+                  <MemberAvatar
+                    name={member.displayName}
+                    avatar={member.assistantSnapshot?.avatar}
+                    size={24}
+                  />
                   <strong className={css.teamParallelPaneName}>{member.displayName}</strong>
                   {member.role === 'leader' && (
                     <span className={css.teamParallelLeaderCrown} aria-label="Leader" title="Leader">

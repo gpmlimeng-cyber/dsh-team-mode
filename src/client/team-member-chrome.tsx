@@ -10,6 +10,7 @@ import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import { useAgentTeamData } from './components.js'
 import css from './AgentTeam.module.css'
+import { MemberAvatar } from './member-avatar.js'
 import type { AssistantView, TeamView } from '../transport/contracts.js'
 
 type TeamMember = TeamView['members'][string]
@@ -304,11 +305,7 @@ export function TeamMemberHeroHint({ sessionId }: { sessionId?: string }): JSX.E
   return (
     <div className={css.teamMemberHeroHint} role="note">
       <span className={css.teamMemberHeroHeader}>
-        <span className={css.teamMemberHeroAvatar} aria-hidden="true">
-          {avatar !== undefined && avatar !== ''
-            ? <img src={avatar} alt="" />
-            : membership.member.displayName.trim().slice(0, 1).toLocaleUpperCase() || '?'}
-        </span>
+        <MemberAvatar name={membership.member.displayName} avatar={avatar} size={44} />
         <span className={css.teamMemberHeroTitleGroup}>
           <span className={css.teamMemberHeroName}>{membership.member.displayName}</span>
           <span className={css.teamMemberHeroRole}>{leader ? 'Leader' : '成员'}</span>

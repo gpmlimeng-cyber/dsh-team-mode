@@ -5737,3 +5737,26 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   background: transparent !important;
   background-image: none !important;
 }
+
+
+/* Same treatment as the DSH sidebar profile avatar. */
+.memberAvatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 50% !important;
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent);
+  color: var(--dsw-alias-label-secondary);
+  font-weight: 500;
+  line-height: 1;
+  user-select: none;
+}
+
+.memberAvatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}

@@ -316,3 +316,14 @@
 - pane 标题栏头像：`border-radius: 50%`、22px 圆形，深色底（`label-primary`）+ 白色首字母，与 AionUI 的黑色圆形标识一致。
 - 若成员助手配置了自定义头像，直接渲染为圆形图片（`object-fit: cover`）；没有头像时回退首字母。
 - 实测计算样式：`radius=50%`、`22×22`、`background rgb(15,17,21)`、`color rgb(255,255,255)`。
+
+---
+
+## 二十六、标题头像复用 DSH 账号头像组件样式
+
+之前用深色底 + 自定义圆角，视觉上仍像圆角方块；现改为与左栏底部账号头像一致的实现：
+
+- 新增共享 `MemberAvatar`：`border-radius: 50% !important`、`overflow: hidden`，图片 `object-fit: cover`，字母回退。
+- 底色使用账号头像的 `color-mix(label-primary 4%, transparent)`（实测 `rgba(15,17,21,0.04)`），不再是深色块。
+- 标题栏 24px，初始化 hero 44px；有自定义头像时直接显示圆形图片，否则显示成员首字母。
+- 实测：24/44px、`radius=50%`、`overflow=hidden`、背景 `rgba(15,17,21,0.04)`。
