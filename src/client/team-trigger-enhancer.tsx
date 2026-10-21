@@ -192,6 +192,7 @@ function markTeamBubble(
   ensureHeader(section, sender, color)
   const content = section.querySelector<HTMLElement>('[class*="content"]')
   if (content === null) return
+  section.dataset.teamContentClass = content.className
   content.innerHTML = renderMarkdown(raw)
   ensureExpandControl(section, content)
 }
@@ -222,8 +223,17 @@ export function TeamTriggerEnhancer(): null {
 
     const refresh = (section: HTMLElement): void => {
       const stored = rawText.get(section)
-      const content = section.querySelector<HTMLElement>('[class*="content"]')
-      if (content === null) return
+      let content = section.querySelector<HTMLElement>('[class*="content"]')
+      if (content === null) {
+        // Native React may replace the whole body node, not just its children.
+        // Recreate the content container from the remembered native class.
+        const className = section.dataset.teamContentClass
+        if (stored === undefined || className === undefined) return
+        const host = section.querySelector<HTMLElement>(':scope > div') ?? section
+        content = document.createElement('div')
+        content.className = className
+        host.appendChild(content)
+      }
       if (content.querySelector('.dsh-team-markdown') === null) {
         // Native re-render replaced our body: restore Markdown from the raw text.
         const raw = stored ?? content.innerText

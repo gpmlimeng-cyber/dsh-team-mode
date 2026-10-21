@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import {
   IconChecklistOutlineRegular,
   IconClockOutlineRegular,
@@ -10,6 +10,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import { isTeamExecuting } from './team-status.js'
+import { teamIdentityColor } from './team-identity.js'
 import css from './TeamBoard.module.css'
 import { setTeamConversationView } from './team-view-presence.js'
 import type { TeamMessage, TeamTask } from '../domain/types.js'
@@ -62,6 +63,14 @@ const TASK_STATUS_LABELS: Record<TaskStatus, string> = {
   completed: '已完成',
   failed: '失败',
   cancelled: '已取消',
+}
+
+const MEMBER_STATE_LABELS: Record<string, string> = {
+  running: '执行中',
+  idle: '空闲',
+  starting: '唤醒中',
+  offline: '离线',
+  error: '异常',
 }
 
 const MESSAGE_TYPE_LABELS: Record<TeamMessage['type'], string> = {
@@ -441,7 +450,11 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
   const sessionId = props.sessionId
   useEffect(() => {
     setTeamConversationView(sessionId, 'board')
-    return () => { setTeamConversationView(sessionId, undefined) }
+    document.documentElement.dataset.teamBoard = 'true'
+    return () => {
+      setTeamConversationView(sessionId, undefined)
+      delete document.documentElement.dataset.teamBoard
+    }
   }, [sessionId])
   const [teams, setTeams] = useState<TeamView[]>(teamCache.teams)
   const [teamsLoaded, setTeamsLoaded] = useState(teamCache.loaded)
@@ -702,6 +715,37 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
     }
   }, [activeMember, baseTasks, filters.query, scopedMessages, team])
 
+  const memberColumns = useMemo(() => {
+    if (team === undefined) return []
+    const order = team.memberOrder ?? Object.keys(team.members)
+    const entries = order
+      .map(id => team.members[id])
+      .filter((member): member is TeamView['members'][string] => member !== undefined)
+      .map((member, index) => ({
+        id: member.id,
+        name: member.displayName,
+        role: member.role,
+        state: member.lastRuntimeState,
+        color: teamIdentityColor(index),
+        tasks: visibleTasks.filter(task => task.ownerSlotId === member.id),
+      }))
+    const columns = activeMember === 'all' || activeMember === UNASSIGNED
+      ? entries
+      : entries.filter(member => member.id === activeMember)
+    const unassigned = visibleTasks.filter(task => task.ownerSlotId === undefined)
+    if (unassigned.length > 0 && (activeMember === 'all' || activeMember === UNASSIGNED)) {
+      columns.push({
+        id: UNASSIGNED,
+        name: '未分配',
+        role: 'member',
+        state: 'idle',
+        color: 'var(--dsw-alias-label-tertiary)',
+        tasks: unassigned,
+      })
+    }
+    return columns
+  }, [activeMember, team, visibleTasks])
+
   const clearFilters = useCallback((): void => {
     setFilters({ status: 'all', member: 'all', query: '' })
   }, [setFilters])
@@ -871,163 +915,49 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
       </div>
 
       <div className={css.boardScroll}>
-      <div className={css.layout}>
-        <div className={css.tasksPanel}>
-          <div className={css.panelHeading}>
-            <h3 className={css.panelTitle}>任务</h3>
-            <span className={css.panelCount}>
-              {visibleTasks.length} 项{filtersActive ? ` / 共 ${tasks.length} 项` : ''}
-            </span>
-          </div>
-
-          {tasks.length === 0
-            ? (
-              <div className={css.panelEmpty}>
-                <span className={css.panelEmptyIcon} aria-hidden="true">
-                  <IconChecklistOutlineRegular size={22} />
+        <div className={css.memberColumns} data-count={String(memberColumns.length)}>
+          {memberColumns.map(column => (
+            <section key={column.id} className={css.memberColumn} aria-label={`${column.name} 的任务`}>
+              <header className={css.memberColumnHeader}>
+                <span
+                  className={css.memberColumnAvatar}
+                  style={{ '--team-column-color': column.color } as CSSProperties}
+                  aria-hidden="true"
+                >
+                  {column.name.trim().slice(0, 1).toLocaleUpperCase()}
                 </span>
-                <strong className={css.panelEmptyTitle}>任务板还是空的</strong>
-                <p className={css.panelEmptyHint}>向 Leader 描述目标，团队会拆解任务并分派给成员。</p>
-              </div>
-            )
-            : baseTasks.length === 0
-              ? (
-                <div className={css.panelEmpty}>
-                  <span className={css.panelEmptyIcon} aria-hidden="true">
-                    <IconSearchOutlineRegular size={22} />
-                  </span>
-                  <strong className={css.panelEmptyTitle}>没有匹配的任务</strong>
-                  <p className={css.panelEmptyHint}>换一个关键词，或清除当前筛选。</p>
-                  <button type="button" className={css.panelEmptyButton} onClick={clearFilters}>
-                    清除筛选
-                  </button>
+                <div className={css.memberColumnIdentity}>
+                  <strong>{column.name}</strong>
+                  <span>{column.role === 'leader' ? 'Leader' : '成员'} · {MEMBER_STATE_LABELS[column.state] ?? column.state}</span>
                 </div>
-              )
-              : visibleTasks.length === 0
-                ? (
-                  <div className={css.panelEmpty}>
-                    <span className={css.panelEmptyIcon} aria-hidden="true">
-                      <IconSearchOutlineRegular size={22} />
-                    </span>
-                    <strong className={css.panelEmptyTitle}>该状态下没有任务</strong>
-                    <p className={css.panelEmptyHint}>切换到“全部”查看其他状态的任务。</p>
-                    <button type="button" className={css.panelEmptyButton} onClick={clearFilters}>
-                      清除筛选
-                    </button>
-                  </div>
-                )
-                : (
-                  <div className={css.groupsShell}>
-                  <div className={css.groups} data-single={groupsToRender.length === 1 ? 'true' : undefined}>
-                    {groupsToRender.map(group => (
-                      <section
-                        key={group.definition.id}
-                        className={css.group}
-                        aria-label={`${group.definition.label}任务，${group.tasks.length} 项`}
-                      >
-                        <header className={css.groupHeader}>
-                          <span className={css.groupDot} data-group={group.definition.id} aria-hidden="true" />
-                          <h4 className={css.groupTitle} title={group.definition.hint}>{group.definition.label}</h4>
-                          <span className={css.groupCount}>{group.tasks.length}</span>
-                        </header>
-                        <ul className={css.groupBody}>
-                          {group.tasks.length === 0 && (
-                            <li className={css.groupEmpty}>暂无{group.definition.label}任务</li>
-                          )}
-                          {group.tasks.map(task => (
-                            <TaskCard
-                              key={task.id}
-                              team={team}
-                              task={task}
-                              taskById={taskById}
-                              now={now}
-                              onOpen={openTaskSession}
-                            />
-                          ))}
-                        </ul>
-                      </section>
-                    ))}
-                  </div>
-                  </div>
-                )}
-          {lastUpdated !== undefined && (
-            <p className={css.tasksFootnote}>
-              最近更新 {relativeTime(lastUpdated, now)}
-              <span className={css.metaDivider} aria-hidden="true">·</span>
-              {absoluteTime(lastUpdated)}
-            </p>
-          )}
-        </div>
-
-        <aside className={css.activityPanel} aria-label="团队动态">
-          <header className={css.activityHeader}>
-            <h3 className={css.panelTitle}>动态</h3>
-            <span className={css.activityCount}>
-              {feedResult.items.length}{feedResult.truncated ? '+' : ''}
-            </span>
-            {messagesLoading && scopedMessages.length > 0 && (
-              <IconLoadingOutlineRegular size={12} className={css.spinner} />
-            )}
-          </header>
-
-          {messagesError !== undefined && (
-            <div className={css.activityNotice} role="alert">
-              <IconWarningTriangleOutlineRegular size={14} />
-              <div>
-                <strong>消息加载失败</strong>
-                <span>{messagesError}</span>
+                <span className={css.memberColumnCount}>{column.tasks.length}</span>
+              </header>
+              <div className={css.memberColumnBody}>
+                {column.tasks.length === 0
+                  ? (
+                    <div className={css.memberColumnEmpty}>
+                      <span>暂无任务</span>
+                      <small>{filtersActive ? '当前筛选下没有匹配项' : '等待 Leader 分配'}</small>
+                    </div>
+                  )
+                  : (
+                    <ul className={css.memberTaskList}>
+                      {column.tasks.map(task => (
+                        <TaskCard
+                          key={task.id}
+                          team={team}
+                          task={task}
+                          taskById={taskById}
+                          now={now}
+                          onOpen={openTaskSession}
+                        />
+                      ))}
+                    </ul>
+                  )}
               </div>
-              <button type="button" className={css.noticeButton} onClick={retry}>重试</button>
-            </div>
-          )}
-
-          {feedResult.items.length > 0
-            ? (
-              <ul className={css.activityList}>
-                {feedResult.items.map(item => (
-                  <ActivityRow
-                    key={item.id}
-                    item={item}
-                    team={team}
-                    now={now}
-                    onOpenTask={openTaskSession}
-                  />
-                ))}
-              </ul>
-            )
-            : feedLoading
-              ? (
-                <ul className={css.activityList} aria-busy="true">
-                  {[0, 1, 2].map(index => (
-                    <li key={index} className={css.activitySkeleton} aria-hidden="true">
-                      <span className={css.skeletonAvatar} />
-                      <span className={css.skeletonBody}>
-                        <span className={`${css.skeletonLine} ${css.skeletonLineShort}`} />
-                        <span className={css.skeletonLine} />
-                        <span className={`${css.skeletonLine} ${css.skeletonLineMedium}`} />
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )
-              : messagesError === undefined
-                ? (
-                  <div className={css.activityEmpty}>
-                    <strong>{filtersActive ? '没有匹配的动态' : '暂无动态'}</strong>
-                    <span>
-                      {filtersActive
-                        ? '调整成员、状态或搜索词后再看。'
-                        : '成员之间的消息和任务更新会出现在这里。'}
-                    </span>
-                  </div>
-                )
-                : null}
-
-          {feedResult.truncated && (
-            <footer className={css.activityFooter}>仅显示最近 {feedResult.items.length} 条动态</footer>
-          )}
-        </aside>
-      </div>
+            </section>
+          ))}
+        </div>
       </div>
     </section>
   )

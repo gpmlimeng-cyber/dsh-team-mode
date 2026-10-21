@@ -661,3 +661,16 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 原生重渲染兜底：清空 content + 删除 header + 删除展开按钮，700ms 后恢复 Markdown、header 1 个、展开按钮 1 个、折叠状态 320px。
 - 系统事件仍保留原生通知条；未增强的原生 trigger 2 个。
 - 截图：`docs/assets/ui-review/team-bubble-collapsed.png`
+
+---
+
+## 五十三、看板改为 AionUI 式成员任务列
+
+- 看板页从「状态分组 + 动态侧栏」改为并行会话式多列布局：
+  - 每个成员一列，列头为头像 / 名称 / 角色与运行状态 / 任务数。
+  - 列内只渲染该成员的任务卡片，不再有消息流和输入框。
+  - 顶部保留筛选栏：搜索、状态 chip、成员 select、刷新。
+  - 未分配任务单独列。
+- 进入看板时给 `html` 标记 `data-team-board=true`，隐藏 `conversation.input.*` 与 `conversation.composer.*` 插槽；实测可见 composer 插槽 0 个。
+- 真机实测（DOM气泡-34389）：3 个成员列，各 1 张任务卡（回归验收 / 登录页重构 / API 接口联调），顶部筛选栏正常。
+- 截图：`docs/assets/ui-review/team-board-columns.png`
