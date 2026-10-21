@@ -36,6 +36,7 @@ Leader 把编码任务交给 GLM，并只接收进度、测试结果和关键产
 | --- | --- |
 | 首次安装和启动插件 | [安装与启动](./installation.md) |
 | 创建 Leader、Coder 或其他角色 | [助手库](./assistants.md) |
+| 使用单聊助手（个人常驻助手） | [单聊助手](./assistant.md) |
 | 选择成员并创建团队 | [创建团队](./creating-teams.md) |
 | 使用多成员聊天和团队协作 | [工作台与协作](./workbench.md) |
 | 浏览文件、查看 Git 变更 | [Workspace 与 Git 变更](./workspace.md) |

@@ -3574,6 +3574,31 @@ textarea.input {
   white-space: nowrap;
 }
 
+/* Keeps the optional task badge and the activity time right-aligned together. */
+.sidebarAssistantMeta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  margin-left: auto;
+}
+
+.sidebarAssistantTaskBadge {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.sidebarAssistantTaskBadgeWaiting {
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+}
+
 .sidebarAssistantEmpty {
   display: flex;
   flex-direction: column;

@@ -13,12 +13,13 @@ import { AssistantCreateDialog } from './assistant-dialogs.js'
 import {
   assistantAvatarSource,
   assistantInstanceName,
+  assistantTaskBadge,
   relativeAssistantTime,
   visibleAssistantInstances,
 } from './assistant-instances.js'
 import { MemberAvatar } from './member-avatar.js'
 import css from './AgentTeam.module.css'
-import type { AssistantInstance } from '../domain/types.js'
+import type { AssistantInstance, AssistantSession } from '../domain/types.js'
 
 const ASSISTANT_EXPANDED_KEY = 'dsh-team-mode:assistant-expanded'
 
@@ -49,6 +50,7 @@ export function AssistantSidebarSection({
   openSession: (sessionId: string) => void
 }): JSX.Element {
   const [instances, setInstances] = useState<AssistantInstance[]>([])
+  const [tasks, setTasks] = useState<AssistantSession[]>([])
   const [expanded, setExpanded] = useState(readAssistantExpanded)
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [query, setQuery] = useState('')
@@ -59,8 +61,12 @@ export function AssistantSidebarSection({
 
   const load = useCallback(async (): Promise<void> => {
     try {
-      const value = await callAgentTeam('assistant.instance.list')
-      setInstances(value.items)
+      const [instancePage, taskPage] = await Promise.all([
+        callAgentTeam('assistant.instance.list'),
+        callAgentTeam('assistant.task.list', undefined),
+      ])
+      setInstances(instancePage.items)
+      setTasks(taskPage.items)
       setListError(undefined)
     } catch (cause) {
       setListError(cause instanceof Error ? cause.message : String(cause))
@@ -223,6 +229,7 @@ export function AssistantSidebarSection({
             : visible.map(instance => {
                 const name = assistantInstanceName(instance)
                 const opening = openingId === instance.id
+                const badge = assistantTaskBadge(tasks, instance)
                 return (
                   <div key={instance.id} className={css.sidebarTeamGroup}>
                     <div className={css.sidebarTeamRowWrap}>
@@ -245,8 +252,21 @@ export function AssistantSidebarSection({
                           <span className={css.sidebarTeamName}>{name}</span>
                         </span>
                         <span className={css.sidebarAssistantKind}>单聊</span>
-                        <span className={css.sidebarTeamTime}>
-                          {opening ? '打开中' : relativeAssistantTime(instance.updatedAt)}
+                        <span className={css.sidebarAssistantMeta}>
+                          {badge !== undefined && (
+                            <span
+                              className={`${css.sidebarAssistantTaskBadge} ${badge.needsInput ? css.sidebarAssistantTaskBadgeWaiting : ''}`}
+                              title={badge.needsInput
+                                ? `${badge.count} 个任务待确认`
+                                : `${badge.count} 个任务进行中`}
+                              data-dsh-assistant-task-badge
+                            >
+                              {badge.needsInput ? '待确认' : `${badge.count} 任务`}
+                            </span>
+                          )}
+                          <span className={css.sidebarTeamTime}>
+                            {opening ? '打开中' : relativeAssistantTime(instance.updatedAt)}
+                          </span>
                         </span>
                       </button>
                       <Tooltip label={instance.pinned === true ? '取消置顶' : '置顶'} delayMs={400}>

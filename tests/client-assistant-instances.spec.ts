@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import type { AssistantInstance } from '../src/domain/types.js'
+import type { AssistantInstance, AssistantSession } from '../src/domain/types.js'
 import {
   assistantAvatarSource,
   assistantInitial,
   assistantInstanceForSession,
   assistantInstanceName,
   assistantNameForSession,
+  assistantTaskBadge,
   relativeAssistantTime,
   visibleAssistantInstances,
 } from '../src/client/assistant-instances.js'
@@ -43,6 +44,70 @@ function instance(
     ...overrides,
   }
 }
+
+function task(
+  assistantId: string,
+  status: AssistantSession['status'],
+  id = `${assistantId}-${status}`,
+): AssistantSession {
+  return {
+    schemaVersion: 1,
+    id,
+    assistantId,
+    sessionId: `session-${id}`,
+    role: 'task',
+    title: `task ${id}`,
+    brief: '',
+    parentSessionId: `parent-${assistantId}`,
+    status,
+    createdAt: '2026-01-01T00:00:00Z',
+    updatedAt: '2026-01-01T00:00:00Z',
+  }
+}
+
+describe('assistantTaskBadge', () => {
+  it('counts only active tasks that belong to the instance', () => {
+    const badge = assistantTaskBadge([
+      task('assistant-a', 'queued'),
+      task('assistant-a', 'running'),
+      task('assistant-a', 'completed'),
+      task('assistant-b', 'running'),
+    ], instance('assistant-a', 'A', '2026-01-01T00:00:00Z'))
+    expect(badge).toEqual({ count: 2, needsInput: false })
+  })
+
+  it('prefers the needs_input label over the plain count', () => {
+    const badge = assistantTaskBadge([
+      task('assistant-a', 'queued'),
+      task('assistant-a', 'needs_input'),
+      task('assistant-a', 'running'),
+    ], instance('assistant-a', 'A', '2026-01-01T00:00:00Z'))
+    expect(badge).toEqual({ count: 3, needsInput: true })
+  })
+
+  it('ignores terminal tasks and archived instances', () => {
+    const terminal = [
+      task('assistant-a', 'completed'),
+      task('assistant-a', 'failed'),
+      task('assistant-a', 'cancelled'),
+    ]
+    expect(assistantTaskBadge(
+      terminal,
+      instance('assistant-a', 'A', '2026-01-01T00:00:00Z'),
+    )).toBeUndefined()
+    expect(assistantTaskBadge(
+      [task('assistant-a', 'running')],
+      instance('assistant-a', 'A', '2026-01-01T00:00:00Z', { status: 'archived' }),
+    )).toBeUndefined()
+  })
+
+  it('returns undefined when there are no tasks', () => {
+    expect(assistantTaskBadge(
+      [],
+      instance('assistant-a', 'A', '2026-01-01T00:00:00Z'),
+    )).toBeUndefined()
+  })
+})
 
 describe('visibleAssistantInstances', () => {
   it('hides archived instances while keeping every other status', () => {

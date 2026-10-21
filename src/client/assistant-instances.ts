@@ -4,6 +4,18 @@ const MINUTE = 60_000
 const HOUR = 3_600_000
 const DAY = 86_400_000
 
+/** A task still occupying a worker, as opposed to completed/failed/cancelled. */
+const ACTIVE_ASSISTANT_TASK_STATUSES: ReadonlySet<AssistantSession['status']> = new Set([
+  'queued',
+  'running',
+  'needs_input',
+])
+
+export interface AssistantTaskBadgeView {
+  count: number
+  needsInput: boolean
+}
+
 /** Sidebar-facing name; the snapshot name is the only display name Phase 0 stores. */
 export function assistantInstanceName(instance: AssistantInstance): string {
   const name = instance.assistantSnapshot.name.trim()
@@ -53,6 +65,27 @@ export function relativeAssistantTime(iso: string, now: number = Date.now()): st
   if (diff < 7 * DAY) return `${Math.floor(diff / DAY)}天`
   const date = new Date(timestamp)
   return `${date.getMonth() + 1}月${date.getDate()}日`
+}
+
+/**
+ * Compact task badge for one sidebar row. Only active worker tasks belonging to
+ * this instance count; terminal tasks never contribute, and an archived
+ * instance never shows a badge even if stale active rows remain.
+ */
+export function assistantTaskBadge(
+  tasks: readonly Pick<AssistantSession, 'assistantId' | 'status'>[],
+  instance: Pick<AssistantInstance, 'id' | 'status'>,
+): AssistantTaskBadgeView | undefined {
+  if (instance.status === 'archived') return undefined
+  let count = 0
+  let needsInput = false
+  for (const task of tasks) {
+    if (task.assistantId !== instance.id) continue
+    if (!ACTIVE_ASSISTANT_TASK_STATUSES.has(task.status)) continue
+    count += 1
+    if (task.status === 'needs_input') needsInput = true
+  }
+  return count === 0 ? undefined : { count, needsInput }
 }
 
 /**
