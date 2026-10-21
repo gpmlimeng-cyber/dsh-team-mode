@@ -650,3 +650,14 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - MutationObserver 增加 `characterData`，已增强气泡若被原生重渲染覆盖，会从缓存原文恢复 Markdown 并补回 header；实测覆盖后 `markdown=true`、`header=1`。
 - Markdown 新增围栏代码块与链接；实测 fixture 渲染出 1 个 `<pre>`。
 - 系统事件（新成员加入等）不再气泡化，保留原生通知条；实测原生 trigger 2 个。
+
+---
+
+## 五十二、折叠与兜底复验
+
+- 修复折叠规则被 `max-height:none !important` 覆盖的问题，改为 `max-height:320px !important` / `overflow:hidden !important`。
+- 实测 19 个气泡中 5 个超长：每个恰好 1 个「展开」按钮，折叠高度 339px（320 内容 + 内边距），scrollHeight 最高 1059px。
+- 展开：339 → 1059px，按钮变「收起」、`aria-expanded=true`；再点恢复 339px。
+- 原生重渲染兜底：清空 content + 删除 header + 删除展开按钮，700ms 后恢复 Markdown、header 1 个、展开按钮 1 个、折叠状态 320px。
+- 系统事件仍保留原生通知条；未增强的原生 trigger 2 个。
+- 截图：`docs/assets/ui-review/team-bubble-collapsed.png`

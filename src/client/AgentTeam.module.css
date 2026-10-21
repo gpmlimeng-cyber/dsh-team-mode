@@ -6316,8 +6316,8 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 [data-team-bubble='true'] [class*='content'][data-team-clamped='true'] {
   position: relative;
-  max-height: 320px;
-  overflow: hidden;
+  max-height: 320px !important;
+  overflow: hidden !important;
 }
 
 [data-team-bubble='true'] [class*='content'][data-team-clamped='true']::after {
