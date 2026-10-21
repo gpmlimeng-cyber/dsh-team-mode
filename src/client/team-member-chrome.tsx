@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   IconChevronDownOutlineRegular,
   IconPlusOutlineRegular,
+  IconSearchOutlineRegular,
   IconUsersOutlineRegular,
   Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
-import { AddTeamMemberDialog } from './teams/TeamPanel.js'
 import { useAgentTeamData } from './components.js'
 import css from './AgentTeam.module.css'
-import type { TeamView } from '../transport/contracts.js'
+import type { AssistantView, TeamView } from '../transport/contracts.js'
 
 type TeamMember = TeamView['members'][string]
 type Membership = { team: TeamView; member: TeamMember }
@@ -83,11 +83,50 @@ export function TeamMemberSwitcher({
   openSession?: (sessionId: string) => void
 }): JSX.Element | null {
   const membership = useMembership(sessionId)
-  const { catalog, assistants, load } = useAgentTeamData(true)
+  const { assistants, load } = useAgentTeamData(true)
   const [open, setOpen] = useState(false)
-  const [addMemberOpen, setAddMemberOpen] = useState(false)
+  const [addPanelOpen, setAddPanelOpen] = useState(false)
+  const [addQuery, setAddQuery] = useState('')
+  const [addingId, setAddingId] = useState<string>()
+  const [addError, setAddError] = useState<string>()
+  const addTriggerRef = useRef<HTMLButtonElement>(null)
   const members = useMemo(() => (membership === undefined ? [] : sortedMembers(membership.team)), [membership])
+  useEffect(() => {
+    if (!addPanelOpen) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setAddPanelOpen(false)
+      addTriggerRef.current?.focus()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('keydown', onKey) }
+  }, [addPanelOpen])
   if (membership === undefined || sessionId === undefined || openSession === undefined) return null
+  const team = membership.team
+  const teamAssistants = assistants.filter(assistant => assistant.enabled && assistant.teamSelectable)
+  const normalizedAddQuery = addQuery.trim().toLocaleLowerCase()
+  const visibleTeamAssistants = normalizedAddQuery === ''
+    ? teamAssistants
+    : teamAssistants.filter(assistant =>
+        assistant.name.toLocaleLowerCase().includes(normalizedAddQuery)
+        || (assistant.description ?? '').toLocaleLowerCase().includes(normalizedAddQuery))
+
+  async function addMemberToTeam(assistant: AssistantView): Promise<void> {
+    if (addingId !== undefined) return
+    setAddingId(assistant.id)
+    setAddError(undefined)
+    try {
+      await callAgentTeam('team.addMember', {
+        teamId: team.id,
+        value: { assistantId: assistant.id },
+      }, team.revision)
+      await load()
+    } catch (cause) {
+      setAddError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setAddingId(undefined)
+    }
+  }
   const current = membership.member
   const items: MenuEntry[] = members.map(member => ({
     id: member.sessionId,
@@ -162,26 +201,90 @@ export function TeamMemberSwitcher({
         </button>
       )}
     />
+    <div className={css.memberAddWrap}>
     <button
+      ref={addTriggerRef}
       type="button"
       className={css.teamSwitcherAdd}
       aria-label="添加成员"
+      aria-haspopup="dialog"
+      aria-expanded={addPanelOpen}
       title="添加成员"
-      onClick={() => { setAddMemberOpen(true) }}
+      onClick={() => {
+        setAddPanelOpen(value => !value)
+        setAddQuery('')
+        setAddError(undefined)
+      }}
     >
       <IconPlusOutlineRegular size={14} />
     </button>
-    </div>
-    {addMemberOpen && (
-      <AddTeamMemberDialog
-        open={addMemberOpen}
-        team={membership.team}
-        catalog={catalog}
-        assistants={assistants}
-        onClose={() => { setAddMemberOpen(false) }}
-        onChanged={async () => { await load() }}
-      />
+    {addPanelOpen && (
+      <>
+        <div className={css.memberAddScrim} onPointerDown={() => { setAddPanelOpen(false) }} />
+        <div className={css.memberAddPanel} role="dialog" aria-label="添加成员">
+          <div className={css.memberAddHeader}>
+            <strong>添加成员</strong>
+            <span>同一助手可被反复添加</span>
+          </div>
+          <div className={css.memberAddSearch}>
+            <IconSearchOutlineRegular size={14} />
+            <input
+              autoFocus
+              value={addQuery}
+              onChange={event => { setAddQuery(event.target.value) }}
+              placeholder="搜索"
+              aria-label="搜索助手"
+            />
+          </div>
+          <div className={css.memberAddList}>
+            {visibleTeamAssistants.map(assistant => (
+              <button
+                key={assistant.id}
+                type="button"
+                className={css.memberAddRow}
+                disabled={addingId !== undefined}
+                onClick={() => { void addMemberToTeam(assistant) }}
+              >
+                <span className={css.memberAddAvatar} aria-hidden="true">
+                  {assistant.avatar !== undefined && assistant.avatar !== ''
+                    ? <img src={assistant.avatar} alt="" />
+                    : assistant.icon?.trim() !== undefined && assistant.icon.trim() !== ''
+                      ? assistant.icon
+                      : initial(assistant.name)}
+                </span>
+                <span className={css.memberAddName}>{assistant.name}</span>
+                <IconPlusOutlineRegular size={16} className={css.memberAddPlus} />
+              </button>
+            ))}
+            {visibleTeamAssistants.length === 0 && (
+              <div className={css.memberAddEmpty}>
+                {teamAssistants.length === 0 ? '没有可加入团队的助手' : '没有匹配的助手'}
+              </div>
+            )}
+          </div>
+          {addError !== undefined && <div className={css.memberAddError} role="alert">{addError}</div>}
+          <div className={css.memberAddFooter}>
+            <span>没有合适的？也可以直接让 Leader 帮你安排。</span>
+            <button
+              type="button"
+              className={css.memberAddFooterLink}
+              onClick={() => {
+                setAddPanelOpen(false)
+                const leader = members.find(member => member.role === 'leader')
+                if (leader !== undefined) {
+                  keepChatView(leader.sessionId)
+                  openSession(leader.sessionId)
+                }
+              }}
+            >
+              告诉 Leader →
+            </button>
+          </div>
+        </div>
+      </>
     )}
+    </div>
+    </div>
     </>
   )
 }
