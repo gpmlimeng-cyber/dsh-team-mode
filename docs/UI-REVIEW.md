@@ -86,3 +86,13 @@
 - 保留宿主原生「对话」页签（顶部成员切换器可换人）。
 
 验证：团队会话页签为 **对话 / 并行 / 看板 / 团队管理 / 轨迹**，无「单聊」；并行贴边布局不受影响。截图：`docs/assets/ui-review/tabs-no-single.png`。
+
+
+---
+
+## 八、并行成员标题栏：最大化与去背景
+
+- 每个成员 pane 标题栏右侧新增最大化按钮（四角图标），点击后只保留该成员并铺满会话区；按钮变为还原图标，`aria-pressed` 同步，按 `Esc` 或再次点击还原。
+- 标题栏去掉成员身份色的 7% 背景，活动态也不再叠加 hover 背景，只保留 1px 底部分隔线；身份仍由姓名颜色、头像和状态点表达。
+- 验证（Harness）：pane 数 `3 → 1 → 3`；三列标题栏计算背景均为 `rgba(0, 0, 0, 0)`；还原按钮 `aria-pressed=true`。
+- 截图：`docs/assets/ui-review/parallel-maximized.png`、`parallel-transparent-header.png`。

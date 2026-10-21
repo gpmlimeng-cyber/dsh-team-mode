@@ -92,6 +92,22 @@ function LeaderMark({ size = 12 }: { size?: number }): JSX.Element {
   )
 }
 
+function MaximizeIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" role="presentation" focusable="false" xmlns="http://www.w3.org/2000/svg">
+      <path d="M6 2H2v4M10 2h4v4M6 14H2v-4M10 14h4v-4" />
+    </svg>
+  )
+}
+
+function RestoreIcon(): JSX.Element {
+  return (
+    <svg viewBox="0 0 16 16" width={14} height={14} fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" role="presentation" focusable="false" xmlns="http://www.w3.org/2000/svg">
+      <path d="M2 6h4V2M14 6h-4V2M2 10h4v4M14 10h-4v4" />
+    </svg>
+  )
+}
+
 function modelLabel(member: TeamView['members'][string]): string | undefined {
   const model = member.assistantSnapshot?.model
   return typeof model === 'string' && model.trim() !== '' ? model.trim() : undefined
@@ -170,6 +186,22 @@ export function TeamParallelHost({
     Object.values(candidate.members).some(member => member.sessionId === activeSessionId),
   ), [teams, activeSessionId])
   const members = useMemo(() => team === undefined ? [] : sortMembers(team), [team])
+  const [maximizedSlotId, setMaximizedSlotId] = useState<string>()
+  useEffect(() => { setMaximizedSlotId(undefined) }, [activeSessionId])
+  useEffect(() => {
+    if (maximizedSlotId === undefined) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setMaximizedSlotId(undefined)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [maximizedSlotId])
+  const maximizedSlot = maximizedSlotId !== undefined && team?.members[maximizedSlotId] !== undefined
+    ? maximizedSlotId
+    : undefined
+  const renderedMembers = maximizedSlot === undefined
+    ? members
+    : members.filter(member => member.id === maximizedSlot)
   const [pendingBySlot, setPendingBySlot] = useState<Record<string, number>>({})
   useEffect(() => {
     if (team === undefined) {
@@ -222,9 +254,9 @@ export function TeamParallelHost({
     <div className={css.teamParallelRoot}>
       <div
         className={css.teamParallelGrid}
-        style={{ '--team-pane-count': members.length } as CSSProperties}
+        style={{ '--team-pane-count': renderedMembers.length } as CSSProperties}
       >
-        {members.map(member => {
+        {renderedMembers.map(member => {
           const status = memberStatus(member)
           const active = member.sessionId === activeSessionId
           return (
@@ -270,6 +302,20 @@ export function TeamParallelHost({
                       {t('member.retry')}
                     </button>
                   )}
+                </span>
+                <span className={css.teamParallelPaneActions}>
+                  <button
+                    type="button"
+                    className={css.teamParallelMaximize}
+                    aria-label={maximizedSlot === member.id ? `还原 ${member.displayName}` : `最大化 ${member.displayName}`}
+                    aria-pressed={maximizedSlot === member.id}
+                    title={maximizedSlot === member.id ? '还原' : '最大化'}
+                    onClick={() => {
+                      setMaximizedSlotId(current => current === member.id ? undefined : member.id)
+                    }}
+                  >
+                    {maximizedSlot === member.id ? <RestoreIcon /> : <MaximizeIcon />}
+                  </button>
                 </span>
               </header>
               <div className={css.teamParallelPaneBody}>

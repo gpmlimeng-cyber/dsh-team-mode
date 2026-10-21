@@ -4364,12 +4364,12 @@ textarea.input {
 }
 
 .teamParallelPaneActive .teamParallelPaneHeader {
-  background: var(--dsw-alias-interactive-bg-hover);
+  background: transparent;
 }
 
 .teamParallelPaneHeader {
   display: flex;
-  background: color-mix(in srgb, var(--team-pane-color, var(--dsw-alias-state-business-primary)) 7%, transparent);
+  background: transparent;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -5222,4 +5222,40 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
 .avatarUpload:focus-within {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 2px;
+}
+
+
+.teamParallelPaneActions {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.teamParallelMaximize {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.teamParallelMaximize:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.teamParallelMaximize:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.teamParallelMaximize[aria-pressed='true'] {
+  color: var(--dsw-alias-label-primary);
 }
