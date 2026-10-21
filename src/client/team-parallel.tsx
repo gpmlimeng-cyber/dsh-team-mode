@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
+import { IconAgentPresetOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamView } from '../transport/contracts.js'
 import { useAgentTeamData } from './components.js'
 import { callAgentTeam } from './api.js'
@@ -123,7 +124,13 @@ function ModelSeat(): JSX.Element {
       if (node !== null && slot !== null && node.parentElement === host) slot.appendChild(node)
     }
   }, [])
-  return <span ref={holder} className={css.teamParallelModelSeat} data-team-model-seat="" />
+  return (
+    <span ref={holder} className={css.teamParallelModelSeat} data-team-model-seat="">
+      <span className={css.teamParallelModelGlyph} aria-hidden="true">
+        <IconAgentPresetOutlineRegular size={14} />
+      </span>
+    </span>
+  )
 }
 
 function MaximizeIcon(): JSX.Element {

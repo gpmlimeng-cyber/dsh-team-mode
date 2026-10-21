@@ -4359,8 +4359,8 @@ textarea.input {
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--team-pane-color, var(--dsw-alias-bg-base)) 6%, var(--dsw-alias-bg-base)) 0%,
-    var(--dsw-alias-bg-base) 64%,
-    var(--dsw-alias-bg-base) 100%
+    color-mix(in srgb, var(--team-pane-color, var(--dsw-alias-bg-base)) 2%, var(--dsw-alias-bg-base)) 72%,
+    var(--dsw-alias-bg-base) 94%
   );
 }
 
@@ -4390,7 +4390,7 @@ textarea.input {
   align-items: center;
   gap: 6px;
   min-width: 0;
-  flex: 1;
+  flex: 0 1 auto;
 }
 
 .teamParallelPaneName {
@@ -5246,8 +5246,10 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 .teamParallelPaneActions {
   display: inline-flex;
-  flex: none;
+  flex: 1 1 auto;
+  min-width: 0;
   align-items: center;
+  justify-content: flex-end;
   gap: 4px;
 }
 
@@ -5644,26 +5646,47 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
    Keep it compact and drop the reasoning suffix so the identity has room. */
 .teamParallelModelSeat {
   display: inline-flex;
+  flex: 1 1 auto;
   align-items: center;
-  min-width: 0;
-  max-width: 132px;
+  gap: 4px;
+  min-width: 28px;
+  max-width: none;
+  overflow: hidden;
 }
 
-.teamParallelModelSeat > * {
+.teamParallelModelGlyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.teamParallelModelSeat > [data-slot],
+.teamParallelModelSeat > div {
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: 132px;
+  max-width: none;
+  overflow: hidden;
 }
 
 .teamParallelModelSeat button {
+  display: flex;
+  flex-wrap: nowrap;
+  width: 100%;
   min-width: 0;
-  max-width: 132px;
-  padding: 0 6px;
+  max-width: none;
+  padding: 0 4px;
   gap: 4px;
+  white-space: nowrap;
 }
 
 .teamParallelModelSeat [class*="triggerLabel"] {
+  flex: 1 1 auto;
   min-width: 0;
-  max-width: 76px;
+  max-width: none;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5671,4 +5694,32 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 .teamParallelModelSeat [class*="triggerEffort"] {
   display: none;
+}
+
+.teamParallelModelSeat button > svg:last-child {
+  flex: none;
+}
+
+/* Header model seat: fill the available width, truncate instead of wrapping.
+   When the pane gets too narrow, collapse to the icon (then the bare glyph). */
+.teamParallelModelSeat {
+  container-type: inline-size;
+  container-name: pane-model;
+}
+
+@container pane-model (max-width: 88px) {
+  .teamParallelModelSeat [class*="triggerLabel"],
+  .teamParallelModelSeat [class*="triggerEffort"] {
+    display: none;
+  }
+}
+
+@container pane-model (max-width: 56px) {
+  .teamParallelModelSeat button > svg:last-child {
+    display: none;
+  }
+
+  .teamParallelModelSeat button {
+    padding: 0;
+  }
 }
