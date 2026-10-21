@@ -899,7 +899,9 @@ function AssistantForm({
   const [icon, setIcon] = useState(assistant?.icon ?? '')
   const [description, setDescription] = useState(assistant?.description ?? '')
   const [instructions, setInstructions] = useState(assistant?.instructions ?? '')
-  const [provider, setProvider] = useState(assistant?.provider ?? providers[0]?.id ?? '')
+  const providerHasModels = (id: string): boolean => (catalog?.models[id]?.length ?? 0) > 0
+  const preferredProvider = providers.find(entry => providerHasModels(entry.id))?.id ?? providers[0]?.id ?? ''
+  const [provider, setProvider] = useState(assistant?.provider ?? preferredProvider)
   const models = catalog?.models[provider] ?? []
   const [modelChoice, setModelChoice] = useState(assistant?.model ?? '')
   const [reasoningEffort, setReasoningEffort] = useState(assistant?.reasoningEffort ?? '')
@@ -919,10 +921,15 @@ function AssistantForm({
   const modelCapabilities = useModelCapabilities(provider, modelChoice)
 
   useEffect(() => {
-    if (!provider && providers[0]) setProvider(providers[0].id)
+    // New templates default to a provider that actually lists models; an
+    // existing template keeps its recorded provider even if the catalog is empty.
+    if (assistant === undefined && (!provider || !providerHasModels(provider))) {
+      const next = providers.find(entry => providerHasModels(entry.id))?.id ?? providers[0]?.id ?? ''
+      if (next !== '' && next !== provider) setProvider(next)
+    }
     if (!agentPresetId && presets[0]) setAgentPresetId(presets[0].id)
     if (!permissionPresetId && permissions[0]) setPermissionPresetId(permissions[0].value)
-  }, [agentPresetId, permissionPresetId, permissions, presets, provider, providers])
+  }, [agentPresetId, catalog, permissionPresetId, permissions, presets, provider, providers])
   useEffect(() => {
     setModelChoice(current => {
       if (models.some(candidate => candidate.id === current)) return current
