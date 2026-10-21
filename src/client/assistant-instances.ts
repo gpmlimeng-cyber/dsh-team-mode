@@ -150,24 +150,3 @@ export function visibleAssistantInstances(
       || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
       || left.id.localeCompare(right.id))
 }
-
-/**
- * Native Sidebar rows the assistant hider owns: every bound main Session plus
- * every hidden task worker Session. This is a pure union so the hider and its
- * tests cannot drift on what counts as hidden.
- */
-export function hiddenAssistantSessionIds(
-  instances: readonly AssistantInstance[],
-  tasks: readonly Pick<AssistantSession, 'sessionId'>[],
-): Set<string> {
-  const ids = new Set<string>()
-  for (const instance of instances) {
-    if (instance.mainSessionId !== undefined && instance.mainSessionId !== '') {
-      ids.add(instance.mainSessionId)
-    }
-  }
-  for (const task of tasks) {
-    if (task.sessionId !== '') ids.add(task.sessionId)
-  }
-  return ids
-}

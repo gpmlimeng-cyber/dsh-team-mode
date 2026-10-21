@@ -8,13 +8,12 @@ import {
   type WorkspaceChoice,
 } from './components.js'
 import { SidebarPortal } from './sidebar.js'
-import { AssistantSessionHider } from './assistant-session-hider.js'
+import { SessionRowHider } from './session-row-hider.js'
 import { AssistantSessionTitle, AssistantSessionTitleHost } from './assistant-session-title.js'
 import { TeamModeDialogs } from './team-dialogs.js'
 import { TeamParallelHost, TeamParallelView } from './team-parallel.js'
 import { TeamTriggerEnhancer } from './team-trigger-enhancer.js'
 import { TEAM_MANAGE_VIEW_ID, TEAM_MANAGE_VIEW_LABEL, TEAM_MANAGE_VIEW_ORDER, TeamManageView } from './team-manage.js'
-import { TeamSessionHider } from './team-session-hider.js'
 import { TeamParallelPane } from './team-pane.js'
 import { TeamMemberHeroHint, TeamMemberSwitcher } from './team-member-chrome.js'
 import {
@@ -73,8 +72,7 @@ export function apply(ctx: AgentTeamClientContext): void {
   const SidebarTeamHost = (): JSX.Element => (
     <>
       <TeamTriggerEnhancer />
-      <TeamSessionHider />
-      <AssistantSessionHider />
+      <SessionRowHider />
       <SidebarPortal openSession={openSession} openTeamPage={openTeamPage} />
     </>
   )

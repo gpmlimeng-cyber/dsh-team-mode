@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react'
+import { callAgentTeam } from './api.js'
 import { AnimatedModal } from './shared.js'
 import {
   assistantInstanceName,
@@ -9,9 +11,11 @@ import css from './AgentTeam.module.css'
 import type { AssistantInstance, AssistantSession } from '../domain/types.js'
 
 /**
- * One Assistant's hidden worker Tasks. Rows are read-only navigational entries:
- * clicking one closes the dialog and opens that worker Session in the shipped
- * conversation view. Task creation stays in the assistant's main Session.
+ * One Assistant's hidden worker Tasks. Rows are navigational entries: clicking
+ * one first reattaches the task's worker Session through `assistant.task.open`,
+ * then opens that Session in the shipped conversation view. A failed open keeps
+ * the dialog visible with an inline error. Task creation stays in the main
+ * Session.
  */
 export function AssistantTaskDialog({
   open,
@@ -28,6 +32,30 @@ export function AssistantTaskDialog({
 }): JSX.Element {
   const name = assistantInstanceName(assistant)
   const rows = assistantTasksFor(tasks, assistant.id)
+  const [openingTaskId, setOpeningTaskId] = useState<string>()
+  const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    if (!open) return
+    setOpeningTaskId(undefined)
+    setError(undefined)
+  }, [open])
+
+  async function openTask(task: AssistantSession): Promise<void> {
+    if (openingTaskId !== undefined) return
+    setOpeningTaskId(task.id)
+    setError(undefined)
+    try {
+      const result = await callAgentTeam('assistant.task.open', { taskId: task.id })
+      onClose()
+      openSession(result.sessionId)
+    } catch (cause) {
+      setError(`任务打开失败：${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setOpeningTaskId(undefined)
+    }
+  }
+
   return (
     <AnimatedModal
       open={open}
@@ -38,6 +66,7 @@ export function AssistantTaskDialog({
       className={css.assistantTaskDialog ?? ''}
       contentClassName={css.assistantTaskDialogContent ?? ''}
     >
+      {error !== undefined && <div className={css.sidebarTeamError} role="alert">{error}</div>}
       {rows.length === 0
         ? <div className={css.assistantTaskEmpty}>还没有任务</div>
         : (
@@ -63,10 +92,9 @@ export function AssistantTaskDialog({
                   data-dsh-assistant-task={task.id}
                   data-dsh-assistant-task-status={task.status}
                   title={task.title}
-                  onClick={() => {
-                    onClose()
-                    openSession(task.sessionId)
-                  }}
+                  disabled={openingTaskId === task.id}
+                  aria-busy={openingTaskId === task.id}
+                  onClick={() => { void openTask(task) }}
                 >
                   <span className={css.assistantTaskRowCopy}>
                     <span className={css.assistantTaskRowTitle}>{task.title}</span>

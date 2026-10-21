@@ -263,6 +263,18 @@ export class AssistantRuntime {
     })
   }
 
+  /**
+   * Open one stored task's worker Session by task id. The worker is resumed when
+   * it is no longer live, so opening a completed or restarted task reattaches
+   * instead of failing. Task status is intentionally left untouched.
+   */
+  async openTask(rawTaskId: string): Promise<{ task: AssistantSession; sessionId: string }> {
+    const taskId = requireText(rawTaskId, 'Task id')
+    const task = this.service.getAssistantSession(taskId)
+    const worker = await this.ensureWorker(task)
+    return { task, sessionId: worker.sessionId }
+  }
+
   /** Deliver another instruction to a live worker and mark its task running. */
   async sendTask(
     rawAssistantId: string,
@@ -450,7 +462,72 @@ export class AssistantRuntime {
         this.ctx.logger.warn(`dsh-team-mode: failed to cancel worker '${task.id}' cleanly`, error)
       }
     }
+    await this.releaseWorker(task.id, 'cancelled')
     return cancelled
+  }
+
+  /**
+   * Stop every active worker of one Assistant before its instance is archived.
+   * Tasks are marked cancelled so a later idle transition cannot resurrect them;
+   * only workers this runtime owns are interrupted, and the main Session is
+   * never touched by this method.
+   */
+  async stopForArchive(rawAssistantId: string): Promise<void> {
+    const assistantId = requireText(rawAssistantId, 'Assistant instance id')
+    await this.withAssistantLock(assistantId, async () => {
+      const tasks = this.service.listAssistantSessions(assistantId).items
+      for (const task of tasks) {
+        if (!ACTIVE_TASK_STATUSES.has(task.status)) continue
+        try {
+          await this.service.updateAssistantSession(task.id, { status: 'cancelled' })
+        } catch (error) {
+          this.ctx.logger.warn(
+            `dsh-team-mode: failed to cancel task '${task.id}' while archiving assistant '${assistantId}'`,
+            error,
+          )
+          continue
+        }
+        const worker = this.workers.get(task.id)
+        if (worker !== undefined && worker.owned) {
+          try {
+            worker.handle.agent.cancel({ kind: 'user' })
+            await worker.handle.agent.whenIdle()
+          } catch (error) {
+            this.ctx.logger.warn(
+              `dsh-team-mode: failed to cancel worker '${task.id}' while archiving assistant '${assistantId}'`,
+              error,
+            )
+          }
+        }
+        await this.releaseWorker(task.id, 'archived')
+      }
+    })
+  }
+
+  /**
+   * Release a terminal worker: flush its Session log, drop every runtime map
+   * entry, and dispose the handle only when this runtime created it. A passive
+   * worker belongs to another lifecycle, so it is detached but never disposed.
+   */
+  private async releaseWorker(taskId: string, reason: string): Promise<void> {
+    this.startingWorkers.delete(taskId)
+    const worker = this.workers.get(taskId)
+    if (worker === undefined) return
+    this.workers.delete(taskId)
+    this.workerBySession.delete(worker.sessionId)
+    try {
+      await this.ctx.sessions.flush(worker.handle.agent.session)
+    } catch (error) {
+      this.ctx.logger.warn(
+        `dsh-team-mode: failed to flush worker Session for task '${taskId}' (${reason})`,
+        error,
+      )
+    }
+    if (!worker.owned) return
+    await this.disposeQuietly(
+      worker.handle,
+      `failed to dispose worker Session for task '${taskId}' (${reason})`,
+    )
   }
 
   private async markTaskRunning(taskId: string): Promise<void> {
@@ -481,6 +558,7 @@ export class AssistantRuntime {
     if (task.status === 'needs_input') return
     if (task.status !== 'running' && task.status !== 'queued') return
     await this.service.updateAssistantSession(taskId, { status: 'completed' })
+    await this.releaseWorker(taskId, 'completed')
   }
 
   private async markTaskFailed(taskId: string, error: unknown): Promise<void> {
@@ -492,6 +570,7 @@ export class AssistantRuntime {
       status: 'failed',
       error: truncate(message, ERROR_TEXT_LIMIT),
     })
+    await this.releaseWorker(taskId, 'failed')
   }
 
   private async failTask(taskId: string, error: unknown): Promise<void> {

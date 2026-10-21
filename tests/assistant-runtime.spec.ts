@@ -105,6 +105,7 @@ function createHarness(
   const handles: AgentRecord[] = []
   const live = new Map<string, Agent>()
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
+  const persistedEvents = new Map<string, SessionEvent[]>()
 
   const on = vi.fn((event: string, listener: (...args: unknown[]) => void) => {
     const set = listeners.get(event) ?? new Set()
@@ -118,6 +119,7 @@ function createHarness(
 
   const createHandle = async (sessionId: string, setup?: AgentSetup): Promise<AgentRecord> => {
     const events: SessionEvent[] = []
+    persistedEvents.set(sessionId, events)
     const session = {
       id: SessionId(sessionId),
       snapshotEvents: vi.fn(() => events),
@@ -172,6 +174,12 @@ function createHarness(
   const workspaceStatus = vi.fn(async () => 'ok' as const)
   const workspace = { attachSession, status: workspaceStatus }
   const workspaceGet = vi.fn((id: WorkspaceId) => (String(id) === WORKSPACE_ID ? workspace : undefined))
+  const sessionPersistence = {
+    open: vi.fn(async (id: SessionId) => ({
+      read: async () => ({ events: [...(persistedEvents.get(String(id)) ?? [])] }),
+      close: async () => {},
+    })),
+  }
 
   const ctx = {
     logger: { warn: vi.fn() },
@@ -180,6 +188,7 @@ function createHarness(
     agentPresets: { mount: mounted },
     permissionPresets: { set: permissionSet },
     sessions: { flush },
+    sessionPersistence,
     workspaceRegistry: { get: workspaceGet },
   } as unknown as Context
 
@@ -586,6 +595,7 @@ describe('AssistantRuntime', () => {
       status: 'failed',
       error: 'provider exploded',
     })
+    expect(worker?.dispose).toHaveBeenCalledTimes(1)
 
     h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
     await settle()
@@ -648,6 +658,126 @@ describe('AssistantRuntime', () => {
     expect(h.getAssistantSession(task.id).status).toBe('cancelled')
   })
 
+  it('disposes a completed worker and summarizes from its stored Session log', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Task', brief: 'Start.' })
+    const worker = h.handles[1]
+    expect(worker).toBeDefined()
+    worker!.events.push(
+      {
+        type: 'user/message',
+        seq: 1,
+        time: 1,
+        data: {
+          id: 'message-1',
+          content: [{ type: 'text', text: 'Start.' }],
+          source: { kind: 'user' },
+        },
+      } as unknown as SessionEvent,
+      {
+        type: 'assistant/message',
+        seq: 2,
+        time: 2,
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            id: 'message-2',
+            content: [{ type: 'text', text: 'Stored completion.' }],
+          },
+          stream: [],
+        },
+      } as unknown as SessionEvent,
+    )
+
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+
+    expect(h.getAssistantSession(task.id).status).toBe('completed')
+    expect(worker?.dispose).toHaveBeenCalledTimes(1)
+    expect(h.flush).toHaveBeenCalledWith(worker?.agent.session)
+
+    const summary = await h.runtime.summaryTask('instance-1', task.id)
+    expect(summary.summary).toBe('Stored completion.')
+    expect(summary.messages.map(message => message.kind)).toEqual(['user', 'assistant'])
+  })
+
+  it('re-resumes a released completed worker from sendTask', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Task', brief: 'Start.' })
+    const worker = h.handles[1]
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+    expect(worker?.dispose).toHaveBeenCalledTimes(1)
+
+    const sent = await h.runtime.sendTask('instance-1', task.id, 'Continue.')
+
+    expect(sent.status).toBe('running')
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+    const resumed = h.handles[2]
+    expect(resumed).toBeDefined()
+    expect(resumed?.followup).toHaveBeenCalledTimes(1)
+    expect(textOf(resumed?.followup.mock.calls[0]?.[0])).toBe('Continue.')
+  })
+
+  it('opens a released task by resuming its worker without changing status', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Task', brief: 'Start.' })
+    const worker = h.handles[1]
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+    expect(worker?.dispose).toHaveBeenCalledTimes(1)
+
+    const opened = await h.runtime.openTask(task.id)
+
+    expect(opened.task).toMatchObject({ id: task.id, status: 'completed' })
+    expect(opened.sessionId).toBe(task.sessionId)
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+    expect(h.getAssistantSession(task.id).status).toBe('completed')
+  })
+
+  it('opens a live task without resuming or changing its status', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Task', brief: 'Start.' })
+
+    const opened = await h.runtime.openTask(task.id)
+
+    expect(opened.task.status).toBe('running')
+    expect(opened.sessionId).toBe(task.sessionId)
+    expect(h.resumeMock).not.toHaveBeenCalled()
+  })
+
+  it('cancels active tasks and disposes their workers before archive', async () => {
+    const h = createHarness()
+    const active = await h.runtime.createTask('instance-1', { title: 'Active', brief: 'Start.' })
+    const done = await h.runtime.createTask('instance-1', { title: 'Done', brief: 'Start.' })
+    const main = h.handles[0]
+    const activeWorker = h.handles[1]
+    const doneWorker = h.handles[2]
+    h.emit('agent/status', { agent: doneWorker?.agent, status: 'idle' })
+    await settle()
+    expect(h.getAssistantSession(done.id).status).toBe('completed')
+
+    await h.runtime.stopForArchive('instance-1')
+
+    expect(h.getAssistantSession(active.id).status).toBe('cancelled')
+    expect(h.getAssistantSession(done.id).status).toBe('completed')
+    expect(activeWorker?.cancel).toHaveBeenCalledWith({ kind: 'user' })
+    expect(activeWorker?.dispose).toHaveBeenCalledTimes(1)
+    expect(doneWorker?.dispose).toHaveBeenCalledTimes(1)
+    expect(main?.dispose).not.toHaveBeenCalled()
+  })
+
+  it('cancels a running worker on archive even when it had no live handle', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Task', brief: 'Start.' })
+    const recovered = h.createRuntime()
+
+    await recovered.stopForArchive('instance-1')
+
+    expect(h.getAssistantSession(task.id).status).toBe('cancelled')
+  })
+
   it('times out a wait instead of blocking forever', async () => {
     const h = createHarness()
     const task = await h.runtime.createTask('instance-1', { title: 'Task', brief: 'Start.' })
@@ -707,6 +837,7 @@ describe('AssistantRuntime', () => {
     expect(cancelled.status).toBe('cancelled')
     expect(worker?.cancel).toHaveBeenCalledWith({ kind: 'user' })
     expect(worker?.whenIdle).toHaveBeenCalledTimes(1)
+    expect(worker?.dispose).toHaveBeenCalledTimes(1)
 
     h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
     await settle()

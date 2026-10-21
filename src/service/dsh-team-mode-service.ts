@@ -519,10 +519,15 @@ export class AgentTeamService extends Service {
   /**
    * Hide an instance from listings without deleting it or its main Session.
    * Idempotent: archiving an archived instance returns the stored record.
+   * When the Assistant runtime is attached, active workers are cancelled and
+   * disposed before the instance is marked archived.
    */
   async archiveAssistantInstance(id: string): Promise<AssistantInstance> {
     const current = requireAssistantInstance(this.store, id)
     if (current.status === 'archived') return current
+    if (this.assistantRuntime !== undefined) {
+      await this.assistantRuntime.stopForArchive(id)
+    }
     const now = new Date().toISOString()
     const next = await this.store.updateAssistantInstance(id, value => ({
       ...value,
@@ -644,6 +649,11 @@ export class AgentTeamService extends Service {
   /** Materialize the instance's main Session through the attached runtime. */
   async ensureAssistantInstance(id: string): Promise<AssistantEnsureResult> {
     return this.requireAssistantRuntime().ensureInstance(id)
+  }
+
+  /** Reattach one task's worker Session and return the Session to navigate to. */
+  async openAssistantTask(taskId: string): Promise<{ task: AssistantSession; sessionId: string }> {
+    return this.requireAssistantRuntime().openTask(taskId)
   }
 
   /**

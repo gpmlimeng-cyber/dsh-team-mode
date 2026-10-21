@@ -251,6 +251,7 @@ describe('Assistant instances', () => {
         }
         return { instance, sessionId: 'session-main' }
       }),
+      stopForArchive: vi.fn(async () => {}),
     } as unknown as AssistantRuntime
     service.attachAssistantRuntime(runtime)
 
@@ -262,8 +263,39 @@ describe('Assistant instances', () => {
       .toThrow('Assistant runtime is already attached')
 
     await service.archiveAssistantInstance(created.id)
+    expect(runtime.stopForArchive).toHaveBeenCalledWith(created.id)
     await expect(service.ensureAssistantInstance(created.id)).rejects
       .toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+  })
+
+  it('opens a task through the attached assistant runtime', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+    const created = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+    const task = await service.createAssistantSession({
+      assistantId: created.id,
+      sessionId: 'session-worker',
+      title: 'Task',
+      brief: 'Brief',
+      parentSessionId: 'session-main',
+    })
+
+    await expect(service.openAssistantTask(task.id))
+      .rejects.toThrow('Assistant runtime is not attached')
+
+    const openTask = vi.fn(async (taskId: string) => ({
+      task: service.getAssistantSession(taskId),
+      sessionId: 'session-worker',
+    }))
+    const runtime = { openTask } as unknown as AssistantRuntime
+    service.attachAssistantRuntime(runtime)
+
+    const opened = await service.openAssistantTask(task.id)
+    expect(openTask).toHaveBeenCalledWith(task.id)
+    expect(opened).toEqual({ task, sessionId: 'session-worker' })
   })
 
   it('rejects ensure before an assistant runtime is attached', async () => {

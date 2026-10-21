@@ -98,6 +98,10 @@ function harness(overrides: {
       instance: { id, status: 'active' },
       sessionId: 'session-main',
     })),
+    openAssistantTask: vi.fn(async (taskId: string) => ({
+      task: { id: taskId, status: 'completed' },
+      sessionId: 'session-worker',
+    })),
   } as unknown as AgentTeamService
   const transport = registerWebTransport(
     ctx,
@@ -214,6 +218,28 @@ describe('web transport authentication and upload contract', () => {
       value: { instance: { id: 'instance-1', status: 'active' }, sessionId: 'session-main' },
     })
     expect(service.ensureAssistantInstance).toHaveBeenCalledWith('instance-1')
+  })
+
+  it('dispatches assistant.task.open', async () => {
+    const { call, service } = harness()
+    const reply = await call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        requestId: 'r1',
+        method: 'assistant.task.open',
+        payload: { taskId: 'task-1' },
+      }),
+    }))
+
+    expect(reply.status).toBe(200)
+    expect(JSON.parse(reply.body)).toMatchObject({
+      ok: true,
+      value: {
+        task: { id: 'task-1', status: 'completed' },
+        sessionId: 'session-worker',
+      },
+    })
+    expect(service.openAssistantTask).toHaveBeenCalledWith('task-1')
   })
 
   it('returns a typed error for an unknown method', async () => {
