@@ -909,6 +909,7 @@ function AssistantForm({
   const permissions = catalog?.permissionPresets ?? []
   const [name, setName] = useState(assistant?.name ?? '')
   const [avatar, setAvatar] = useState(assistant?.avatar ?? '')
+  const [generatingAvatar, setGeneratingAvatar] = useState(false)
   const [description, setDescription] = useState(assistant?.description ?? '')
   const [instructions, setInstructions] = useState(assistant?.instructions ?? '')
   const [promptsText, setPromptsText] = useState((assistant?.prompts ?? []).join('\n'))
@@ -1030,6 +1031,24 @@ function AssistantForm({
     reader.readAsDataURL(file)
   }
 
+  async function generateAvatar(): Promise<void> {
+    if (generatingAvatar) return
+    setGeneratingAvatar(true)
+    setError(undefined)
+    try {
+      const seed = `${name.trim() || 'assistant'}-${Math.random().toString(36).slice(2, 8)}`
+      const url = `https://api.dicebear.com/9.x/adventurer/svg?seed=${encodeURIComponent(seed)}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`
+      const response = await fetch(url)
+      if (!response.ok) throw new Error(`头像服务返回 ${response.status}`)
+      const svg = await response.text()
+      setAvatar(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setGeneratingAvatar(false)
+    }
+  }
+
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault()
     if (saving) return
@@ -1090,6 +1109,14 @@ function AssistantForm({
               />
               {avatar === '' ? '上传图片' : '更换图片'}
             </label>
+            <button
+              type="button"
+              className={css.avatarGenerate}
+              disabled={generatingAvatar}
+              onClick={() => { void generateAvatar() }}
+            >
+              {generatingAvatar ? '生成中…' : '自动生成'}
+            </button>
             {avatar !== '' && (
               <button type="button" className={css.assistantRemoveAvatar} onClick={() => { setAvatar('') }}>
                 移除头像
@@ -1112,7 +1139,7 @@ function AssistantForm({
               </button>
             ))}
           </div>
-          <span className={css.hint}>PNG/JPEG/WebP，≤256KB；没有头像时显示名称首字母。</span>
+          <span className={css.hint}>PNG/JPEG/WebP，≤256KB；也可自动生成或选择内置头像；没有头像时显示名称首字母。</span>
         </Field>
         <Field label="说明"><input value={description} onChange={event => { setDescription(event.target.value) }} className={css.input} /></Field>
         <Field label="启用">

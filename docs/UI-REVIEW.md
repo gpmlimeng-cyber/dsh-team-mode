@@ -371,3 +371,17 @@ DSH 全局设置了 `corner-shape: superellipse(1.5)`，所以即使 `border-rad
 - 验证：编辑器内 20 个「使用…头像」按钮，标签与官方助手名对应，40px 正圆网格。
 
 截图更新：`docs/assets/ui-review/assistant-builtin-avatars.png`。
+
+---
+
+## 三十、DiceBear 自动生成头像
+
+助手编辑器头像行新增「自动生成」：
+
+- 使用 DiceBear 9.x 的 `adventurer` 人像风格，seed 由「助手名 + 随机串」组成，每次点击得到不同头像。
+- 浏览器 `fetch` 取回 SVG 后转成 `data:image/svg+xml` 写入 `avatar`，不依赖运行时外链，离线也能显示；失败时在表单错误区提示。
+- 生成中按钮显示「生成中…」并禁用；生成后头像预览立即出现。
+- 与「上传图片 / 移除头像 / 20 个内置头像」并存。
+
+验证：点击后预览 `src=data:image/svg+xml;charset=utf-8,…`，`naturalWidth=150`。
+截图：`docs/assets/ui-review/assistant-dicebear.png`。
