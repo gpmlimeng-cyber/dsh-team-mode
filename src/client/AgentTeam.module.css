@@ -5284,13 +5284,13 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
   top: calc(100% + 6px);
   right: 0;
   z-index: 61;
-  width: 300px;
-  max-height: 440px;
+  width: 272px;
+  max-height: 420px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 12px;
+  border-radius: var(--dsw-radius-lg);
   background: var(--dsw-alias-bg-layer-1);
   box-shadow: var(--dsw-alias-shadow-l1);
 }
@@ -5319,14 +5319,18 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 6px;
-  margin: 4px 12px 8px;
-  height: 32px;
-  padding: 0 10px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2);
+  gap: 8px;
+  margin: 4px 12px 10px;
+  height: 36px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-module-platform);
   color: var(--dsw-alias-label-tertiary);
+}
+
+.memberAddSearch:focus-within {
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2);
 }
 
 .memberAddSearch input {
@@ -5338,6 +5342,11 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
   color: var(--dsw-alias-label-primary);
   font: inherit;
   font-size: 13px;
+}
+
+.memberAddSearch input::placeholder {
+  color: var(--dsw-alias-label-tertiary);
+  opacity: 1;
 }
 
 .memberAddList {
@@ -5451,4 +5460,16 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
 
 .memberAddFooterLink:hover {
   text-decoration: underline;
+}
+
+/* Keep the team member selector at the far right of the session title cluster,
+   immediately left of the host's own header utilities. The native
+   `headerActions` slot wraps our group, so let it grow and push the group over. */
+[class*="headerActions"]:has([class*="teamSwitcherGroup"]) {
+  flex: 1;
+  min-width: 0;
+}
+
+[class*="teamSwitcherGroup"] {
+  margin-left: auto;
 }

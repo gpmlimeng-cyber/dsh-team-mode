@@ -227,7 +227,7 @@ export function TeamMemberSwitcher({
             <span>同一助手可被反复添加</span>
           </div>
           <div className={css.memberAddSearch}>
-            <IconSearchOutlineRegular size={14} />
+            <IconSearchOutlineRegular size={16} />
             <input
               autoFocus
               value={addQuery}

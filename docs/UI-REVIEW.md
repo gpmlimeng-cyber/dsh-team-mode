@@ -156,3 +156,14 @@
 验证（Harness）：触发器 `right=857, bottom=39`；面板 `right=857, top=45`（6px 间距）；默认 2 个助手行；搜索后行数收敛；`Esc` 关闭。
 
 截图：`docs/assets/ui-review/add-member-panel.png`。
+
+---
+
+## 十三、成员选择器与添加面板的形状对齐
+
+- 成员选择器靠右：团队会话标题栏里让原生 `headerActions`（包含成员选择器）占满标题簇，选择器 `margin-left:auto`，最终停在宿主右侧图标组左边（实测选择器右缘 `1135`，右侧工具组从约 `1200` 开始）。
+- 选择器圆角沿用 DSH token `--dsw-radius-md`（12px），与原生 trigger 一致；「+」与选择器共用外圆角。
+- 添加成员面板收窄到 272px（实测含边框 274px），最大高 420px；面板圆角改用原生菜单的 `--dsw-radius-lg`（16px）。
+- 搜索框改成 AionUI 风格：36px 高、无边框、`--dsw-alias-bg-module-platform` 填充（实测 `rgb(245,246,247)`）、圆角 10px、图标 16px；聚焦时仅有 1px 内描边。
+
+截图更新：`docs/assets/ui-review/add-member-panel.png`（含选择器靠右与面板最终形态）。
