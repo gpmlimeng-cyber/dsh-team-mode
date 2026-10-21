@@ -3554,49 +3554,118 @@ textarea.input {
   padding: 0;
 }
 
+/* DS Bot-style two-line row: denser than a native session row, but it keeps
+   the team section's 8px inline padding and hover-action geometry. */
+.sidebarAssistantRowWrap {
+  height: auto;
+  min-height: 44px;
+  padding: 4px 8px;
+}
+
+.sidebarAssistantRow {
+  height: auto;
+  min-height: 34px;
+  gap: 8px;
+}
+
 .sidebarAssistantAvatar {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
+  width: 26px;
+  height: 26px;
   flex: none;
 }
 
-.sidebarAssistantKind {
-  flex: none;
-  margin-inline-start: 2px;
-  padding: 0 5px;
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-module-platform);
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 10px;
-  line-height: 16px;
-  white-space: nowrap;
+.sidebarAssistantDot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  box-sizing: content-box;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--dsw-alias-bg-page);
+  border-radius: 50%;
 }
 
-/* Keeps the optional task badge and the activity time right-aligned together. */
-.sidebarAssistantMeta {
+.sidebarAssistantDotWaiting {
+  background: var(--dsw-alias-state-warn-primary);
+}
+
+.sidebarAssistantDotRunning {
+  background: var(--dsw-alias-state-success-primary);
+}
+
+.sidebarAssistantDotQueued {
+  background: var(--dsw-alias-label-quaternary);
+}
+
+.sidebarAssistantCopy {
+  gap: 1px;
+}
+
+.sidebarAssistantTop {
   display: flex;
   align-items: center;
   gap: 4px;
-  flex: none;
-  margin-left: auto;
+  min-width: 0;
 }
 
-.sidebarAssistantTaskBadge {
+.sidebarAssistantTop .sidebarTeamName {
+  flex: 0 1 auto;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.sidebarAssistantPinned {
+  display: inline-flex;
+  align-items: center;
   flex: none;
-  padding: 0 5px;
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-module-platform);
-  color: var(--dsw-alias-label-secondary);
-  font-size: 10px;
-  line-height: 16px;
+  color: var(--dsw-alias-label-quaternary);
+}
+
+/* Compact status preview; the activity time above yields to hover actions. */
+.sidebarAssistantStatus {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sidebarAssistantTaskBadgeWaiting {
-  background: var(--dsw-alias-state-warn-tertiary);
-  color: var(--dsw-alias-state-warn-label);
+.sidebarAssistantStatusWaiting {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.sidebarAssistantStatusRunning {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.sidebarAssistantStatusQueued {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.sidebarAssistantStatusIdle {
+  color: var(--dsw-alias-label-quaternary);
+}
+
+.sidebarAssistantMore {
+  display: inline-flex;
+  flex: none;
+}
+
+/* A portaled menu moves focus out of the row, so keep the trigger and hide the
+   time while that menu stays open. */
+.sidebarTeamRowWrapMenuOpen .sidebarTeamManage {
+  display: inline-flex;
+}
+
+.sidebarTeamRowWrapMenuOpen .sidebarTeamTime {
+  display: none;
 }
 
 .sidebarAssistantEmpty {
@@ -3629,6 +3698,144 @@ textarea.input {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
+}
+
+.assistantTaskDialog {
+  width: min(540px, calc(100vw - 32px));
+  max-height: min(82vh, 640px);
+}
+
+.assistantTaskDialogContent {
+  min-height: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+.assistantTaskEmpty {
+  padding: 36px 20px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+  text-align: center;
+}
+
+.assistantTaskList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: min(54vh, 430px);
+  padding: 4px 8px 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.assistantTaskRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--dsw-radius-md);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assistantTaskRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.assistantTaskRow:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+.assistantTaskRowWaiting {
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 8%, transparent);
+}
+
+.assistantTaskRowRunning {
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 8%, transparent);
+}
+
+.assistantTaskRowCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.assistantTaskRowTitle {
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 19px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistantTaskRowMuted .assistantTaskRowTitle {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.assistantTaskRowMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.assistantTaskStatus {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.assistantTaskStatusWaiting {
+  background: var(--dsw-alias-state-warn-tertiary);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.assistantTaskStatusRunning {
+  background: var(--dsw-alias-state-success-tertiary);
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.assistantTaskStatusIdle {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.assistantTaskRowTime {
+  flex: none;
+  margin-left: auto;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 10px;
+}
+
+@media (max-width: 420px) {
+  .assistantTaskDialog {
+    width: calc(100vw - 20px);
+  }
+
+  .assistantTaskList {
+    max-height: min(60vh, 430px);
+    padding: 2px 6px 8px;
+  }
 }
 
 /* Appended to the native Session breadcrumb; the Session title itself is untouched. */

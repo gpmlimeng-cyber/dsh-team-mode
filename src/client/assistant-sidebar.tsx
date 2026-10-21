@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  IconChecklistOutlineRegular,
   IconChevronRightOutlineRegular,
   IconCloseFillRegular,
+  IconEllipsisOutlineRegular,
+  IconNewChatOutlineRegular,
   IconPinFillRegular,
   IconPinOutlineRegular,
   IconPlusOutlineRegular,
   IconSearchOutlineRegular,
+  Menu,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import { AssistantCreateDialog } from './assistant-dialogs.js'
+import { AssistantTaskDialog } from './assistant-task-dialog.js'
 import {
   assistantAvatarSource,
   assistantInstanceName,
-  assistantTaskBadge,
+  assistantRowActivity,
+  assistantRowStatusText,
+  assistantRowStatusTitle,
   relativeAssistantTime,
   visibleAssistantInstances,
 } from './assistant-instances.js'
@@ -55,6 +62,9 @@ export function AssistantSidebarSection({
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [query, setQuery] = useState('')
   const [openingId, setOpeningId] = useState<string>()
+  const [menuOpenId, setMenuOpenId] = useState<string>()
+  const [taskAssistantId, setTaskAssistantId] = useState<string>()
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [listError, setListError] = useState<string>()
   const [error, setError] = useState<string>()
@@ -85,6 +95,13 @@ export function AssistantSidebarSection({
     [instances, query],
   )
 
+  const taskAssistant = useMemo(
+    () => (taskAssistantId === undefined
+      ? undefined
+      : instances.find(item => item.id === taskAssistantId)),
+    [instances, taskAssistantId],
+  )
+
   const toggle = (): void => {
     setExpanded(current => {
       const next = !current
@@ -96,6 +113,12 @@ export function AssistantSidebarSection({
   const openCreate = (): void => {
     setError(undefined)
     setCreateOpen(true)
+  }
+
+  const openTasks = (instance: AssistantInstance): void => {
+    setTaskAssistantId(instance.id)
+    setTaskDialogOpen(true)
+    setMenuOpenId(undefined)
   }
 
   async function openAssistant(instance: AssistantInstance): Promise<void> {
@@ -229,43 +252,74 @@ export function AssistantSidebarSection({
             : visible.map(instance => {
                 const name = assistantInstanceName(instance)
                 const opening = openingId === instance.id
-                const badge = assistantTaskBadge(tasks, instance)
+                const menuOpen = menuOpenId === instance.id
+                const activity = assistantRowActivity(tasks, instance)
+                const statusText = assistantRowStatusText(activity)
+                const statusTitle = assistantRowStatusTitle(activity)
+                const dotClass = activity.status === 'needs_input'
+                  ? css.sidebarAssistantDotWaiting
+                  : activity.status === 'running'
+                    ? css.sidebarAssistantDotRunning
+                    : css.sidebarAssistantDotQueued
+                const statusClass = activity.status === 'needs_input'
+                  ? css.sidebarAssistantStatusWaiting
+                  : activity.status === 'running'
+                    ? css.sidebarAssistantStatusRunning
+                    : activity.status === 'queued'
+                      ? css.sidebarAssistantStatusQueued
+                      : css.sidebarAssistantStatusIdle
                 return (
                   <div key={instance.id} className={css.sidebarTeamGroup}>
-                    <div className={css.sidebarTeamRowWrap}>
+                    <div
+                      className={`${css.sidebarTeamRowWrap} ${css.sidebarAssistantRowWrap} ${menuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
+                      data-dsh-assistant-row
+                    >
                       <button
                         type="button"
-                        className={css.sidebarTeamRow}
+                        className={`${css.sidebarTeamRow} ${css.sidebarAssistantRow}`}
                         onClick={() => { void openAssistant(instance) }}
                         disabled={opening}
                         aria-busy={opening}
-                        title={`${name} · 单聊 · ${instance.assistantSnapshot.model}`}
+                        title={`${name} · ${statusText} · ${instance.assistantSnapshot.model}`}
                       >
-                        <span className={css.sidebarAssistantAvatar} aria-hidden="true">
+                        <span className={css.sidebarAssistantAvatar}>
                           <MemberAvatar
                             name={name}
                             avatar={assistantAvatarSource(instance)}
-                            size={18}
+                            size={26}
                           />
-                        </span>
-                        <span className={css.sidebarTeamCopy}>
-                          <span className={css.sidebarTeamName}>{name}</span>
-                        </span>
-                        <span className={css.sidebarAssistantKind}>单聊</span>
-                        <span className={css.sidebarAssistantMeta}>
-                          {badge !== undefined && (
+                          {activity.status !== 'none' && (
                             <span
-                              className={`${css.sidebarAssistantTaskBadge} ${badge.needsInput ? css.sidebarAssistantTaskBadgeWaiting : ''}`}
-                              title={badge.needsInput
-                                ? `${badge.count} 个任务待确认`
-                                : `${badge.count} 个任务进行中`}
-                              data-dsh-assistant-task-badge
-                            >
-                              {badge.needsInput ? '待确认' : `${badge.count} 任务`}
-                            </span>
+                              className={`${css.sidebarAssistantDot} ${dotClass}`}
+                              data-dsh-assistant-status={activity.status}
+                              title={statusTitle}
+                              aria-label={statusTitle}
+                              role="img"
+                            />
                           )}
-                          <span className={css.sidebarTeamTime}>
-                            {opening ? '打开中' : relativeAssistantTime(instance.updatedAt)}
+                        </span>
+                        <span className={`${css.sidebarTeamCopy} ${css.sidebarAssistantCopy}`}>
+                          <span className={css.sidebarAssistantTop}>
+                            <span className={css.sidebarTeamName}>{name}</span>
+                            {instance.pinned === true && (
+                              <span
+                                className={css.sidebarAssistantPinned}
+                                title="已置顶"
+                                aria-label="已置顶"
+                                role="img"
+                              >
+                                <IconPinFillRegular size={11} />
+                              </span>
+                            )}
+                            <span className={css.sidebarTeamTime}>
+                              {opening ? '打开中' : relativeAssistantTime(instance.updatedAt)}
+                            </span>
+                          </span>
+                          <span
+                            className={`${css.sidebarAssistantStatus} ${statusClass}`}
+                            data-dsh-assistant-status-text={activity.status}
+                          >
+                            {statusText}
                           </span>
                         </span>
                       </button>
@@ -281,6 +335,40 @@ export function AssistantSidebarSection({
                             : <IconPinOutlineRegular size={14} />}
                         </button>
                       </Tooltip>
+                      <Menu
+                        open={menuOpen}
+                        onClose={() => { setMenuOpenId(undefined) }}
+                        align="end"
+                        side="bottom"
+                        dense
+                        portal
+                        className={css.sidebarAssistantMore ?? ''}
+                        items={[
+                          { id: 'tasks', label: '查看任务', icon: <IconChecklistOutlineRegular size={14} /> },
+                          { id: 'open-main', label: '打开主会话', icon: <IconNewChatOutlineRegular size={14} /> },
+                        ]}
+                        onSelect={id => {
+                          setMenuOpenId(undefined)
+                          if (id === 'tasks') openTasks(instance)
+                          else if (id === 'open-main') void openAssistant(instance)
+                        }}
+                        anchor={(
+                          <Tooltip label="更多操作" delayMs={400}>
+                            <button
+                              type="button"
+                              className={css.sidebarTeamManage}
+                              aria-label={`更多操作 ${name}`}
+                              aria-haspopup="menu"
+                              aria-expanded={menuOpen}
+                              onClick={() => {
+                                setMenuOpenId(current => current === instance.id ? undefined : instance.id)
+                              }}
+                            >
+                              <IconEllipsisOutlineRegular size={14} />
+                            </button>
+                          </Tooltip>
+                        )}
+                      />
                     </div>
                   </div>
                 )
@@ -293,6 +381,15 @@ export function AssistantSidebarSection({
         openSession={openSession}
         onCreated={load}
       />
+      {taskAssistant !== undefined && (
+        <AssistantTaskDialog
+          open={taskDialogOpen}
+          assistant={taskAssistant}
+          tasks={tasks}
+          onClose={() => { setTaskDialogOpen(false) }}
+          openSession={openSession}
+        />
+      )}
     </section>
   )
 }

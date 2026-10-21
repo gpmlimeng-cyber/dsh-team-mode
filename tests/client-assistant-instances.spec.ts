@@ -6,7 +6,11 @@ import {
   assistantInstanceForSession,
   assistantInstanceName,
   assistantNameForSession,
-  assistantTaskBadge,
+  assistantRowActivity,
+  assistantRowStatusText,
+  assistantRowStatusTitle,
+  assistantTaskStatusLabel,
+  assistantTasksFor,
   relativeAssistantTime,
   visibleAssistantInstances,
 } from '../src/client/assistant-instances.js'
@@ -49,6 +53,7 @@ function task(
   assistantId: string,
   status: AssistantSession['status'],
   id = `${assistantId}-${status}`,
+  overrides: Partial<AssistantSession> = {},
 ): AssistantSession {
   return {
     schemaVersion: 1,
@@ -62,50 +67,101 @@ function task(
     status,
     createdAt: '2026-01-01T00:00:00Z',
     updatedAt: '2026-01-01T00:00:00Z',
+    ...overrides,
   }
 }
 
-describe('assistantTaskBadge', () => {
-  it('counts only active tasks that belong to the instance', () => {
-    const badge = assistantTaskBadge([
-      task('assistant-a', 'queued'),
-      task('assistant-a', 'running'),
-      task('assistant-a', 'completed'),
-      task('assistant-b', 'running'),
-    ], instance('assistant-a', 'A', '2026-01-01T00:00:00Z'))
-    expect(badge).toEqual({ count: 2, needsInput: false })
-  })
+describe('assistantRowActivity', () => {
+  const idle = instance('assistant-a', 'A', '2026-01-01T00:00:00Z')
 
-  it('prefers the needs_input label over the plain count', () => {
-    const badge = assistantTaskBadge([
+  it('prefers needs_input and counts only blockers', () => {
+    expect(assistantRowActivity([
       task('assistant-a', 'queued'),
       task('assistant-a', 'needs_input'),
+      task('assistant-a', 'needs_input', 'assistant-a-needs-2'),
       task('assistant-a', 'running'),
-    ], instance('assistant-a', 'A', '2026-01-01T00:00:00Z'))
-    expect(badge).toEqual({ count: 3, needsInput: true })
+    ], idle)).toEqual({ status: 'needs_input', count: 2 })
   })
 
-  it('ignores terminal tasks and archived instances', () => {
-    const terminal = [
+  it('reports running when no task needs input', () => {
+    expect(assistantRowActivity([
+      task('assistant-a', 'queued'),
+      task('assistant-a', 'running'),
+      task('assistant-a', 'running', 'assistant-a-running-2'),
+      task('assistant-b', 'needs_input'),
+    ], idle)).toEqual({ status: 'running', count: 2 })
+  })
+
+  it('reports queued only when nothing is running', () => {
+    expect(assistantRowActivity([
+      task('assistant-a', 'queued'),
+      task('assistant-a', 'queued', 'assistant-a-queued-2'),
+      task('assistant-a', 'completed'),
+    ], idle)).toEqual({ status: 'queued', count: 2 })
+  })
+
+  it('ignores terminal tasks and other assistants', () => {
+    expect(assistantRowActivity([
       task('assistant-a', 'completed'),
       task('assistant-a', 'failed'),
       task('assistant-a', 'cancelled'),
-    ]
-    expect(assistantTaskBadge(
-      terminal,
-      instance('assistant-a', 'A', '2026-01-01T00:00:00Z'),
-    )).toBeUndefined()
-    expect(assistantTaskBadge(
-      [task('assistant-a', 'running')],
-      instance('assistant-a', 'A', '2026-01-01T00:00:00Z', { status: 'archived' }),
-    )).toBeUndefined()
+      task('assistant-b', 'running'),
+    ], idle)).toEqual({ status: 'none', count: 0 })
   })
 
-  it('returns undefined when there are no tasks', () => {
-    expect(assistantTaskBadge(
-      [],
-      instance('assistant-a', 'A', '2026-01-01T00:00:00Z'),
-    )).toBeUndefined()
+  it('reads an archived instance as idle even with stale active rows', () => {
+    expect(assistantRowActivity(
+      [task('assistant-a', 'needs_input')],
+      instance('assistant-a', 'A', '2026-01-01T00:00:00Z', { status: 'archived' }),
+    )).toEqual({ status: 'none', count: 0 })
+  })
+
+  it('returns none for an empty task list', () => {
+    expect(assistantRowActivity([], idle)).toEqual({ status: 'none', count: 0 })
+  })
+})
+
+describe('assistantRow status labels', () => {
+  it('renders a compact second-line preview for every status', () => {
+    expect(assistantRowStatusText({ status: 'needs_input', count: 2 })).toBe('待确认')
+    expect(assistantRowStatusText({ status: 'running', count: 2 })).toBe('2 个任务运行中')
+    expect(assistantRowStatusText({ status: 'queued', count: 3 })).toBe('3 个任务排队中')
+    expect(assistantRowStatusText({ status: 'none', count: 0 })).toBe('空闲')
+  })
+
+  it('spells out the pending count for the status dot title', () => {
+    expect(assistantRowStatusTitle({ status: 'needs_input', count: 2 })).toBe('2 个任务待确认')
+    expect(assistantRowStatusTitle({ status: 'running', count: 2 })).toBe('2 个任务运行中')
+    expect(assistantRowStatusTitle({ status: 'queued', count: 1 })).toBe('1 个任务排队中')
+    expect(assistantRowStatusTitle({ status: 'none', count: 0 })).toBe('空闲')
+  })
+})
+
+describe('assistantTaskStatusLabel', () => {
+  it.each([
+    ['queued', '排队中'],
+    ['running', '运行中'],
+    ['needs_input', '待确认'],
+    ['completed', '已完成'],
+    ['failed', '失败'],
+    ['cancelled', '已取消'],
+  ] as const)('labels %s as %s', (status, label) => {
+    expect(assistantTaskStatusLabel(status)).toBe(label)
+  })
+})
+
+describe('assistantTasksFor', () => {
+  it('keeps only one assistant and orders newest first', () => {
+    const older = task('assistant-a', 'completed', 'a-old', { updatedAt: '2026-01-01T00:00:00Z' })
+    const newer = task('assistant-a', 'running', 'a-new', { updatedAt: '2026-03-01T00:00:00Z' })
+    const other = task('assistant-b', 'running', 'b-new', { updatedAt: '2026-04-01T00:00:00Z' })
+    const values = [older, other, newer]
+    expect(assistantTasksFor(values, 'assistant-a').map(item => item.id)).toEqual(['a-new', 'a-old'])
+    expect(values.map(item => item.id)).toEqual(['a-old', 'b-new', 'a-new'])
+  })
+
+  it('returns an empty list for an unknown assistant', () => {
+    expect(assistantTasksFor([task('assistant-a', 'running')], 'assistant-b')).toEqual([])
   })
 })
 

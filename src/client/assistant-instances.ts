@@ -4,16 +4,21 @@ const MINUTE = 60_000
 const HOUR = 3_600_000
 const DAY = 86_400_000
 
-/** A task still occupying a worker, as opposed to completed/failed/cancelled. */
-const ACTIVE_ASSISTANT_TASK_STATUSES: ReadonlySet<AssistantSession['status']> = new Set([
-  'queued',
-  'running',
-  'needs_input',
-])
+export type AssistantRowStatus = 'needs_input' | 'running' | 'queued' | 'none'
 
-export interface AssistantTaskBadgeView {
+export interface AssistantRowActivity {
+  status: AssistantRowStatus
+  /** Number of tasks in the state that determines the row. */
   count: number
-  needsInput: boolean
+}
+
+const ASSISTANT_TASK_STATUS_LABELS: Record<AssistantSession['status'], string> = {
+  queued: '排队中',
+  running: '运行中',
+  needs_input: '待确认',
+  completed: '已完成',
+  failed: '失败',
+  cancelled: '已取消',
 }
 
 /** Sidebar-facing name; the snapshot name is the only display name Phase 0 stores. */
@@ -68,24 +73,63 @@ export function relativeAssistantTime(iso: string, now: number = Date.now()): st
 }
 
 /**
- * Compact task badge for one sidebar row. Only active worker tasks belonging to
- * this instance count; terminal tasks never contribute, and an archived
- * instance never shows a badge even if stale active rows remain.
+ * Row-level task state for one Assistant, in urgency order. Only active worker
+ * tasks belonging to this instance count; terminal tasks never contribute, and
+ * an archived instance reads as idle even if stale active rows remain.
  */
-export function assistantTaskBadge(
+export function assistantRowActivity(
   tasks: readonly Pick<AssistantSession, 'assistantId' | 'status'>[],
   instance: Pick<AssistantInstance, 'id' | 'status'>,
-): AssistantTaskBadgeView | undefined {
-  if (instance.status === 'archived') return undefined
-  let count = 0
-  let needsInput = false
+): AssistantRowActivity {
+  if (instance.status === 'archived') return { status: 'none', count: 0 }
+  let needsInput = 0
+  let running = 0
+  let queued = 0
   for (const task of tasks) {
     if (task.assistantId !== instance.id) continue
-    if (!ACTIVE_ASSISTANT_TASK_STATUSES.has(task.status)) continue
-    count += 1
-    if (task.status === 'needs_input') needsInput = true
+    if (task.status === 'needs_input') needsInput += 1
+    else if (task.status === 'running') running += 1
+    else if (task.status === 'queued') queued += 1
   }
-  return count === 0 ? undefined : { count, needsInput }
+  if (needsInput > 0) return { status: 'needs_input', count: needsInput }
+  if (running > 0) return { status: 'running', count: running }
+  if (queued > 0) return { status: 'queued', count: queued }
+  return { status: 'none', count: 0 }
+}
+
+/** Compact second-line preview for an Assistant row. */
+export function assistantRowStatusText(activity: AssistantRowActivity): string {
+  if (activity.status === 'needs_input') return '待确认'
+  if (activity.status === 'running') return `${activity.count} 个任务运行中`
+  if (activity.status === 'queued') return `${activity.count} 个任务排队中`
+  return '空闲'
+}
+
+/** Accessible title for the Assistant status dot; the preview omits counts. */
+export function assistantRowStatusTitle(activity: AssistantRowActivity): string {
+  if (activity.status === 'needs_input') return `${activity.count} 个任务待确认`
+  return assistantRowStatusText(activity)
+}
+
+/** Human label for one worker task status. */
+export function assistantTaskStatusLabel(status: AssistantSession['status']): string {
+  return ASSISTANT_TASK_STATUS_LABELS[status]
+}
+
+/**
+ * Tasks belonging to one Assistant, newest first. The list API does not sort,
+ * so the task dialog owns this stable ordering; the id tie-break keeps equal
+ * timestamps deterministic across SSE refreshes.
+ */
+export function assistantTasksFor(
+  tasks: readonly AssistantSession[],
+  assistantId: string,
+): AssistantSession[] {
+  return tasks
+    .filter(task => task.assistantId === assistantId)
+    .slice()
+    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+      || right.id.localeCompare(left.id))
 }
 
 /**
