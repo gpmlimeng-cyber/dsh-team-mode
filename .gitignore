@@ -8,3 +8,6 @@ coverage/
 # Local reverse-engineering notes and agent skills
 .agents/
 deepfork-out/
+
+# Graphify generated graph
+ graphify-out/
