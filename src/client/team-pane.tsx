@@ -34,9 +34,7 @@ export function TeamParallelPane(props: any): JSX.Element {
     && session.subagent.parentAvailable === void 0
   const settling = (shellPhase === 'blank' && session.openState === 'loading' && summaryBlank !== true)
     || parentAvailabilityPending
-  // Always use the active shell. The hero layout centers its composer inside a
-  // blank pane, which breaks the shared bottom baseline across team columns.
-  const hero = false
+  const hero = shellPhase === 'blank' && (session.openState === 'open' || summaryBlank === true)
   if (typeof props.renderFactorySlot !== 'function') {
     return <div className={css.teamPaneError}>无法加载官方会话内容</div>
   }

@@ -5475,3 +5475,21 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
 [class*="teamSwitcherGroup"] {
   margin-left: auto;
 }
+
+/* Hero panes: keep the official welcome branding but pin its composer to the
+   pane bottom so every column shares one input baseline. The hero stack holds
+   both the brand block and the composer, so let the stack fill the pane and
+   push the compose slot down with an auto margin. */
+[data-team-pane] [data-composer-seat]:has([class*="composerHero"]) {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+[data-team-pane] [class*="composerHero"] {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+[data-team-pane] [class*="composerHero"] [data-slot="conversation.compose"] {
+  margin-top: auto;
+}

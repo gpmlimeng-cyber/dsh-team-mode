@@ -192,3 +192,15 @@
 处理：改用与成员卡片一致的 `--dsw-alias-bg-module-platform`（浅色实测 `rgb(245,246,247)`），文字色 `label-secondary`，圆角 7px。这样头像、搜索框、成员卡片使用同一层灰，不再出现白块。
 
 截图更新：`docs/assets/ui-review/add-member-panel.png`。
+
+---
+
+## 十六、并行初始化消息界面
+
+恢复并行 pane 的原生 hero 初始化界面（品牌标识、工作区、输入框），不再显示空白。为保持底部对齐：
+
+- hero pane 的 `composerHero` 撑满 pane，compose 插槽 `margin-top:auto` 把输入框钉到底部。
+- 空白 pane 与有消息 pane 的输入框底边对齐（实测底边 `788` / `790`）；hero 输入框因占位文案换行会高约 16px，顶部略高，属于原生 hero 形态。
+- 「对话」页签不受影响；成员提示卡继续在并行视图隐藏（原设计），避免与品牌 hero 重复。
+
+截图：`docs/assets/ui-review/parallel-hero-init.png`。
