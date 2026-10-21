@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  IconArchiveOutlineRegular,
   IconUsersOutlineRegular,
   IconChevronRightOutlineRegular,
   IconChevronsUpDownOutlineRegular,
@@ -53,6 +54,18 @@ function teamStateLabel(team: TeamView): string {
   if (team.state === 'starting') return '启动中'
   if (isTeamExecuting(team)) return '运行中'
   return '空闲'
+}
+
+function relativeTime(iso: string): string {
+  const timestamp = Date.parse(iso)
+  if (Number.isNaN(timestamp)) return ''
+  const diff = Math.max(0, Date.now() - timestamp)
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}小时`
+  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}天`
+  const date = new Date(timestamp)
+  return `${date.getMonth() + 1}月${date.getDate()}日`
 }
 
 function waitingCount(team: TeamView): number {
@@ -262,6 +275,7 @@ export function SidebarTeamSection({
               const members = Object.values(team.members)
               const waiting = waitingCount(team)
               const active = selectedTeamId === team.id
+              const archivable = team.state !== 'active' && team.state !== 'starting'
               return (
                 <div key={team.id} className={css.sidebarTeamGroup}>
                   <div className={`${css.sidebarTeamRowWrap} ${active ? css.sidebarTeamRowWrapActive : ''}`}>
@@ -278,12 +292,41 @@ export function SidebarTeamSection({
                       <span className={css.sidebarTeamCopy}>
                         <span className={css.sidebarTeamName}>{team.name}</span>
                       </span>
+                      <span className={css.sidebarTeamTime}>{relativeTime(team.updatedAt)}</span>
                       {waiting > 0
                         ? <span className={css.sidebarTeamBadge} title={`${waiting} 个待确认`}>{waiting > 99 ? '99+' : waiting}</span>
                         : isTeamExecuting(team)
                           ? <span className={css.sidebarTeamStateDot} aria-hidden="true" />
                           : null}
                     </button>
+                    <Tooltip label={t('sidebar.manage')} delayMs={400}>
+                      <button
+                        type="button"
+                        className={css.sidebarTeamManage}
+                        onClick={() => { openManageTeamDialog(team.id) }}
+                        aria-label={`管理 ${team.name}`}
+                      >
+                        <IconEllipsisOutlineRegular size={14} />
+                      </button>
+                    </Tooltip>
+                    <Tooltip label={archivable ? '归档团队' : '先解散团队再归档'} delayMs={400}>
+                      <button
+                        type="button"
+                        className={css.sidebarTeamManage}
+                        disabled={!archivable}
+                        onClick={() => {
+                          void callAgentTeam('team.archive', {
+                            teamId: team.id,
+                            archived: true,
+                          }, team.revision).then(() => { void load() }).catch(cause => {
+                            setError(cause instanceof Error ? cause.message : String(cause))
+                          })
+                        }}
+                        aria-label={`归档 ${team.name}`}
+                      >
+                        <IconArchiveOutlineRegular size={14} />
+                      </button>
+                    </Tooltip>
                     <Tooltip label={team.pinned === true ? t('sidebar.unpin') : t('sidebar.pin')} delayMs={400}>
                       <button
                         type="button"
@@ -301,16 +344,6 @@ export function SidebarTeamSection({
                         {team.pinned === true
                           ? <IconPinFillRegular size={14} />
                           : <IconPinOutlineRegular size={14} />}
-                      </button>
-                    </Tooltip>
-                    <Tooltip label={t('sidebar.manage')} delayMs={400}>
-                      <button
-                        type="button"
-                        className={css.sidebarTeamManage}
-                        onClick={() => { openManageTeamDialog(team.id) }}
-                        aria-label={`管理 ${team.name}`}
-                      >
-                        <IconEllipsisOutlineRegular size={14} />
                       </button>
                     </Tooltip>
                   </div>

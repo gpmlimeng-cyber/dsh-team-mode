@@ -630,3 +630,23 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 自定义标题行（头像 + 名称 + 时间）与气泡之间增加 8px 间距。
 - 实测 `header.bottom` 到气泡 `top`：8px。
 - 截图：`docs/assets/ui-review/team-bubble-header-gap.png`
+
+---
+
+## 五十、团队行对齐工作区会话行
+
+- 团队行右侧改为工作区会话行同款三图标（hover 显示）：
+  1. 更多（省略号，打开管理）
+  2. 归档（`IconArchiveOutlineRegular`；运行中团队禁用，提示先解散）
+  3. 置顶 / 取消置顶（`IconPinFillRegular` / `IconPinOutlineRegular`）
+- 行内补充相对时间：刚刚 / N分钟 / N小时 / N天 / M月D日；hover 时时间与状态让位给三图标。
+- 左侧保留 `IconUsersOutlineRegular`；行高 34px、hover/active 背景沿用侧栏令牌。
+- 实测：hover 时三个按钮均 `display:flex`，坐标为 183 / 209 / 235px；非 hover 只保留时间与置顶指示。
+
+## 五十一、长消息折叠与增强兜底
+
+- 气泡正文超过 320px 时折叠，显示「展开」；展开后按钮变「收起」。
+- 修复增强按钮重复插入（此前 `:scope >` 选不到嵌套按钮，导致 1284 个重复按钮）；实测 7 个可见气泡仅 1 个折叠按钮。
+- MutationObserver 增加 `characterData`，已增强气泡若被原生重渲染覆盖，会从缓存原文恢复 Markdown 并补回 header；实测覆盖后 `markdown=true`、`header=1`。
+- Markdown 新增围栏代码块与链接；实测 fixture 渲染出 1 个 `<pre>`。
+- 系统事件（新成员加入等）不再气泡化，保留原生通知条；实测原生 trigger 2 个。
