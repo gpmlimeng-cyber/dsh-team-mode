@@ -301,3 +301,87 @@ assistant_sessions
 - Phase 1 再引入任务 Session 和映射表；Phase 2 再做模型路由。
 - 不要重写原生聊天；插件负责目录、映射、编排工具和隐藏/打开。
 - 只要 Phase 0 通过，后续主要是编排策略和稳定性工作，不存在底层阻塞。
+
+---
+
+## 14. 按 Grok Bot 形态收敛（补充）
+
+如果产品目标是“类似 Grok Bot”，前面方案需要进一步收敛：**Bot 是唯一可见的对话对象，子 Session 只是它内部的工作线程。**
+
+### 14.1 产品形态
+
+```text
+侧栏助手列表
+  🧑‍💻 论文助手    单聊   刚刚
+  🧑‍💻 数据助手    单聊   1天
+        │ 点击
+        ▼
+  与 Bot 的常驻 DM（唯一可见会话）
+        │ Bot 内部
+        ├─ worker session A（任务 1）
+        ├─ worker session B（任务 2）
+        └─ worker session C（任务 3）
+```
+
+- 一个助手 = 一个 Bot = 一个侧栏入口 = **一个常驻 DM 线程**。
+- 用户只和 Bot 对话，不感知 Session ID。
+- Bot 内部按任务创建 worker Session，用于隔离上下文和并行执行。
+- 子任务进度、结果以消息/任务卡形式回到 DM；完整 worker 对话不作为主界面。
+- 默认不提供 Session 切换器；后续可作为高级调试入口。
+
+### 14.2 与前一版方案的差异
+
+| 维度 | 前一版 | Grok Bot 收敛版 |
+| --- | --- | --- |
+| 人类看到的会话 | 编排 + 可切换任务 | 只有 Bot DM |
+| 任务 Session | 半可见 | 完全内部 |
+| 路由 | 用户可选/助手建议 | Bot 自主决定 |
+| UI 复杂度 | 需要 Session 切换器 | 首版不需要 |
+| 重点风险 | Session 暴露/切换 | 编排质量、上下文、并发 |
+
+### 14.3 Bot 运行时
+
+Bot 的常驻 DM 就是一个 orchestrator Session。它需要这些内部工具：
+
+- `worker_create(title, brief)`：为任务开 worker Session。
+- `worker_send(workerId, message)`：追加任务指令。
+- `worker_list()`：查看进行中/已完成 worker。
+- `worker_wait(workerId)`：等待结果。
+- `worker_cancel(workerId)`：取消。
+- `worker_summary(workerId)`：把结果压缩回 DM。
+
+用户说“继续上次的登录页”时，Bot 自己匹配 worker；说“新做一个接口文档”时，Bot 自己开新 worker。用户不需要知道 worker 存在。
+
+### 14.4 DM 里显示什么
+
+- Bot 的正常回复。
+- 任务卡：`已开始：登录页重构` / `进行中 2/4` / `已完成，摘要如下`。
+- 失败卡：`任务失败，原因…` + 重试。
+- 可选“查看详情”只作为高级入口，不作为主流程。
+
+### 14.5 对可行性的影响
+
+- **UI 更简单**：助手行 + 原生 DM，不需要多会话切换器。
+- **后端更重要**：Bot 必须可靠地创建/恢复 worker、聚合结果、控制并发。
+- **Session 映射仍需存在**，但只服务于 Bot 运行时和崩溃恢复，不暴露给用户。
+- **Phase 0 更容易**：先做一个 Bot 的常驻 DM。
+- **Phase 1 的核心**变成 worker 工具和任务卡，而不是会话切换 UI。
+
+### 14.6 调整后的落地节奏
+
+| 阶段 | 内容 | 估算 |
+| --- | --- | --- |
+| Phase 0 | 助手行 + Bot DM + 常驻 Session | 2–3 天 |
+| Phase 1 | worker 创建/发送/等待 + 任务卡 + 隐藏 worker | 4–6 天 |
+| Phase 2 | Bot 自主路由、并发、摘要回传 | 5–8 天 |
+| Phase 3 | 失败恢复、权限、回归 | 3–5 天 |
+
+**单人约 2–3 周；比多会话可见方案少一层 UI 工作，但编排质量要求更高。**
+
+### 14.7 结论
+
+Grok Bot 形态完全可行，而且产品边界更清晰：
+
+- 用户侧：一个助手一个 DM。
+- 系统侧：一个常驻 orchestrator + N 个隐藏 worker。
+- 首版不要做 Session 切换器，先把 Bot 的 worker 编排和任务卡做稳。
