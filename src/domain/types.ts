@@ -47,6 +47,7 @@ export function snapshotAssistant(assistant: AssistantTemplate): AssistantSnapsh
     assistantId: assistant.id,
     revision: assistant.revision,
     name: assistant.name,
+    ...(assistant.avatar === undefined ? {} : { avatar: assistant.avatar }),
     instructions: assistant.instructions,
     provider: assistant.provider,
     model: assistant.model,

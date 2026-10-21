@@ -766,6 +766,9 @@ function AssistantCard({
             onEdit()
           }}
         >
+          {assistant.avatar !== undefined && assistant.avatar !== ''
+            ? <img className={css.assistantAvatar} src={assistant.avatar} alt="" />
+            : null}
           <strong>{assistant.icon ? `${assistant.icon} ${assistant.name}` : assistant.name}</strong>
           {(!assistant.enabled || !assistant.teamSelectable) && (
             <span className={css.muted}>
@@ -901,6 +904,7 @@ function AssistantForm({
   const permissions = catalog?.permissionPresets ?? []
   const [name, setName] = useState(assistant?.name ?? '')
   const [icon, setIcon] = useState(assistant?.icon ?? '')
+  const [avatar, setAvatar] = useState(assistant?.avatar ?? '')
   const [description, setDescription] = useState(assistant?.description ?? '')
   const [instructions, setInstructions] = useState(assistant?.instructions ?? '')
   const [promptsText, setPromptsText] = useState((assistant?.prompts ?? []).join('\n'))
@@ -1003,6 +1007,25 @@ function AssistantForm({
 
   const model = modelChoice
 
+  function readAvatar(file: File): void {
+    if (!file.type.startsWith('image/')) {
+      setError('请选择 PNG、JPEG 或 WebP 图片')
+      return
+    }
+    if (file.size > 256 * 1024) {
+      setError('头像图片不能超过 256KB')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setAvatar(reader.result)
+        setError(undefined)
+      }
+    }
+    reader.readAsDataURL(file)
+  }
+
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault()
     if (saving) return
@@ -1010,6 +1033,7 @@ function AssistantForm({
     try {
       const value = {
         name,
+        avatar,
         ...(icon.trim() ? { icon: icon.trim() } : {}),
         ...(assistant === undefined && !description.trim()
           ? {}
@@ -1056,6 +1080,25 @@ function AssistantForm({
             onChange={event => { setIcon(event.target.value) }}
             className={css.input}
           />
+        </Field>
+        <Field label="头像（可选，图片）">
+          <div className={css.avatarField}>
+            {avatar !== '' && <img className={css.avatarPreview} src={avatar} alt="头像预览" />}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={event => {
+                const file = event.target.files?.[0]
+                if (file !== undefined) readAvatar(file)
+              }}
+            />
+            {avatar !== '' && (
+              <button type="button" className={css.assistantRemoveAvatar} onClick={() => { setAvatar('') }}>
+                移除头像
+              </button>
+            )}
+          </div>
+          <span className={css.hint}>PNG/JPEG/WebP，≤256KB；存在头像时优先于 emoji 显示。</span>
         </Field>
         <Field label="说明"><input value={description} onChange={event => { setDescription(event.target.value) }} className={css.input} /></Field>
         <Field label="启用">

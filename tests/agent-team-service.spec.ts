@@ -143,6 +143,23 @@ describe('AgentTeamService', () => {
     })
   })
 
+  it('stores and clears assistant avatars, and snapshots them into members', async () => {
+    const { service } = createHarness()
+    const avatar = 'data:image/png;base64,AAAA'
+    const assistant = await service.createAssistant({ ...assistantInput(), avatar })
+    expect(assistant.avatar).toBe(avatar)
+
+    const draft = await service.createTeamDraft({
+      name: 'Avatar team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    expect(Object.values(draft.members)[0]?.assistantSnapshot.avatar).toBe(avatar)
+
+    const cleared = await service.updateAssistant(assistant.id, { avatar: '' })
+    expect(cleared.avatar).toBeUndefined()
+  })
+
   it('normalizes recommended prompts and carries them into member snapshots', async () => {
     const { service } = createHarness()
     const assistant = await service.createAssistant({
