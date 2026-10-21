@@ -1,5 +1,6 @@
 import type { FormEvent } from 'react'
 import { BUILTIN_ASSISTANT_AVATARS } from '../assistant-avatars.js'
+import { MemberAvatar } from '../member-avatar.js'
 
 const DICEBEAR_STYLES = [
   { id: 'bottts', label: '机器人' },
@@ -1126,38 +1127,39 @@ function AssistantForm({
           <strong>身份</strong>
           <span className={css.assistantFormSectionHint}>改动立即生效</span>
         </div>
-        <div className={css.formGrid}>
-        <Field label="名称"><input required value={name} onChange={event => { setName(event.target.value) }} className={css.input} /></Field>
-        <Field label="说明"><input value={description} onChange={event => { setDescription(event.target.value) }} className={css.input} /></Field>
-        <Field label="头像（可选，图片）">
-          <div className={css.avatarField}>
-            {avatar !== '' && <img className={css.avatarPreview} src={avatar} alt="头像预览" />}
-            <button type="button" className={css.avatarUpload} onClick={() => { setDraftAvatar(avatar); setAvatarPickerOpen(true) }}>
-              选择头像
+        <div className={css.assistantIdentityGrid}>
+          <div className={css.assistantIdentityAvatar}>
+            <MemberAvatar name={name.trim() || '助手'} avatar={avatar !== '' ? avatar : undefined} size={48} />
+            <button type="button" className={css.assistantAvatarButton} onClick={() => { setDraftAvatar(avatar); setAvatarPickerOpen(true) }}>
+              {avatar === '' ? '上传图片' : '更换图片'}
             </button>
             {avatar !== '' && (
               <button type="button" className={css.assistantRemoveAvatar} onClick={() => { setAvatar('') }}>
-                移除头像
+                移除
               </button>
             )}
           </div>
-          <span className={css.hint}>内置 AionUI 头像、DiceBear 生成或本地上传；没有头像时显示名称首字母。</span>
-        </Field>
-        <div className={css.assistantToggleColumn}>
-          <Field label="启用">
-            <label className={css.muted}>
-              <input type="checkbox" checked={enabled} onChange={event => { setEnabled(event.target.checked) }} />
-              {' '}在助手库与选择器中显示
+          <div className={css.assistantIdentityFields}>
+            <label className={css.assistantInlineField}>
+              <span className={css.assistantInlineLabel}><span className={css.assistantRequired} aria-hidden="true">*</span> 名称</span>
+              <input required value={name} onChange={event => { setName(event.target.value) }} className={css.input} placeholder="请输入助手名称" />
             </label>
-          </Field>
-          <Field label="团队可用">
-            <label className={css.muted}>
-              <input type="checkbox" checked={teamSelectable} onChange={event => { setTeamSelectable(event.target.checked) }} />
-              {' '}允许被拉入团队（关闭后仅用于单聊）
+            <label className={css.assistantInlineField}>
+              <span className={css.assistantInlineLabel}>描述</span>
+              <input value={description} onChange={event => { setDescription(event.target.value) }} className={css.input} placeholder="帮你解决什么问题" />
             </label>
-          </Field>
+          </div>
         </div>
-      </div>
+        <div className={css.assistantToggleRow}>
+          <label className={css.muted}>
+            <input type="checkbox" checked={enabled} onChange={event => { setEnabled(event.target.checked) }} />
+            {' '}在助手库与选择器中显示
+          </label>
+          <label className={css.muted}>
+            <input type="checkbox" checked={teamSelectable} onChange={event => { setTeamSelectable(event.target.checked) }} />
+            {' '}允许被拉入团队（关闭后仅用于单聊）
+          </label>
+        </div>
       </div>
       <div className={css.assistantFormSection}>
         <div className={css.assistantFormSectionHeading}>

@@ -484,3 +484,17 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 整体身份区从 4 行压缩为 2 行（+提示文字），后续「推荐提示词」「引擎与默认配置」整体上移。
 
 截图：`docs/assets/ui-review/assistant-editor-identity.png`。
+
+---
+
+## 三十九、身份区改为参考图的内联布局
+
+参照 AionUI 的助手表单：
+
+- 左侧 48px 圆形头像 + 下方「上传图片 / 更换图片」小按钮；有头像时追加「移除」。
+- 右侧两行内联字段：`* 名称`、`描述`，标签固定 56px，输入框占满剩余宽度。
+- 名称不再独占整行，整体从 4 行压到 2 行。
+- 「启用」「团队可用」收成一行紧凑复选框，位于表单下方。
+- 保留 `请输入助手名称` / `帮你解决什么问题` 占位提示。
+
+截图更新：`docs/assets/ui-review/assistant-editor-identity.png`。
