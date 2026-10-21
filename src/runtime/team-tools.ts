@@ -76,7 +76,18 @@ export function registerTeamTools(
   agentCtx: Context,
   handlers: TeamToolHandlers,
 ): void {
-  agentCtx.tools.register(defineTool({
+  const register = (tool: Parameters<typeof agentCtx.tools.register>[0]): void => {
+    try {
+      agentCtx.tools.register(tool)
+    } catch (error) {
+      // A member session can be set up more than once (reconnect / warmup
+      // retry). The tool names are already present in that agent scope, so a
+      // duplicate registration must not fail the whole member startup.
+      if (error instanceof Error && /already registered/i.test(error.message)) return
+      throw error
+    }
+  }
+  register(defineTool({
     name: 'team_members',
     description: 'List the current team roster: name, role, slot id, assistant, model, and runtime status. Call this before planning or delegating.',
     parameters: {},
@@ -87,7 +98,7 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
+  register(defineTool({
     name: 'team_read_messages',
     description: 'Read your team mailbox (unread first, then recent), FIFO, at most 50 messages. Marks returned messages read.',
     parameters: {
@@ -100,7 +111,7 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
+  register(defineTool({
     name: 'team_send_message',
     description: 'Send a durable team message. `to` is a member slot id (or display name) or `*` to broadcast to every active member except yourself. Use summary for the mailbox preview; files attaches workspace paths or URLs.',
     parameters: {
@@ -128,7 +139,7 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
+  register(defineTool({
     name: 'team_interrupt_agent',
     description: 'Leader only. Stop a member’s current turn and deliver a replacement instruction to that member.',
     parameters: {
@@ -142,8 +153,8 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
-    name: 'team_task_create',
+  register(defineTool({
+    name: 'team_mode_task_create',
     description: 'Leader only. Create a task on the shared task board. `blocked_by` lists task ids that must finish first. Assigning an owner wakes that member automatically.',
     parameters: {
       subject: { type: 'string', required: true, description: 'Short task subject.' },
@@ -168,8 +179,8 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
-    name: 'team_task_update',
+  register(defineTool({
+    name: 'team_mode_task_update',
     description: 'Update a task you own (the Leader may update any task). Completing a task clears its downstream blockers. The task owner or Leader may reassign an owner or change blockers; reassignment wakes the new owner.',
     parameters: {
       task_id: { type: 'string', required: true, description: 'Task id.' },
@@ -200,8 +211,8 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
-    name: 'team_task_list',
+  register(defineTool({
+    name: 'team_mode_task_list',
     description: 'Read the shared task board, including owner, blockers, reverse blocks, and file scopes.',
     parameters: {
       limit: { type: 'number', description: 'Maximum tasks to return (1-200, default 200).' },
@@ -213,7 +224,7 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
+  register(defineTool({
     name: 'team_list_assistants',
     description: 'List reusable assistant templates available for spawning a new teammate.',
     parameters: {},
@@ -224,7 +235,7 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
+  register(defineTool({
     name: 'team_describe_assistant',
     description: 'Read one assistant template: model, preset, permissions, Skills, MCP servers, and long-term instructions.',
     parameters: {
@@ -237,7 +248,7 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
+  register(defineTool({
     name: 'team_spawn_agent',
     description: 'Leader only. Add one new member from an assistant template and activate it. Returns the new slot id.',
     parameters: {
@@ -257,7 +268,7 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
+  register(defineTool({
     name: 'team_rename_agent',
     description: 'Leader only. Rename a member’s team-local display name without changing its session or configuration.',
     parameters: {
@@ -271,7 +282,7 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
+  register(defineTool({
     name: 'team_clear_agent_context',
     description: 'Leader only. Give one member a fresh session and context, preserving the team, task board, and workspace. Other members are untouched.',
     parameters: {
@@ -284,7 +295,7 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
+  register(defineTool({
     name: 'team_shutdown_agent',
     description: 'Leader only. Ask one member to stop. The member replies shutdown_approved or shutdown_rejected: reason; approval removes it after a short delay.',
     parameters: {
@@ -300,9 +311,9 @@ export function registerTeamTools(
 
   // Backward-compatible aliases for the pre-AionUi tool names. New prompts and
   // code should use the primary names above.
-  agentCtx.tools.register(defineTool({
+  register(defineTool({
     name: 'team_get_task_board',
-    description: 'Alias for team_task_list. Read the shared task board.',
+    description: 'Alias for team_mode_task_list. Read the shared task board.',
     parameters: {},
     output: textOutput,
     execute: async (_args, exec) => {
@@ -311,9 +322,9 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
+  register(defineTool({
     name: 'team_create_task',
-    description: 'Alias for team_task_create. Create and optionally assign a shared task.',
+    description: 'Alias for team_mode_task_create. Create and optionally assign a shared task.',
     parameters: {
       title: { type: 'string', required: true, description: 'Task subject.' },
       description: { type: 'string' },
@@ -337,9 +348,9 @@ export function registerTeamTools(
     },
   }))
 
-  agentCtx.tools.register(defineTool({
+  register(defineTool({
     name: 'team_update_task',
-    description: 'Alias for team_task_update. Update a task you own (Leader may update any task).',
+    description: 'Alias for team_mode_task_update. Update a task you own (Leader may update any task).',
     parameters: {
       taskId: { type: 'string', required: true, description: 'Task id.' },
       status: {

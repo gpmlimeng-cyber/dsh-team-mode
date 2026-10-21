@@ -73,9 +73,9 @@ describe('Team Mode tool surface', () => {
       'team_read_messages',
       'team_send_message',
       'team_interrupt_agent',
-      'team_task_create',
-      'team_task_update',
-      'team_task_list',
+      'team_mode_task_create',
+      'team_mode_task_update',
+      'team_mode_task_list',
       'team_list_assistants',
       'team_describe_assistant',
       'team_spawn_agent',
@@ -93,8 +93,8 @@ describe('Team Mode tool surface', () => {
   it('publishes the required parameter contracts for the dangerous tools', () => {
     const { tools } = harness()
     expect(tools.get('team_send_message')?.parameters.required).toEqual(expect.arrayContaining(['to', 'message']))
-    expect(tools.get('team_task_create')?.parameters.required).toEqual(['subject'])
-    expect(tools.get('team_task_update')?.parameters.required).toEqual(expect.arrayContaining(['task_id', 'status']))
+    expect(tools.get('team_mode_task_create')?.parameters.required).toEqual(['subject'])
+    expect(tools.get('team_mode_task_update')?.parameters.required).toEqual(expect.arrayContaining(['task_id', 'status']))
     expect(tools.get('team_spawn_agent')?.parameters.required).toEqual(expect.arrayContaining(['name', 'assistant_id']))
     expect(tools.get('team_shutdown_agent')?.description).toContain('Leader only')
     expect(tools.get('team_clear_agent_context')?.description).toContain('Leader only')
@@ -122,7 +122,7 @@ describe('Team Mode tool surface', () => {
 
   it('maps internal task statuses to AionUi statuses', async () => {
     const { tools } = harness()
-    const result = await tools.get('team_task_update')!.execute(
+    const result = await tools.get('team_mode_task_update')!.execute(
       { task_id: 't1', status: 'in_progress' },
       { agent: { id: 'agent-1' } },
     )

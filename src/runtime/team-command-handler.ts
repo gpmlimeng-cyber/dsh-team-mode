@@ -357,7 +357,7 @@ export class TeamCommandHandler {
             recipientSlotId: ready.ownerSlotId,
             taskId: ready.id,
             type: 'instruction',
-            content: `Task '${ready.title}' is unblocked and ready for you (task id: ${ready.id}). Use team_task_update to mark it in_progress.`,
+            content: `Task '${ready.title}' is unblocked and ready for you (task id: ${ready.id}). Use team_mode_task_update to mark it in_progress.`,
           }))
           nextWoken.push(ready.ownerSlotId)
         }

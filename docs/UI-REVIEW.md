@@ -548,3 +548,14 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 应用已重启加载新构建；不再随内容长短收缩。
 
 截图：`/tmp/ui-bubble-equal.png`（临时验证图，未入库）。
+
+---
+
+## 四十四、DSH 实际运行测试发现并修复工具冲突
+
+- 在 DSH 0.2.1-rc.2 上实际创建团队时，成员启动失败：
+  `tool "team_task_create" is already registered in this scope`。
+- 原因：该版本已内置 Agent Teams 工具（`team_task_create` / `team_task_update` / `team_task_list`），与本插件同名。
+- 处理：本插件三个任务工具改名为 `team_mode_task_create` / `team_mode_task_update` / `team_mode_task_list`，同步更新提示词、别名描述、运行时消息与测试。
+- 结果：团队可正常启动；通过 `team.message.send` 发送的 Markdown 广播已进入成员收件箱，workbench 节点包含 `team-message`。
+- 遗留问题：成员会话面板尚未把该 `team-message` 节点绘制成气泡（fresh reload 后仍为 0 个 `.teamMessageCard`），需要继续修投影/刷新链路；等宽 CSS 已用真实类名实测 546px / 546px。
