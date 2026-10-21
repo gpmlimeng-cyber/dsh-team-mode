@@ -31,6 +31,12 @@ export const assistantTemplateSchema = z.object({
   permissionPresetId: nonEmpty,
   skillAllowlist: z.array(nonEmpty),
   mcpServers: z.array(nonEmpty),
+  /** Whether the template appears in assistant pickers (AionUi "已启用"). */
+  enabled: z.boolean().default(true),
+  /** Whether teams may recruit this template; false keeps it out of team pickers. */
+  teamSelectable: z.boolean().default(true),
+  /** Ascending display order shared by the assistant library and every picker. */
+  sortOrder: z.int().nonnegative().default(0),
   revision: z.int().positive(),
   createdAt: isoDate,
   updatedAt: isoDate,
@@ -217,9 +223,15 @@ export const createAssistantInputSchema = assistantTemplateSchema.pick({
   permissionPresetId: true,
   skillAllowlist: true,
   mcpServers: true,
+}).extend({
+  /** Omitted on legacy callers; the service applies the enabled/team defaults. */
+  enabled: z.boolean().optional(),
+  teamSelectable: z.boolean().optional(),
 })
 
-export const updateAssistantInputSchema = createAssistantInputSchema.partial().strict()
+export const updateAssistantInputSchema = createAssistantInputSchema.partial().extend({
+  sortOrder: z.int().nonnegative().optional(),
+}).strict()
 
 export const createTeamMemberInputSchema = z.object({
   assistantId: nonEmpty,

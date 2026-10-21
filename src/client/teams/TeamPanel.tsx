@@ -524,6 +524,7 @@ export function AddTeamMemberDialog({
   const [addingAssistantId, setAddingAssistantId] = useState<string>()
   const [configuringAssistants, setConfiguringAssistants] = useState(false)
   const [error, setError] = useState<string>()
+  const selectableAssistants = assistants.filter(assistant => assistant.enabled && assistant.teamSelectable)
 
   async function addMember(assistant: AssistantView): Promise<void> {
     setAddingAssistantId(assistant.id)
@@ -563,7 +564,7 @@ export function AddTeamMemberDialog({
         <div className={css.addMemberDialogHeader}>
           <strong>助手列表</strong>
           <div className={css.addMemberDialogHeaderActions}>
-            <span>{assistants.length} 个助手</span>
+            <span>{selectableAssistants.length} 个可用助手</span>
             <Button
               variant="outline"
               size="sm"
@@ -575,7 +576,7 @@ export function AddTeamMemberDialog({
           </div>
         </div>
         <div className={css.addMemberMenuList}>
-          {assistants.map(assistant => (
+          {selectableAssistants.map(assistant => (
             <button
               key={assistant.id}
               type="button"
@@ -593,7 +594,13 @@ export function AddTeamMemberDialog({
               </span>
             </button>
           ))}
-          {assistants.length === 0 && <span className={css.addMemberEmpty}>还没有可添加的助手模板</span>}
+          {selectableAssistants.length === 0 && (
+            <span className={css.addMemberEmpty}>
+              {assistants.length === 0
+                ? '还没有可添加的助手模板'
+                : '没有已启用且允许加入团队的助手，请到“助手配置”中开启'}
+            </span>
+          )}
         </div>
         {error && <div role="alert" className={css.inlineError}>{error}</div>}
       </AnimatedModal>
@@ -1472,9 +1479,10 @@ export function TeamForm({
     [workspaceId, workspaces],
   )
   const filteredAssistants = useMemo(() => {
+    const pool = assistants.filter(assistant => assistant.enabled && assistant.teamSelectable)
     const normalized = query.trim().toLocaleLowerCase()
-    if (!normalized) return assistants
-    return assistants.filter(assistant => assistant.name.toLocaleLowerCase().includes(normalized))
+    if (!normalized) return pool
+    return pool.filter(assistant => assistant.name.toLocaleLowerCase().includes(normalized))
   }, [assistants, query])
 
   async function createDefaultAssistant(): Promise<void> {

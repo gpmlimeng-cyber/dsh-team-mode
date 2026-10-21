@@ -46,17 +46,62 @@ export function AssistantPanel({
   const [editingAssistant, setEditingAssistant] = useState<AssistantView>()
   const [builderOpen, setBuilderOpen] = useState(false)
   const [assistantSaving, setAssistantSaving] = useState(false)
+  const [query, setQuery] = useState('')
+  const [moving, setMoving] = useState(false)
+  const [moveError, setMoveError] = useState<string>()
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const visibleAssistants = normalizedQuery === ''
+    ? assistants
+    : assistants.filter(assistant =>
+        assistant.name.toLocaleLowerCase().includes(normalizedQuery)
+        || (assistant.description ?? '').toLocaleLowerCase().includes(normalizedQuery))
+  const enabledCount = assistants.filter(assistant => assistant.enabled).length
+
+  /** Persist the whole visible order so legacy ties (sortOrder 0) become distinct. */
+  async function move(assistant: AssistantView, delta: number): Promise<void> {
+    if (moving) return
+    const index = assistants.findIndex(item => item.id === assistant.id)
+    const targetIndex = index + delta
+    if (index < 0 || targetIndex < 0 || targetIndex >= assistants.length) return
+    const reordered = [...assistants]
+    const [item] = reordered.splice(index, 1)
+    if (item === undefined) return
+    reordered.splice(targetIndex, 0, item)
+    setMoving(true)
+    setMoveError(undefined)
+    try {
+      for (const [position, entry] of reordered.entries()) {
+        if (entry.sortOrder === position) continue
+        await callAgentTeam('assistant.update', { id: entry.id, value: { sortOrder: position } }, entry.revision)
+      }
+      await onChanged()
+    } catch (cause) {
+      setMoveError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setMoving(false)
+    }
+  }
   return (
     <section className={css.section}>
       <div className={css.sectionHeader}>
         <div>
           <h2 className={css.sectionHeading}>助手模板 <span className={css.count}>{assistants.length}</span></h2>
-          <p className={css.sectionDescription}>助手是可复用模板，解散团队不会删除助手。</p>
+          <p className={css.sectionDescription}>
+            可复用的角色模板；已启用 {enabledCount} 个，且只有启用并允许加入团队的助手会出现在选人列表。
+          </p>
         </div>
         <div className={css.sectionHeaderActions}>
+          <input
+            value={query}
+            onChange={event => { setQuery(event.target.value) }}
+            className={css.input}
+            placeholder="按名称或描述搜索助手"
+            aria-label="按名称或描述搜索助手"
+          />
           <Button variant="primary" onClick={() => { setCreating(true) }}>手动新建</Button>
         </div>
       </div>
+      {moveError && <div role="alert" className={css.inlineError}>{moveError}</div>}
       <article className={css.assistantBuilderCard}>
         <div className={css.assistantBuilderAvatar} aria-hidden="true">AI</div>
         <div className={css.assistantBuilderCopy}>
@@ -68,18 +113,28 @@ export function AssistantPanel({
       </article>
       {assistants.length === 0
         ? <Empty text="还没有助手模板" hint="创建助手后，就可以把它作为 Leader 或普通成员加入不同团队。" />
-        : (
-            <div className={css.cardGrid}>
-              {assistants.map(assistant => (
-                <AssistantCard
-                  key={assistant.id}
-                  assistant={assistant}
-                  onEdit={() => { setEditingAssistant(assistant) }}
-                  onChanged={onChanged}
-                />
-              ))}
-            </div>
-          )}
+        : visibleAssistants.length === 0
+          ? <Empty text="没有匹配的助手" hint="换个关键词，或清空搜索。" />
+          : (
+              <div className={css.cardGrid}>
+                {visibleAssistants.map(assistant => {
+                  const index = assistants.findIndex(item => item.id === assistant.id)
+                  return (
+                    <AssistantCard
+                      key={assistant.id}
+                      assistant={assistant}
+                      onEdit={() => { setEditingAssistant(assistant) }}
+                      onChanged={onChanged}
+                      reorderEnabled={normalizedQuery === '' && !moving}
+                      canMoveUp={index > 0}
+                      canMoveDown={index >= 0 && index < assistants.length - 1}
+                      onMoveUp={() => { void move(assistant, -1) }}
+                      onMoveDown={() => { void move(assistant, 1) }}
+                    />
+                  )
+                })}
+              </div>
+            )}
       <AnimatedModal
         open={builderOpen}
         onClose={() => { setBuilderOpen(false) }}
@@ -638,10 +693,20 @@ function AssistantCard({
   assistant,
   onEdit,
   onChanged,
+  reorderEnabled,
+  canMoveUp,
+  canMoveDown,
+  onMoveUp,
+  onMoveDown,
 }: {
   assistant: AssistantView
   onEdit: () => void
   onChanged: () => Promise<void>
+  reorderEnabled: boolean
+  canMoveUp: boolean
+  canMoveDown: boolean
+  onMoveUp: () => void
+  onMoveDown: () => void
 }): JSX.Element {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
@@ -673,6 +738,19 @@ function AssistantCard({
     }
   }
 
+  async function toggleEnabled(next: boolean): Promise<void> {
+    setBusy(true)
+    try {
+      await callAgentTeam('assistant.update', { id: assistant.id, value: { enabled: next } }, assistant.revision)
+      setError(undefined)
+      await onChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
   return (
     <>
       <article className={css.card}>
@@ -689,6 +767,11 @@ function AssistantCard({
           }}
         >
           <strong>{assistant.name}</strong>
+          {(!assistant.enabled || !assistant.teamSelectable) && (
+            <span className={css.muted}>
+              {assistant.enabled ? '仅单聊' : assistant.teamSelectable ? '已停用' : '已停用 · 仅单聊'}
+            </span>
+          )}
           <span className={css.muted}>{assistant.provider} / {assistant.model}</span>
           <span className={css.muted}>
             Preset: {assistant.agentPresetId} · 权限: {PERMISSION_LABELS[assistant.permissionPresetId] ?? assistant.permissionPresetId} · 思考模式：{assistant.reasoningEffort ?? '模型默认'}
@@ -702,6 +785,33 @@ function AssistantCard({
           {assistant.description && <p className={css.description}>{assistant.description}</p>}
         </div>
         <div className={css.actions}>
+          <label className={css.muted}>
+            <input
+              type="checkbox"
+              checked={assistant.enabled}
+              disabled={busy}
+              onChange={event => { void toggleEnabled(event.target.checked) }}
+            />
+            {' '}启用
+          </label>
+          <button
+            type="button"
+            className={css.secondaryButton}
+            disabled={busy || !reorderEnabled || !canMoveUp}
+            aria-label={`上移助手 ${assistant.name}`}
+            onClick={onMoveUp}
+          >
+            上移
+          </button>
+          <button
+            type="button"
+            className={css.secondaryButton}
+            disabled={busy || !reorderEnabled || !canMoveDown}
+            aria-label={`下移助手 ${assistant.name}`}
+            onClick={onMoveDown}
+          >
+            下移
+          </button>
           <button type="button" className={css.secondaryButton} disabled={busy} onClick={onEdit}>编辑</button>
           <button type="button" className={css.secondaryButton} disabled={busy} onClick={() => { void clone() }}>复制</button>
           <button
@@ -794,6 +904,8 @@ function AssistantForm({
   const [reasoningEffort, setReasoningEffort] = useState(assistant?.reasoningEffort ?? '')
   const [agentPresetId, setAgentPresetId] = useState(assistant?.agentPresetId ?? presets[0]?.id ?? '')
   const [permissionPresetId, setPermissionPresetId] = useState(assistant?.permissionPresetId ?? permissions[0]?.value ?? '')
+  const [enabled, setEnabled] = useState(assistant?.enabled ?? true)
+  const [teamSelectable, setTeamSelectable] = useState(assistant?.teamSelectable ?? true)
   const [availableSkills, setAvailableSkills] = useState<SkillCatalogView['skills']>([])
   const [selectedSkills, setSelectedSkills] = useState<string[]>(assistant?.skillAllowlist ?? [])
   const [skillsLoading, setSkillsLoading] = useState(false)
@@ -896,6 +1008,8 @@ function AssistantForm({
         permissionPresetId,
         skillAllowlist: selectedSkills,
         mcpServers: selectedMcpServers,
+        enabled,
+        teamSelectable,
       }
       if (assistant === undefined) {
         await callAgentTeam('assistant.create', value)
@@ -915,6 +1029,18 @@ function AssistantForm({
       <div className={css.formGrid}>
         <Field label="名称"><input required value={name} onChange={event => { setName(event.target.value) }} className={css.input} /></Field>
         <Field label="说明"><input value={description} onChange={event => { setDescription(event.target.value) }} className={css.input} /></Field>
+        <Field label="启用">
+          <label className={css.muted}>
+            <input type="checkbox" checked={enabled} onChange={event => { setEnabled(event.target.checked) }} />
+            {' '}在助手库与选择器中显示
+          </label>
+        </Field>
+        <Field label="团队可用">
+          <label className={css.muted}>
+            <input type="checkbox" checked={teamSelectable} onChange={event => { setTeamSelectable(event.target.checked) }} />
+            {' '}允许被拉入团队（关闭后仅用于单聊）
+          </label>
+        </Field>
         <Field label="Provider">
           <select required value={provider} onChange={event => { setProvider(event.target.value) }} className={css.input}>
             <option value="">请选择</option>

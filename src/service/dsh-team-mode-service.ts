@@ -312,8 +312,16 @@ export class AgentTeamService extends Service {
 
   listAssistants(): Page<AssistantTemplate> {
     const items = this.store.listAssistants()
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+      .sort((left, right) => left.sortOrder - right.sortOrder
+        || left.createdAt.localeCompare(right.createdAt)
+        || left.id.localeCompare(right.id))
     return { items, total: items.length }
+  }
+
+  /** Append new templates after the current library order (AionUi drag ordering). */
+  private nextAssistantSortOrder(): number {
+    return this.store.listAssistants()
+      .reduce((max, assistant) => Math.max(max, assistant.sortOrder), -1) + 1
   }
 
   async createAssistant(raw: CreateAssistantInput): Promise<AssistantTemplate> {
@@ -323,6 +331,9 @@ export class AgentTeamService extends Service {
       schemaVersion: 1,
       id: randomUUID(),
       ...input,
+      enabled: input.enabled ?? true,
+      teamSelectable: input.teamSelectable ?? true,
+      sortOrder: this.nextAssistantSortOrder(),
       revision: 1,
       createdAt: now,
       updatedAt: now,
@@ -347,14 +358,18 @@ export class AgentTeamService extends Service {
     const patch = updateAssistantInputSchema.parse(raw)
     const current = requireAssistant(this.store, id)
     assertRevision('assistant', current.revision, options.expectedRevision)
+    const { sortOrder: patchedSortOrder, ...patchInput } = patch
     const candidate = normalizeAssistantInput(createAssistantInputSchema.parse({
       ...assistantInputOf(current),
-      ...patch,
+      ...patchInput,
     }))
     await this.validateAssistantReferences(candidate)
     const next = await this.store.updateAssistant(id, value => ({
       ...value,
       ...candidate,
+      enabled: candidate.enabled ?? value.enabled,
+      teamSelectable: candidate.teamSelectable ?? value.teamSelectable,
+      ...(patchedSortOrder === undefined ? {} : { sortOrder: patchedSortOrder }),
       revision: value.revision + 1,
       updatedAt: new Date().toISOString(),
     }))
@@ -1209,6 +1224,8 @@ function assistantInputOf(assistant: AssistantTemplate): CreateAssistantInput {
     permissionPresetId: assistant.permissionPresetId,
     skillAllowlist: [...assistant.skillAllowlist],
     mcpServers: [...assistant.mcpServers],
+    enabled: assistant.enabled,
+    teamSelectable: assistant.teamSelectable,
   }
 }
 

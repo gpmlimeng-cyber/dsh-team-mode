@@ -88,6 +88,9 @@ describe('AgentTeamService', () => {
       permissionPresetId: 'standard',
       skillAllowlist: [],
       mcpServers: [],
+      enabled: true,
+      teamSelectable: true,
+      sortOrder: 0,
       revision: 1,
     }
     await store.putAssistant({
@@ -109,6 +112,25 @@ describe('AgentTeamService', () => {
       'older-assistant',
       'newer-assistant',
     ])
+  })
+
+  it('defaults new assistants to enabled and team-selectable and applies explicit sort order', async () => {
+    const { service } = createHarness()
+    const first = await service.createAssistant({ ...assistantInput(), name: 'First' })
+    const second = await service.createAssistant({ ...assistantInput(), name: 'Second' })
+
+    expect(first.enabled).toBe(true)
+    expect(first.teamSelectable).toBe(true)
+    expect(first.sortOrder).toBe(0)
+    expect(second.sortOrder).toBe(1)
+
+    const disabled = await service.updateAssistant(first.id, { enabled: false, teamSelectable: false })
+    expect(disabled.enabled).toBe(false)
+    expect(disabled.teamSelectable).toBe(false)
+
+    const moved = await service.updateAssistant(first.id, { sortOrder: 2 })
+    expect(moved.sortOrder).toBe(2)
+    expect(service.listAssistants().items.map(assistant => assistant.id)).toEqual([second.id, first.id])
   })
 
   it('delegates the built-in assistant builder conversation without storing it as a template', async () => {
