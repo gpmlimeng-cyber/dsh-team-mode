@@ -336,6 +336,13 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       }).strict().parse(request.payload)
       return service.renameMember(payload.teamId, payload.slotId, payload.displayName, options)
     }
+    case 'team.rename': {
+      const payload = z.object({
+        teamId: z.string().min(1),
+        name: z.string().trim().min(1).max(80),
+      }).strict().parse(request.payload)
+      return service.renameTeam(payload.teamId, payload.name, options)
+    }
     case 'team.removeMember': {
       const payload = z.object({ teamId: z.string().min(1), slotId: z.string().min(1) }).strict().parse(request.payload)
       return service.removeMember(payload.teamId, payload.slotId, options)

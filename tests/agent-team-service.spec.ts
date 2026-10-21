@@ -578,6 +578,23 @@ describe('AgentTeamService', () => {
     expect(service.getAssistant(assistant.id).revision).toBe(1)
   })
 
+  it('renames the team and refuses to reset the leader context', async () => {
+    const { service } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const draft = await service.createTeamDraft({
+      name: 'Before Rename',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+
+    const renamed = await service.renameTeam(draft.id, '  After Rename  ', { expectedRevision: draft.revision })
+    expect(renamed.name).toBe('After Rename')
+    expect(renamed.revision).toBe(draft.revision + 1)
+
+    await expect(service.contextResetMember(renamed.id, renamed.leaderSlotId))
+      .rejects.toMatchObject({ code: 'MEMBER_IS_LEADER' })
+  })
+
   it('applies spawn display names and renames members without changing templates', async () => {
     const { service } = createHarness()
     const assistant = await service.createAssistant(assistantInput())

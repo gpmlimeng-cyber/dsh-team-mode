@@ -814,6 +814,10 @@ export function TeamCard({
   const [cloneOpen, setCloneOpen] = useState(false)
   const [dissolveOpen, setDissolveOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
+  const [teamRenameOpen, setTeamRenameOpen] = useState(false)
+  const [teamNameDraft, setTeamNameDraft] = useState(team.name)
+  const [teamRenameBusy, setTeamRenameBusy] = useState(false)
+  const [teamRenameError, setTeamRenameError] = useState<string>()
   const [memberToRemove, setMemberToRemove] = useState<{ slotId: string; displayName: string }>()
   const [contextTarget, setContextTarget] = useState<{ slotId: string; displayName: string }>()
   const [renaming, setRenaming] = useState<{ slotId: string; draft: string }>()
@@ -854,6 +858,25 @@ export function TeamCard({
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function renameTeam(): Promise<void> {
+    const name = teamNameDraft.trim()
+    if (name.length === 0) {
+      setTeamRenameError('团队名不能为空')
+      return
+    }
+    setTeamRenameBusy(true)
+    try {
+      await callAgentTeam('team.rename', { teamId: team.id, name }, team.revision)
+      setTeamRenameOpen(false)
+      setTeamRenameError(undefined)
+      await onChanged()
+    } catch (cause) {
+      setTeamRenameError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setTeamRenameBusy(false)
     }
   }
 
@@ -995,6 +1018,18 @@ export function TeamCard({
         </div>
         <div className={css.teamCardHeaderTrailing}>
           {executing && <span className={`${css.badge} ${css.badgeSuccess ?? ''}`}>任务执行中</span>}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => {
+              setTeamNameDraft(team.name)
+              setTeamRenameError(undefined)
+              setTeamRenameOpen(true)
+            }}
+          >
+            重命名
+          </Button>
           {headerActions}
         </div>
       </header>
@@ -1389,6 +1424,55 @@ export function TeamCard({
           </div>
           {error && <div role="alert" className={css.inlineError}>{error}</div>}
         </div>
+      </AnimatedModal>
+      <AnimatedModal
+        open={teamRenameOpen}
+        onClose={() => {
+          if (teamRenameBusy) return
+          setTeamRenameOpen(false)
+          setTeamRenameError(undefined)
+        }}
+        title="重命名团队"
+        closeLabel="关闭"
+        description="只修改团队显示名，成员、会话、任务与 Workspace 都不变。"
+        footer={(
+          <>
+            <Button
+              variant="outline"
+              disabled={teamRenameBusy}
+              onClick={() => {
+                setTeamRenameOpen(false)
+                setTeamRenameError(undefined)
+              }}
+            >
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              type="submit"
+              form={`dsh-team-rename-${team.id}`}
+              disabled={teamRenameBusy}
+            >
+              {teamRenameBusy ? '保存中…' : '保存'}
+            </Button>
+          </>
+        )}
+      >
+        <form
+          id={`dsh-team-rename-${team.id}`}
+          onSubmit={event => { event.preventDefault(); void renameTeam() }}
+        >
+          <Field label="团队名">
+            <Input
+              autoFocus
+              value={teamNameDraft}
+              disabled={teamRenameBusy}
+              maxLength={80}
+              onChange={event => { setTeamNameDraft(event.target.value) }}
+            />
+          </Field>
+        </form>
+        {teamRenameError && <div role="alert" className={css.inlineError}>{teamRenameError}</div>}
       </AnimatedModal>
     </>
   )

@@ -46,6 +46,7 @@ export const AGENT_TEAM_METHODS = [
   'team.warmup.retry',
   'team.addMember',
   'team.renameMember',
+  'team.rename',
   'team.removeMember',
   'team.changeLeader',
   'team.reset',
@@ -354,6 +355,7 @@ export interface AgentTeamRequestMap {
   'team.warmup.retry': { payload: { teamId: string; slotId?: string }; result: TeamView }
   'team.addMember': { payload: { teamId: string; value: AddTeamMemberInput }; result: TeamView }
   'team.renameMember': { payload: { teamId: string; slotId: string; displayName: string }; result: TeamView }
+  'team.rename': { payload: { teamId: string; name: string }; result: TeamView }
   'team.removeMember': { payload: { teamId: string; slotId: string }; result: TeamView }
   'team.changeLeader': { payload: { teamId: string; successorSlotId: string }; result: TeamView }
   'team.reset': { payload: { teamId: string; confirmation: string }; result: TeamView }

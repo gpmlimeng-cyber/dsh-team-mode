@@ -697,6 +697,34 @@ export class AgentTeamService extends Service {
     return next
   }
 
+  /**
+   * Rename the team itself. Members, sessions, workspace, and the task board
+   * are untouched; only the team-local display name changes.
+   */
+  async renameTeam(
+    teamId: string,
+    rawName: string,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    assertRevision('team', team.revision, options.expectedRevision)
+    const name = rawName.trim()
+    if (name.length === 0 || name.length > 80) {
+      throw new AgentTeamError('TEAM_NAME_INVALID', 'A team name must be 1-80 characters')
+    }
+    if (name === team.name) return team
+    const next = await this.store.updateTeam(teamId, current => ({
+      ...current,
+      name,
+      revision: current.revision + 1,
+      updatedAt: new Date().toISOString(),
+    }))
+    await this.activity('team.renamed', teamId, next.revision, `Team renamed to ${name}`)
+    this.publish('team', teamId, next.revision, 'team.renamed')
+    return next
+  }
+
   async removeMember(
     teamId: string,
     slotId: string,
@@ -753,6 +781,14 @@ export class AgentTeamService extends Service {
   ): Promise<{ team: TeamAggregate; sessionId: string; status: string }> {
     const team = requireTeam(this.store, teamId)
     assertRevision('team', team.revision, options.expectedRevision)
+    const member = team.members[slotId]
+    if (member === undefined) throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown member '${slotId}'`)
+    if (slotId === team.leaderSlotId) {
+      throw new AgentTeamError(
+        'MEMBER_IS_LEADER',
+        'The leader cannot be reset; transfer leadership to another member first',
+      )
+    }
     const result = await this.requireRuntime().clearMemberContext(teamId, slotId)
     return { team: this.getTeam(teamId), ...result }
   }
