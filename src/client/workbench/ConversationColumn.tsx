@@ -93,10 +93,11 @@ export function ConversationColumn({
   const running = conversation?.status === 'running'
   const visibleNodes = mergeConversationNodes(conversation?.nodes ?? [], pendingMessages)
   const pendingInteractions = conversation?.pendingInteractions ?? []
+  const pendingCount = pendingInteractions.length
   const statusLabel = pendingInteractions.some(interaction => interaction.kind === 'approval')
-    ? '等待审批'
-    : pendingInteractions.length > 0
-      ? '等待回答'
+    ? (pendingCount > 1 ? `等待审批（${pendingCount}）` : '等待审批')
+    : pendingCount > 0
+      ? (pendingCount > 1 ? `等待回答（${pendingCount}）` : '等待回答')
       : memberStatusLabel(conversation?.status ?? member.lastRuntimeState)
   const modelCapabilities = useModelCapabilities(
     member.assistantSnapshot.provider,

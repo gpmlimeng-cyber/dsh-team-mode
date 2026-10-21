@@ -293,6 +293,14 @@ function TeamWorkbench({
                 <span className={css.memberTabName}>{member.displayName}</span>
                 {member.role === 'leader' && <CrownIcon size={15} className={css.leaderCrown} title="Leader" />}
                 <span className={`${css.statusDot} ${conversation?.status === 'running' ? css.statusRunning : css.statusIdle}`} />
+                {(conversation?.pendingInteractions.length ?? 0) > 0 && (
+                  <span
+                    className={css.teamParallelPendingBadge}
+                    aria-label={`${conversation?.pendingInteractions.length} 个待确认`}
+                  >
+                    {conversation?.pendingInteractions.length}
+                  </span>
+                )}
               </button>
               {member.role !== 'leader' && (
                 <span className={css.memberTabActions}>

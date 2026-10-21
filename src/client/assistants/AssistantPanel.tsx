@@ -766,7 +766,7 @@ function AssistantCard({
             onEdit()
           }}
         >
-          <strong>{assistant.name}</strong>
+          <strong>{assistant.icon ? `${assistant.icon} ${assistant.name}` : assistant.name}</strong>
           {(!assistant.enabled || !assistant.teamSelectable) && (
             <span className={css.muted}>
               {assistant.enabled ? '仅单聊' : assistant.teamSelectable ? '已停用' : '已停用 · 仅单聊'}
@@ -896,6 +896,7 @@ function AssistantForm({
   const presets = catalog?.agentPresets.filter(preset => preset.broken === undefined) ?? []
   const permissions = catalog?.permissionPresets ?? []
   const [name, setName] = useState(assistant?.name ?? '')
+  const [icon, setIcon] = useState(assistant?.icon ?? '')
   const [description, setDescription] = useState(assistant?.description ?? '')
   const [instructions, setInstructions] = useState(assistant?.instructions ?? '')
   const [provider, setProvider] = useState(assistant?.provider ?? providers[0]?.id ?? '')
@@ -997,6 +998,7 @@ function AssistantForm({
     try {
       const value = {
         name,
+        ...(icon.trim() ? { icon: icon.trim() } : {}),
         ...(assistant === undefined && !description.trim()
           ? {}
           : { description: description.trim() }),
@@ -1028,6 +1030,15 @@ function AssistantForm({
     <form id={formId} onSubmit={(event) => { void submit(event) }} className={`${css.form} ${css.assistantForm}`}>
       <div className={css.formGrid}>
         <Field label="名称"><input required value={name} onChange={event => { setName(event.target.value) }} className={css.input} /></Field>
+        <Field label="图标（emoji，可选）">
+          <input
+            value={icon}
+            maxLength={4}
+            placeholder="例如 🧭"
+            onChange={event => { setIcon(event.target.value) }}
+            className={css.input}
+          />
+        </Field>
         <Field label="说明"><input value={description} onChange={event => { setDescription(event.target.value) }} className={css.input} /></Field>
         <Field label="启用">
           <label className={css.muted}>

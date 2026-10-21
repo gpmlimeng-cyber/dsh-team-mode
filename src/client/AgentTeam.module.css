@@ -4996,3 +4996,20 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
   font-size: 10px;
   letter-spacing: 0.02em;
 }
+
+.teamParallelPendingBadge {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border: 1px solid var(--dsw-alias-label-primary);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+}

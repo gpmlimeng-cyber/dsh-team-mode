@@ -202,6 +202,26 @@ export function TeamParallelHost({
   const visibleMembers = singleMode
     ? members.filter(member => member.id === activeSingleSlotId)
     : members
+  const [pendingBySlot, setPendingBySlot] = useState<Record<string, number>>({})
+  useEffect(() => {
+    if (team === undefined) {
+      setPendingBySlot({})
+      return
+    }
+    let live = true
+    void callAgentTeam('team.workbench.get', { id: team.id }).then(view => {
+      if (!live) return
+      const next: Record<string, number> = {}
+      for (const conversation of view.conversations) {
+        const count = conversation.pendingInteractions.length
+        if (count > 0) next[conversation.slotId] = count
+      }
+      setPendingBySlot(next)
+    }).catch(() => {
+      if (live) setPendingBySlot({})
+    })
+    return () => { live = false }
+  }, [team])
   const colorOf = useIdentityColors(team?.id, members)
   const [warmupTimedOut, setWarmupTimedOut] = useState(false)
   useEffect(() => {
@@ -247,6 +267,14 @@ export function TeamParallelHost({
             >
               {member.displayName}
               {member.role === 'leader' && <span className={css.teamSingleLeaderMark}>Leader</span>}
+              {(pendingBySlot[member.id] ?? 0) > 0 && (
+                <span
+                  className={css.teamParallelPendingBadge}
+                  aria-label={`${pendingBySlot[member.id]} 个待确认`}
+                >
+                  {pendingBySlot[member.id]}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -282,6 +310,15 @@ export function TeamParallelHost({
                     </span>
                   )}
                   <span className={`${css.teamParallelStatusDot} ${css[`teamParallelStatus_${status}`] ?? ''}`} aria-label={status} />
+                  {(pendingBySlot[member.id] ?? 0) > 0 && (
+                    <span
+                      className={css.teamParallelPendingBadge}
+                      title={`${pendingBySlot[member.id]} 个待确认`}
+                      aria-label={`${pendingBySlot[member.id]} 个待确认`}
+                    >
+                      {pendingBySlot[member.id]}
+                    </span>
+                  )}
                   {member.lastRuntimeState === 'error' && (
                     <button
                       type="button"
