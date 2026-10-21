@@ -3549,6 +3549,84 @@ textarea.input {
   color: var(--dsw-alias-state-error-primary);
 }
 
+/* Assistant (“单聊”) section: same header/row geometry as the team section. */
+.sidebarAssistantSection {
+  padding: 0;
+}
+
+.sidebarAssistantAvatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  flex: none;
+}
+
+.sidebarAssistantKind {
+  flex: none;
+  margin-inline-start: 2px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.sidebarAssistantEmpty {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.assistantCreateDialog {
+  width: min(520px, 100%);
+}
+
+.assistantCreateForm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.assistantCreateHint {
+  margin: -8px 0 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.assistantCreateActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* Appended to the native Session breadcrumb; the Session title itself is untouched. */
+.assistantSessionTitle {
+  min-width: 0;
+  max-width: 220px;
+  overflow: hidden;
+  padding: 2px 6px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (hover: none) {
+  .sidebarAssistantSection .sidebarTeamManage {
+    display: inline-flex;
+  }
+}
+
 @media (hover: none) {
   .sidebarTeamManage {
     opacity: 1;

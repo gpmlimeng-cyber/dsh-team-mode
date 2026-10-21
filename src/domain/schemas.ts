@@ -51,6 +51,27 @@ export const assistantTemplateSchema = z.object({
   updatedAt: isoDate,
 }).strict()
 
+/**
+ * One persisted Assistant: a template snapshot bound to a workspace, with the
+ * lazily created main Session recorded on first open. Creation never makes a
+ * Session; `mainSessionId` stays absent until the runtime binds it.
+ */
+export const assistantInstanceSchema = z.object({
+  schemaVersion: z.literal(1),
+  id: nonEmpty,
+  templateId: nonEmpty,
+  assistantSnapshot: assistantSnapshotSchema,
+  workspaceId: nonEmpty,
+  workspacePath: nonEmpty,
+  mainSessionId: nonEmpty.optional(),
+  status: z.enum(['idle', 'starting', 'active', 'error', 'archived']),
+  pinned: z.boolean().default(false),
+  revision: z.int().positive(),
+  createdAt: isoDate,
+  updatedAt: isoDate,
+  archivedAt: isoDate.optional(),
+}).strict()
+
 export const memberRuntimeStateSchema = z.enum([
   'offline',
   'starting',
@@ -242,6 +263,21 @@ export const createAssistantInputSchema = assistantTemplateSchema.pick({
 
 export const updateAssistantInputSchema = createAssistantInputSchema.partial().extend({
   sortOrder: z.int().nonnegative().optional(),
+}).strict()
+
+export const createAssistantInstanceInputSchema = z.object({
+  templateId: nonEmpty,
+  name: nonEmpty.optional(),
+  avatar: z.string().max(400_000).optional(),
+  workspaceId: nonEmpty,
+  pinned: z.boolean().optional(),
+}).strict()
+
+/** Patch an instance snapshot; an empty object leaves every field unchanged. */
+export const updateAssistantInstanceInputSchema = z.object({
+  name: nonEmpty.optional(),
+  avatar: z.string().max(400_000).optional(),
+  pinned: z.boolean().optional(),
 }).strict()
 
 export const createTeamMemberInputSchema = z.object({

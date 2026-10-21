@@ -8,6 +8,8 @@ import {
   type WorkspaceChoice,
 } from './components.js'
 import { SidebarPortal } from './sidebar.js'
+import { AssistantSessionHider } from './assistant-session-hider.js'
+import { AssistantSessionTitle, AssistantSessionTitleHost } from './assistant-session-title.js'
 import { TeamModeDialogs } from './team-dialogs.js'
 import { TeamParallelHost, TeamParallelView } from './team-parallel.js'
 import { TeamTriggerEnhancer } from './team-trigger-enhancer.js'
@@ -72,6 +74,7 @@ export function apply(ctx: AgentTeamClientContext): void {
     <>
       <TeamTriggerEnhancer />
       <TeamSessionHider />
+      <AssistantSessionHider />
       <SidebarPortal openSession={openSession} openTeamPage={openTeamPage} />
     </>
   )
@@ -157,6 +160,28 @@ export function apply(ctx: AgentTeamClientContext): void {
     order: 90,
     label: '团队视图',
   }, TeamViewTabs))
+
+  // Register the lineage title only while the active Session is an Assistant
+  // main Session. The host below is always mounted in the utilities list slot;
+  // outside that condition nothing occupies the single lineage slot, so the
+  // shipped subagent header stays untouched.
+  const registerAssistantTitle = (): (() => void) | void => slotApi.inject(
+    'conversation.session.header.lineage',
+    () => slotApi.register({
+      name: 'conversation.session.header.lineage',
+      // The shipped subagent header holds the default priority and a higher
+      // number would be shadowed; this entry exists only for assistant Sessions.
+      priority: -10,
+      label: '助手会话标题',
+    }, AssistantSessionTitle as never),
+  )
+  slotApi.inject('conversation.session.header.utilities', () => slotApi.register({
+    name: 'conversation.session.header.utilities',
+    id: 'dsh-team-mode-assistant-title',
+    order: 95,
+    label: '助手会话标题',
+    inject: () => ({ registerTitle: registerAssistantTitle }),
+  }, AssistantSessionTitleHost as never))
 
   slotApi.inject('conversation.session.header.actions', () => slotApi.register({
     name: 'conversation.session.header.actions',

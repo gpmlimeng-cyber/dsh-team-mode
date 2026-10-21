@@ -1,10 +1,12 @@
 import type { z } from 'zod'
 import type {
+  assistantInstanceSchema,
   assistantSnapshotSchema,
   addTeamMemberInputSchema,
   assistantTemplateSchema,
   cloneTeamInputSchema,
   createAssistantInputSchema,
+  createAssistantInstanceInputSchema,
   createTeamDraftInputSchema,
   createTeamMemberInputSchema,
   fileScopeLeaseSchema,
@@ -17,10 +19,14 @@ import type {
   teamMessageSchema,
   teamTaskSchema,
   updateAssistantInputSchema,
+  updateAssistantInstanceInputSchema,
 } from './schemas.js'
 
 export type AssistantSnapshot = z.infer<typeof assistantSnapshotSchema>
 export type AssistantTemplate = z.infer<typeof assistantTemplateSchema>
+export type AssistantInstance = z.infer<typeof assistantInstanceSchema>
+export type CreateAssistantInstanceInput = z.infer<typeof createAssistantInstanceInputSchema>
+export type UpdateAssistantInstanceInput = z.infer<typeof updateAssistantInstanceInputSchema>
 export type CreateAssistantInput = z.infer<typeof createAssistantInputSchema>
 export type UpdateAssistantInput = z.infer<typeof updateAssistantInputSchema>
 export type MemberRuntimeState = z.infer<typeof memberRuntimeStateSchema>

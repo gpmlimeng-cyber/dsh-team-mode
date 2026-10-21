@@ -9,15 +9,20 @@ import {
   createAssistantInputSchema,
   addTeamMemberInputSchema,
   cloneTeamInputSchema,
+  createAssistantInstanceInputSchema,
   createTeamDraftInputSchema,
   updateAssistantInputSchema,
+  updateAssistantInstanceInputSchema,
 } from '../domain/schemas.js'
 import {
   snapshotAssistant,
   type AddTeamMemberInput,
+  type AssistantInstance,
+  type AssistantSnapshot,
   type AssistantTemplate,
   type CloneTeamInput,
   type CreateAssistantInput,
+  type CreateAssistantInstanceInput,
   type CreateTeamDraftInput,
   type Operation,
   type Page,
@@ -26,9 +31,11 @@ import {
   type TeamMemberSlot,
   type TeamMessage,
   type UpdateAssistantInput,
+  type UpdateAssistantInstanceInput,
 } from '../domain/types.js'
 import type { AgentTeamStore } from '../storage/store.js'
 import type { AssistantBuilderRuntime } from '../runtime/assistant-builder-runtime.js'
+import type { AssistantEnsureResult, AssistantRuntime } from '../runtime/assistant-runtime.js'
 import type { TeamRuntime } from '../runtime/team-runtime.js'
 import { WorkspaceService } from './workspace-service.js'
 import type {
@@ -56,7 +63,7 @@ export interface MutationOptions {
 
 export interface AgentTeamChange {
   cursor: number
-  entityType: 'assistant' | 'assistant-builder' | 'team' | 'operation' | 'conversation' | 'workspace' | 'catalog'
+  entityType: 'assistant' | 'assistant-instance' | 'assistant-builder' | 'team' | 'operation' | 'conversation' | 'workspace' | 'catalog'
   entityId: string
   revision: number
   kind: string
@@ -117,6 +124,7 @@ export class AgentTeamService extends Service {
   private cursor = 0
   private runtime?: TeamRuntime
   private assistantBuilderRuntime?: AssistantBuilderRuntime
+  private assistantRuntime?: AssistantRuntime
   private readonly workspace: WorkspaceService
 
   constructor(
@@ -154,6 +162,11 @@ export class AgentTeamService extends Service {
   attachAssistantBuilderRuntime(runtime: AssistantBuilderRuntime): void {
     if (this.assistantBuilderRuntime !== undefined) throw new Error('Assistant Builder runtime is already attached')
     this.assistantBuilderRuntime = runtime
+  }
+
+  attachAssistantRuntime(runtime: AssistantRuntime): void {
+    if (this.assistantRuntime !== undefined) throw new Error('Assistant runtime is already attached')
+    this.assistantRuntime = runtime
   }
 
   startWorkspaceTracking(): void {
@@ -409,6 +422,130 @@ export class AgentTeamService extends Service {
     await this.store.deleteAssistant(id)
     await this.activity('assistant.deleted', id, assistant.revision + 1, `Assistant ${assistant.name} deleted`)
     this.publish('assistant', id, assistant.revision + 1, 'assistant.deleted')
+  }
+
+  /**
+   * Instances are returned unfiltered — archived rows stay in `items` — so the
+   * Sidebar owns the presentation choice and an archive stays reversible
+   * without a second read. Pinned rows sort first, then most recent activity.
+   */
+  listAssistantInstances(): Page<AssistantInstance> {
+    const items = this.store.listAssistantInstances()
+      .sort((left, right) => Number(right.pinned) - Number(left.pinned)
+        || right.updatedAt.localeCompare(left.updatedAt)
+        || left.id.localeCompare(right.id))
+    return { items, total: items.length }
+  }
+
+  getAssistantInstance(id: string): AssistantInstance {
+    return requireAssistantInstance(this.store, id)
+  }
+
+  /** Persist a template snapshot for a workspace; no Session is created here. */
+  async createAssistantInstance(raw: CreateAssistantInstanceInput): Promise<AssistantInstance> {
+    const input = createAssistantInstanceInputSchema.parse(raw)
+    const assistant = requireAssistant(this.store, input.templateId)
+    const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(input.workspaceId))
+    if (workspace === undefined || await workspace.status() !== 'ok') {
+      throw new AgentTeamError('WORKSPACE_UNAVAILABLE', `Workspace '${input.workspaceId}' is unavailable`)
+    }
+    const now = new Date().toISOString()
+    const instance: AssistantInstance = {
+      schemaVersion: 1,
+      id: randomUUID(),
+      templateId: assistant.id,
+      assistantSnapshot: overrideAssistantSnapshot(snapshotAssistant(assistant), input.name, input.avatar),
+      workspaceId: String(workspace.id),
+      workspacePath: workspace.path,
+      status: 'idle',
+      pinned: input.pinned ?? false,
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+    }
+    await this.store.putAssistantInstance(instance)
+    this.publish('assistant-instance', instance.id, instance.revision, 'assistant.instance.created')
+    return instance
+  }
+
+  /**
+   * Rewrite the instance-local display name/avatar and pin flag on the stored
+   * snapshot. The referenced template is untouched, and an empty patch is a
+   * no-op rather than a revision bump.
+   */
+  async updateAssistantInstance(
+    id: string,
+    raw: UpdateAssistantInstanceInput,
+  ): Promise<AssistantInstance> {
+    const patch = updateAssistantInstanceInputSchema.parse(raw)
+    const current = requireAssistantInstance(this.store, id)
+    const snapshot = overrideAssistantSnapshot(current.assistantSnapshot, patch.name, patch.avatar)
+    const pinned = patch.pinned ?? current.pinned
+    const changed = snapshot.name !== current.assistantSnapshot.name
+      || snapshot.avatar !== current.assistantSnapshot.avatar
+      || pinned !== current.pinned
+    if (!changed) return current
+    const next = await this.store.updateAssistantInstance(id, value => ({
+      ...value,
+      assistantSnapshot: snapshot,
+      pinned,
+      revision: value.revision + 1,
+      updatedAt: new Date().toISOString(),
+    }))
+    this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.updated')
+    return next
+  }
+
+  /**
+   * Hide an instance from listings without deleting it or its main Session.
+   * Idempotent: archiving an archived instance returns the stored record.
+   */
+  async archiveAssistantInstance(id: string): Promise<AssistantInstance> {
+    const current = requireAssistantInstance(this.store, id)
+    if (current.status === 'archived') return current
+    const now = new Date().toISOString()
+    const next = await this.store.updateAssistantInstance(id, value => ({
+      ...value,
+      status: 'archived',
+      archivedAt: now,
+      revision: value.revision + 1,
+      updatedAt: now,
+    }))
+    this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.archived')
+    return next
+  }
+
+  /**
+   * Runtime-only hook: record the lazily created main Session. Re-binding the
+   * same Session is a no-op so ensure/open can call it on every click.
+   */
+  async bindAssistantMainSession(id: string, sessionId: string): Promise<AssistantInstance> {
+    const mainSessionId = sessionId.trim()
+    if (mainSessionId === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Main Session id cannot be empty')
+    }
+    const current = requireAssistantInstance(this.store, id)
+    if (current.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${id}' is archived`,
+      )
+    }
+    if (current.mainSessionId === mainSessionId && current.status === 'active') return current
+    const next = await this.store.updateAssistantInstance(id, value => ({
+      ...value,
+      mainSessionId,
+      status: 'active',
+      revision: value.revision + 1,
+      updatedAt: new Date().toISOString(),
+    }))
+    this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.bound')
+    return next
+  }
+
+  /** Materialize the instance's main Session through the attached runtime. */
+  async ensureAssistantInstance(id: string): Promise<AssistantEnsureResult> {
+    return this.requireAssistantRuntime().ensureInstance(id)
   }
 
   listAssistantBuilderConversations(): Promise<AssistantBuilderConversationListView> {
@@ -1223,6 +1360,11 @@ export class AgentTeamService extends Service {
     if (this.assistantBuilderRuntime === undefined) throw new Error('Assistant Builder runtime is not attached')
     return this.assistantBuilderRuntime
   }
+
+  private requireAssistantRuntime(): AssistantRuntime {
+    if (this.assistantRuntime === undefined) throw new Error('Assistant runtime is not attached')
+    return this.assistantRuntime
+  }
 }
 
 function requireAssistant(store: AgentTeamStore, id: string): AssistantTemplate {
@@ -1231,6 +1373,37 @@ function requireAssistant(store: AgentTeamStore, id: string): AssistantTemplate 
     throw new AgentTeamError('ASSISTANT_NOT_FOUND', `Unknown assistant '${id}'`)
   }
   return assistant
+}
+
+function requireAssistantInstance(store: AgentTeamStore, id: string): AssistantInstance {
+  const instance = store.getAssistantInstance(id)
+  if (instance === undefined) {
+    throw new AgentTeamError('ASSISTANT_INSTANCE_NOT_FOUND', `Unknown assistant instance '${id}'`)
+  }
+  return instance
+}
+
+/**
+ * Apply instance-local name/avatar overrides to a template snapshot. An absent
+ * name keeps the snapshot's name; an absent avatar keeps the snapshot's
+ * avatar, while an empty string clears it (matching template editing).
+ */
+function overrideAssistantSnapshot(
+  snapshot: AssistantSnapshot,
+  name: string | undefined,
+  avatar: string | undefined,
+): AssistantSnapshot {
+  const trimmedName = name?.trim()
+  const next: AssistantSnapshot = trimmedName === undefined || trimmedName === ''
+    ? { ...snapshot }
+    : { ...snapshot, name: trimmedName }
+  if (avatar === undefined) return next
+  const trimmedAvatar = avatar.trim()
+  if (trimmedAvatar === '') {
+    const { avatar: _current, ...rest } = next
+    return rest
+  }
+  return { ...next, avatar: trimmedAvatar }
 }
 
 function requireTeam(store: AgentTeamStore, id: string): TeamAggregate {

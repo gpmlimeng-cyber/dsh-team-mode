@@ -19,6 +19,7 @@ import {
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
+import { AssistantSidebarSection } from './assistant-sidebar.js'
 import {
   openCreateTeamDialog,
   openManageTeamDialog,
@@ -72,7 +73,7 @@ function waitingCount(team: TeamView): number {
   return Object.values(team.members).filter(member => member.lastRuntimeState === 'waiting_approval').length
 }
 
-/** The collapsible “团队” section above the native Workspace/Session browser. */
+/** The collapsible “群聊” section above the native Workspace/Session browser. */
 export function SidebarTeamSection({
   openSession,
   openTeamPage,
@@ -143,7 +144,7 @@ export function SidebarTeamSection({
   }
 
   return (
-    <section className={css.sidebarTeamSection} aria-label="团队" data-dsh-team-mode-section>
+    <section className={css.sidebarTeamSection} aria-label="群聊" data-dsh-team-mode-section>
       <div className={css.sidebarTeamHeader} data-dsh-team-mode-header>
         {searchExpanded ? (
           <div className={css.sidebarTeamSearch}>
@@ -360,10 +361,11 @@ export function SidebarTeamSection({
 const SIDEBAR_HOST_ID = 'dsh-team-mode-sidebar-host'
 
 /**
- * Additive mount for the “团队” section above the shipped Workspace browser.
- * The `sidebar.workspaces` slot is single and its occupant owns a private
- * store/hook contract, so we do not replace it: we insert one stable host node
- * before its DOM anchor and portal the section into it.
+ * Additive mount for the “群聊” and “单聊” sections above the shipped Workspace
+ * browser. The `sidebar.workspaces` slot is single and its occupant owns a
+ * private store/hook contract, so we do not replace it: we insert one stable
+ * host node before its DOM anchor and portal both sections into it, in order
+ * 群聊 → 单聊 → native Workspaces.
  */
 export function SidebarPortal({
   openSession,
@@ -443,5 +445,11 @@ export function SidebarPortal({
     }
   }, [])
 
-  return host === undefined ? null : createPortal(<SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />, host)
+  return host === undefined ? null : createPortal(
+    <>
+      <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
+      <AssistantSidebarSection openSession={openSession} />
+    </>,
+    host,
+  )
 }
