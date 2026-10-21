@@ -1,4 +1,5 @@
 import type { FormEvent } from 'react'
+import { BUILTIN_ASSISTANT_AVATARS } from '../assistant-avatars.js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Button,
@@ -1105,6 +1106,22 @@ function AssistantForm({
                 移除头像
               </button>
             )}
+          </div>
+          <span className={css.avatarBuiltinLabel}>内置头像</span>
+          <div className={css.avatarBuiltinGrid}>
+            {BUILTIN_ASSISTANT_AVATARS.map(item => (
+              <button
+                key={item.id}
+                type="button"
+                className={css.avatarBuiltinItem}
+                aria-pressed={avatar === item.data}
+                aria-label={`使用${item.label}头像`}
+                title={item.label}
+                onClick={() => { setAvatar(item.data) }}
+              >
+                <img src={item.data} alt="" />
+              </button>
+            ))}
           </div>
           <span className={css.hint}>PNG/JPEG/WebP，≤256KB；存在头像时优先于 emoji 显示。</span>
         </Field>

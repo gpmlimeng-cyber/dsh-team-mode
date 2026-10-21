@@ -345,3 +345,16 @@ DSH 全局设置了 `corner-shape: superellipse(1.5)`，所以即使 `border-rad
 ```
 
 标题栏 24px、hero 44px 均为正圆；截图放大验证为圆形而非 squircle。团队会话顶部的成员切换头像也同步加上。
+
+---
+
+## 二十八、内置 AionUI 助手头像
+
+助手编辑器新增「内置头像」选择：
+
+- 从 AionUI 的 assistant 资源中内置 6 张头像：学术论文、AionUI 助手、数据看板、Excel、PPT、Word。
+- 以 data URL 打包（约 49KB），无需额外静态资源路由；选中后直接写入 `avatar`，与上传头像走同一字段。
+- 图标为 40px 正圆（同样设置 `corner-shape: superellipse(1)`），选中态 `aria-pressed=true` + 2px 描边；点击后头像预览立即出现。
+- 仍保留原有上传/移除头像逻辑。
+
+截图：`docs/assets/ui-review/assistant-builtin-avatars.png`（待补）。

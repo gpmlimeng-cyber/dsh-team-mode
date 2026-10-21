@@ -5764,3 +5764,55 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   border-radius: 50%;
   object-fit: cover;
 }
+
+
+.avatarBuiltinLabel {
+  display: block;
+  margin-top: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.avatarBuiltinGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.avatarBuiltinItem {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  overflow: hidden;
+  corner-shape: superellipse(1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-layer-2);
+  cursor: pointer;
+}
+
+.avatarBuiltinItem img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.avatarBuiltinItem:hover {
+  border-color: var(--dsw-alias-border-l4);
+}
+
+.avatarBuiltinItem[aria-pressed='true'] {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 2px;
+}
+
+.avatarBuiltinItem:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
