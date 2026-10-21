@@ -1328,33 +1328,35 @@ function AssistantForm({
         className={css.avatarPickerDialog ?? ''}
         contentClassName={css.avatarPickerDialogContent ?? ''}
       >
-        <div className={css.avatarPickerToolbar}>
-          <label className={css.avatarUpload}>
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp"
-              className={css.avatarFileInput}
-              onChange={event => {
-                const file = event.target.files?.[0]
-                if (file !== undefined) readAvatar(file)
-              }}
-            />
-            本地上传
-          </label>
-          <button type="button" className={css.avatarGenerate} disabled={pickingAvatar} onClick={randomizeAvatar}>
-            {pickingAvatar ? '生成中…' : '随机一个'}
-          </button>
-          {error !== undefined && <span className={css.avatarPickerError}>{error}</span>}
+        <div className={css.avatarPickerHeader}>
+          <div className={css.avatarPickerPreview}>
+            <span className={css.avatarPickerPreviewBox}>
+              {draftAvatar !== '' ? <img src={draftAvatar} alt="选中头像预览" /> : <span className={css.avatarPickerPreviewEmpty}>未选择</span>}
+            </span>
+            <span className={css.avatarPickerPreviewText}>
+              <strong>预览</strong>
+              <small>点击下方头像或「随机一个」，确认后使用</small>
+            </span>
+          </div>
+          <div className={css.avatarPickerActions}>
+            <label className={css.avatarUpload}>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className={css.avatarFileInput}
+                onChange={event => {
+                  const file = event.target.files?.[0]
+                  if (file !== undefined) readAvatar(file)
+                }}
+              />
+              本地上传
+            </label>
+            <button type="button" className={css.avatarGenerate} disabled={pickingAvatar} onClick={randomizeAvatar}>
+              {pickingAvatar ? '生成中…' : '随机一个'}
+            </button>
+          </div>
         </div>
-        <div className={css.avatarPickerPreview}>
-          <span className={css.avatarPickerPreviewBox}>
-            {draftAvatar !== '' ? <img src={draftAvatar} alt="选中头像预览" /> : <span className={css.avatarPickerPreviewEmpty}>未选择</span>}
-          </span>
-          <span className={css.avatarPickerPreviewText}>
-            <strong>预览</strong>
-            <small>点击下方头像或「随机一个」，确认后使用</small>
-          </span>
-        </div>
+        {error !== undefined && <span className={css.avatarPickerError}>{error}</span>}
         <div ref={avatarScrollRef} className={css.avatarPickerScroll}>
           <div className={css.avatarStyleRow}>
             <div className={css.avatarStyleMeta}>

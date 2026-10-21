@@ -451,3 +451,14 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 实测：点 Preview 后预览框出现 data SVG（150×150），弹窗保持打开；确认后编辑器头像更新、弹窗关闭。
 
 截图更新：`docs/assets/ui-review/assistant-avatar-picker.png`。
+
+---
+
+## 三十六、预览与操作按钮左右分栏
+
+- 弹窗顶部一行：左侧「预览框 + 说明」，右侧「本地上传 / 随机一个」。
+- 操作按钮用 `margin-left: auto` 靠右；窄宽度下允许换行，按钮不会挤压预览文字。
+- 底部仍为「提示 + 使用这个头像」。
+- 实测：预览 64px 左侧，两个按钮并排右侧，间距 8px。
+
+截图更新：`docs/assets/ui-review/assistant-avatar-picker.png`。

@@ -5875,11 +5875,13 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   min-height: 0;
 }
 
-.avatarPickerToolbar {
+.avatarPickerHeader {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 16px;
   flex-wrap: wrap;
+  padding: 2px 0 6px;
 }
 
 .avatarPickerError {
@@ -6010,7 +6012,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 2px 0 6px;
+  min-width: 0;
 }
 
 .avatarPickerPreviewBox {
@@ -6058,6 +6060,8 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 .avatarPickerActions {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
 }
