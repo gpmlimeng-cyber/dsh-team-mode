@@ -1,6 +1,7 @@
 import type { Domain, KvTable } from '@deepseek-ai/dsh-storage-domain'
 import type {
   AssistantInstance,
+  AssistantMemory,
   AssistantSession,
   AssistantTemplate,
   Operation,
@@ -25,6 +26,13 @@ export interface AgentTeamStore {
     update: (current: AssistantInstance) => AssistantInstance,
   ): Promise<AssistantInstance>
   deleteAssistantInstance(id: string): Promise<boolean>
+
+  getAssistantMemory(assistantId: string): AssistantMemory | undefined
+  putAssistantMemory(value: AssistantMemory): Promise<void>
+  updateAssistantMemory(
+    assistantId: string,
+    update: (current: AssistantMemory) => AssistantMemory,
+  ): Promise<AssistantMemory>
 
   getAssistantSession(id: string): AssistantSession | undefined
   listAssistantSessions(): AssistantSession[]
@@ -59,6 +67,7 @@ export class DomainAgentTeamStore implements AgentTeamStore {
   private readonly assistants: KvTable<string, AssistantTemplate>
   private readonly assistantInstances: KvTable<string, AssistantInstance>
   private readonly assistantSessions: KvTable<string, AssistantSession>
+  private readonly assistantMemory: KvTable<string, AssistantMemory>
   private readonly teams: KvTable<string, TeamAggregate>
   private readonly messages: KvTable<string, TeamMessage>
   private readonly activities: KvTable<string, TeamActivity>
@@ -68,6 +77,7 @@ export class DomainAgentTeamStore implements AgentTeamStore {
     this.assistants = domain.table('assistants')
     this.assistantInstances = domain.table('assistant_instances')
     this.assistantSessions = domain.table('assistant_sessions')
+    this.assistantMemory = domain.table('assistant_memory')
     this.teams = domain.table('teams')
     this.messages = domain.table('messages')
     this.activities = domain.table('activities')
@@ -120,6 +130,21 @@ export class DomainAgentTeamStore implements AgentTeamStore {
 
   deleteAssistantInstance(id: string): Promise<boolean> {
     return this.assistantInstances.delete(id)
+  }
+
+  getAssistantMemory(assistantId: string): AssistantMemory | undefined {
+    return this.assistantMemory.get(assistantId)
+  }
+
+  putAssistantMemory(value: AssistantMemory): Promise<void> {
+    return this.assistantMemory.put(value.assistantId, value)
+  }
+
+  updateAssistantMemory(
+    assistantId: string,
+    update: (current: AssistantMemory) => AssistantMemory,
+  ): Promise<AssistantMemory> {
+    return this.assistantMemory.update(assistantId, update)
   }
 
   getAssistantSession(id: string): AssistantSession | undefined {

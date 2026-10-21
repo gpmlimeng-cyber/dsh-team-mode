@@ -16,11 +16,16 @@ import type { Config } from '../config.js'
 import { AgentTeamError } from '../domain/errors.js'
 import type {
   AssistantInstance,
+  AssistantMemory,
   AssistantSession,
   AssistantSnapshot,
 } from '../domain/types.js'
 import type { AgentTeamService } from '../service/dsh-team-mode-service.js'
-import { registerAssistantTaskTools, type AssistantTaskSummaryMessage } from './assistant-tools.js'
+import {
+  registerAssistantMemoryTools,
+  registerAssistantTaskTools,
+  type AssistantTaskSummaryMessage,
+} from './assistant-tools.js'
 import { projectConversation } from './conversation-projector.js'
 import { readStoredSessionEvents } from './session-log.js'
 
@@ -76,6 +81,7 @@ const WAIT_POLL_MS = 250
 const SUMMARY_MESSAGE_LIMIT = 1_200
 const SUMMARY_TEXT_LIMIT = 4_000
 const ERROR_TEXT_LIMIT = 2_000
+const MEMORY_PROMPT_LIMIT = 4_000
 
 /**
  * Owns every Agent Session one Assistant instance needs: the visible main
@@ -103,7 +109,17 @@ export class AssistantRuntime {
     this.disposeStatusListener = ctx.on('agent/status', ({ agent, status }) => {
       const taskId = this.workerBySession.get(String(agent.id))
       if (taskId === undefined || this.closing) return
-      if (status === 'running') {
+      // DSH 0.2.1 declares AgentStatus as only 'idle' | 'running'. Compare the
+      // string form so a newer harness that adds 'waiting_approval' maps to the
+      // truthful needs_input state without a type-only break here.
+      const observed = String(status)
+      if (observed === 'waiting_approval') {
+        void this.markTaskNeedsInput(taskId).catch(error => {
+          this.ctx.logger.warn('dsh-team-mode: failed to record worker waiting status', error)
+        })
+        return
+      }
+      if (observed === 'running') {
         void this.markTaskRunning(taskId).catch(error => {
           this.ctx.logger.warn('dsh-team-mode: failed to record worker running status', error)
         })
@@ -441,12 +457,28 @@ export class AssistantRuntime {
     if (this.closing) return
     const task = this.service.getAssistantSession(taskId)
     if (task.status === 'running' || isTerminalTaskStatus(task.status)) return
+    // This also resumes a needs_input task after an approval is granted.
     await this.service.updateAssistantSession(taskId, { status: 'running' })
+  }
+
+  /**
+   * A worker waiting for an approval is genuinely blocked on the user. Mark it
+   * needs_input so lists, the prompt digest, and capacity checks stay truthful;
+   * this runtime still renders no custom approval UI.
+   */
+  private async markTaskNeedsInput(taskId: string): Promise<void> {
+    if (this.closing) return
+    const task = this.service.getAssistantSession(taskId)
+    if (task.status === 'needs_input' || isTerminalTaskStatus(task.status)) return
+    await this.service.updateAssistantSession(taskId, { status: 'needs_input' })
   }
 
   private async markTaskIdle(taskId: string): Promise<void> {
     if (this.closing) return
     const task = this.service.getAssistantSession(taskId)
+    // An idle worker can be waiting for an approval that the main Session has
+    // not resolved yet. Do not turn that into a false completion.
+    if (task.status === 'needs_input') return
     if (task.status !== 'running' && task.status !== 'queued') return
     await this.service.updateAssistantSession(taskId, { status: 'completed' })
   }
@@ -545,6 +577,11 @@ export class AssistantRuntime {
       await this.ctx.agentPresets.mount(agentCtx, snapshot.agentPresetId)
       installModelSelection(agentCtx, modelSelection)
       agentCtx.systemPrompt.section({
+        name: `dsh-team-mode:assistant-worker-memory:${taskId}`,
+        order: 9,
+        text: () => memoryPrompt(this.service.getAssistantMemory(assistantId), 'worker'),
+      })
+      agentCtx.systemPrompt.section({
         name: `dsh-team-mode:assistant-worker:${taskId}`,
         order: 10,
         text: () => workerPrompt(
@@ -553,7 +590,8 @@ export class AssistantRuntime {
         ),
       })
       this.ctx.permissionPresets.set(agent.session, snapshot.permissionPresetId)
-      // Deliberately no registerAssistantTaskTools: workers cannot delegate.
+      // Deliberately no registerAssistantTaskTools or registerAssistantMemoryTools:
+      // workers cannot delegate and cannot mutate the shared memory note.
     }
   }
 
@@ -584,6 +622,12 @@ export class AssistantRuntime {
         lines.push(`- [${task.status}] ${truncate(task.title, DIGEST_TITLE_LIMIT)} (id: ${task.id})`)
       }
     }
+    lines.push(
+      'Routing fallback: answer simple one-step requests directly in this main Session. '
+      + 'Use a worker only for multi-step, background, or parallel work. If a request is '
+      + 'ambiguous or missing a concrete deliverable, ask the user a clarifying question '
+      + 'instead of creating a worker.',
+    )
     lines.push(
       'Use assistant_task_list to inspect tasks, assistant_task_create to start a new deliverable, '
       + 'assistant_task_send to continue an existing task, and assistant_task_wait or '
@@ -658,6 +702,11 @@ export class AssistantRuntime {
       await this.ctx.agentPresets.mount(agentCtx, snapshot.agentPresetId)
       installModelSelection(agentCtx, modelSelection)
       agentCtx.systemPrompt.section({
+        name: `dsh-team-mode:assistant-memory:${instance.id}`,
+        order: 9,
+        text: () => memoryPrompt(this.service.getAssistantMemory(id), 'main'),
+      })
+      agentCtx.systemPrompt.section({
         name: `dsh-team-mode:assistant-identity:${instance.id}`,
         order: 10,
         text: () => assistantPrompt(this.service.getAssistantInstance(id).assistantSnapshot),
@@ -676,6 +725,11 @@ export class AssistantRuntime {
         waitTask: (taskId, timeoutMs) => this.waitTask(id, taskId, timeoutMs),
         summaryTask: taskId => this.summaryTask(id, taskId),
         cancelTask: taskId => this.cancelTask(id, taskId),
+      })
+      registerAssistantMemoryTools(agentCtx, {
+        assertIdentity: agent => { this.assertMainToolIdentity(id, agent) },
+        readMemory: () => this.service.getAssistantMemory(id),
+        writeMemory: input => this.service.writeAssistantMemory(id, input.content, input.mode),
       })
     }
     const agentOptions = agentOptionsFor(snapshot)
@@ -758,6 +812,20 @@ function assistantPrompt(snapshot: AssistantSnapshot): string {
 }
 
 /**
+ * Durable memory is injected before identity so every turn starts from the same
+ * shared note. The stored document may hold 16k characters, but only a 4k
+ * excerpt enters the prompt to keep the context bounded.
+ */
+function memoryPrompt(memory: AssistantMemory | undefined, role: 'main' | 'worker'): string {
+  const intro = role === 'main'
+    ? 'Durable assistant memory: a short persistent note shared by every Session of this assistant. Use assistant_memory_read and assistant_memory_write to inspect or update it. Keep it to lasting preferences and facts, not transcripts.'
+    : 'Durable assistant memory: a short persistent note shared by every Session of this assistant and maintained by its main Session. Treat it as background context; this worker cannot change it.'
+  const content = memory?.content.trim() ?? ''
+  if (content === '') return `${intro}\nNo memory has been saved yet.`
+  return `${intro}\n${boundedText(content, MEMORY_PROMPT_LIMIT)}`
+}
+
+/**
  * A worker is the same assistant but with a deliberately narrower role: one
  * hidden task, no delegation tools, and no direct contact with the user.
  */
@@ -819,6 +887,12 @@ function boundedLimit(value: number | undefined, fallback: number, max: number):
 
 function truncate(value: string, limit: number): string {
   return value.length <= limit ? value : `${value.slice(0, limit)}…`
+}
+
+/** Like {@link truncate}, but the returned string never exceeds `limit`. */
+function boundedText(value: string, limit: number): string {
+  if (value.length <= limit) return value
+  return `${value.slice(0, Math.max(limit - 1, 0))}…`
 }
 
 function delay(ms: number): Promise<void> {

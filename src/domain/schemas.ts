@@ -105,6 +105,21 @@ export const assistantSessionSchema = z.object({
   archivedAt: isoDate.optional(),
 }).strict()
 
+/**
+ * Durable memory for one Assistant instance, keyed by `assistantId`. The
+ * content is deliberately a single bounded string in Phase 2; topic files and
+ * daily logs remain future work.
+ */
+export const assistantMemorySchema = z.object({
+  schemaVersion: z.literal(1),
+  assistantId: nonEmpty,
+  content: z.string(),
+  revision: z.int().positive(),
+  updatedAt: isoDate,
+}).strict()
+
+export const assistantMemoryModeSchema = z.enum(['replace', 'append'])
+
 export const memberRuntimeStateSchema = z.enum([
   'offline',
   'starting',

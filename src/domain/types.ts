@@ -1,6 +1,8 @@
 import type { z } from 'zod'
 import type {
   assistantInstanceSchema,
+  assistantMemoryModeSchema,
+  assistantMemorySchema,
   assistantSessionSchema,
   assistantSnapshotSchema,
   addTeamMemberInputSchema,
@@ -30,6 +32,8 @@ export type AssistantTemplate = z.infer<typeof assistantTemplateSchema>
 export type AssistantInstance = z.infer<typeof assistantInstanceSchema>
 export type CreateAssistantInstanceInput = z.infer<typeof createAssistantInstanceInputSchema>
 export type UpdateAssistantInstanceInput = z.infer<typeof updateAssistantInstanceInputSchema>
+export type AssistantMemory = z.infer<typeof assistantMemorySchema>
+export type AssistantMemoryMode = z.infer<typeof assistantMemoryModeSchema>
 export type AssistantSession = z.infer<typeof assistantSessionSchema>
 export type CreateAssistantSessionInput = z.infer<typeof createAssistantSessionInputSchema>
 export type UpdateAssistantSessionInput = z.infer<typeof updateAssistantSessionInputSchema>

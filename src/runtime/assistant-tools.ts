@@ -1,7 +1,7 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { AssistantSession } from '../domain/types.js'
+import type { AssistantMemory, AssistantSession } from '../domain/types.js'
 
 export interface AssistantTaskSummaryMessage {
   kind: 'user' | 'assistant'
@@ -28,6 +28,16 @@ export interface AssistantTaskToolHandlers {
   waitTask: (taskId: string, timeoutMs?: number) => Promise<AssistantTaskWaitResult>
   summaryTask: (taskId: string) => Promise<AssistantTaskSummaryResult>
   cancelTask: (taskId: string) => Promise<AssistantSession>
+}
+
+export interface AssistantMemoryToolHandlers {
+  /** Reject a caller that is not this assistant instance's main Session. */
+  assertIdentity: (agent: Agent | undefined) => void
+  readMemory: () => AssistantMemory | undefined
+  writeMemory: (input: {
+    content: string
+    mode: 'replace' | 'append'
+  }) => Promise<AssistantMemory>
 }
 
 type ToolResult = Record<string, unknown>
@@ -175,6 +185,73 @@ export function registerAssistantTaskTools(
       handlers.assertIdentity(exec.agent)
       const task = await handlers.cancelTask(args.task_id)
       return { task: taskView(task) } as never
+    },
+  }))
+}
+
+/**
+ * Durable-memory tools are registered only on the main Session, like the task
+ * tools. Workers receive the memory in their system prompt but cannot mutate it.
+ * Write output intentionally omits the stored text: the write already happened,
+ * and re-emitting up to 16k characters would waste main-conversation context.
+ */
+export function registerAssistantMemoryTools(
+  agentCtx: Context,
+  handlers: AssistantMemoryToolHandlers,
+): void {
+  const register = (tool: Parameters<typeof agentCtx.tools.register>[0]): void => {
+    try {
+      agentCtx.tools.register(tool)
+    } catch (error) {
+      if (error instanceof Error && /already registered/i.test(error.message)) return
+      throw error
+    }
+  }
+
+  register(defineTool({
+    name: 'assistant_memory_read',
+    description: 'Read this assistant’s durable memory: one bounded note shared by its main and worker Sessions. Returns null when no memory has been written yet.',
+    parameters: {},
+    output: textOutput,
+    execute: async (_args, exec) => {
+      handlers.assertIdentity(exec.agent)
+      const memory = handlers.readMemory()
+      return {
+        memory: memory === undefined
+          ? null
+          : {
+            assistant_id: memory.assistantId,
+            content: memory.content,
+            revision: memory.revision,
+            updated_at: memory.updatedAt,
+          },
+      } as never
+    },
+  }))
+
+  register(defineTool({
+    name: 'assistant_memory_write',
+    description: 'Replace or append this assistant’s durable memory, a bounded note shared with every worker Session. Use it for lasting user preferences and facts, not transcripts. Content over 16000 characters is rejected, not truncated.',
+    parameters: {
+      content: { type: 'string', required: true, description: 'Memory text (combined stored content must stay within 16000 characters).' },
+      mode: {
+        type: 'string',
+        enum: ['replace', 'append'],
+        description: 'replace overwrites the note (default); append adds a newline and the new text.',
+      },
+    },
+    output: textOutput,
+    execute: async (args, exec) => {
+      handlers.assertIdentity(exec.agent)
+      const mode = args.mode === 'append' ? 'append' : 'replace'
+      const memory = await handlers.writeMemory({ content: args.content, mode })
+      return {
+        assistant_id: memory.assistantId,
+        mode,
+        revision: memory.revision,
+        content_length: memory.content.length,
+        updated_at: memory.updatedAt,
+      } as never
     },
   }))
 }

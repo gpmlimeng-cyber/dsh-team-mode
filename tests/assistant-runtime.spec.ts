@@ -14,6 +14,7 @@ import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
 import type {
   AssistantInstance,
+  AssistantMemory,
   AssistantSession,
   CreateAssistantSessionInput,
   UpdateAssistantSessionInput,
@@ -36,6 +37,11 @@ const TASK_TOOL_NAMES = [
   'assistant_task_wait',
   'assistant_task_summary',
   'assistant_task_cancel',
+]
+
+const MEMORY_TOOL_NAMES = [
+  'assistant_memory_read',
+  'assistant_memory_write',
 ]
 
 const config: Config = {
@@ -248,6 +254,27 @@ function createHarness(
     return next
   })
 
+  const memories = new Map<string, AssistantMemory>()
+  const getAssistantMemory = vi.fn((assistantId: string) => memories.get(assistantId))
+  const writeAssistantMemory = vi.fn(async (
+    assistantId: string,
+    content: string,
+    mode: 'replace' | 'append',
+  ) => {
+    const current = memories.get(assistantId)
+    const next: AssistantMemory = {
+      schemaVersion: 1,
+      assistantId,
+      content: mode === 'append' && current !== undefined && current.content !== ''
+        ? `${current.content}\n${content}`
+        : content,
+      revision: (current?.revision ?? 0) + 1,
+      updatedAt: NOW,
+    }
+    memories.set(assistantId, next)
+    return next
+  })
+
   const service = {
     getAssistantInstance,
     bindAssistantMainSession,
@@ -255,6 +282,8 @@ function createHarness(
     getAssistantSession,
     listAssistantSessions,
     updateAssistantSession,
+    getAssistantMemory,
+    writeAssistantMemory,
   } as unknown as AgentTeamService
 
   return {
@@ -270,6 +299,8 @@ function createHarness(
     getAssistantSession,
     listAssistantSessions,
     updateAssistantSession,
+    getAssistantMemory,
+    writeAssistantMemory,
     createMock,
     resumeMock,
     getMock,
@@ -284,6 +315,7 @@ function createHarness(
     createHandle,
     emit,
     tasks,
+    memories,
     current: () => current,
     setLive(sessionId: string, agent?: Agent) {
       live.set(sessionId, agent ?? { id: SessionId(sessionId) } as unknown as Agent)
@@ -344,14 +376,17 @@ describe('AssistantRuntime', () => {
     expect(selection?.current ?? {}).toMatchObject({ provider: 'openai', model: 'gpt-5' })
     expect(String(selection?.current?.reasoningEffort)).toBe('high')
     expect(h.permissionSet).toHaveBeenCalledWith(record?.agent.session, 'workspace-write')
-    const prompt = record?.section.mock.calls[0]?.[0] as {
-      name: string
-      order: number
-      text: () => string
-    }
-    expect(prompt.name).toContain('assistant-identity')
-    expect(prompt.order).toBe(10)
-    expect(prompt.text()).toBe(
+    const sections = record?.section.mock.calls.map(
+      call => call[0] as { name: string; order: number; text: () => string },
+    ) ?? []
+    const memory = sections.find(section => section.name.includes('assistant-memory'))
+    expect(memory?.order).toBe(9)
+    expect(memory?.text()).toContain('Durable assistant memory')
+    expect(memory?.text()).toContain('No memory has been saved yet.')
+
+    const prompt = sections.find(section => section.name.includes('assistant-identity'))
+    expect(prompt?.order).toBe(10)
+    expect(prompt?.text()).toBe(
       'You are Researcher, a persistent assistant for one workspace.\n\nCite sources.',
     )
 
@@ -362,12 +397,13 @@ describe('AssistantRuntime', () => {
     expect(h.bindAssistantMainSession).toHaveBeenCalledTimes(1)
   })
 
-  it('registers exactly the task tools on the main Session', async () => {
+  it('registers exactly the task and memory tools on the main Session', async () => {
     const h = createHarness()
 
     await h.runtime.ensureInstance('instance-1')
 
-    expect(toolsRegistered(h.handles[0]).sort()).toEqual([...TASK_TOOL_NAMES].sort())
+    expect(toolsRegistered(h.handles[0]).sort())
+      .toEqual([...TASK_TOOL_NAMES, ...MEMORY_TOOL_NAMES].sort())
   })
 
   it('creates a hidden worker, persists the task, and delivers the brief', async () => {
@@ -411,11 +447,103 @@ describe('AssistantRuntime', () => {
     expect(textOf(worker?.followup.mock.calls[0]?.[0])).toBe(
       'Compare the three vendors and return a table.',
     )
-    const prompt = worker?.section.mock.calls[0]?.[0] as { name: string; text: () => string }
-    expect(prompt.name).toContain('assistant-worker')
-    expect(prompt.text()).toContain('hidden background worker')
-    expect(prompt.text()).toContain('Cite sources.')
+    const sections = worker?.section.mock.calls.map(
+      call => call[0] as { name: string; order: number; text: () => string },
+    ) ?? []
+    const workerMemory = sections.find(section => section.name.includes('assistant-worker-memory'))
+    expect(workerMemory?.order).toBe(9)
+    expect(workerMemory?.text()).toContain('Durable assistant memory')
+    expect(workerMemory?.text()).toContain('this worker cannot change it')
+
+    const prompt = sections.find(section => section.name.includes('assistant-worker:'))
+    expect(prompt?.name).toContain('assistant-worker')
+    expect(prompt?.text()).toContain('hidden background worker')
+    expect(prompt?.text()).toContain('Cite sources.')
     expect(toolsRegistered(worker)).toEqual([])
+  })
+
+  it('injects bounded durable memory before identity and into workers', async () => {
+    const h = createHarness()
+    h.memories.set('instance-1', {
+      schemaVersion: 1,
+      assistantId: 'instance-1',
+      content: `${'A'.repeat(5_000)}TAIL-MARKER`,
+      revision: 4,
+      updatedAt: NOW,
+    })
+
+    await h.runtime.createTask('instance-1', { title: 'Use memory', brief: 'Start.' })
+
+    const mainSections = h.handles[0]?.section.mock.calls.map(
+      call => call[0] as { name: string; order: number; text: () => string },
+    ) ?? []
+    const mainMemory = mainSections.find(section => section.name.includes('assistant-memory'))
+    expect(mainMemory?.order).toBe(9)
+    expect(mainMemory?.text()).toContain('Durable assistant memory')
+    expect(mainMemory?.text()).toContain('assistant_memory_read')
+    expect(mainMemory?.text()).not.toContain('TAIL-MARKER')
+    expect(mainMemory!.text().length).toBeLessThan(4_400)
+
+    const workerSections = h.handles[1]?.section.mock.calls.map(
+      call => call[0] as { name: string; order: number; text: () => string },
+    ) ?? []
+    const workerMemory = workerSections.find(
+      section => section.name.includes('assistant-worker-memory'),
+    )
+    expect(workerMemory?.order).toBe(9)
+    expect(workerMemory?.text()).toContain('Durable assistant memory')
+    expect(workerMemory?.text()).toContain('this worker cannot change it')
+    expect(workerMemory?.text()).not.toContain('TAIL-MARKER')
+  })
+
+  it('registers memory tools on the main Session and rejects other Sessions', async () => {
+    const h = createHarness()
+    await h.runtime.ensureInstance('instance-1')
+    const main = h.handles[0]
+    const mainSessionId = h.current().mainSessionId
+    expect(mainSessionId).toBeDefined()
+    const mainAgent = { id: SessionId(mainSessionId!) } as unknown as Agent
+    const otherAgent = { id: SessionId('session-other') } as unknown as Agent
+    const findTool = (name: string) => main?.toolsRegister.mock.calls.find(
+      call => (call[0] as { name: string }).name === name,
+    )?.[0] as unknown as {
+      execute: (args: Record<string, unknown>, exec: { agent: Agent }) => Promise<Record<string, unknown>>
+    }
+
+    const read = findTool('assistant_memory_read')
+    const write = findTool('assistant_memory_write')
+    expect(read).toBeDefined()
+    expect(write).toBeDefined()
+
+    await expect(read.execute({}, { agent: otherAgent }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(write.execute({ content: 'x', mode: 'replace' }, { agent: otherAgent }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    const written = await write.execute(
+      { content: 'Prefers tables.', mode: 'append' },
+      { agent: mainAgent },
+    )
+    expect(h.writeAssistantMemory).toHaveBeenCalledWith(
+      'instance-1',
+      'Prefers tables.',
+      'append',
+    )
+    expect(written).toMatchObject({
+      assistant_id: 'instance-1',
+      mode: 'append',
+      revision: 1,
+      content_length: 15,
+    })
+
+    const readResult = await read.execute({}, { agent: mainAgent })
+    expect(readResult).toMatchObject({
+      memory: {
+        assistant_id: 'instance-1',
+        content: 'Prefers tables.',
+        revision: 1,
+      },
+    })
   })
 
   it('sends follow-ups, tracks running/idle, and completes the task', async () => {
@@ -462,6 +590,62 @@ describe('AssistantRuntime', () => {
     h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
     await settle()
     expect(h.getAssistantSession(task.id).status).toBe('failed')
+  })
+
+  it('maps waiting_approval to needs_input, resumes on running, and never auto-completes it', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Approval task', brief: 'Start.' })
+    const worker = h.handles[1]
+    expect(worker).toBeDefined()
+
+    h.emit('agent/status', { agent: worker?.agent, status: 'waiting_approval' })
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('needs_input')
+
+    h.emit('agent/status', { agent: worker?.agent, status: 'running' })
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('running')
+
+    h.emit('agent/status', { agent: worker?.agent, status: 'waiting_approval' })
+    await settle()
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('needs_input')
+  })
+
+  it('keeps needs_input visible in task lists and the prompt digest', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Blocked task', brief: 'Start.' })
+    const worker = h.handles[1]
+    h.emit('agent/status', { agent: worker?.agent, status: 'waiting_approval' })
+    await settle()
+
+    expect(h.runtime.listTasks('instance-1').map(item => item.status)).toEqual(['needs_input'])
+
+    const sections = h.handles[0]?.section.mock.calls.map(
+      call => call[0] as { name: string; text: () => string },
+    ) ?? []
+    const digest = sections.find(section => section.name.includes('assistant-tasks'))
+    expect(digest?.text()).toContain('[needs_input]')
+    expect(digest?.text()).toContain(task.id)
+  })
+
+  it('does not overwrite terminal tasks on waiting_approval or idle', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Done task', brief: 'Start.' })
+    const worker = h.handles[1]
+    await h.updateAssistantSession(task.id, { status: 'completed' })
+
+    h.emit('agent/status', { agent: worker?.agent, status: 'waiting_approval' })
+    h.emit('agent/status', { agent: worker?.agent, status: 'running' })
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('completed')
+
+    await h.updateAssistantSession(task.id, { status: 'cancelled' })
+    h.emit('agent/status', { agent: worker?.agent, status: 'waiting_approval' })
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('cancelled')
   })
 
   it('times out a wait instead of blocking forever', async () => {
@@ -659,9 +843,12 @@ describe('AssistantRuntime', () => {
     expect(textOf(resumed?.followup.mock.calls[0]?.[0])).toBe('Continue with renewals.')
     expect(h.mounted).toHaveBeenCalledWith(resumed?.agentCtx, 'default')
     expect(h.permissionSet).toHaveBeenCalledWith(resumed?.agent.session, 'workspace-write')
-    const prompt = resumed?.section.mock.calls[0]?.[0] as { name: string; text: () => string }
-    expect(prompt.name).toContain('assistant-worker')
-    expect(prompt.text()).toContain('Research pricing')
+    const sections = resumed?.section.mock.calls.map(
+      call => call[0] as { name: string; text: () => string },
+    ) ?? []
+    const prompt = sections.find(section => section.name.includes('assistant-worker:'))
+    expect(prompt?.name).toContain('assistant-worker')
+    expect(prompt?.text()).toContain('Research pricing')
   })
 
   it('uses a live unowned worker without resuming or disposing it', async () => {
@@ -746,6 +933,9 @@ describe('AssistantRuntime', () => {
     expect(text).toContain('assistant_task_wait')
     expect(text).toContain('assistant_task_summary')
     expect(text).toContain('continue')
+    expect(text).toContain('answer simple one-step requests directly')
+    expect(text).toContain('ambiguous')
+    expect(text).toContain('ask the user')
     expect(text).not.toContain('SECRET WORKER TRANSCRIPT')
   })
 

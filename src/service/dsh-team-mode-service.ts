@@ -8,6 +8,7 @@ import { isMcpServerName, mcpServerFromToolName } from '../domain/mcp.js'
 import {
   createAssistantInputSchema,
   addTeamMemberInputSchema,
+  assistantMemoryModeSchema,
   cloneTeamInputSchema,
   createAssistantInstanceInputSchema,
   createAssistantSessionInputSchema,
@@ -20,6 +21,8 @@ import {
   snapshotAssistant,
   type AddTeamMemberInput,
   type AssistantInstance,
+  type AssistantMemory,
+  type AssistantMemoryMode,
   type AssistantSession,
   type AssistantSnapshot,
   type AssistantTemplate,
@@ -63,6 +66,18 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export interface MutationOptions {
+  expectedRevision?: number
+}
+
+/**
+ * Durable memory is a single string per Assistant instance. Writes over the
+ * budget are rejected instead of truncated: silently dropping durable context
+ * is worse than an explicit retry with a shorter note.
+ */
+export const ASSISTANT_MEMORY_MAX_CHARS = 16_000
+
+export interface WriteAssistantMemoryOptions {
+  /** Expected memory revision; 0 means "no memory written yet". */
   expectedRevision?: number
 }
 
@@ -546,6 +561,84 @@ export class AgentTeamService extends Service {
     }))
     this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.bound')
     return next
+  }
+
+  /**
+   * Read one Assistant instance's durable memory. A missing document returns
+   * `undefined`; this is a plain store read so callers can render an empty
+   * memory prompt without creating a row.
+   */
+  getAssistantMemory(assistantId: string): AssistantMemory | undefined {
+    const id = assistantId.trim()
+    if (id === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Assistant instance id cannot be empty')
+    }
+    return this.store.getAssistantMemory(id)
+  }
+
+  /**
+   * Replace or append durable memory. `append` joins with one newline and each
+   * successful write bumps the memory revision. Content over
+   * {@link ASSISTANT_MEMORY_MAX_CHARS} is rejected (not truncated) after the
+   * combined value is computed, so an append can fail even when the new text
+   * alone fits. Archived instances can be read but not written.
+   */
+  async writeAssistantMemory(
+    assistantId: string,
+    content: string,
+    mode: AssistantMemoryMode = 'replace',
+    options: WriteAssistantMemoryOptions = {},
+  ): Promise<AssistantMemory> {
+    const instance = requireAssistantInstance(this.store, assistantId)
+    if (instance.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${instance.id}' is archived`,
+      )
+    }
+    const normalizedMode = assistantMemoryModeSchema.parse(mode)
+    if (typeof content !== 'string') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Assistant memory content must be a string')
+    }
+    const current = this.store.getAssistantMemory(instance.id)
+    if (
+      options.expectedRevision !== undefined
+      && options.expectedRevision !== (current?.revision ?? 0)
+    ) {
+      throw new AgentTeamError(
+        'ASSISTANT_REVISION_CONFLICT',
+        `Assistant memory revision conflict: expected ${options.expectedRevision}, current ${current?.revision ?? 0}`,
+        { expected: options.expectedRevision, actual: current?.revision ?? 0 },
+      )
+    }
+    const nextContent = normalizedMode === 'append'
+      ? appendMemory(current?.content ?? '', content)
+      : content
+    if (nextContent.length > ASSISTANT_MEMORY_MAX_CHARS) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Assistant memory content exceeds ${ASSISTANT_MEMORY_MAX_CHARS} characters`,
+        { length: nextContent.length, limit: ASSISTANT_MEMORY_MAX_CHARS },
+      )
+    }
+    const now = new Date().toISOString()
+    if (current === undefined) {
+      const memory: AssistantMemory = {
+        schemaVersion: 1,
+        assistantId: instance.id,
+        content: nextContent,
+        revision: 1,
+        updatedAt: now,
+      }
+      await this.store.putAssistantMemory(memory)
+      return memory
+    }
+    return this.store.updateAssistantMemory(instance.id, value => ({
+      ...value,
+      content: nextContent,
+      revision: value.revision + 1,
+      updatedAt: now,
+    }))
   }
 
   /** Materialize the instance's main Session through the attached runtime. */
@@ -1485,8 +1578,17 @@ function overrideAssistantSnapshot(
   return { ...next, avatar: trimmedAvatar }
 }
 
-function requireTeam(store: AgentTeamStore, id: string): TeamAggregate {
-  const team = store.getTeam(id)
+/**
+ * Append with exactly one separating newline. An empty existing document is
+ * treated as no separator, so the first append does not start with a blank line.
+ */
+function appendMemory(current: string, addition: string): string {
+  if (current === '') return addition
+  if (addition === '') return current
+  return `${current}\n${addition}`
+}
+
+function requireTeam(store: AgentTeamStore, id: string): TeamAggregate {  const team = store.getTeam(id)
   if (team === undefined) throw new AgentTeamError('TEAM_NOT_FOUND', `Unknown team '${id}'`)
   return team
 }

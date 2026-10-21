@@ -7,6 +7,7 @@ import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
 import type {
   AssistantInstance,
+  AssistantMemory,
   AssistantSession,
   AssistantTemplate,
   Operation,
@@ -1366,6 +1367,7 @@ class MemoryStore implements AgentTeamStore {
   private assistants = new Map<string, AssistantTemplate>()
   private assistantInstances = new Map<string, AssistantInstance>()
   private assistantSessions = new Map<string, AssistantSession>()
+  private assistantMemory = new Map<string, AssistantMemory>()
   private teams = new Map<string, TeamAggregate>()
   private messages = new Map<string, TeamMessage>()
   private activities = new Map<string, TeamActivity>()
@@ -1386,6 +1388,15 @@ class MemoryStore implements AgentTeamStore {
     return updateMap(this.assistantInstances, id, update)
   }
   async deleteAssistantInstance(id: string) { return this.assistantInstances.delete(id) }
+
+  getAssistantMemory(assistantId: string) { return this.assistantMemory.get(assistantId) }
+  async putAssistantMemory(value: AssistantMemory) { this.assistantMemory.set(value.assistantId, value) }
+  updateAssistantMemory(
+    assistantId: string,
+    update: (current: AssistantMemory) => AssistantMemory,
+  ) {
+    return updateMap(this.assistantMemory, assistantId, update)
+  }
 
   getAssistantSession(id: string) { return this.assistantSessions.get(id) }
   listAssistantSessions() { return [...this.assistantSessions.values()] }

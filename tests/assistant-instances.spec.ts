@@ -3,9 +3,10 @@ import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
-import { assistantInstanceSchema, assistantSessionSchema } from '../src/domain/schemas.js'
+import { assistantInstanceSchema, assistantMemorySchema, assistantSessionSchema } from '../src/domain/schemas.js'
 import type {
   AssistantInstance,
+  AssistantMemory,
   AssistantSession,
   AssistantTemplate,
   Operation,
@@ -14,7 +15,7 @@ import type {
   TeamMessage,
 } from '../src/domain/types.js'
 import type { AssistantRuntime } from '../src/runtime/assistant-runtime.js'
-import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
+import { AgentTeamService, ASSISTANT_MEMORY_MAX_CHARS } from '../src/service/dsh-team-mode-service.js'
 import { dshTeamModeDomainSpec } from '../src/storage/domain.js'
 import { DomainAgentTeamStore, type AgentTeamStore } from '../src/storage/store.js'
 
@@ -341,6 +342,139 @@ describe('Assistant instances', () => {
   })
 })
 
+describe('Assistant memory', () => {
+  async function instanceFor(service: AgentTeamService, store: MemoryStore): Promise<AssistantInstance> {
+    await store.putAssistant(template())
+    return service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+  }
+
+  it('returns undefined before the first write and bumps revisions on replace and append', async () => {
+    const { service, store } = createHarness()
+    const instance = await instanceFor(service, store)
+
+    expect(service.getAssistantMemory(instance.id)).toBeUndefined()
+
+    const first = await service.writeAssistantMemory(instance.id, 'Prefers tables.', 'replace')
+    expect(first).toMatchObject({
+      schemaVersion: 1,
+      assistantId: instance.id,
+      content: 'Prefers tables.',
+      revision: 1,
+    })
+    expect(assistantMemorySchema.parse(first)).toEqual(first)
+    expect(() => assistantMemorySchema.parse({ ...first, extra: true })).toThrow()
+
+    const appended = await service.writeAssistantMemory(instance.id, 'Cite sources.', 'append')
+    expect(appended.content).toBe('Prefers tables.\nCite sources.')
+    expect(appended.revision).toBe(2)
+
+    const replaced = await service.writeAssistantMemory(instance.id, 'Only this.', 'replace')
+    expect(replaced.content).toBe('Only this.')
+    expect(replaced.revision).toBe(3)
+
+    // Persistence is a store read, so a fresh service instance sees the record.
+    expect(new AgentTeamService(new Context(), config, store).getAssistantMemory(instance.id))
+      .toEqual(replaced)
+  })
+
+  it('rejects content over the 16000 character budget without changing the record', async () => {
+    const { service, store } = createHarness()
+    const instance = await instanceFor(service, store)
+
+    const exact = await service.writeAssistantMemory(
+      instance.id,
+      'a'.repeat(ASSISTANT_MEMORY_MAX_CHARS),
+      'replace',
+    )
+    expect(exact.content).toHaveLength(ASSISTANT_MEMORY_MAX_CHARS)
+
+    await expect(service.writeAssistantMemory(instance.id, 'b', 'append')).rejects
+      .toMatchObject({
+        code: 'INVALID_REQUEST',
+        details: {
+          length: ASSISTANT_MEMORY_MAX_CHARS + 2,
+          limit: ASSISTANT_MEMORY_MAX_CHARS,
+        },
+      })
+    expect(service.getAssistantMemory(instance.id)).toEqual(exact)
+  })
+
+  it('rejects archived and unknown instances', async () => {
+    const { service, store } = createHarness()
+    const instance = await instanceFor(service, store)
+    await service.archiveAssistantInstance(instance.id)
+
+    await expect(service.writeAssistantMemory(instance.id, 'Note.', 'replace')).rejects
+      .toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+    expect(service.getAssistantMemory(instance.id)).toBeUndefined()
+
+    await expect(service.writeAssistantMemory('missing-instance', 'Note.', 'replace')).rejects
+      .toMatchObject({ code: 'ASSISTANT_INSTANCE_NOT_FOUND' })
+    expect(service.getAssistantMemory('missing-instance')).toBeUndefined()
+  })
+
+  it('honors an expected memory revision', async () => {
+    const { service, store } = createHarness()
+    const instance = await instanceFor(service, store)
+
+    await expect(service.writeAssistantMemory(instance.id, 'First.', 'replace', {
+      expectedRevision: 1,
+    })).rejects.toMatchObject({ code: 'ASSISTANT_REVISION_CONFLICT' })
+
+    const first = await service.writeAssistantMemory(instance.id, 'First.', 'replace', {
+      expectedRevision: 0,
+    })
+    expect(first.revision).toBe(1)
+
+    const second = await service.writeAssistantMemory(instance.id, 'Second.', 'append', {
+      expectedRevision: 1,
+    })
+    expect(second.revision).toBe(2)
+    expect(second.content).toBe('First.\nSecond.')
+  })
+
+  it('exposes assistant_memory in the v1 domain spec and round-trips it through the store', async () => {
+    expect(dshTeamModeDomainSpec.version).toBe(1)
+    expect(Object.keys(dshTeamModeDomainSpec.tables)).toContain('assistant_memory')
+
+    const tables = new Map<string, FakeTable>()
+    const domain = {
+      name: 'dsh_team_mode',
+      table(name: string) {
+        let table = tables.get(name)
+        if (table === undefined) {
+          table = new FakeTable()
+          tables.set(name, table)
+        }
+        return table
+      },
+    } as unknown as Domain<typeof dshTeamModeDomainSpec>
+    const store = new DomainAgentTeamStore(domain)
+    const memory: AssistantMemory = {
+      schemaVersion: 1,
+      assistantId: 'instance-1',
+      content: 'Remember this.',
+      revision: 1,
+      updatedAt: NOW,
+    }
+
+    await store.putAssistantMemory(memory)
+    expect(store.getAssistantMemory('instance-1')).toEqual(memory)
+
+    const updated = await store.updateAssistantMemory('instance-1', current => ({
+      ...current,
+      content: 'Remember this better.',
+      revision: 2,
+      updatedAt: NOW,
+    }))
+    expect(updated).toMatchObject({ content: 'Remember this better.', revision: 2 })
+    expect(store.getAssistantMemory('instance-1')).toEqual(updated)
+  })
+})
+
 describe('Assistant sessions', () => {
   it('persists a queued task whose parent is the main Session', async () => {
     const { service, store } = createHarness()
@@ -565,6 +699,7 @@ class MemoryStore implements AgentTeamStore {
   private assistants = new Map<string, AssistantTemplate>()
   private assistantInstances = new Map<string, AssistantInstance>()
   private assistantSessions = new Map<string, AssistantSession>()
+  private assistantMemory = new Map<string, AssistantMemory>()
   private teams = new Map<string, TeamAggregate>()
   private messages = new Map<string, TeamMessage>()
   private activities = new Map<string, TeamActivity>()
@@ -585,6 +720,15 @@ class MemoryStore implements AgentTeamStore {
     return updateMap(this.assistantInstances, id, update)
   }
   async deleteAssistantInstance(id: string) { return this.assistantInstances.delete(id) }
+
+  getAssistantMemory(assistantId: string) { return this.assistantMemory.get(assistantId) }
+  async putAssistantMemory(value: AssistantMemory) { this.assistantMemory.set(value.assistantId, value) }
+  updateAssistantMemory(
+    assistantId: string,
+    update: (current: AssistantMemory) => AssistantMemory,
+  ) {
+    return updateMap(this.assistantMemory, assistantId, update)
+  }
 
   getAssistantSession(id: string) { return this.assistantSessions.get(id) }
   listAssistantSessions() { return [...this.assistantSessions.values()] }
