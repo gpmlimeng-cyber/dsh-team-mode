@@ -264,14 +264,16 @@ describe('AssistantRuntime', () => {
     expect(h.attachSession).not.toHaveBeenCalled()
   })
 
-  it('rejects a live but unowned main Session with an ownership conflict', async () => {
+  it('passively opens a live but unowned main Session', async () => {
     const h = createHarness({ mainSessionId: 'session-bound', status: 'active' })
     h.setLive('session-bound')
 
-    await expect(h.runtime.ensureInstance('instance-1')).rejects
-      .toMatchObject({ code: 'AGENT_HANDLE_OWNERSHIP_CONFLICT' })
+    await expect(h.runtime.ensureInstance('instance-1')).resolves.toMatchObject({
+      sessionId: 'session-bound',
+    })
     expect(h.resumeMock).not.toHaveBeenCalled()
     expect(h.createMock).not.toHaveBeenCalled()
+    expect(h.bindAssistantMainSession).not.toHaveBeenCalled()
   })
 
   it('fails a missing bound Session without creating a replacement', async () => {

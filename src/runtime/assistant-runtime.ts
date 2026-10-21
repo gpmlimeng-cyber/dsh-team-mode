@@ -83,10 +83,15 @@ export class AssistantRuntime {
         return { instance, sessionId: boundSessionId }
       }
       if (this.ctx.agents.get(SessionId(boundSessionId)) !== undefined) {
-        throw new AgentTeamError(
-          'AGENT_HANDLE_OWNERSHIP_CONFLICT',
-          `Session '${boundSessionId}' is live without this plugin's AgentHandle`,
+        // A previous plugin lifecycle can leave the main Agent live without
+        // this instance's handle (for example a dev plugin reload). Phase 0
+        // only needs navigation, so open the existing native Session instead
+        // of blocking the Assistant row; no new Agent is created and this
+        // runtime does not claim teardown ownership for it.
+        this.ctx.logger.warn(
+          `dsh-team-mode: assistant '${instance.id}' is already live without an owned handle; opening it passively`,
         )
+        return { instance, sessionId: boundSessionId }
       }
     }
 
