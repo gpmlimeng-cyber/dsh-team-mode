@@ -314,7 +314,9 @@ export function TeamParallelHost({
               <header className={css.teamParallelPaneHeader}>
                 <span className={css.teamParallelPaneIdentity}>
                   <span className={`${css.teamParallelAvatar} ${css[`teamParallelAvatar_${status}`] ?? ''}`} aria-hidden="true">
-                    {initial(member.displayName)}
+                    {member.assistantSnapshot?.avatar !== undefined && member.assistantSnapshot.avatar !== ''
+                      ? <img src={member.assistantSnapshot.avatar} alt="" />
+                      : initial(member.displayName)}
                   </span>
                   <strong className={css.teamParallelPaneName}>{member.displayName}</strong>
                   {member.role === 'leader' && (
