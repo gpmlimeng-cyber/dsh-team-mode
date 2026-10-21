@@ -61,3 +61,16 @@
 - `npm run check`：通过。
 - 截图：`docs/assets/ui-review/dlg-add-member.png`、`dlg-clone.png`、`dlg-reset.png`、`dlg-dissolve.png`、`dlg-create-team.png`。
 - 暗色模式沿用同一套语义 token，无新增硬编码色。
+
+---
+
+## 六、并行模式贴边修正
+
+按反馈移除并行视图的外层留白：`.teamParallelRoot` 的 `padding` 由 `10px 12px 12px` 改为 `0`，列间距保持 0；移除 grid 的上下边框，避免与宿主 tab 分隔线形成双线。单聊模式的成员胶囊保留自身 8px/12px 内边距（不贴着文字），聊天区仍贴边。
+
+验证（Harness，1280×820）：
+- pane 左边界 = 内容区左边界（281），宽度 1000 = 内容区全宽；
+- pane 顶部 = 76（紧贴 tab 栏底），底部 = 视口底；
+- root/grid/pane 计算样式 `padding` 均为 `0px`；状态栏未被裁切（bottom 1002 / pane bottom 1006）。
+
+截图：`docs/assets/ui-review/parallel-flush.png`。
