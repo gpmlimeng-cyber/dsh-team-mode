@@ -110,3 +110,16 @@
 3. 对齐验证（Harness）：三个 pane 的 `seatTop=692、seatH=128、cardTop=692、cardBottom=790`，完全一致。
 
 截图：`docs/assets/ui-review/parallel-composer-aligned.png`。
+
+
+---
+
+## 十、标题成员选择器常驻
+
+此前成员切换器只在「对话」页签显示（`conversationView !== undefined` 时直接返回 `null`），切到并行/看板/团队管理就消失。现已移除该条件，四个页签下都显示同一个选择器：
+
+- 按钮文案：`切换团队成员，当前 <成员>`，带 Leader 皇冠与下拉箭头；
+- 菜单仍可切换成员会话或进入「管理团队」；
+- 实测四个页签 `aria-label` 与可见性一致：`visible=true`。
+
+截图：`docs/assets/ui-review/switcher-always-visible.png`。

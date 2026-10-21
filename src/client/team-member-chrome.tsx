@@ -11,7 +11,6 @@ import { AddTeamMemberDialog } from './teams/TeamPanel.js'
 import { useAgentTeamData } from './components.js'
 import css from './AgentTeam.module.css'
 import type { TeamView } from '../transport/contracts.js'
-import { useTeamConversationView } from './team-view-presence.js'
 
 type TeamMember = TeamView['members'][string]
 type Membership = { team: TeamView; member: TeamMember }
@@ -85,11 +84,9 @@ export function TeamMemberSwitcher({
 }): JSX.Element | null {
   const membership = useMembership(sessionId)
   const { catalog, assistants, load } = useAgentTeamData(true)
-  const conversationView = useTeamConversationView(sessionId)
   const [open, setOpen] = useState(false)
   const [addMemberOpen, setAddMemberOpen] = useState(false)
   const members = useMemo(() => (membership === undefined ? [] : sortedMembers(membership.team)), [membership])
-  if (conversationView !== undefined) return null
   if (membership === undefined || sessionId === undefined || openSession === undefined) return null
   const current = membership.member
   const items: MenuEntry[] = members.map(member => ({
