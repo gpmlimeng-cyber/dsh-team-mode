@@ -9,6 +9,8 @@ export interface Config {
   assistantBuilderModel: string
   assistantBuilderAgentPresetId: string
   assistantBuilderPermissionPresetId: string
+  /** Active hidden workers per Assistant instance (default 4). */
+  assistantWorkerConcurrency?: number
   /** Hard cap on one team's member slots (AionUi default 8). */
   maxTeamMembers?: number
   /** Hard cap on one team's task records (AionUi default 256). */
@@ -28,6 +30,7 @@ export const Config: Schema<Config> = Schema.object({
   assistantBuilderModel: Schema.string().default(''),
   assistantBuilderAgentPresetId: Schema.string().default(''),
   assistantBuilderPermissionPresetId: Schema.string().default(''),
+  assistantWorkerConcurrency: Schema.number().min(1).max(16).step(1).default(4),
   maxTeamMembers: Schema.number().min(1).max(64).default(8),
   maxTeamTasks: Schema.number().min(1).max(4096).default(256),
   maxTeamMessageBytes: Schema.number().min(1024).max(1024 * 1024).default(64 * 1024),

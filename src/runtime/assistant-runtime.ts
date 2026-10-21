@@ -5,6 +5,7 @@ import {
   type Agent,
   type AgentHandle,
   type AgentOptions,
+  type AgentSetup,
   type ModelSelectionRef,
 } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, ReasoningEffortId, type UserMessage } from '@deepseek-ai/dsh-llm'
@@ -48,6 +49,8 @@ interface OwnedWorker {
   assistantId: string
   sessionId: string
   handle: AgentHandle
+  /** False when the Session is live but another lifecycle owns its handle. */
+  owned: boolean
 }
 
 const TERMINAL_TASK_STATUSES: ReadonlySet<AssistantSession['status']> = new Set([
@@ -55,6 +58,17 @@ const TERMINAL_TASK_STATUSES: ReadonlySet<AssistantSession['status']> = new Set(
   'failed',
   'cancelled',
 ])
+
+const ACTIVE_TASK_STATUSES: ReadonlySet<AssistantSession['status']> = new Set([
+  'queued',
+  'running',
+  'needs_input',
+])
+
+const DEFAULT_WORKER_CONCURRENCY = 4
+const DIGEST_ACTIVE_LIMIT = 5
+const DIGEST_TERMINAL_LIMIT = 3
+const DIGEST_TITLE_LIMIT = 80
 
 const DEFAULT_WAIT_TIMEOUT_MS = 30_000
 const MAX_WAIT_TIMEOUT_MS = 120_000
@@ -75,6 +89,8 @@ export class AssistantRuntime {
   private readonly starting = new Map<string, Promise<AssistantEnsureResult>>()
   private readonly workers = new Map<string, OwnedWorker>()
   private readonly workerBySession = new Map<string, string>()
+  private readonly startingWorkers = new Map<string, Promise<OwnedWorker>>()
+  private readonly assistantLocks = new Map<string, Promise<void>>()
   private readonly disposeStatusListener: () => void
   private readonly disposeSessionListener: () => void
   private closing = false
@@ -126,13 +142,17 @@ export class AssistantRuntime {
     this.closing = true
     this.disposeStatusListener()
     this.disposeSessionListener()
-    const pending = [...this.starting.values()]
+    const pending = [...this.starting.values(), ...this.startingWorkers.values()]
     this.starting.clear()
+    this.startingWorkers.clear()
     await Promise.allSettled(pending)
     const workers = [...this.workers.values()]
     this.workers.clear()
     this.workerBySession.clear()
     for (const worker of workers) {
+      // A passive worker is live in another lifecycle; this runtime never
+      // owns that AgentHandle, so it must not cancel or dispose it.
+      if (!worker.owned) continue
       try {
         worker.handle.agent.cancel({ kind: 'user' }, { keepInbox: false })
         await worker.handle.dispose()
@@ -164,74 +184,67 @@ export class AssistantRuntime {
     const title = requireText(input.title, 'Task title')
     const brief = requireText(input.brief, 'Task brief')
     const main = await this.ensureInstance(assistantId)
-    const instance = main.instance
-    const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(instance.workspaceId))
-    if (workspace === undefined || await workspace.status() !== 'ok') {
-      throw new AgentTeamError(
-        'WORKSPACE_UNAVAILABLE',
-        `Workspace '${instance.workspaceId}' is unavailable`,
-      )
-    }
-
-    const snapshot = instance.assistantSnapshot
-    const taskId = randomUUID()
-    const sessionId = `session-${randomUUID()}`
-    const modelSelection = modelSelectionFor(snapshot)
-    const setup = async (agentCtx: Context, agent: Agent): Promise<void> => {
-      await this.ctx.agentPresets.mount(agentCtx, snapshot.agentPresetId)
-      installModelSelection(agentCtx, modelSelection)
-      agentCtx.systemPrompt.section({
-        name: `dsh-team-mode:assistant-worker:${taskId}`,
-        order: 10,
-        text: () => workerPrompt(
-          this.service.getAssistantInstance(assistantId).assistantSnapshot,
-          title,
-        ),
-      })
-      this.ctx.permissionPresets.set(agent.session, snapshot.permissionPresetId)
-      // Deliberately no registerAssistantTaskTools: workers cannot delegate.
-    }
-
-    let handle: AgentHandle
-    try {
-      handle = await this.ctx.agents.create({
-        sessionId: SessionId(sessionId),
-        meta: { cwd: instance.workspacePath, agentPreset: snapshot.agentPresetId },
-        agentOptions: agentOptionsFor(snapshot),
-        setup,
-      })
-    } catch (error) {
-      throw this.workerStartupError(instance, title, error)
-    }
-
-    let task: AssistantSession | undefined
-    try {
-      await workspace.attachSession(SessionId(sessionId))
-      // Persist the empty worker Session before the task record exists, so the
-      // native session directory never shows a row without a stored task.
-      await this.ctx.sessions.flush(handle.agent.session)
-      task = await this.service.createAssistantSession({
-        assistantId: instance.id,
-        sessionId,
-        title,
-        brief,
-        parentSessionId: main.sessionId,
-      })
-      this.workers.set(task.id, { assistantId: instance.id, sessionId, handle })
-      this.workerBySession.set(sessionId, task.id)
-      const running = await this.service.updateAssistantSession(task.id, { status: 'running' })
-      handle.agent.followup(workerMessage(brief))
-      return running
-    } catch (error) {
-      if (task !== undefined) {
-        this.removeWorker(task.id)
-        await this.failTask(task.id, error)
+    return this.withAssistantLock(assistantId, async () => {
+      const instance = this.service.getAssistantInstance(assistantId)
+      const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(instance.workspaceId))
+      if (workspace === undefined || await workspace.status() !== 'ok') {
+        throw new AgentTeamError(
+          'WORKSPACE_UNAVAILABLE',
+          `Workspace '${instance.workspaceId}' is unavailable`,
+        )
       }
-      await this.disposeQuietly(handle, `worker Session '${sessionId}' failed to start`)
-      throw error instanceof AgentTeamError
-        ? error
-        : this.workerStartupError(instance, title, error)
-    }
+      this.assertWorkerCapacity(assistantId)
+
+      const snapshot = instance.assistantSnapshot
+      const taskId = randomUUID()
+      const sessionId = `session-${randomUUID()}`
+      const setup = this.workerSetup(assistantId, taskId, title)
+
+      let handle: AgentHandle
+      try {
+        handle = await this.ctx.agents.create({
+          sessionId: SessionId(sessionId),
+          meta: { cwd: instance.workspacePath, agentPreset: snapshot.agentPresetId },
+          agentOptions: agentOptionsFor(snapshot),
+          setup,
+        })
+      } catch (error) {
+        throw this.workerStartupError(instance, title, error)
+      }
+
+      let task: AssistantSession | undefined
+      try {
+        await workspace.attachSession(SessionId(sessionId))
+        // Persist the empty worker Session before the task record exists, so the
+        // native session directory never shows a row without a stored task.
+        await this.ctx.sessions.flush(handle.agent.session)
+        task = await this.service.createAssistantSession({
+          assistantId: instance.id,
+          sessionId,
+          title,
+          brief,
+          parentSessionId: main.sessionId,
+        })
+        this.mapWorker(task.id, {
+          assistantId: instance.id,
+          sessionId,
+          handle,
+          owned: true,
+        })
+        const running = await this.service.updateAssistantSession(task.id, { status: 'running' })
+        handle.agent.followup(workerMessage(brief))
+        return running
+      } catch (error) {
+        if (task !== undefined) {
+          this.removeWorker(task.id)
+          await this.failTask(task.id, error)
+        }
+        await this.disposeQuietly(handle, `worker Session '${sessionId}' failed to start`)
+        throw error instanceof AgentTeamError
+          ? error
+          : this.workerStartupError(instance, title, error)
+      }
+    })
   }
 
   /** Deliver another instruction to a live worker and mark its task running. */
@@ -242,10 +255,94 @@ export class AssistantRuntime {
   ): Promise<AssistantSession> {
     const assistantId = requireText(rawAssistantId, 'Assistant instance id')
     const task = this.requireTask(assistantId, rawTaskId)
-    const worker = this.requireWorker(task)
     const message = requireText(rawMessage, 'Task message')
+    const worker = await this.ensureWorker(task)
     worker.handle.agent.followup(workerMessage(message))
     return this.service.updateAssistantSession(task.id, { status: 'running' })
+  }
+
+  /**
+   * Return an owned worker for one stored task. A host restart or plugin
+   * reload drops the handle while the Session may still exist, so the task is
+   * resumed lazily instead of being reported as inactive.
+   */
+  private async ensureWorker(task: AssistantSession): Promise<OwnedWorker> {
+    const existing = this.workers.get(task.id)
+    if (existing !== undefined) return existing
+    const pending = this.startingWorkers.get(task.id)
+    if (pending !== undefined) return pending
+    const starting = this.recoverWorker(task)
+    this.startingWorkers.set(task.id, starting)
+    try {
+      return await starting
+    } finally {
+      if (this.startingWorkers.get(task.id) === starting) {
+        this.startingWorkers.delete(task.id)
+      }
+    }
+  }
+
+  private async recoverWorker(task: AssistantSession): Promise<OwnedWorker> {
+    if (this.closing) throw new AgentTeamError('INVALID_REQUEST', 'Assistant runtime is closing')
+    const live = this.ctx.agents.get(SessionId(task.sessionId))
+    if (live !== undefined) {
+      // Another lifecycle created this worker and still owns its handle. Use
+      // the bare Agent for follow-ups, but never claim teardown ownership.
+      this.ctx.logger.warn(
+        `dsh-team-mode: task '${task.id}' is already live without an owned worker handle; attaching passively`,
+      )
+      const worker: OwnedWorker = {
+        assistantId: task.assistantId,
+        sessionId: task.sessionId,
+        handle: { agent: live, dispose: async () => {} },
+        owned: false,
+      }
+      this.mapWorker(task.id, worker)
+      return worker
+    }
+
+    const instance = this.service.getAssistantInstance(task.assistantId)
+    const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(instance.workspaceId))
+    if (workspace === undefined || await workspace.status() !== 'ok') {
+      throw new AgentTeamError(
+        'WORKSPACE_UNAVAILABLE',
+        `Workspace '${instance.workspaceId}' is unavailable`,
+      )
+    }
+
+    let handle: AgentHandle
+    try {
+      handle = await this.ctx.agents.resume({
+        resumeSessionId: SessionId(task.sessionId),
+        agentOptions: agentOptionsFor(instance.assistantSnapshot),
+        setup: this.workerSetup(task.assistantId, task.id, task.title),
+      })
+    } catch (error) {
+      const causeMessage = error instanceof Error ? error.message : String(error)
+      throw new AgentTeamError(
+        'ASSISTANT_TASK_NOT_ACTIVE',
+        `Task '${task.title}' could not be resumed: ${causeMessage}`,
+        { taskId: task.id, cause: causeMessage },
+        { cause: error },
+      )
+    }
+
+    try {
+      await workspace.attachSession(SessionId(task.sessionId))
+      await this.ctx.sessions.flush(handle.agent.session)
+    } catch (error) {
+      await this.disposeQuietly(handle, `resumed worker Session '${task.sessionId}' failed to attach`)
+      throw this.workerStartupError(instance, task.title, error)
+    }
+
+    const worker: OwnedWorker = {
+      assistantId: task.assistantId,
+      sessionId: task.sessionId,
+      handle,
+      owned: true,
+    }
+    this.mapWorker(task.id, worker)
+    return worker
   }
 
   /** Newest-first tasks for one assistant, bounded for the tool result. */
@@ -391,15 +488,111 @@ export class AssistantRuntime {
     return task
   }
 
-  private requireWorker(task: AssistantSession): OwnedWorker {
-    const worker = this.workers.get(task.id)
-    if (worker === undefined) {
-      throw new AgentTeamError(
-        'ASSISTANT_TASK_NOT_ACTIVE',
-        `Task '${task.id}' has no live worker Session in this runtime`,
-      )
+  private mapWorker(taskId: string, worker: OwnedWorker): void {
+    this.workers.set(taskId, worker)
+    this.workerBySession.set(worker.sessionId, taskId)
+  }
+
+  private assertWorkerCapacity(assistantId: string): void {
+    const limit = this.workerConcurrencyLimit()
+    const active = this.service.listAssistantSessions(assistantId).items
+      .filter(task => ACTIVE_TASK_STATUSES.has(task.status))
+      .length
+    if (active < limit) return
+    throw new AgentTeamError(
+      'ASSISTANT_WORKER_LIMIT',
+      `Assistant '${assistantId}' already has ${active} active worker task(s); the limit is ${limit}`,
+      { assistantId, active, limit },
+    )
+  }
+
+  private workerConcurrencyLimit(): number {
+    const configured = this.config.assistantWorkerConcurrency
+    if (configured === undefined || !Number.isFinite(configured)) {
+      return DEFAULT_WORKER_CONCURRENCY
     }
-    return worker
+    return Math.min(Math.max(Math.floor(configured), 1), 16)
+  }
+
+  /**
+   * Serialize task creation per assistant so the capacity check and the new
+   * task record cannot race against a second create call.
+   */
+  private async withAssistantLock<T>(
+    assistantId: string,
+    work: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.assistantLocks.get(assistantId) ?? Promise.resolve()
+    let release: () => void = () => {}
+    const current = new Promise<void>(resolve => { release = resolve })
+    const tail = previous.then(() => current)
+    this.assistantLocks.set(assistantId, tail)
+    await previous
+    try {
+      return await work()
+    } finally {
+      release()
+      if (this.assistantLocks.get(assistantId) === tail) {
+        this.assistantLocks.delete(assistantId)
+      }
+    }
+  }
+
+  private workerSetup(assistantId: string, taskId: string, title: string): AgentSetup {
+    const snapshot = this.service.getAssistantInstance(assistantId).assistantSnapshot
+    const modelSelection = modelSelectionFor(snapshot)
+    return async (agentCtx: Context, agent: Agent): Promise<void> => {
+      await this.ctx.agentPresets.mount(agentCtx, snapshot.agentPresetId)
+      installModelSelection(agentCtx, modelSelection)
+      agentCtx.systemPrompt.section({
+        name: `dsh-team-mode:assistant-worker:${taskId}`,
+        order: 10,
+        text: () => workerPrompt(
+          this.service.getAssistantInstance(assistantId).assistantSnapshot,
+          title,
+        ),
+      })
+      this.ctx.permissionPresets.set(agent.session, snapshot.permissionPresetId)
+      // Deliberately no registerAssistantTaskTools: workers cannot delegate.
+    }
+  }
+
+  /**
+   * Bounded task status for the main prompt, so routing decisions can see the
+   * latest active and finished titles without reading any transcript.
+   */
+  private taskDigest(assistantId: string): string {
+    const tasks = this.service.listAssistantSessions(assistantId).items
+    const active = tasks
+      .filter(task => ACTIVE_TASK_STATUSES.has(task.status))
+      .slice(0, DIGEST_ACTIVE_LIMIT)
+    const terminal = tasks
+      .filter(task => isTerminalTaskStatus(task.status))
+      .slice(0, DIGEST_TERMINAL_LIMIT)
+    const lines = ['Background task routing:']
+    if (active.length === 0) {
+      lines.push('Active tasks: none.')
+    } else {
+      lines.push('Active tasks (newest first):')
+      for (const task of active) {
+        lines.push(`- [${task.status}] ${truncate(task.title, DIGEST_TITLE_LIMIT)} (id: ${task.id})`)
+      }
+    }
+    if (terminal.length > 0) {
+      lines.push('Recently finished tasks (newest first):')
+      for (const task of terminal) {
+        lines.push(`- [${task.status}] ${truncate(task.title, DIGEST_TITLE_LIMIT)} (id: ${task.id})`)
+      }
+    }
+    lines.push(
+      'Use assistant_task_list to inspect tasks, assistant_task_create to start a new deliverable, '
+      + 'assistant_task_send to continue an existing task, and assistant_task_wait or '
+      + 'assistant_task_summary to observe results. Create a new worker for a genuinely new '
+      + 'deliverable; continue the existing worker when the user says "continue" or refers to '
+      + 'earlier work. Only claim a task is complete after assistant_task_wait or '
+      + 'assistant_task_summary reports a terminal status.',
+    )
+    return lines.join('\n')
   }
 
   private assertMainToolIdentity(assistantId: string, agent: Agent | undefined): void {
@@ -468,6 +661,11 @@ export class AssistantRuntime {
         name: `dsh-team-mode:assistant-identity:${instance.id}`,
         order: 10,
         text: () => assistantPrompt(this.service.getAssistantInstance(id).assistantSnapshot),
+      })
+      agentCtx.systemPrompt.section({
+        name: `dsh-team-mode:assistant-tasks:${instance.id}`,
+        order: 11,
+        text: () => this.taskDigest(id),
       })
       this.ctx.permissionPresets.set(agent.session, snapshot.permissionPresetId)
       registerAssistantTaskTools(agentCtx, {

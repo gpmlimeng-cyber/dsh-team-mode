@@ -92,7 +92,10 @@ function instance(overrides: Partial<AssistantInstance> = {}): AssistantInstance
   }
 }
 
-function createHarness(overrides: Partial<AssistantInstance> = {}) {
+function createHarness(
+  overrides: Partial<AssistantInstance> = {},
+  configOverrides: Partial<Config> = {},
+) {
   const handles: AgentRecord[] = []
   const live = new Map<string, Agent>()
   const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
@@ -255,7 +258,10 @@ function createHarness(overrides: Partial<AssistantInstance> = {}) {
   } as unknown as AgentTeamService
 
   return {
-    runtime: new AssistantRuntime(ctx, config, service),
+    runtime: new AssistantRuntime(ctx, { ...config, ...configOverrides }, service),
+    createRuntime(runtimeConfig: Partial<Config> = {}) {
+      return new AssistantRuntime(ctx, { ...config, ...configOverrides, ...runtimeConfig }, service)
+    },
     ctx,
     service,
     getAssistantInstance,
@@ -279,8 +285,8 @@ function createHarness(overrides: Partial<AssistantInstance> = {}) {
     emit,
     tasks,
     current: () => current,
-    setLive(sessionId: string) {
-      live.set(sessionId, { id: SessionId(sessionId) } as unknown as Agent)
+    setLive(sessionId: string, agent?: Agent) {
+      live.set(sessionId, agent ?? { id: SessionId(sessionId) } as unknown as Agent)
     },
   }
 }
@@ -628,6 +634,119 @@ describe('AssistantRuntime', () => {
     expect(h.createMock).toHaveBeenCalledTimes(1)
     expect(left).toEqual(right)
     expect(h.bindAssistantMainSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('recovers a dropped worker by resuming its Session on send', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'Start.',
+    })
+    const recovered = h.createRuntime()
+
+    const sent = await recovered.sendTask('instance-1', task.id, 'Continue with renewals.')
+
+    expect(sent.status).toBe('running')
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+    const resumeOptions = h.resumeMock.mock.calls[0]?.[0] as ResumeAgentOptions
+    expect(String(resumeOptions.resumeSessionId)).toBe(task.sessionId)
+    expect(resumeOptions.agentOptions).toMatchObject({ provider: 'openai', model: 'gpt-5' })
+    const resumed = h.handles[2]
+    expect(resumed).toBeDefined()
+    expect(h.attachSession).toHaveBeenCalledWith(task.sessionId)
+    expect(h.flush).toHaveBeenCalledWith(resumed?.agent.session)
+    expect(resumed?.followup).toHaveBeenCalledTimes(1)
+    expect(textOf(resumed?.followup.mock.calls[0]?.[0])).toBe('Continue with renewals.')
+    expect(h.mounted).toHaveBeenCalledWith(resumed?.agentCtx, 'default')
+    expect(h.permissionSet).toHaveBeenCalledWith(resumed?.agent.session, 'workspace-write')
+    const prompt = resumed?.section.mock.calls[0]?.[0] as { name: string; text: () => string }
+    expect(prompt.name).toContain('assistant-worker')
+    expect(prompt.text()).toContain('Research pricing')
+  })
+
+  it('uses a live unowned worker without resuming or disposing it', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'Start.',
+    })
+    const worker = h.handles[1]
+    expect(worker).toBeDefined()
+    h.setLive(task.sessionId, worker!.agent)
+    const recovered = h.createRuntime()
+
+    await recovered.sendTask('instance-1', task.id, 'Keep going.')
+
+    expect(h.resumeMock).not.toHaveBeenCalled()
+    expect(worker?.followup).toHaveBeenCalledTimes(2)
+    expect(textOf(worker?.followup.mock.calls[1]?.[0])).toBe('Keep going.')
+    expect(vi.mocked(h.ctx.logger.warn)).toHaveBeenCalledWith(
+      expect.stringContaining('already live'),
+    )
+
+    await recovered.dispose()
+
+    expect(worker?.dispose).not.toHaveBeenCalled()
+    expect(worker?.cancel).not.toHaveBeenCalled()
+  })
+
+  it('reports ASSISTANT_TASK_NOT_ACTIVE when worker recovery fails', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'Start.',
+    })
+    h.resumeMock.mockRejectedValueOnce(new Error('Session is not persisted'))
+    const recovered = h.createRuntime()
+
+    const error = await recovered.sendTask('instance-1', task.id, 'Continue.').catch(value => value)
+
+    expect(error).toBeInstanceOf(AgentTeamError)
+    expect(error).toMatchObject({
+      code: 'ASSISTANT_TASK_NOT_ACTIVE',
+      details: { taskId: task.id, cause: 'Session is not persisted' },
+    })
+    expect((error as Error).cause).toBeInstanceOf(Error)
+  })
+
+  it('enforces the per-assistant worker limit and frees capacity after terminal', async () => {
+    const h = createHarness({}, { assistantWorkerConcurrency: 1 })
+    const first = await h.runtime.createTask('instance-1', { title: 'First', brief: 'Start.' })
+
+    await expect(h.runtime.createTask('instance-1', { title: 'Second', brief: 'Start.' }))
+      .rejects.toMatchObject({ code: 'ASSISTANT_WORKER_LIMIT' })
+    expect(h.createMock).toHaveBeenCalledTimes(2)
+
+    await h.updateAssistantSession(first.id, { status: 'completed' })
+    const second = await h.runtime.createTask('instance-1', { title: 'Third', brief: 'Start.' })
+
+    expect(second.status).toBe('running')
+    expect(h.createMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('puts bounded recent tasks and routing instructions into the main prompt', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'SECRET WORKER TRANSCRIPT',
+    })
+
+    const sections = h.handles[0]?.section.mock.calls.map(
+      call => call[0] as { name: string; order: number; text: () => string },
+    ) ?? []
+    const digest = sections.find(section => section.order === 11)
+
+    expect(digest).toBeDefined()
+    const text = digest!.text()
+    expect(text).toContain('Research pricing')
+    expect(text).toContain(task.id)
+    expect(text).toContain('[running]')
+    expect(text).toContain('assistant_task_create')
+    expect(text).toContain('assistant_task_send')
+    expect(text).toContain('assistant_task_wait')
+    expect(text).toContain('assistant_task_summary')
+    expect(text).toContain('continue')
+    expect(text).not.toContain('SECRET WORKER TRANSCRIPT')
   })
 
   it('cancels and disposes owned handles and refuses later ensures', async () => {
