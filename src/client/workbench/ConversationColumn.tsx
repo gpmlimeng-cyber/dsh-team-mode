@@ -826,28 +826,23 @@ function TeamMessageCard({ node }: { node: Extract<ConversationNode, { kind: 'te
     : node.senderRole === 'system'
       ? '团队事件'
       : '成员反馈'
+  const author = node.senderRole === 'leader' ? 'Leader' : node.senderName
   return (
-    <article className={`${css.teamMessageCard} ${toneClass}`}>
+    <article className={`${css.teamMessageCard} ${toneClass}`} aria-label={`${category} · ${TEAM_MESSAGE_TYPE_LABELS[node.messageType]}`}>
       <header className={css.teamMessageHeader}>
         <span className={css.teamMessageIdentity}>
-          <strong>{category}</strong>
-          {node.senderRole !== 'system' && <span>{node.senderName}</span>}
-          {node.senderRole !== 'system' && (
-            <code className={css.teamMessageMemberId} title={`成员 ID：${node.senderId}`}>
-              ID {shortMemberId(node.senderId)}
-            </code>
-          )}
+          <span className={css.teamMessageAvatar} aria-hidden="true">{author.trim().slice(0, 1).toLocaleUpperCase()}</span>
+          <strong>{author}</strong>
         </span>
-        <span className={css.teamMessageType}>{TEAM_MESSAGE_TYPE_LABELS[node.messageType]}</span>
       </header>
-      <div className={css.teamMessageText}><UserTextRun text={node.text} /></div>
+      <div className={css.teamMessageBubble}>
+        <div className={css.teamMessageText}><UserTextRun text={node.text} /></div>
+      </div>
     </article>
   )
 }
 
-function shortMemberId(id: string): string {
-  return id.length > 8 ? `${id.slice(0, 8)}…` : id
-}
+
 
 function ToolCard({ node }: { node: Extract<ConversationNode, { kind: 'tool' }> }): JSX.Element {
   const status = node.status === 'running' ? '执行中' : node.status === 'success' ? '已完成' : '失败'

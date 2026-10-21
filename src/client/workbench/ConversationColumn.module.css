@@ -259,25 +259,39 @@
 }
 
 .teamMessageCard {
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
   flex: none;
   box-sizing: border-box;
   width: min(88%, 560px);
   align-self: flex-start;
-  overflow: hidden;
-  padding: 9px 11px 10px 13px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 10px;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-secondary);
 }
 
-.teamMessageCard::before {
-  position: absolute;
-  inset: 0 auto 0 0;
-  width: 3px;
-  background: var(--team-message-accent, var(--dsw-alias-state-business-primary));
-  content: '';
+.teamMessageBubble {
+  max-width: 100%;
+  padding: 9px 12px 10px;
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.teamMessageAvatar {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  overflow: hidden;
+  corner-shape: superellipse(1);
+  border-radius: 50%;
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-label-primary-foreground);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
 }
 
 .teamMessageHeader,
@@ -289,7 +303,8 @@
 .teamMessageHeader {
   justify-content: space-between;
   gap: 10px;
-  margin-bottom: 5px;
+  width: 100%;
+  padding: 0 2px;
 }
 
 .teamMessageIdentity {
@@ -331,7 +346,7 @@
 
 .teamMessageText {
   overflow-wrap: anywhere;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--dsw-alias-label-primary);
   font: var(--dsw-font-xs-13);
   white-space: pre-wrap;
   word-break: break-word;

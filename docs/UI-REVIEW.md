@@ -511,3 +511,15 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 
 实测：行内 3 个按钮（团队、置顶、管理），无 Chevron，无 task list。
 截图：`docs/assets/ui-review/sidebar-team-row.png`。
+
+---
+
+## 四十一、成员消息气泡改为 AionUI 式
+
+- 去掉卡片式边框、左侧彩色竖条和内部类型标签。
+- 结构改为：上方 20px 圆形头像 + 发送者名（Leader / 成员名），下方独立圆角气泡。
+- 气泡使用 `bg-layer-2` 中性底色、12px 圆角、无边框，正文主色；宽度随内容收缩，最大 88%/560px。
+- 消息类型仍保留在 `aria-label`（如「Leader 消息 · 指令」），不再占据视觉。
+- 头像与气泡纵向 6px 间距，头部左右 2px 内缩，贴近参考图。
+
+对应变更：`ConversationColumn.tsx` 的 `TeamMessageCard` 与 `ConversationColumn.module.css`。
