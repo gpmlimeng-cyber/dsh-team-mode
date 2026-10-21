@@ -1,4 +1,4 @@
-import type { FormEvent } from 'react'
+import type { CSSProperties, FormEvent } from 'react'
 import { useEffect, useRef, useState } from 'react'
 import {
   IconCloseOutlineRegular,
@@ -17,6 +17,7 @@ import type {
   WorkspaceUploadView,
 } from '../../transport/contracts.js'
 import { callAgentTeam, uploadAgentTeamFile } from '../api.js'
+import { teamIdentityColor } from '../team-identity.js'
 import {
   composerTriggerAt,
   matchingUserSkills,
@@ -418,7 +419,7 @@ export function ConversationColumn({
             <span>{member.role === 'leader' ? '向 Leader 描述目标，由它组织团队协作。' : '等待 Leader 分配任务，或直接向该成员发送消息。'}</span>
           </div>
           : <>
-            {visibleNodes.map(node => <ConversationNodeView key={node.id} node={node} />)}
+            {visibleNodes.map(node => <ConversationNodeView key={node.id} node={node} team={team} />)}
             {pendingInteractions.map(interaction => (
               <PendingInteractionCard
                 key={interaction.id}
@@ -729,10 +730,10 @@ function ContextUsageMeter({
   )
 }
 
-export function ConversationNodeView({ node }: { node: ConversationNode }): JSX.Element {
+export function ConversationNodeView({ node, team }: { node: ConversationNode; team?: TeamView | undefined }): JSX.Element {
   if (node.kind === 'tool') return <ToolCard node={node} />
   if (node.kind === 'notice') return <div className={`${css.noticeNode} ${node.tone === 'error' ? css.noticeError : ''}`}>{node.text}</div>
-  if (node.kind === 'team-message') return <TeamMessageCard node={node} />
+  if (node.kind === 'team-message') return <TeamMessageCard node={node} team={team} />
   return (
     <article className={`${css.messageNode} ${node.kind === 'user' ? css.userMessage : css.assistantMessage}`}>
       {node.reasoning && (
@@ -809,7 +810,7 @@ const TEAM_MESSAGE_TYPE_LABELS: Record<Extract<ConversationNode, { kind: 'team-m
   system: '系统',
 }
 
-function TeamMessageCard({ node }: { node: Extract<ConversationNode, { kind: 'team-message' }> }): JSX.Element {
+function TeamMessageCard({ node, team }: { node: Extract<ConversationNode, { kind: 'team-message' }>; team?: TeamView | undefined }): JSX.Element {
   const toneClass = node.messageType === 'result'
     ? css.teamMessageResult
     : node.messageType === 'question'
@@ -827,8 +828,17 @@ function TeamMessageCard({ node }: { node: Extract<ConversationNode, { kind: 'te
       ? '团队事件'
       : '成员反馈'
   const author = node.senderRole === 'leader' ? 'Leader' : node.senderName
+  const order = team?.memberOrder ?? (team === undefined ? [] : Object.keys(team.members))
+  const slotIndex = node.senderRole === 'system'
+    ? 0
+    : node.senderRole === 'leader'
+      ? 0
+      : Math.max(order.indexOf(node.senderId), 0)
+  const memberColor = node.senderRole === 'system'
+    ? 'var(--dsw-alias-label-tertiary)'
+    : teamIdentityColor(slotIndex)
   return (
-    <article className={`${css.teamMessageCard} ${toneClass}`} aria-label={`${category} · ${TEAM_MESSAGE_TYPE_LABELS[node.messageType]}`}>
+    <article className={`${css.teamMessageCard} ${toneClass}`} style={{ '--team-message-color': memberColor } as CSSProperties} aria-label={`${category} · ${TEAM_MESSAGE_TYPE_LABELS[node.messageType]}`}>
       <header className={css.teamMessageHeader}>
         <span className={css.teamMessageIdentity}>
           <span className={css.teamMessageAvatar} aria-hidden="true">{author.trim().slice(0, 1).toLocaleUpperCase()}</span>
@@ -836,7 +846,7 @@ function TeamMessageCard({ node }: { node: Extract<ConversationNode, { kind: 'te
         </span>
       </header>
       <div className={css.teamMessageBubble}>
-        <div className={css.teamMessageText}><UserTextRun text={node.text} /></div>
+        <div className={css.teamMessageText}><MarkdownText text={node.text} labels={MARKDOWN_LABELS} /></div>
       </div>
     </article>
   )

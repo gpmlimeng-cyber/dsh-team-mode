@@ -523,3 +523,13 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 头像与气泡纵向 6px 间距，头部左右 2px 内缩，贴近参考图。
 
 对应变更：`ConversationColumn.tsx` 的 `TeamMessageCard` 与 `ConversationColumn.module.css`。
+
+---
+
+## 四十二、消息底色跟成员色 + Markdown 渲染
+
+- 气泡底色改为成员身份色的 10% 混入：`color-mix(in srgb, 成员色 10%, bg-layer-2)`；Leader 用中性色，成员用各自 teal/tan 等色。
+- 成员消息正文从 `UserTextRun` 改为 `MarkdownText`，支持标题、列表、代码、表格等 MD 语法，减少纯文本/自定义渲染依赖。
+- `.teamMessageText` 去掉 `pre-wrap`，避免与 Markdown 块级排版冲突；仍保留 `word-break`。
+
+对应变更：`ConversationColumn.tsx`、`ConversationColumn.module.css`。

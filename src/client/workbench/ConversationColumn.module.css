@@ -273,7 +273,7 @@
   max-width: 100%;
   padding: 9px 12px 10px;
   border-radius: 12px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: color-mix(in srgb, var(--team-message-color, var(--dsw-alias-bg-layer-2)) 10%, var(--dsw-alias-bg-layer-2));
   color: var(--dsw-alias-label-primary);
 }
 
@@ -348,7 +348,6 @@
   overflow-wrap: anywhere;
   color: var(--dsw-alias-label-primary);
   font: var(--dsw-font-xs-13);
-  white-space: pre-wrap;
   word-break: break-word;
 }
 
