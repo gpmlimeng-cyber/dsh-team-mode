@@ -4356,7 +4356,12 @@ textarea.input {
   border: 0;
   border-left: 1px solid var(--dsw-alias-border-l1);
   border-radius: 0;
-  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 4%, var(--dsw-alias-bg-base));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--team-pane-color, var(--dsw-alias-bg-base)) 6%, var(--dsw-alias-bg-base)) 0%,
+    var(--dsw-alias-bg-base) 64%,
+    var(--dsw-alias-bg-base) 100%
+  );
 }
 
 .teamParallelPane:first-child {
@@ -5632,4 +5637,37 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="heroOptions"] {
 html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHint"] {
   width: 100%;
   max-width: min(100%, 300px);
+}
+
+/* The composer's official model selector is relocated into the pane header.
+   Keep it compact and drop the reasoning suffix so the identity has room. */
+.teamParallelModelSeat {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 132px;
+}
+
+.teamParallelModelSeat > * {
+  min-width: 0;
+  max-width: 132px;
+}
+
+.teamParallelModelSeat button {
+  min-width: 0;
+  max-width: 132px;
+  padding: 0 6px;
+  gap: 4px;
+}
+
+.teamParallelModelSeat [class*="triggerLabel"] {
+  min-width: 0;
+  max-width: 76px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teamParallelModelSeat [class*="triggerEffort"] {
+  display: none;
 }

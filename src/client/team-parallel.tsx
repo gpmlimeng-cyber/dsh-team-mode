@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { TeamView } from '../transport/contracts.js'
 import { useAgentTeamData } from './components.js'
@@ -90,6 +90,40 @@ function LeaderMark({ size = 12 }: { size?: number }): JSX.Element {
       <path d="M3 7.4 8.2 11 12 4l3.8 7L21 7.4 19.1 18H4.9L3 7.4Zm1.1 12.4h15.8V22H4.1v-2.2Z" fill="currentColor" />
     </svg>
   )
+}
+
+function ModelSeat(): JSX.Element {
+  const holder = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    const host = holder.current
+    const pane = host?.closest('[data-team-pane]')
+    if (host === null || host === undefined || pane === undefined || pane === null) return
+    let slot: HTMLElement | null = null
+    let moveObserver: MutationObserver | undefined
+    const move = (): void => {
+      const node = slot?.firstElementChild
+      if (node !== undefined && node !== null && node.parentElement !== host) host.appendChild(node)
+    }
+    const attach = (): void => {
+      if (slot !== null && slot.isConnected) return
+      slot = pane.querySelector<HTMLElement>('[data-slot="conversation.input.model"]')
+      if (slot === null) return
+      move()
+      moveObserver?.disconnect()
+      moveObserver = new MutationObserver(move)
+      moveObserver.observe(slot, { childList: true })
+    }
+    const paneObserver = new MutationObserver(attach)
+    paneObserver.observe(pane, { childList: true, subtree: true })
+    attach()
+    return () => {
+      paneObserver.disconnect()
+      moveObserver?.disconnect()
+      const node = host.firstElementChild
+      if (node !== null && slot !== null && node.parentElement === host) slot.appendChild(node)
+    }
+  }, [])
+  return <span ref={holder} className={css.teamParallelModelSeat} data-team-model-seat="" />
 }
 
 function MaximizeIcon(): JSX.Element {
@@ -277,11 +311,6 @@ export function TeamParallelHost({
                       <LeaderMark size={12} />
                     </span>
                   )}
-                  {modelLabel(member) !== undefined && (
-                    <span className={css.teamParallelModelPill} title={modelLabel(member)}>
-                      {modelLabel(member)}
-                    </span>
-                  )}
                   <span className={`${css.teamParallelStatusDot} ${css[`teamParallelStatus_${status}`] ?? ''}`} aria-label={status} />
                   {(pendingBySlot[member.id] ?? 0) > 0 && (
                     <span
@@ -304,6 +333,7 @@ export function TeamParallelHost({
                   )}
                 </span>
                 <span className={css.teamParallelPaneActions}>
+                  <ModelSeat />
                   <button
                     type="button"
                     className={css.teamParallelMaximize}
