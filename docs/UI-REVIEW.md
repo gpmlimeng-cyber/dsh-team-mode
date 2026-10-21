@@ -66,7 +66,7 @@
 
 ## 六、并行模式贴边修正
 
-按反馈移除并行视图的外层留白：`.teamParallelRoot` 的 `padding` 由 `10px 12px 12px` 改为 `0`，列间距保持 0；移除 grid 的上下边框，避免与宿主 tab 分隔线形成双线。单聊模式的成员胶囊保留自身 8px/12px 内边距（不贴着文字），聊天区仍贴边。
+按反馈移除并行视图的外层留白：`.teamParallelRoot` 的 `padding` 由 `10px 12px 12px` 改为 `0`，列间距保持 0；移除 grid 的上下边框，避免与宿主 tab 分隔线形成双线。对话页签沿用宿主自带的成员切换器；并行页签的聊天区贴边。
 
 验证（Harness，1280×820）：
 - pane 左边界 = 内容区左边界（281），宽度 1000 = 内容区全宽；
@@ -74,3 +74,15 @@
 - root/grid/pane 计算样式 `padding` 均为 `0px`；状态栏未被裁切（bottom 1002 / pane bottom 1006）。
 
 截图：`docs/assets/ui-review/parallel-flush.png`。
+
+---
+
+## 七、页签收敛
+
+「对话」与「单聊」功能重复（都是单成员会话），按反馈移除自定义「单聊」视图：
+
+- 删除 `conversation.view` 的 `team-single` 注册与 `TeamSingleView` 组件；
+- 移除并行 host 的单聊分支、成员胶囊、按团队记忆的 `single:<teamId>` 状态及相关样式；
+- 保留宿主原生「对话」页签（顶部成员切换器可换人）。
+
+验证：团队会话页签为 **对话 / 并行 / 看板 / 团队管理 / 轨迹**，无「单聊」；并行贴边布局不受影响。截图：`docs/assets/ui-review/tabs-no-single.png`。

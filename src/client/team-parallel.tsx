@@ -18,15 +18,6 @@ export function TeamParallelView({ sessionId }: { sessionId?: string }): JSX.Ele
   return <div className={css.teamParallelAnchor} data-team-parallel-anchor data-session-id={sessionId ?? ''} />
 }
 
-/** Placeholder rendered inside the native `conversation.view` tab for the
- * single-chat mode. The shared overlay host portals one member pane here. */
-export function TeamSingleView({ sessionId }: { sessionId?: string }): JSX.Element {
-  useEffect(() => {
-    setTeamConversationView(sessionId, 'single')
-    return () => { setTeamConversationView(sessionId, undefined) }
-  }, [sessionId])
-  return <div className={css.teamParallelAnchor} data-team-single-anchor data-session-id={sessionId ?? ''} />
-}
 
 interface ParallelHostProps {
   sessions: {
@@ -161,18 +152,12 @@ export function TeamParallelHost({
 }: ParallelHostProps): JSX.Element | null {
   const { teams, load } = useAgentTeamData(true)
   const t = useTeamText()
-  const [anchorState, setAnchorState] = useState<{ element: HTMLElement; mode: 'parallel' | 'single' }>()
+  const [anchor, setAnchor] = useState<HTMLElement>()
 
   useEffect(() => {
     const locate = (): void => {
-      const single = document.querySelector<HTMLElement>('[data-team-single-anchor]')
-      const parallel = document.querySelector<HTMLElement>('[data-team-parallel-anchor]')
-      const next = single !== null
-        ? { element: single, mode: 'single' as const }
-        : parallel !== null
-          ? { element: parallel, mode: 'parallel' as const }
-          : undefined
-      setAnchorState(current => current?.element === next?.element ? current : next)
+      const next = document.querySelector<HTMLElement>('[data-team-parallel-anchor]') ?? undefined
+      setAnchor(current => current === next ? current : next)
     }
     locate()
     const observer = new MutationObserver(locate)
@@ -180,28 +165,11 @@ export function TeamParallelHost({
     return () => { observer.disconnect() }
   }, [])
 
-  const anchor = anchorState?.element
-  const singleMode = anchorState?.mode === 'single'
   const activeSessionId = anchor?.dataset.sessionId
   const team = useMemo(() => teams.find(candidate =>
     Object.values(candidate.members).some(member => member.sessionId === activeSessionId),
   ), [teams, activeSessionId])
   const members = useMemo(() => team === undefined ? [] : sortMembers(team), [team])
-  const [singleSlotId, setSingleSlotId] = useState<string>()
-  useEffect(() => {
-    if (team === undefined || !singleMode) return
-    const stored = readStored<string>(`dsh-team-mode:single:${team.id}`, '')
-    setSingleSlotId(current => {
-      if (current !== undefined && team.members[current] !== undefined) return current
-      return team.members[stored] !== undefined ? stored : team.leaderSlotId
-    })
-  }, [team, singleMode])
-  const activeSingleSlotId = singleSlotId !== undefined && team?.members[singleSlotId] !== undefined
-    ? singleSlotId
-    : team?.leaderSlotId
-  const visibleMembers = singleMode
-    ? members.filter(member => member.id === activeSingleSlotId)
-    : members
   const [pendingBySlot, setPendingBySlot] = useState<Record<string, number>>({})
   useEffect(() => {
     if (team === undefined) {
@@ -252,38 +220,11 @@ export function TeamParallelHost({
   const leader = team.members[team.leaderSlotId]
   return createPortal(
     <div className={css.teamParallelRoot}>
-      {singleMode && (
-        <div className={css.teamSingleSwitcher} role="group" aria-label="选择单聊成员">
-          {members.map(member => (
-            <button
-              key={member.id}
-              type="button"
-              className={css.teamSingleSwitcherButton}
-              aria-pressed={member.id === activeSingleSlotId}
-              onClick={() => {
-                setSingleSlotId(member.id)
-                writeStored(`dsh-team-mode:single:${team.id}`, member.id)
-              }}
-            >
-              {member.displayName}
-              {member.role === 'leader' && <span className={css.teamSingleLeaderMark}>Leader</span>}
-              {(pendingBySlot[member.id] ?? 0) > 0 && (
-                <span
-                  className={css.teamParallelPendingBadge}
-                  aria-label={`${pendingBySlot[member.id]} 个待确认`}
-                >
-                  {pendingBySlot[member.id]}
-                </span>
-              )}
-            </button>
-          ))}
-        </div>
-      )}
       <div
-        className={`${css.teamParallelGrid} ${singleMode ? css.teamParallelGridSingle : ''}`}
-        style={{ '--team-pane-count': visibleMembers.length } as CSSProperties}
+        className={css.teamParallelGrid}
+        style={{ '--team-pane-count': members.length } as CSSProperties}
       >
-        {visibleMembers.map(member => {
+        {members.map(member => {
           const status = memberStatus(member)
           const active = member.sessionId === activeSessionId
           return (

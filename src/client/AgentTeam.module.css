@@ -4346,9 +4346,6 @@ textarea.input {
   background: var(--dsw-alias-bg-layer-1);
 }
 
-.teamParallelGridSingle {
-  grid-template-columns: minmax(0, 1fr);
-}
 
 .teamParallelPane {
   display: flex;
@@ -4971,47 +4968,10 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
   box-sizing: border-box;
 }
 
-.teamSingleSwitcher {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  overflow-x: auto;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-page);
-}
 
-.teamSingleSwitcherButton {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 999px;
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
-  padding: 4px 10px;
-  font-size: 12px;
-  line-height: 1.4;
-  cursor: pointer;
-}
 
-.teamSingleSwitcherButton:hover {
-  background: var(--dsw-alias-bg-layer-2);
-}
 
-.teamSingleSwitcherButton[aria-pressed='true'] {
-  border-color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-bg-layer-2);
-  font-weight: 500;
-}
 
-.teamSingleLeaderMark {
-  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
-  font-size: 10px;
-  letter-spacing: 0.02em;
-}
 
 .teamParallelPendingBadge {
   display: inline-flex;

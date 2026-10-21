@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react'
 
-export type TeamConversationView = 'parallel' | 'single' | 'board'
+export type TeamConversationView = 'parallel' | 'board'
 
 const views = new Map<string, TeamConversationView>()
 const listeners = new Set<() => void>()
