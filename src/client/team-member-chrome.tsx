@@ -227,7 +227,7 @@ export function TeamMemberSwitcher({
             <span>同一助手可被反复添加</span>
           </div>
           <div className={css.memberAddSearch}>
-            <IconSearchOutlineRegular size={16} />
+            <IconSearchOutlineRegular size={14} />
             <input
               autoFocus
               value={addQuery}
@@ -253,7 +253,7 @@ export function TeamMemberSwitcher({
                       : initial(assistant.name)}
                 </span>
                 <span className={css.memberAddName}>{assistant.name}</span>
-                <IconPlusOutlineRegular size={16} className={css.memberAddPlus} />
+                <IconPlusOutlineRegular size={14} className={css.memberAddPlus} />
               </button>
             ))}
             {visibleTeamAssistants.length === 0 && (
@@ -264,7 +264,7 @@ export function TeamMemberSwitcher({
           </div>
           {addError !== undefined && <div className={css.memberAddError} role="alert">{addError}</div>}
           <div className={css.memberAddFooter}>
-            <span>没有合适的？也可以直接让 Leader 帮你安排。</span>
+            <span>没有合适的？让 Leader 帮你安排。</span>
             <button
               type="button"
               className={css.memberAddFooterLink}
