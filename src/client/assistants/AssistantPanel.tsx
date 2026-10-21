@@ -1,5 +1,18 @@
 import type { FormEvent } from 'react'
 import { BUILTIN_ASSISTANT_AVATARS } from '../assistant-avatars.js'
+
+const DICEBEAR_STYLES = [
+  { id: 'adventurer', label: '冒险家' },
+  { id: 'avataaars', label: '卡通' },
+  { id: 'big-smile', label: '笑脸' },
+  { id: 'lorelei', label: '手绘' },
+  { id: 'micah', label: '极简' },
+  { id: 'notionists', label: '线稿' },
+  { id: 'open-peeps', label: '简笔' },
+  { id: 'personas', label: '人物' },
+  { id: 'pixel-art', label: '像素' },
+  { id: 'thumbs', label: '点赞' },
+] as const
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Button,
@@ -910,6 +923,7 @@ function AssistantForm({
   const [name, setName] = useState(assistant?.name ?? '')
   const [avatar, setAvatar] = useState(assistant?.avatar ?? '')
   const [generatingAvatar, setGeneratingAvatar] = useState(false)
+  const [avatarStyle, setAvatarStyle] = useState('adventurer')
   const [description, setDescription] = useState(assistant?.description ?? '')
   const [instructions, setInstructions] = useState(assistant?.instructions ?? '')
   const [promptsText, setPromptsText] = useState((assistant?.prompts ?? []).join('\n'))
@@ -1037,7 +1051,7 @@ function AssistantForm({
     setError(undefined)
     try {
       const seed = `${name.trim() || 'assistant'}-${Math.random().toString(36).slice(2, 8)}`
-      const url = `https://api.dicebear.com/9.x/adventurer/svg?seed=${encodeURIComponent(seed)}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`
+      const url = `https://api.dicebear.com/9.x/${avatarStyle}/svg?seed=${encodeURIComponent(seed)}&backgroundColor=b6e3f4,c0aede,d1d4f9,ffd5dc,ffdfbf`
       const response = await fetch(url)
       if (!response.ok) throw new Error(`头像服务返回 ${response.status}`)
       const svg = await response.text()
@@ -1117,6 +1131,16 @@ function AssistantForm({
             >
               {generatingAvatar ? '生成中…' : '自动生成'}
             </button>
+            <select
+              className={css.avatarStyleSelect}
+              value={avatarStyle}
+              aria-label="头像风格"
+              onChange={event => { setAvatarStyle(event.target.value) }}
+            >
+              {DICEBEAR_STYLES.map(style => (
+                <option key={style.id} value={style.id}>{style.label}</option>
+              ))}
+            </select>
             {avatar !== '' && (
               <button type="button" className={css.assistantRemoveAvatar} onClick={() => { setAvatar('') }}>
                 移除头像

@@ -385,3 +385,15 @@ DSH 全局设置了 `corner-shape: superellipse(1.5)`，所以即使 `border-rad
 
 验证：点击后预览 `src=data:image/svg+xml;charset=utf-8,…`，`naturalWidth=150`。
 截图：`docs/assets/ui-review/assistant-dicebear.png`。
+
+---
+
+## 三十一、DiceBear 风格可选
+
+「自动生成」旁增加风格选择：
+
+冒险家 / 卡通 / 笑脸 / 手绘 / 极简 / 线稿 / 简笔 / 人物 / 像素 / 点赞（adventurer、avataaars、big-smile、lorelei、micah、notionists、open-peeps、personas、pixel-art、thumbs）。
+
+- 默认「冒险家」；切换后下一次生成使用对应风格。
+- 仍取回 SVG 并转 data URL 保存；实测切到「手绘」生成后预览为 9.4KB SVG、`naturalWidth=150`。
+- 风格选择只影响自动生成，不改变已选头像。
