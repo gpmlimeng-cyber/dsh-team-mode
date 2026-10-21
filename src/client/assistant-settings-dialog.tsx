@@ -7,10 +7,13 @@ import {
   assistantAvatarFileError,
   assistantInstanceName,
 } from './assistant-instances.js'
+import { PERMISSION_LABELS } from './labels.js'
 import { MemberAvatar } from './member-avatar.js'
+import { defaultReasoningLabel, useModelCapabilities } from './model-reasoning.js'
 import { AnimatedModal, Field } from './shared.js'
 import css from './AgentTeam.module.css'
-import type { AssistantInstance } from '../domain/types.js'
+import type { AssistantInstance, UpdateAssistantInstanceInput } from '../domain/types.js'
+import type { CatalogView } from '../transport/contracts.js'
 
 const STATUS_LABELS: Record<AssistantInstance['status'], string> = {
   idle: '空闲',
@@ -38,10 +41,10 @@ function formatCreatedAt(iso: string): string {
 }
 
 /**
- * Edit one Assistant instance's local identity. The template snapshot keeps the
- * model and Workspace fixed after creation, so this dialog deliberately exposes
- * them as read-only. Archive is a two-step inline action that hides the row and
- * lets the service stop its active background workers.
+ * Edit one Assistant instance's local identity and engine settings. The model,
+ * reasoning effort, and permission preset are validated against the live
+ * catalog and saved on the instance snapshot; the referenced template is never
+ * changed. Workspace remains fixed after creation.
  */
 export function AssistantSettingsDialog({
   open,
@@ -59,12 +62,20 @@ export function AssistantSettingsDialog({
   const [avatarChanged, setAvatarChanged] = useState(false)
   const [templateName, setTemplateName] = useState<string>()
   const [workspaceTitle, setWorkspaceTitle] = useState<string>()
+  const [catalog, setCatalog] = useState<CatalogView>()
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogError, setCatalogError] = useState<string>()
+  const [provider, setProvider] = useState(assistant.assistantSnapshot.provider)
+  const [model, setModel] = useState(assistant.assistantSnapshot.model)
+  const [reasoningEffort, setReasoningEffort] = useState(assistant.assistantSnapshot.reasoningEffort ?? '')
+  const [permissionPresetId, setPermissionPresetId] = useState(assistant.assistantSnapshot.permissionPresetId)
   const [confirmArchive, setConfirmArchive] = useState(false)
   const [saving, setSaving] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [error, setError] = useState<string>()
 
   const busy = saving || archiving
+  const modelCapabilities = useModelCapabilities(provider, model)
 
   useEffect(() => {
     if (!open) return
@@ -74,6 +85,13 @@ export function AssistantSettingsDialog({
     setAvatarChanged(false)
     setTemplateName(undefined)
     setWorkspaceTitle(undefined)
+    setCatalog(undefined)
+    setCatalogLoading(true)
+    setCatalogError(undefined)
+    setProvider(assistant.assistantSnapshot.provider)
+    setModel(assistant.assistantSnapshot.model)
+    setReasoningEffort(assistant.assistantSnapshot.reasoningEffort ?? '')
+    setPermissionPresetId(assistant.assistantSnapshot.permissionPresetId)
     setConfirmArchive(false)
     setSaving(false)
     setArchiving(false)
@@ -86,14 +104,32 @@ export function AssistantSettingsDialog({
         // The summary degrades to the stored template id; editing still works.
       })
     callAgentTeam('catalog.get')
-      .then(catalog => {
-        if (live) setWorkspaceTitle(catalog.workspaces.find(item => item.id === assistant.workspaceId)?.title)
+      .then(value => {
+        if (!live) return
+        setCatalog(value)
+        setWorkspaceTitle(value.workspaces.find(item => item.id === assistant.workspaceId)?.title)
       })
-      .catch(() => {
-        // The summary degrades to the stored Workspace path.
+      .catch((cause: unknown) => {
+        // Keep name/avatar editing available; model and permission controls stay
+        // disabled until a catalog is available.
+        if (live) setCatalogError(`读取模型/权限目录失败：${messageOf(cause)}`)
+      })
+      .finally(() => {
+        if (live) setCatalogLoading(false)
       })
     return () => { live = false }
   }, [open, assistant.id])
+
+  useEffect(() => {
+    // A newly selected model may advertise a different set of reasoning efforts
+    // (or none at all). Drop an unsupported effort so the select always shows a
+    // value the model accepts; saving then clears it on the snapshot.
+    if (modelCapabilities.loading || modelCapabilities.value === undefined) return
+    const efforts = modelCapabilities.value.reasoning?.efforts ?? []
+    setReasoningEffort(current => (
+      current !== '' && !efforts.some(effort => effort.id === current) ? '' : current
+    ))
+  }, [modelCapabilities.loading, modelCapabilities.value])
 
   const close = (): void => {
     if (busy) return
@@ -136,20 +172,42 @@ export function AssistantSettingsDialog({
       setError('显示名称不能为空')
       return
     }
+    if (provider.trim() === '' || model.trim() === '') {
+      setError('请选择 Provider 和模型')
+      return
+    }
+    if (permissionPresetId.trim() === '') {
+      setError('请选择权限预设')
+      return
+    }
     const avatarError = assistantAvatarDataUrlError(avatar)
     if (avatarError !== undefined) {
       setError(avatarError)
       return
+    }
+    const snapshot = assistant.assistantSnapshot
+    const value: UpdateAssistantInstanceInput = { name: displayName }
+    if (avatarChanged) value.avatar = avatar
+    if (provider !== snapshot.provider || model !== snapshot.model) {
+      // provider and model always travel together so the service can validate
+      // the pair against the current model catalog.
+      value.provider = provider
+      value.model = model
+    }
+    const nextReasoningEffort = reasoningEffort.trim()
+    if (nextReasoningEffort !== (snapshot.reasoningEffort ?? '')) {
+      // An empty string clears the effort and falls back to the model default.
+      value.reasoningEffort = nextReasoningEffort
+    }
+    if (permissionPresetId !== snapshot.permissionPresetId) {
+      value.permissionPresetId = permissionPresetId
     }
     setSaving(true)
     setError(undefined)
     try {
       await callAgentTeam('assistant.instance.update', {
         id: assistant.id,
-        value: {
-          name: displayName,
-          ...(avatarChanged ? { avatar } : {}),
-        },
+        value,
       })
       onClose()
       await onSaved()
@@ -187,18 +245,30 @@ export function AssistantSettingsDialog({
   const workspaceLabel = workspaceTitle === undefined
     ? assistant.workspacePath
     : `${workspaceTitle} — ${assistant.workspacePath}`
+  const modelGroups = (catalog?.providers ?? []).map(providerEntry => ({
+    provider: providerEntry,
+    models: catalog?.models[providerEntry.id] ?? [],
+  })).filter(group => group.models.length > 0)
+  const modelSelection = JSON.stringify([provider, model])
+  const modelSelectionInCatalog = modelGroups.some(group => (
+    group.provider.id === provider && group.models.some(modelEntry => modelEntry.id === model)
+  ))
+  const permissionOptions = catalog?.permissionPresets ?? []
+  const permissionInCatalog = permissionOptions.some(option => option.value === permissionPresetId)
+  const reasoningEfforts = modelCapabilities.value?.reasoning?.efforts ?? []
 
   return (
     <AnimatedModal
       open={open}
       onClose={close}
       title="助手设置"
-      description="修改显示名称与头像；Workspace 与模型在创建后保持只读。"
+      description="修改显示名称、头像、模型、思考模式与权限；Workspace 在创建后保持只读。"
       closeLabel="关闭"
       className={css.assistantSettingsDialog ?? ''}
     >
       <form className={css.assistantSettingsForm} onSubmit={(event) => { void save(event) }}>
         {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
+        {catalogError !== undefined && <div className={css.inlineError} role="alert">{catalogError}</div>}
         <div className={css.assistantSettingsAvatarRow}>
           <MemberAvatar name={displayName} avatar={avatar} size={52} />
           <div className={css.assistantSettingsAvatarCopy}>
@@ -237,14 +307,94 @@ export function AssistantSettingsDialog({
             onChange={event => { setName(event.target.value) }}
           />
         </Field>
+        <Field label="模型">
+          <select
+            className={css.input}
+            value={modelSelection}
+            disabled={busy || catalog === undefined}
+            onChange={event => {
+              const [nextProvider, nextModel] = JSON.parse(event.target.value) as [string, string]
+              setProvider(nextProvider)
+              setModel(nextModel)
+              setError(undefined)
+            }}
+          >
+            {!modelSelectionInCatalog && (
+              <option value={modelSelection}>{provider} / {model}（当前）</option>
+            )}
+            {modelGroups.map(group => (
+              <optgroup key={group.provider.id} label={group.provider.name}>
+                {group.models.map(modelEntry => (
+                  <option
+                    key={`${group.provider.id}/${modelEntry.id}`}
+                    value={JSON.stringify([group.provider.id, modelEntry.id])}
+                  >
+                    {modelEntry.name === modelEntry.id ? modelEntry.id : `${modelEntry.name}（${modelEntry.id}）`}
+                  </option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+          <span className={css.assistantSettingsAvatarHint}>
+            {catalogLoading
+              ? '正在读取模型列表…'
+              : '按 Provider 分组；保存时同时写入 Provider 与模型。'}
+          </span>
+        </Field>
+        {reasoningEfforts.length > 0 && (
+          <Field label="思考模式">
+            <select
+              className={css.input}
+              value={reasoningEffort}
+              disabled={busy}
+              onChange={event => { setReasoningEffort(event.target.value) }}
+            >
+              <option value="">{defaultReasoningLabel(modelCapabilities.value)}</option>
+              {reasoningEfforts.map(effort => (
+                <option key={effort.id} value={effort.id}>
+                  {effort.name === effort.id ? effort.name : `${effort.name}（${effort.id}）`}
+                </option>
+              ))}
+            </select>
+            <span className={css.assistantSettingsAvatarHint}>
+              由当前模型决定可用档位；选择「模型默认」会清除已保存的档位。
+            </span>
+          </Field>
+        )}
+        {modelCapabilities.error !== undefined && (
+          <div className={css.inlineError} role="alert">
+            读取模型能力失败：{modelCapabilities.error}
+          </div>
+        )}
+        <Field label="权限预设">
+          <select
+            className={css.input}
+            value={permissionPresetId}
+            disabled={busy || catalog === undefined}
+            onChange={event => {
+              setPermissionPresetId(event.target.value)
+              setError(undefined)
+            }}
+          >
+            {!permissionInCatalog && (
+              <option value={permissionPresetId}>
+                {PERMISSION_LABELS[permissionPresetId] ?? permissionPresetId}（当前）
+              </option>
+            )}
+            {permissionOptions.map(option => (
+              <option key={option.value} value={option.value}>
+                {PERMISSION_LABELS[option.value] ?? option.name}
+              </option>
+            ))}
+          </select>
+          <span className={css.assistantSettingsAvatarHint}>
+            权限只影响之后创建或恢复的会话；已打开的主会话保持原权限。
+          </span>
+        </Field>
         <div className={css.assistantSettingsSummary} aria-label="助手信息">
           <div className={css.assistantSettingsSummaryRow}>
             <span className={css.assistantSettingsSummaryLabel}>助手模板</span>
             <span className={css.assistantSettingsSummaryValue} title={assistant.templateId}>{templateLabel}</span>
-          </div>
-          <div className={css.assistantSettingsSummaryRow}>
-            <span className={css.assistantSettingsSummaryLabel}>模型</span>
-            <span className={css.assistantSettingsSummaryValue}>{assistant.assistantSnapshot.model}</span>
           </div>
           <div className={css.assistantSettingsSummaryRow}>
             <span className={css.assistantSettingsSummaryLabel}>Workspace</span>
@@ -264,6 +414,9 @@ export function AssistantSettingsDialog({
             <span className={css.assistantSettingsSummaryValue}>{formatCreatedAt(assistant.createdAt)}</span>
           </div>
         </div>
+        <span className={css.assistantSettingsAvatarHint}>
+          已打开的主会话会沿用旧模型，直到重新创建或恢复；新建的后台任务和未来恢复的主会话使用保存后的配置。
+        </span>
         <div className={css.assistantCreateActions}>
           <Button variant="outline" type="button" disabled={busy} onClick={close}>取消</Button>
           <Button variant="primary" type="submit" disabled={busy}>

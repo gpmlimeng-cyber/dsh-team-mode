@@ -164,6 +164,125 @@ describe('Assistant instances', () => {
     expect(noop).toEqual(cleared)
   })
 
+  it('updates model, reasoning, and permission on the stored snapshot', async () => {
+    const { service, store } = createHarness()
+    const assistant = template()
+    await store.putAssistant(assistant)
+    const created = await service.createAssistantInstance({
+      templateId: 'template-1',
+      name: 'Researcher',
+      workspaceId: 'workspace-1',
+    })
+
+    const updated = await service.updateAssistantInstance(created.id, {
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      reasoningEffort: 'medium',
+      permissionPresetId: 'read-only',
+    })
+
+    expect(updated.revision).toBe(2)
+    expect(updated.assistantSnapshot).toMatchObject({
+      assistantId: 'template-1',
+      revision: 3,
+      name: 'Researcher',
+      instructions: 'Research carefully and cite sources.',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      reasoningEffort: 'medium',
+      permissionPresetId: 'read-only',
+      skillAllowlist: ['code-review'],
+      prompts: ['Plan the work'],
+    })
+    expect(assistantInstanceSchema.parse(updated)).toEqual(updated)
+    expect(store.getAssistantInstance(created.id)).toEqual(updated)
+    // The instance snapshot is persisted; the template is untouched.
+    expect(new AgentTeamService(new Context(), config, store).getAssistantInstance(created.id))
+      .toEqual(updated)
+    expect(store.getAssistant(assistant.id)).toEqual(assistant)
+  })
+
+  it('clears reasoning when the new model does not support it or the patch clears it', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+    const created = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+
+    const noReasoning = await service.updateAssistantInstance(created.id, {
+      provider: 'openai',
+      model: 'no-reasoning',
+    })
+    expect(noReasoning.revision).toBe(2)
+    expect(noReasoning.assistantSnapshot.model).toBe('no-reasoning')
+    expect(noReasoning.assistantSnapshot.reasoningEffort).toBeUndefined()
+
+    const explicit = await service.updateAssistantInstance(created.id, {
+      provider: 'openai',
+      model: 'gpt-5',
+      reasoningEffort: 'low',
+    })
+    expect(explicit.revision).toBe(3)
+    expect(explicit.assistantSnapshot.reasoningEffort).toBe('low')
+
+    const cleared = await service.updateAssistantInstance(created.id, { reasoningEffort: '' })
+    expect(cleared.revision).toBe(4)
+    expect(cleared.assistantSnapshot.reasoningEffort).toBeUndefined()
+    expect(cleared.assistantSnapshot.model).toBe('gpt-5')
+  })
+
+  it('does not bump the revision when engine fields match the snapshot', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+    const created = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+
+    const unchanged = await service.updateAssistantInstance(created.id, {
+      provider: 'openai',
+      model: 'gpt-5',
+      reasoningEffort: 'high',
+      permissionPresetId: 'workspace-write',
+    })
+
+    expect(unchanged.revision).toBe(created.revision)
+    expect(unchanged.updatedAt).toBe(created.updatedAt)
+    expect(service.getAssistantInstance(created.id)).toEqual(created)
+  })
+
+  it('rejects invalid engine references without changing the instance', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+    const created = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+
+    await expect(service.updateAssistantInstance(created.id, { provider: 'anthropic' }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(service.updateAssistantInstance(created.id, { model: 'gpt-5-mini' }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(service.updateAssistantInstance(created.id, {
+      provider: 'openai',
+      model: 'missing-model',
+    })).rejects.toMatchObject({ code: 'MODEL_REFERENCE_INVALID' })
+    await expect(service.updateAssistantInstance(created.id, { reasoningEffort: 'ultra' }))
+      .rejects.toMatchObject({ code: 'MODEL_REFERENCE_INVALID' })
+    await expect(service.updateAssistantInstance(created.id, {
+      permissionPresetId: 'root-access',
+    })).rejects.toMatchObject({ code: 'PERMISSION_PRESET_INVALID' })
+    // An explicit unsupported effort is rejected even when the model changes.
+    await expect(service.updateAssistantInstance(created.id, {
+      provider: 'openai',
+      model: 'gpt-5-mini',
+      reasoningEffort: 'medium',
+    })).rejects.toMatchObject({ code: 'MODEL_REFERENCE_INVALID' })
+
+    expect(service.getAssistantInstance(created.id)).toEqual(created)
+  })
+
   it('sorts pinned instances first for listing', async () => {
     const { service, store } = createHarness()
     await store.putAssistant(template())
@@ -722,6 +841,47 @@ function createHarness(): { service: AgentTeamService; store: MemoryStore } {
   ctx.provide('workspaceRegistry', {
     get: (id: string) => workspaces.get(id),
     list: () => [...workspaces.values()],
+  } as never)
+  ctx.provide('llm', {
+    listProviders: () => [
+      { id: 'openai', name: 'OpenAI' },
+      { id: 'anthropic', name: 'Anthropic' },
+    ],
+    listModels: async (provider: string) => (provider === 'anthropic'
+      ? [{ id: 'claude-sonnet', name: 'Claude Sonnet' }]
+      : [
+        { id: 'gpt-5', name: 'GPT-5' },
+        { id: 'gpt-5-mini', name: 'GPT-5 mini' },
+        { id: 'no-reasoning', name: 'No reasoning' },
+      ]),
+    resolveModelInfo: async (provider: string, model: string) => {
+      const efforts = provider === 'openai' && model === 'gpt-5'
+        ? ['low', 'medium', 'high']
+        : provider === 'openai' && model === 'gpt-5-mini'
+          ? ['low', 'high']
+          : provider === 'anthropic' && model === 'claude-sonnet'
+            ? ['low', 'medium', 'high']
+            : provider === 'openai' && model === 'no-reasoning'
+              ? []
+              : undefined
+      if (efforts === undefined) throw new Error(`Unknown model '${provider}/${model}'`)
+      return {
+        provider,
+        model,
+        ...(efforts.length === 0
+          ? {}
+          : {
+              reasoning: {
+                efforts: efforts.map(id => ({ id, name: id })),
+                defaultEffort: efforts[0],
+              },
+            }),
+      }
+    },
+  } as never)
+  ctx.provide('permissionPresets', {
+    names: ['standard', 'workspace-write', 'read-only'],
+    optionOf: (name: string) => ({ value: name, name }),
   } as never)
   const store = new MemoryStore()
   return { service: new AgentTeamService(ctx, config, store), store }

@@ -489,9 +489,16 @@ export class AgentTeamService extends Service {
   }
 
   /**
-   * Rewrite the instance-local display name/avatar and pin flag on the stored
-   * snapshot. The referenced template is untouched, and an empty patch is a
-   * no-op rather than a revision bump.
+   * Rewrite the instance-local display name/avatar, pin flag, and engine
+   * settings on the stored snapshot. Model references and reasoning efforts are
+   * validated exactly like assistant templates, and permission presets must
+   * exist in the current catalog. The referenced template is untouched, and a
+   * patch that changes nothing is a no-op rather than a revision bump.
+   *
+   * The snapshot only affects Sessions created or resumed after this call.
+   * Already-live Sessions (the visible main Session in particular) keep their
+   * current model until they are recreated/resumed; newly created workers and a
+   * future main-Session resume read the updated snapshot.
    */
   async updateAssistantInstance(
     id: string,
@@ -499,10 +506,68 @@ export class AgentTeamService extends Service {
   ): Promise<AssistantInstance> {
     const patch = updateAssistantInstanceInputSchema.parse(raw)
     const current = requireAssistantInstance(this.store, id)
-    const snapshot = overrideAssistantSnapshot(current.assistantSnapshot, patch.name, patch.avatar)
+
+    if ((patch.provider === undefined) !== (patch.model === undefined)) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        'Changing the Assistant model requires both provider and model',
+      )
+    }
+
+    const permissionPresetId = patch.permissionPresetId?.trim()
+    if (
+      permissionPresetId !== undefined
+      && !this.ctx.permissionPresets.names.includes(permissionPresetId)
+    ) {
+      throw new AgentTeamError(
+        'PERMISSION_PRESET_INVALID',
+        `Unknown permission preset '${permissionPresetId}'`,
+      )
+    }
+
+    const provider = patch.provider?.trim() ?? current.assistantSnapshot.provider
+    const model = patch.model?.trim() ?? current.assistantSnapshot.model
+    const modelReferenceChanged = provider !== current.assistantSnapshot.provider
+      || model !== current.assistantSnapshot.model
+    let reasoningEffort = patch.reasoningEffort === undefined
+      ? current.assistantSnapshot.reasoningEffort
+      : patch.reasoningEffort.trim() || undefined
+
+    if (modelReferenceChanged || patch.reasoningEffort !== undefined) {
+      const capabilities = await this.modelCapabilities(provider, model)
+      const supported = capabilities.reasoning?.efforts.some(effort => effort.id === reasoningEffort) ?? false
+      if (
+        modelReferenceChanged
+        && patch.reasoningEffort === undefined
+        && reasoningEffort !== undefined
+        && !supported
+      ) {
+        // The inherited effort is not available on the new model. Fall back to
+        // the model default instead of blocking an otherwise valid model change.
+        reasoningEffort = undefined
+      }
+      await this.validateReasoningEffort(provider, model, reasoningEffort, capabilities)
+    }
+
+    const display = overrideAssistantSnapshot(current.assistantSnapshot, patch.name, patch.avatar)
+    const {
+      reasoningEffort: _previousReasoning,
+      ...snapshotRest
+    } = display
+    const snapshot: AssistantSnapshot = {
+      ...snapshotRest,
+      provider,
+      model,
+      permissionPresetId: permissionPresetId ?? current.assistantSnapshot.permissionPresetId,
+      ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+    }
     const pinned = patch.pinned ?? current.pinned
     const changed = snapshot.name !== current.assistantSnapshot.name
       || snapshot.avatar !== current.assistantSnapshot.avatar
+      || snapshot.provider !== current.assistantSnapshot.provider
+      || snapshot.model !== current.assistantSnapshot.model
+      || snapshot.reasoningEffort !== current.assistantSnapshot.reasoningEffort
+      || snapshot.permissionPresetId !== current.assistantSnapshot.permissionPresetId
       || pinned !== current.pinned
     if (!changed) return current
     const next = await this.store.updateAssistantInstance(id, value => ({
@@ -1472,17 +1537,18 @@ export class AgentTeamService extends Service {
     provider: string,
     model: string,
     reasoningEffort: string | undefined,
+    capabilities?: ModelCapabilitiesSnapshot,
   ): Promise<void> {
-    const capabilities = await this.modelCapabilities(provider, model)
+    const resolved = capabilities ?? await this.modelCapabilities(provider, model)
     if (reasoningEffort === undefined) return
-    const supported = capabilities.reasoning?.efforts.some(effort => effort.id === reasoningEffort) ?? false
+    const supported = resolved.reasoning?.efforts.some(effort => effort.id === reasoningEffort) ?? false
     if (!supported) {
       throw new AgentTeamError(
         'MODEL_REFERENCE_INVALID',
         `Model '${provider}/${model}' does not support reasoning effort '${reasoningEffort}'`,
         {
           reasoningEffort,
-          supportedEfforts: capabilities.reasoning?.efforts.map(effort => effort.id) ?? [],
+          supportedEfforts: resolved.reasoning?.efforts.map(effort => effort.id) ?? [],
         },
       )
     }

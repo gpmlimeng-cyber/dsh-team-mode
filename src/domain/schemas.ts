@@ -321,11 +321,20 @@ export const createAssistantInstanceInputSchema = z.object({
   pinned: z.boolean().optional(),
 }).strict()
 
-/** Patch an instance snapshot; an empty object leaves every field unchanged. */
+/**
+ * Patch an instance snapshot; an empty object leaves every field unchanged.
+ * `provider` and `model` travel together: changing either one must name both so
+ * the service can validate the pair. An empty `reasoningEffort` clears the
+ * recorded effort and falls back to the model default.
+ */
 export const updateAssistantInstanceInputSchema = z.object({
   name: nonEmpty.optional(),
   avatar: z.string().max(400_000).optional(),
   pinned: z.boolean().optional(),
+  provider: nonEmpty.optional(),
+  model: nonEmpty.optional(),
+  reasoningEffort: z.string().trim().optional(),
+  permissionPresetId: nonEmpty.optional(),
 }).strict()
 
 /** Runtime-owned record of one hidden worker Session; the service assigns ids and timestamps. */
