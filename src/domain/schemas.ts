@@ -15,6 +15,8 @@ export const assistantSnapshotSchema = z.object({
   permissionPresetId: nonEmpty,
   skillAllowlist: z.array(nonEmpty),
   mcpServers: z.array(nonEmpty),
+  /** Suggestions shown on the member's empty-session hero. */
+  prompts: z.array(nonEmpty).default([]),
 }).strict()
 
 export const assistantTemplateSchema = z.object({
@@ -37,6 +39,8 @@ export const assistantTemplateSchema = z.object({
   teamSelectable: z.boolean().default(true),
   /** Ascending display order shared by the assistant library and every picker. */
   sortOrder: z.int().nonnegative().default(0),
+  /** Suggestions shown on the member's empty-session hero. */
+  prompts: z.array(nonEmpty).default([]),
   revision: z.int().positive(),
   createdAt: isoDate,
   updatedAt: isoDate,
@@ -227,6 +231,7 @@ export const createAssistantInputSchema = assistantTemplateSchema.pick({
   /** Omitted on legacy callers; the service applies the enabled/team defaults. */
   enabled: z.boolean().optional(),
   teamSelectable: z.boolean().optional(),
+  prompts: z.array(z.string()).optional(),
 })
 
 export const updateAssistantInputSchema = createAssistantInputSchema.partial().extend({

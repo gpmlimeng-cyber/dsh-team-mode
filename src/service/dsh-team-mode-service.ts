@@ -334,6 +334,7 @@ export class AgentTeamService extends Service {
       enabled: input.enabled ?? true,
       teamSelectable: input.teamSelectable ?? true,
       sortOrder: this.nextAssistantSortOrder(),
+      prompts: uniqueOrdered(input.prompts ?? []).slice(0, 12),
       revision: 1,
       createdAt: now,
       updatedAt: now,
@@ -369,6 +370,7 @@ export class AgentTeamService extends Service {
       ...candidate,
       enabled: candidate.enabled ?? value.enabled,
       teamSelectable: candidate.teamSelectable ?? value.teamSelectable,
+      prompts: candidate.prompts ?? value.prompts,
       ...(patchedSortOrder === undefined ? {} : { sortOrder: patchedSortOrder }),
       revision: value.revision + 1,
       updatedAt: new Date().toISOString(),
@@ -1262,6 +1264,7 @@ function assistantInputOf(assistant: AssistantTemplate): CreateAssistantInput {
     mcpServers: [...assistant.mcpServers],
     enabled: assistant.enabled,
     teamSelectable: assistant.teamSelectable,
+    prompts: [...assistant.prompts],
   }
 }
 
@@ -1276,7 +1279,20 @@ function normalizeAssistantInput(input: CreateAssistantInput): CreateAssistantIn
     permissionPresetId: input.permissionPresetId.trim(),
     skillAllowlist: unique(input.skillAllowlist),
     mcpServers: unique(input.mcpServers),
+    prompts: uniqueOrdered(input.prompts ?? []).slice(0, 12),
   }
+}
+
+function uniqueOrdered(values: readonly string[]): string[] {
+  const seen = new Set<string>()
+  const ordered: string[] = []
+  for (const value of values) {
+    const trimmed = value.trim()
+    if (trimmed === '' || seen.has(trimmed)) continue
+    seen.add(trimmed)
+    ordered.push(trimmed)
+  }
+  return ordered
 }
 
 function unique(values: readonly string[]): string[] {

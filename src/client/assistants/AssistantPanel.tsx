@@ -782,6 +782,7 @@ function AssistantCard({
           <span className={css.muted}>
             MCP: {assistant.mcpServers.length > 0 ? assistant.mcpServers.join('、') : '未选择'}
           </span>
+          {assistant.prompts.length > 0 && <span className={css.muted}>推荐提示词：{assistant.prompts.length} 条</span>}
           {assistant.description && <p className={css.description}>{assistant.description}</p>}
         </div>
         <div className={css.actions}>
@@ -899,6 +900,7 @@ function AssistantForm({
   const [icon, setIcon] = useState(assistant?.icon ?? '')
   const [description, setDescription] = useState(assistant?.description ?? '')
   const [instructions, setInstructions] = useState(assistant?.instructions ?? '')
+  const [promptsText, setPromptsText] = useState((assistant?.prompts ?? []).join('\n'))
   const providerHasModels = (id: string): boolean => (catalog?.models[id]?.length ?? 0) > 0
   const preferredProvider = providers.find(entry => providerHasModels(entry.id))?.id ?? providers[0]?.id ?? ''
   const [provider, setProvider] = useState(assistant?.provider ?? preferredProvider)
@@ -1019,6 +1021,7 @@ function AssistantForm({
         mcpServers: selectedMcpServers,
         enabled,
         teamSelectable,
+        prompts: promptsText.split('\n').map(line => line.trim()).filter(Boolean),
       }
       if (assistant === undefined) {
         await callAgentTeam('assistant.create', value)
@@ -1065,6 +1068,24 @@ function AssistantForm({
           </label>
         </Field>
       </div>
+      </div>
+      <div className={css.assistantFormSection}>
+        <div className={css.assistantFormSectionHeading}>
+          <strong>推荐提示词</strong>
+          <span className={css.assistantFormSectionHint}>改动立即生效</span>
+        </div>
+        <div className={css.formGrid}>
+          <Field label="推荐提示词（可选，每行一条）" className={css.fullWidth ?? ''}>
+            <textarea
+              value={promptsText}
+              onChange={event => { setPromptsText(event.target.value) }}
+              rows={3}
+              placeholder="例如：帮我梳理需求 / 先读代码再改 / 完成后跑测试"
+              className={css.input}
+            />
+            <span className={css.hint}>成员会话为空时，会把这些建议展示在输入区上方。</span>
+          </Field>
+        </div>
       </div>
       <div className={css.assistantFormSection}>
         <div className={css.assistantFormSectionHeading}>

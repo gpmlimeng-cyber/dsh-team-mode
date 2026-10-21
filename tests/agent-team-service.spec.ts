@@ -91,6 +91,7 @@ describe('AgentTeamService', () => {
       enabled: true,
       teamSelectable: true,
       sortOrder: 0,
+      prompts: [],
       revision: 1,
     }
     await store.putAssistant({
@@ -131,6 +132,24 @@ describe('AgentTeamService', () => {
     const moved = await service.updateAssistant(first.id, { sortOrder: 2 })
     expect(moved.sortOrder).toBe(2)
     expect(service.listAssistants().items.map(assistant => assistant.id)).toEqual([second.id, first.id])
+  })
+
+  it('normalizes recommended prompts and carries them into member snapshots', async () => {
+    const { service } = createHarness()
+    const assistant = await service.createAssistant({
+      ...assistantInput(),
+      name: 'Prompted',
+      prompts: ['  Help me plan  ', 'Help me plan', '', 'Run the tests'],
+    })
+    expect(assistant.prompts).toEqual(['Help me plan', 'Run the tests'])
+
+    const draft = await service.createTeamDraft({
+      name: 'Prompted team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const leader = Object.values(draft.members)[0]
+    expect(leader?.assistantSnapshot.prompts).toEqual(['Help me plan', 'Run the tests'])
   })
 
   it('delegates the built-in assistant builder conversation without storing it as a template', async () => {

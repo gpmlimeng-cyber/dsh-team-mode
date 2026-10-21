@@ -55,5 +55,6 @@ export function snapshotAssistant(assistant: AssistantTemplate): AssistantSnapsh
     permissionPresetId: assistant.permissionPresetId,
     skillAllowlist: [...assistant.skillAllowlist],
     mcpServers: [...assistant.mcpServers],
+    prompts: [...assistant.prompts],
   }
 }

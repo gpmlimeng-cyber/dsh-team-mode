@@ -195,6 +195,12 @@ export function TeamMemberHeroHint({ sessionId }: { sessionId?: string }): JSX.E
   const membership = useMembership(sessionId)
   if (membership === undefined) return null
   const leader = membership.member.role === 'leader'
+  const configuredPrompts = membership.member.assistantSnapshot.prompts ?? []
+  const suggestions = configuredPrompts.length > 0
+    ? configuredPrompts.slice(0, 3)
+    : leader
+      ? ['组织一场辩论赛，让不同助手各持立场', '帮我在团队里加一个擅长 ___ 的成员', '多位专家会诊同一个问题']
+      : []
   return (
     <div className={css.teamMemberHeroHint} role="note">
       <span className={css.teamMemberHeroAvatar} aria-hidden="true">
@@ -211,11 +217,11 @@ export function TeamMemberHeroHint({ sessionId }: { sessionId?: string }): JSX.E
             : '你好，我是团队成员，我听 Leader 和你的指挥。等待 Leader 分配任务。'}
         </span>
       </span>
-      {leader && (
+      {suggestions.length > 0 && (
         <div className={css.teamMemberHeroSuggestions}>
-          <div className={css.teamMemberHeroSuggestion}>组织一场辩论赛，让不同助手各持立场</div>
-          <div className={css.teamMemberHeroSuggestion}>帮我在团队里加一个擅长 ___ 的成员</div>
-          <div className={css.teamMemberHeroSuggestion}>多位专家会诊同一个问题</div>
+          {suggestions.map(suggestion => (
+            <div key={suggestion} className={css.teamMemberHeroSuggestion}>{suggestion}</div>
+          ))}
         </div>
       )}
     </div>
