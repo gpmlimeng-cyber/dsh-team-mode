@@ -6175,3 +6175,140 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 .sidebarTeamManagePinned {
   display: inline-flex;
 }
+
+/* Native turn-trigger enhancement: DSH team relays become member bubbles. */
+:global(.dsh-team-trigger-header) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+:global(.dsh-team-trigger-header strong) {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+}
+
+:global(.dsh-team-trigger-avatar) {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  overflow: hidden;
+  corner-shape: superellipse(1);
+  border-radius: 50%;
+  background: var(--dsw-alias-label-primary);
+  color: var(--dsw-alias-label-primary-foreground);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+:global(.dsh-team-trigger-time) {
+  margin-left: auto;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 10px;
+}
+
+[data-team-bubble='true'] {
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  min-width: 0;
+}
+
+[data-team-bubble='true'] > button {
+  display: none !important;
+}
+
+[data-team-bubble='true'] > div {
+  padding: 0 !important;
+}
+
+[data-team-bubble='true'] [class*='explanation'] {
+  display: none !important;
+}
+
+[data-team-bubble='true'] [class*='content'] {
+  max-height: none !important;
+  overflow: visible !important;
+  padding: 9px 12px 10px !important;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--team-message-color, var(--dsw-alias-bg-layer-2)) 10%, var(--dsw-alias-bg-layer-2));
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px !important;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+[data-team-bubble='true'] [class*='content'] {
+  white-space: normal !important;
+}
+
+:global(.dsh-team-markdown) {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+:global(.dsh-team-markdown) p {
+  margin: 0;
+}
+
+:global(.dsh-team-markdown) ul,
+:global(.dsh-team-markdown) ol {
+  margin: 0;
+  padding-left: 18px;
+}
+
+:global(.dsh-team-markdown) li + li {
+  margin-top: 2px;
+}
+
+:global(.dsh-team-markdown) .dsh-team-h1,
+:global(.dsh-team-markdown) .dsh-team-h2,
+:global(.dsh-team-markdown) .dsh-team-h3,
+:global(.dsh-team-markdown) .dsh-team-h4 {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+:global(.dsh-team-markdown) .dsh-team-h1 {
+  font-size: 16px;
+}
+
+:global(.dsh-team-markdown) .dsh-team-h2 {
+  font-size: 15px;
+}
+
+:global(.dsh-team-markdown) .dsh-team-h3,
+:global(.dsh-team-markdown) .dsh-team-h4 {
+  font-size: 13px;
+}
+
+:global(.dsh-team-markdown) code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--dsw-alias-bg-module-platform);
+  font-size: 12px;
+}
+
+:global(.dsh-team-markdown) blockquote {
+  margin: 0;
+  padding-left: 8px;
+  border-left: 2px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-secondary);
+}
+
+:global(.dsh-team-markdown) hr {
+  width: 100%;
+  margin: 2px 0;
+  border: 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}

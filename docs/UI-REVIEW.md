@@ -572,3 +572,21 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 通过模块增强给 `MessageSourceMap` 增加 `team-message` 类型；projector 同步把该 source 视为可见团队消息，兼容旧 `plugin-relay` / legacy relay。
 - 效果：DSH 原生聊天会把消息识别为「收到团队消息」，而不是普通执行请求，为后续 `conversation.chat.node` 原生气泡渲染提供入口。
 - 测试更新并通过：`npm run check`。
+
+---
+
+## 四十六、原生 turn-trigger DOM 增强（实际可见）
+
+- 原生 `conversation.chat.node` 的 `turn-trigger` key 不允许插件覆盖（priority 200 实测无效），改用 DOM 增强。
+- 新增 `TeamTriggerEnhancer`：
+  - 监听 `[data-turn-trigger]`，识别「收到团队消息 / Received team message」。
+  - 自动展开原生 body，从 `[Team message from <name>; slotId=<id>]` 解析发送者与 slot id。
+  - 隐藏原生折叠头，插入自定义 20px 头像 + 发送者名 + 时间。
+  - 按成员身份色 10% 混入气泡底色；正文替换为内置轻量 Markdown 渲染（标题 / 有序无序列表 / 引用 / 行内代码 / 加粗斜体 / 分割线）。
+- 真机实测（DSH 0.2.1-rc.2，并行视图）：
+  - `[data-team-bubble="true"]`：2 个
+  - 发送者：`Aion CLI`
+  - 气泡内容宽度：412–413px（同一 pane 等宽）
+  - Markdown 节点：5 个段落 / 8 个列表项 / 3 个标题
+- 截图：`docs/assets/ui-review/native-team-bubble.png`
+- 注意：依赖原生 turn-trigger DOM 与「收到团队消息」文案；DSH 升级若改结构需同步维护。

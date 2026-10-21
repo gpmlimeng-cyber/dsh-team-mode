@@ -10,6 +10,7 @@ import {
 import { SidebarPortal } from './sidebar.js'
 import { TeamModeDialogs } from './team-dialogs.js'
 import { TeamParallelHost, TeamParallelView } from './team-parallel.js'
+import { TeamTriggerEnhancer } from './team-trigger-enhancer.js'
 import { TEAM_MANAGE_VIEW_ID, TEAM_MANAGE_VIEW_LABEL, TEAM_MANAGE_VIEW_ORDER, TeamManageView } from './team-manage.js'
 import { TeamSessionHider } from './team-session-hider.js'
 import { TeamParallelPane } from './team-pane.js'
@@ -69,6 +70,7 @@ export function apply(ctx: AgentTeamClientContext): void {
   }
   const SidebarTeamHost = (): JSX.Element => (
     <>
+      <TeamTriggerEnhancer />
       <TeamSessionHider />
       <SidebarPortal openSession={openSession} openTeamPage={openTeamPage} />
     </>
