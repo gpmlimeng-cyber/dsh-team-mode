@@ -614,3 +614,11 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
   - `docs/assets/ui-review/native-team-bubble-final.png`
   - `docs/assets/ui-review/native-team-bubble-narrow.png`
   - `docs/assets/ui-review/native-team-bubble-dark.png`
+
+---
+
+## 四十八、团队行恢复左侧图标
+
+- 侧栏团队行左侧恢复 `IconUsersOutlineRegular`（16px），与团队名间距 8px。
+- 保留右侧置顶、更多按钮；行高 34px 不变。
+- 截图：`docs/assets/ui-review/sidebar-team-icon.png`

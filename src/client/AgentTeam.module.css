@@ -3311,7 +3311,7 @@ textarea.input {
 .sidebarTeamRow {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 8px;
   min-width: 0;
   flex: 1;
   height: 34px;

@@ -272,6 +272,9 @@ export function SidebarTeamSection({
                       aria-current={active ? 'page' : undefined}
                       title={`${team.name} · ${members.length} 名成员 · ${teamStateLabel(team)}`}
                     >
+                      <span className={css.sidebarTeamAvatar} aria-hidden="true">
+                        <IconUsersOutlineRegular size={16} />
+                      </span>
                       <span className={css.sidebarTeamCopy}>
                         <span className={css.sidebarTeamName}>{team.name}</span>
                       </span>
