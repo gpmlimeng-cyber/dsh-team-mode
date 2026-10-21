@@ -245,7 +245,7 @@ export function SidebarTeamSection({
                   aria-label={t('sidebar.add')}
                   data-dsh-team-mode-add
                 >
-                  <IconProjectAddOutlineRegular size={16} />
+                  <IconPlusOutlineRegular size={16} />
                 </button>
               </Tooltip>
             </div>

@@ -674,3 +674,11 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 进入看板时给 `html` 标记 `data-team-board=true`，隐藏 `conversation.input.*` 与 `conversation.composer.*` 插槽；实测可见 composer 插槽 0 个。
 - 真机实测（DOM气泡-34389）：3 个成员列，各 1 张任务卡（回归验收 / 登录页重构 / API 接口联调），顶部筛选栏正常。
 - 截图：`docs/assets/ui-review/team-board-columns.png`
+
+---
+
+## 五十四、新建团队按钮改为纯加号
+
+- 团队分组右侧的新建按钮从项目/加号组合图标改为纯 `IconPlusOutlineRegular`（16px）。
+- tooltip 与 aria-label 仍为“新建团队”；点击行为不变。
+- 截图：`docs/assets/ui-review/team-add-plus.png`
