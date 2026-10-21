@@ -1315,7 +1315,6 @@ export function TeamCard({
         }}
         title="清空任务与上下文"
         closeLabel="关闭"
-        description="所有成员将换用全新的对话上下文。"
         className={css.teamResetDialog ?? ''}
         footer={(
           <>

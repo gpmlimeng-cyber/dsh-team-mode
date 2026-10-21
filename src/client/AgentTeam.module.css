@@ -1242,8 +1242,8 @@
 .teamBuilderGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  height: min(54vh, 470px);
-  min-height: 390px;
+  height: min(52vh, 420px);
+  min-height: 340px;
   min-width: 0;
 }
 
@@ -1258,6 +1258,7 @@
 
 .selectedMembers {
   padding: 12px 20px 14px;
+  border-left: 1px solid var(--dsw-alias-border-l1);
 }
 
 .builderSectionHeading {
