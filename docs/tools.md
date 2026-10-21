@@ -23,16 +23,21 @@
 | API | 作用 |
 |---|---|
 | `team.list` / `team.get` | 团队列表 / 详情 |
-| `team.createDraft` / `team.create` | 创建草稿 / 启动团队 |
-| `team.addMember` | 添加成员 |
-| `team.renameMember` | 成员改名 |
-| `team.removeMember` | 移出成员 |
+| `team.createDraft` / `team.start` / `team.clone` | 创建草稿 / 启动 / 克隆团队 |
+| `team.addMember` / `team.renameMember` / `team.removeMember` | 成员增删改 |
 | `team.changeLeader` | 切换 Leader |
-| `team.clearMemberContext` | 清空单成员上下文 |
+| `team.member.contextReset` | 清空单成员上下文（新 Session） |
+| `team.member.reconnect` | 重启成员 Agent，保留上下文 |
+| `team.members.reorder` | 成员顺序（Leader 固定首位） |
+| `team.pin` / `team.archive` | 置顶 / 归档 |
+| `team.warmup.retry` | 重试 Leader 或失败成员的 warmup |
+| `team.member.stop` | 停止单个成员 |
 | `team.reset` / `team.dissolve` | 重置 / 解散团队 |
 | `team.message.send` / `team.message.list` | 团队消息 |
 | `team.task.*` | 任务板读写 |
 | `team.activity.list` | 活动流 |
+| `team.workspace.*` | 工作区树、搜索、Git 变更 / diff、上传 |
+| `team.interaction.respond` | 回答提问 / 审批 |
 
 ## 原生 Slot / UI
 

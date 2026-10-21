@@ -55,6 +55,7 @@ export class TeamRuntime {
   private readonly disposeStatusListener: () => void
   private readonly disposeConversationListener: () => void
   private readonly conversationPublishes = new Map<string, ReturnType<typeof setTimeout>>()
+  private readonly watchdogs = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly messages: TeamMessageDispatcher
   private readonly commands: TeamCommandHandler
   private readonly interactions: TeamInteractionBridge
@@ -89,9 +90,14 @@ export class TeamRuntime {
       void this.setMemberRuntimeState(owned.teamId, owned.slotId, status)
         .catch(error => this.ctx.logger.warn('dsh-team-mode: failed to persist agent status', error))
     })
-    this.disposeConversationListener = ctx.on('session/event', (session) => {
+    this.disposeConversationListener = ctx.on('session/event', (session, event) => {
       const owned = this.owned.get(String(session.id))
-      if (owned === undefined || this.conversationPublishes.has(String(session.id))) return
+      if (owned === undefined) return
+      if (event.type === 'turn/end' && event.data.reason.kind === 'error') {
+        void this.recordTurnFailure(owned.teamId, owned.slotId, event.data.reason.error.message)
+          .catch(error => this.ctx.logger.warn('dsh-team-mode: failed to record turn failure', error))
+      }
+      if (this.conversationPublishes.has(String(session.id))) return
       const timer = setTimeout(() => {
         this.conversationPublishes.delete(String(session.id))
         try {
@@ -186,7 +192,7 @@ export class TeamRuntime {
           this.ctx.logger.warn(`dsh-team-mode: context-clear workspace detach failed for ${oldSessionId}`, error)
         }
       }
-      const nextSessionId = `dsh-team-mode:${randomUUID()}`
+      const nextSessionId = `session-${randomUUID()}`
       const clearedAt = new Date().toISOString()
       const next = await this.service.updateRuntimeTeam(
         teamId,
@@ -235,6 +241,64 @@ export class TeamRuntime {
       }
       const latest = this.service.getTeam(teamId).members[slotId]
       return { sessionId: nextSessionId, status: latest?.lastRuntimeState ?? 'idle' }
+    })
+  }
+
+  /**
+   * Restart one member's agent runtime while keeping its Session and context.
+   * The old handle is disposed first; `ensureMemberOnline` then resumes the
+   * durable Session (or fails explicitly when the Session is gone).
+   */
+  reconnectMember(teamId: string, slotId: string): Promise<TeamAggregate> {
+    return this.exclusive(teamId, async () => {
+      const team = this.service.getTeam(teamId)
+      if (team.state !== 'active' && team.state !== 'error') {
+        throw new AgentTeamError('TEAM_NOT_ACTIVE', `Cannot reconnect a member while team is '${team.state}'`)
+      }
+      const member = team.members[slotId]
+      if (member === undefined) throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown member '${slotId}'`)
+      const owned = this.owned.get(member.sessionId)
+      const live = this.ctx.agents.get(SessionId(member.sessionId))
+      if (owned === undefined && live !== undefined) {
+        throw new AgentTeamError(
+          'AGENT_HANDLE_OWNERSHIP_CONFLICT',
+          `Session '${member.sessionId}' is live without this plugin's AgentHandle`,
+        )
+      }
+      if (owned !== undefined) {
+        owned.handle.agent.cancel({ kind: 'user' }, { keepInbox: true })
+        await owned.handle.agent.whenIdle()
+        try {
+          await this.ctx.sessions.flush(owned.handle.agent.session)
+        } catch (error) {
+          this.ctx.logger.warn(`dsh-team-mode: reconnect flush failed for ${member.sessionId}`, error)
+        }
+        this.owned.delete(member.sessionId)
+        this.interactions.forget(member.sessionId)
+        await owned.handle.dispose()
+      }
+      await this.ensureWorkspaceReady(team)
+      const materialized = await this.materializedSessions()
+      await this.service.updateRuntimeTeam(
+        teamId,
+        current => ({
+          ...current,
+          members: mapMembers(current, currentMember => currentMember.id === slotId
+            ? { ...currentMember, lastRuntimeState: 'starting', lastError: undefined }
+            : currentMember),
+        }),
+        'team.member_reconnecting',
+        `Member ${member.displayName} is reconnecting`,
+      )
+      try {
+        await this.ensureMemberOnline(team, member, materialized.has(member.sessionId))
+        await this.clearMemberWarmupFailure(teamId, slotId)
+      } catch (error) {
+        await this.recordMemberWarmupFailure(teamId, slotId, error)
+        throw error
+      }
+      await this.messages.recover(this.service.getTeam(teamId))
+      return this.service.getTeam(teamId)
     })
   }
 
@@ -446,6 +510,7 @@ export class TeamRuntime {
           return {
             ...current,
             members,
+            memberOrder: (current.memberOrder ?? Object.keys(current.members)).filter(id => id !== slotId),
             retiredSessions: {
               ...current.retiredSessions,
               [member.sessionId]: {
@@ -542,7 +607,7 @@ export class TeamRuntime {
             },
           members: mapMembers(current, member => ({
             ...member,
-            sessionId: `dsh-team-mode:${randomUUID()}`,
+            sessionId: `session-${randomUUID()}`,
             desiredState: current.state === 'draft' ? 'offline' : 'online',
             lastRuntimeState: shouldRestart ? 'starting' : 'offline',
           })),
@@ -722,6 +787,8 @@ export class TeamRuntime {
     await this.interactions.dispose()
     for (const timer of this.conversationPublishes.values()) clearTimeout(timer)
     this.conversationPublishes.clear()
+    for (const timer of this.watchdogs.values()) clearTimeout(timer)
+    this.watchdogs.clear()
     await Promise.allSettled([...this.operations.values()])
     const owned = [...this.owned.values()]
     for (const entry of owned) entry.handle.agent.cancel({ kind: 'disposed' }, { keepInbox: true })
@@ -760,11 +827,13 @@ export class TeamRuntime {
     if (team.state !== 'draft' && team.state !== 'error') {
       throw new AgentTeamError('TEAM_NOT_ACTIVE', `Cannot start team in state '${team.state}'`)
     }
+    const startedAt = new Date().toISOString()
     await this.service.updateRuntimeTeam(
       teamId,
       current => ({
         ...current,
         state: 'starting',
+        warmup: { phase: 'starting', startedAt, failedSlotIds: [] },
         members: mapMembers(current, member => ({
           ...member,
           desiredState: 'online',
@@ -775,26 +844,209 @@ export class TeamRuntime {
       `Team ${team.name} is starting`,
     )
     try {
-      await this.ensureMembersOnline(this.service.getTeam(teamId))
-      await this.messages.recover(this.service.getTeam(teamId))
-      return await this.service.updateRuntimeTeam(
+      const current = this.service.getTeam(teamId)
+      await this.ensureWorkspaceReady(current)
+      const leader = current.members[current.leaderSlotId]
+      if (leader === undefined) {
+        throw new AgentTeamError('TEAM_INVALID_LEADER', 'Team has no leader slot')
+      }
+      const materialized = await this.materializedSessions()
+      await this.ensureMemberOnline(current, leader, materialized.has(leader.sessionId))
+      await this.service.updateRuntimeTeam(
         teamId,
-        current => ({ ...current, state: 'active' }),
-        'team.started',
-        `Team ${team.name} started`,
+        latest => ({
+          ...latest,
+          state: 'active',
+          warmup: latest.warmup === undefined
+            ? latest.warmup
+            : { ...latest.warmup, phase: 'leader-ready', leaderReadyAt: new Date().toISOString() },
+        }),
+        'team.warmup_leader_ready',
+        `Leader ${leader.displayName} is ready`,
       )
+      // Teammates continue warming up in the background; their failures are
+      // recorded per member and never turn the whole team back into `error`.
+      void this.warmupRemaining(teamId).catch(error => {
+        this.ctx.logger.warn('dsh-team-mode: background warmup failed', error)
+      })
+      return this.service.getTeam(teamId)
     } catch (error) {
+      await this.service.updateRuntimeTeam(
+        teamId,
+        current => ({
+          ...current,
+          warmup: current.warmup === undefined
+            ? current.warmup
+            : { ...current.warmup, phase: 'error' },
+        }),
+        'team.warmup_failed',
+        error instanceof Error ? error.message : String(error),
+      ).catch(() => undefined)
       await this.markTeamError(teamId, error)
       throw error
     }
   }
 
-  private async ensureMembersOnline(team: TeamAggregate): Promise<void> {
+  private async warmupRemaining(teamId: string): Promise<void> {
+    const team = this.service.getTeam(teamId)
+    if (team.state !== 'active') return
+    await this.ensureWorkspaceReady(team)
+    const materialized = await this.materializedSessions()
+    const teammates = Object.values(team.members)
+      .filter(member => member.id !== team.leaderSlotId && member.desiredState !== 'removing')
+    await mapConcurrent(teammates, this.config.runtimeConcurrency, async member => {
+      if (this.owned.has(member.sessionId)) return
+      try {
+        await this.ensureMemberOnline(team, member, materialized.has(member.sessionId))
+      } catch (error) {
+        await this.recordMemberWarmupFailure(teamId, member.id, error)
+      }
+    })
+    await this.messages.recover(this.service.getTeam(teamId))
+    await this.service.updateRuntimeTeam(
+      teamId,
+      current => ({
+        ...current,
+        warmup: current.warmup === undefined
+          ? current.warmup
+          : {
+            ...current.warmup,
+            phase: 'ready',
+            failedSlotIds: Object.values(current.members)
+              .filter(member => member.lastRuntimeState === 'error')
+              .map(member => member.id),
+          },
+      }),
+      'team.warmup_completed',
+      `Team ${team.name} finished warming up`,
+    )
+  }
+
+  async retryWarmup(teamId: string, slotId?: string): Promise<TeamAggregate> {
+    return this.exclusive(teamId, async () => {
+      const team = this.service.getTeam(teamId)
+      if (team.state !== 'active' && team.state !== 'error') {
+        throw new AgentTeamError('TEAM_NOT_ACTIVE', `Cannot retry warmup while team is '${team.state}'`)
+      }
+      const targets = slotId === undefined
+        ? Object.values(team.members).filter(member =>
+          member.id === team.leaderSlotId
+            ? team.state === 'error'
+            : member.lastRuntimeState === 'error')
+        : [team.members[slotId]].filter((member): member is TeamMemberSlot => member !== undefined)
+      if (targets.length === 0) return team
+
+      if (team.state === 'error') {
+        await this.service.updateRuntimeTeam(
+          teamId,
+          current => ({
+            ...current,
+            state: 'starting',
+            warmup: current.warmup === undefined
+              ? current.warmup
+              : { ...current.warmup, phase: 'starting' },
+          }),
+          'team.warmup_retrying',
+          `Team ${team.name} is retrying startup`,
+        )
+      }
+      const retryTeam = this.service.getTeam(teamId)
+      await this.ensureWorkspaceReady(retryTeam)
+      const materialized = await this.materializedSessions()
+      await mapConcurrent(targets, this.config.runtimeConcurrency, async member => {
+        try {
+          await this.ensureMemberOnline(retryTeam, member, materialized.has(member.sessionId))
+          await this.clearMemberWarmupFailure(teamId, member.id)
+        } catch (error) {
+          await this.recordMemberWarmupFailure(teamId, member.id, error)
+        }
+      })
+      await this.messages.recover(this.service.getTeam(teamId))
+      const leaderReady = this.owned.has(this.service.getTeam(teamId).members[this.service.getTeam(teamId).leaderSlotId]?.sessionId ?? '')
+      const result = await this.service.updateRuntimeTeam(
+        teamId,
+        current => ({
+          ...current,
+          state: leaderReady ? 'active' : current.state,
+          warmup: current.warmup === undefined
+            ? current.warmup
+            : {
+              ...current.warmup,
+              phase: leaderReady ? 'ready' : 'error',
+              failedSlotIds: Object.values(current.members)
+                .filter(member => member.lastRuntimeState === 'error')
+                .map(member => member.id),
+            },
+        }),
+        'team.warmup_retried',
+        `Team ${team.name} warmup retried`,
+      )
+      if (leaderReady) {
+        void this.warmupRemaining(teamId).catch(error => {
+          this.ctx.logger.warn('dsh-team-mode: background warmup retry failed', error)
+        })
+      }
+      return result
+    })
+  }
+
+  private async ensureWorkspaceReady(team: TeamAggregate): Promise<void> {
     const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(team.workspaceId))
     if (workspace === undefined || await workspace.status() !== 'ok' || workspace.path !== team.workspacePath) {
       throw new AgentTeamError('WORKSPACE_UNAVAILABLE', `Workspace '${team.workspaceId}' is unavailable or changed`)
     }
-    const materialized = new Set((await this.ctx.sessionPersistence.list()).map(snapshot => String(snapshot.header.id)))
+  }
+
+  private async materializedSessions(): Promise<Set<string>> {
+    return new Set((await this.ctx.sessionPersistence.list()).map(snapshot => String(snapshot.header.id)))
+  }
+
+  private async recordMemberWarmupFailure(teamId: string, slotId: string, error: unknown): Promise<void> {
+    const message = error instanceof Error ? error.message : String(error)
+    await this.service.updateRuntimeTeam(
+      teamId,
+      current => ({
+        ...current,
+        warmup: current.warmup === undefined
+          ? current.warmup
+          : {
+            ...current.warmup,
+            failedSlotIds: [...new Set([...(current.warmup.failedSlotIds ?? []), slotId])],
+          },
+        members: mapMembers(current, member => member.id === slotId
+          ? { ...member, lastRuntimeState: 'error', lastError: message }
+          : member),
+      }),
+      'team.member_warmup_failed',
+      `Member ${slotId} failed to start: ${message}`,
+    ).catch(() => undefined)
+  }
+
+  private async clearMemberWarmupFailure(teamId: string, slotId: string): Promise<void> {
+    await this.service.updateRuntimeTeam(
+      teamId,
+      current => ({
+        ...current,
+        warmup: current.warmup === undefined
+          ? current.warmup
+          : {
+            ...current.warmup,
+            failedSlotIds: (current.warmup.failedSlotIds ?? []).filter(id => id !== slotId),
+          },
+        members: mapMembers(current, member => {
+          if (member.id !== slotId) return member
+          const { lastError: _lastError, ...rest } = member
+          return rest as TeamMemberSlot
+        }),
+      }),
+      'team.member_warmup_retried',
+      `Member ${slotId} restarted`,
+    ).catch(() => undefined)
+  }
+
+  private async ensureMembersOnline(team: TeamAggregate): Promise<void> {
+    await this.ensureWorkspaceReady(team)
+    const materialized = await this.materializedSessions()
     await mapConcurrent(Object.values(team.members), this.config.runtimeConcurrency, async member => {
       if (member.desiredState === 'removing') return
       await this.ensureMemberOnline(team, member, materialized.has(member.sessionId))
@@ -1015,6 +1267,10 @@ export class TeamRuntime {
       }
       try {
         await workspace.attachSession(sessionId)
+        // Persist the Session header immediately: an empty member Session has
+        // no event yet, and the native session browser cannot reveal a Session
+        // the Host has never written.
+        await this.ctx.sessions.flush(handle.agent.session)
       } catch (error) {
         await handle.dispose()
         throw error
@@ -1085,7 +1341,19 @@ export class TeamRuntime {
     state: 'idle' | 'running',
   ): Promise<void> {
     const current = this.service.getTeam(teamId)
-    if (current.members[slotId]?.lastRuntimeState === state) return
+    const previous = current.members[slotId]
+    if (previous?.lastRuntimeState === state) return
+    if (state === 'idle' && previous?.lastRuntimeState === 'error') {
+      // A terminal failure stays visible until an explicit retry; the idle
+      // transition that follows cancellation must not erase it.
+      this.clearWatchdog(slotId)
+      return
+    }
+    if (state === 'running' && previous !== undefined) {
+      this.armWatchdog(teamId, slotId, previous.sessionId)
+    } else {
+      this.clearWatchdog(slotId)
+    }
     await this.service.updateRuntimeTeam(
       teamId,
       team => ({
@@ -1097,6 +1365,90 @@ export class TeamRuntime {
       'team.member_status',
       `Member ${slotId} entered ${state}`,
     )
+  }
+
+  private armWatchdog(teamId: string, slotId: string, sessionId: string): void {
+    this.clearWatchdog(slotId)
+    const timer = setTimeout(() => {
+      this.watchdogs.delete(slotId)
+      void this.handleWatchdogTimeout(teamId, slotId, sessionId).catch(error => {
+        this.ctx.logger.warn('dsh-team-mode: watchdog handling failed', error)
+      })
+    }, this.config.memberIdleWatchdogMs ?? 10 * 60 * 1000)
+    timer.unref?.()
+    this.watchdogs.set(slotId, timer)
+  }
+
+  private clearWatchdog(slotId: string): void {
+    const timer = this.watchdogs.get(slotId)
+    if (timer === undefined) return
+    clearTimeout(timer)
+    this.watchdogs.delete(slotId)
+  }
+
+  private async handleWatchdogTimeout(teamId: string, slotId: string, sessionId: string): Promise<void> {
+    if (this.closing) return
+    const owned = this.owned.get(sessionId)
+    if (owned === undefined || owned.handle.agent.status !== 'running') return
+    this.ctx.logger.warn(`dsh-team-mode: watchdog cancelling member '${slotId}' after ${this.config.memberIdleWatchdogMs ?? 600_000}ms`)
+    owned.handle.agent.cancel({ kind: 'hook', reason: 'dsh-team-mode-watchdog' }, { keepInbox: false })
+    await owned.handle.agent.whenIdle()
+    await this.failMemberAndNotifyLeader(
+      teamId,
+      slotId,
+      `WATCHDOG: member did not become idle within ${Math.round((this.config.memberIdleWatchdogMs ?? 600_000) / 1000)}s`,
+      `成员“${owned.slotId}”运行超时，看门狗已取消当前回合。请检查任务或重试该成员。`,
+    )
+  }
+
+  private async recordTurnFailure(teamId: string, slotId: string, message: string): Promise<void> {
+    const team = this.service.getTeam(teamId)
+    const member = team.members[slotId]
+    if (member === undefined) return
+    if (member.lastRuntimeState === 'error' && member.lastError !== undefined) return
+    const rateLimited = isRateLimitMessage(message)
+    await this.failMemberAndNotifyLeader(
+      teamId,
+      slotId,
+      `${rateLimited ? 'RATE_LIMITED' : 'TURN_FAILED'}: ${message}`,
+      rateLimited
+        ? `成员“${member.displayName}”触发了模型速率限制（429）。团队仍可用，可稍后重试该成员。`
+        : `成员“${member.displayName}”本轮运行失败：${message}`,
+    )
+  }
+
+  private async failMemberAndNotifyLeader(
+    teamId: string,
+    slotId: string,
+    lastError: string,
+    noticeText: string,
+  ): Promise<void> {
+    const team = this.service.getTeam(teamId)
+    const member = team.members[slotId]
+    if (member === undefined) return
+    let noticeId: string | undefined
+    await this.service.updateRuntimeTeam(
+      teamId,
+      current => {
+        if (current.members[slotId] === undefined) return current
+        const notice = systemTeamMessage({
+          team: current,
+          recipientSlotId: current.leaderSlotId,
+          content: noticeText,
+        })
+        noticeId = notice.id
+        return {
+          ...current,
+          members: mapMembers(current, item => item.id === slotId
+            ? { ...item, lastRuntimeState: 'error', lastError }
+            : item),
+          outbox: { ...current.outbox, [notice.id]: notice },
+        }
+      },
+      'team.member_failed',
+      `${member.displayName}: ${lastError}`,
+    )
+    if (noticeId !== undefined) await this.messages.deliver(teamId, noticeId)
   }
 
   private async markTeamError(teamId: string, error: unknown): Promise<void> {
@@ -1140,6 +1492,10 @@ function withReasoningEffort(
 function skillNameFromArguments(value: unknown): string | undefined {
   if (typeof value !== 'object' || value === null || !('name' in value)) return undefined
   return typeof value.name === 'string' ? value.name : undefined
+}
+
+export function isRateLimitMessage(message: string): boolean {
+  return /(?:\b429\b|too many requests|rate[\s_-]?limit|quota exceeded)/i.test(message)
 }
 
 async function mapConcurrent<T>(

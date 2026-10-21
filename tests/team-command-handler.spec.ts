@@ -3,6 +3,7 @@ import type {
   TeamAggregate,
   TeamMemberSlot,
   TeamMessage,
+  TeamTask,
 } from '../src/domain/types.js'
 import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import {
@@ -130,7 +131,15 @@ function harness() {
     removeMember,
   }
   const commands = new TeamCommandHandler(service, port)
-  return { commands, service, team: () => team, messages, followup, removeMember }
+  return {
+    commands,
+    service,
+    team: () => team,
+    mutate: (next: TeamAggregate) => { team = next },
+    messages,
+    followup,
+    removeMember,
+  }
 }
 
 describe('TeamCommandHandler AionUi semantics', () => {
@@ -159,6 +168,67 @@ describe('TeamCommandHandler AionUi semantics', () => {
       blocked_by: [blocker.taskId],
     })
     expect(team().tasks[blocked.taskId]?.dependencyIds).toEqual([blocker.taskId])
+  })
+
+  it('does not wake the owner of a task that is still blocked', async () => {
+    const { commands, team, followup } = harness()
+    const blocker = await commands.createTask(team().id, 'leader', { subject: 'Blocker', owner: 'a' })
+    followup.mockClear()
+
+    const blocked = await commands.createTask(team().id, 'leader', {
+      subject: 'Blocked work',
+      owner: 'b',
+      blocked_by: [blocker.taskId],
+    })
+
+    expect(blocked).toMatchObject({ status: 'assigned' })
+    expect(blocked).not.toHaveProperty('deliveryState')
+    expect(followup).not.toHaveBeenCalled()
+
+    await commands.updateTask(team().id, 'a', {
+      taskId: blocker.taskId,
+      status: 'completed',
+    })
+    expect(followup).toHaveBeenCalledWith('session-b', expect.anything())
+  })
+
+  it('merges a concurrent task update instead of clobbering the latest board', async () => {
+    const { commands, service, team, mutate } = harness()
+    const first = await commands.createTask(team().id, 'leader', { subject: 'First', owner: 'a' })
+    const second = await commands.createTask(team().id, 'leader', { subject: 'Second', owner: 'b' })
+    const extra: TeamTask = {
+      id: 'extra',
+      title: 'Concurrent task',
+      description: '',
+      status: 'pending',
+      dependencyIds: [],
+      fileScopes: [],
+      revision: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+    }
+    const baseUpdate = (service as unknown as {
+      updateRuntimeTeam: (...args: never[]) => Promise<TeamAggregate>
+    }).updateRuntimeTeam
+    let injected = false
+    ;(service as unknown as { updateRuntimeTeam: unknown }).updateRuntimeTeam = vi.fn(async (
+      ...args: never[]
+    ) => {
+      if (!injected) {
+        injected = true
+        mutate({ ...team(), tasks: { ...team().tasks, [extra.id]: extra } })
+      }
+      return baseUpdate(...args)
+    })
+
+    await commands.updateTask(team().id, 'a', {
+      taskId: first.taskId,
+      status: 'in_progress',
+    })
+
+    expect(team().tasks[extra.id]).toBeDefined()
+    expect(team().tasks[first.taskId]?.status).toBe('running')
+    expect(team().tasks[second.taskId]?.status).toBe('assigned')
   })
 
   it('clears downstream blockers when a task completes and wakes the unblocked owner', async () => {

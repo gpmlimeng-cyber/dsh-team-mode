@@ -1,0 +1,19 @@
+.page {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px 28px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+}
+
+@media (max-width: 720px) {
+  .page {
+    padding: 12px 12px 24px;
+  }
+}
+
+/* Team management is a settings surface; the Session composer belongs to Chat. */
+:global(body[data-team-manage='true']) [data-composer-seat] {
+  display: none !important;
+}

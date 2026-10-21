@@ -4,7 +4,7 @@
 
 团队创建后会自动进入全屏工作台。左侧切换团队，中间并排显示成员对话，右侧按需展示共享 Workspace。
 
-![多成员工作台](../demo/4.png)
+![多成员工作台](../assets/dsh-team-mode/parallel-final.png)
 
 ## 顶部成员标签
 

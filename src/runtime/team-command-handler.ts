@@ -209,7 +209,9 @@ export class TeamCommandHandler {
     const taskId = randomUUID()
     const status: InternalTaskStatus = ownerSlotId === undefined ? 'pending' : 'assigned'
     const owner = ownerSlotId === undefined ? undefined : team.members[ownerSlotId]
-    const assignment = owner === undefined || owner.id === creatorSlotId
+    // A blocked task is not dispatched yet; completing its blockers sends the
+    // unblock notification instead.
+    const assignment = owner === undefined || owner.id === creatorSlotId || blockedBy.length > 0
       ? undefined
       : createTaskDispatchMessage({
         team,
@@ -288,73 +290,90 @@ export class TeamCommandHandler {
     const nextBlockedBy = requestedBlockedBy === undefined
       ? task.dependencyIds
       : this.validateBlockedBy(team, taskId, requestedBlockedBy)
-    const ownerChanged = requestedOwner !== undefined && nextOwnerSlotId !== task.ownerSlotId
     const now = new Date().toISOString()
-    let updatedTask: TeamTask = {
-      ...task,
-      status: nextStatus,
-      ...(nextOwnerSlotId === undefined ? {} : { ownerSlotId: nextOwnerSlotId }),
-      dependencyIds: nextBlockedBy,
-      ...(input.result === undefined ? {} : { result: input.result }),
-      ...(input.error === undefined ? {} : { error: input.error }),
-      revision: task.revision + 1,
-      updatedAt: now,
-    }
-    let tasks: Record<string, TeamTask> = { ...team.tasks, [taskId]: updatedTask }
-    const unblocked: TeamTask[] = []
-    if (nextStatus === 'completed' || nextStatus === 'cancelled') {
-      const cleared = clearDownstreamBlockers(tasks, taskId, now)
-      tasks = cleared.tasks
-      unblocked.push(...cleared.unblocked)
-    }
-    updatedTask = tasks[taskId] ?? updatedTask
-
-    const notifications: TeamMessage[] = []
-    if (ownerChanged && nextOwnerSlotId !== undefined && nextOwnerSlotId !== callerSlotId) {
-      notifications.push(createTaskDispatchMessage({
-        team,
-        senderSlotId: callerSlotId,
-        recipientSlotId: nextOwnerSlotId,
-        taskId: task.id,
-        type: 'instruction',
-        content: reassignmentContent(task.title, input.result, input.error),
-      }))
-    } else if (callerSlotId !== team.leaderSlotId) {
-      notifications.push(createTaskDispatchMessage({
-        team,
-        senderSlotId: callerSlotId,
-        recipientSlotId: team.leaderSlotId,
-        taskId: task.id,
-        type: taskMessageType(nextStatus),
-        content: taskUpdateContent(task.title, nextStatus, input.result, input.error),
-      }))
-    }
-    const woken: string[] = []
-    for (const ready of unblocked) {
-      if (ready.ownerSlotId === undefined || ready.ownerSlotId === callerSlotId) continue
-      const notification = createTaskDispatchMessage({
-        team,
-        senderSlotId: callerSlotId,
-        recipientSlotId: ready.ownerSlotId,
-        taskId: ready.id,
-        type: 'instruction',
-        content: `Task '${ready.title}' is unblocked and ready for you (task id: ${ready.id}). Use team_task_update to mark it in_progress.`,
-      })
-      notifications.push(notification)
-      woken.push(ready.ownerSlotId)
-    }
+    let notifications: TeamMessage[] = []
+    let woken: string[] = []
+    let finalStatus = nextStatus
     await this.service.updateRuntimeTeam(
       teamId,
-      current => ({
-        ...current,
-        tasks,
-        outbox: notifications.length === 0
-          ? current.outbox
-          : {
-            ...current.outbox,
-            ...Object.fromEntries(notifications.map(message => [message.id, message])),
-          },
-      }),
+      current => {
+        // Rebase on the latest aggregate: two members may update different tasks
+        // concurrently, and the board must not lose either change.
+        const base = current.tasks[taskId] ?? task
+        const status = input.status === undefined ? base.status : nextStatus
+        const ownerSlotId = requestedOwner === undefined ? base.ownerSlotId : nextOwnerSlotId
+        const dependencyIds = requestedBlockedBy === undefined
+          ? base.dependencyIds
+          : nextBlockedBy
+        const ownerChanged = requestedOwner !== undefined && nextOwnerSlotId !== base.ownerSlotId
+        const updated: TeamTask = {
+          ...base,
+          status,
+          dependencyIds,
+          ...(input.result === undefined ? {} : { result: input.result }),
+          ...(input.error === undefined ? {} : { error: input.error }),
+          revision: base.revision + 1,
+          updatedAt: now,
+        }
+        if (ownerSlotId === undefined) delete updated.ownerSlotId
+        else updated.ownerSlotId = ownerSlotId
+
+        let tasks: Record<string, TeamTask> = { ...current.tasks, [taskId]: updated }
+        const unblocked: TeamTask[] = []
+        if (status === 'completed' || status === 'cancelled') {
+          const cleared = clearDownstreamBlockers(tasks, taskId, now)
+          tasks = cleared.tasks
+          unblocked.push(...cleared.unblocked)
+        }
+        const stored = tasks[taskId] ?? updated
+        finalStatus = stored.status
+
+        const nextNotifications: TeamMessage[] = []
+        if (ownerChanged && ownerSlotId !== undefined && ownerSlotId !== callerSlotId) {
+          nextNotifications.push(createTaskDispatchMessage({
+            team: current,
+            senderSlotId: callerSlotId,
+            recipientSlotId: ownerSlotId,
+            taskId,
+            type: 'instruction',
+            content: reassignmentContent(base.title, input.result, input.error),
+          }))
+        } else if (callerSlotId !== current.leaderSlotId) {
+          nextNotifications.push(createTaskDispatchMessage({
+            team: current,
+            senderSlotId: callerSlotId,
+            recipientSlotId: current.leaderSlotId,
+            taskId,
+            type: taskMessageType(status),
+            content: taskUpdateContent(base.title, status, input.result, input.error),
+          }))
+        }
+        const nextWoken: string[] = []
+        for (const ready of unblocked) {
+          if (ready.ownerSlotId === undefined || ready.ownerSlotId === callerSlotId) continue
+          nextNotifications.push(createTaskDispatchMessage({
+            team: current,
+            senderSlotId: callerSlotId,
+            recipientSlotId: ready.ownerSlotId,
+            taskId: ready.id,
+            type: 'instruction',
+            content: `Task '${ready.title}' is unblocked and ready for you (task id: ${ready.id}). Use team_task_update to mark it in_progress.`,
+          }))
+          nextWoken.push(ready.ownerSlotId)
+        }
+        notifications = nextNotifications
+        woken = nextWoken
+        return {
+          ...current,
+          tasks,
+          outbox: nextNotifications.length === 0
+            ? current.outbox
+            : {
+              ...current.outbox,
+              ...Object.fromEntries(nextNotifications.map(message => [message.id, message])),
+            },
+        }
+      },
       'team.task_updated',
       `Task ${task.title} entered ${nextStatus}`,
     )
@@ -364,7 +383,7 @@ export class TeamCommandHandler {
     }
     return {
       taskId: task.id,
-      status: updatedTask.status,
+      status: finalStatus,
       ...(notifications.length === 0 ? {} : { deliveryState: delivered ? 'delivered' as const : 'queued' as const }),
       ...(woken.length === 0 ? {} : { woken }),
     }

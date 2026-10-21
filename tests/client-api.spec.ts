@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  AGENT_TEAM_FILE_NAME_HEADER,
+  AGENT_TEAM_REQUEST_ID_HEADER,
+} from '../src/transport/contracts.js'
 
 class FakeEventSource {
   static readonly OPEN = 1
@@ -177,7 +181,8 @@ describe('Agent Team client requests', () => {
       body: file,
       headers: expect.objectContaining({
         'Content-Type': 'application/octet-stream',
-        'X-Agent-Team-File-Name': encodeURIComponent(file.name),
+        [AGENT_TEAM_FILE_NAME_HEADER]: encodeURIComponent(file.name),
+        [AGENT_TEAM_REQUEST_ID_HEADER]: 'request-1',
       }),
     }))
   })

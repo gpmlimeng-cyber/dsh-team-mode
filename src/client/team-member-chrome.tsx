@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   IconChevronDownOutlineRegular,
+  IconPlusOutlineRegular,
   IconUsersOutlineRegular,
   Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
-import { openManageTeamDialog } from './store.js'
+import { AddTeamMemberDialog } from './teams/TeamPanel.js'
+import { useAgentTeamData } from './components.js'
 import css from './AgentTeam.module.css'
 import type { TeamView } from '../transport/contracts.js'
+import { useTeamConversationView } from './team-view-presence.js'
 
 type TeamMember = TeamView['members'][string]
 type Membership = { team: TeamView; member: TeamMember }
@@ -50,7 +53,7 @@ function useMembership(sessionId?: string): Membership | undefined {
       }
     }
     void load()
-    return subscribeAgentTeam(() => { void load() }, () => {})
+    return subscribeAgentTeam(() => { void load() }, () => {}, () => { void load() })
   }, [sessionId])
   return membership
 }
@@ -81,15 +84,23 @@ export function TeamMemberSwitcher({
   openSession?: (sessionId: string) => void
 }): JSX.Element | null {
   const membership = useMembership(sessionId)
+  const { catalog, assistants, load } = useAgentTeamData(true)
+  const conversationView = useTeamConversationView(sessionId)
   const [open, setOpen] = useState(false)
+  const [addMemberOpen, setAddMemberOpen] = useState(false)
   const members = useMemo(() => (membership === undefined ? [] : sortedMembers(membership.team)), [membership])
+  if (conversationView !== undefined) return null
   if (membership === undefined || sessionId === undefined || openSession === undefined) return null
   const current = membership.member
   const items: MenuEntry[] = members.map(member => ({
     id: member.sessionId,
     label: (
       <span className={css.teamSwitcherItem}>
-        <span className={css.teamSwitcherAvatar} aria-hidden="true">{initial(member.displayName)}</span>
+        <span
+          className={css.teamSwitcherAvatar}
+          style={{ width: 20, height: 20, minWidth: 20, maxWidth: 20, flex: '0 0 20px', aspectRatio: '1 / 1' }}
+          aria-hidden="true"
+        >{initial(member.displayName)}</span>
         <span className={css.teamSwitcherItemCopy}>
           <span className={css.teamSwitcherItemName}>{member.displayName}</span>
           {member.role === 'leader' && (
@@ -103,6 +114,8 @@ export function TeamMemberSwitcher({
     ),
   }))
   return (
+    <>
+    <div className={css.teamSwitcherGroup}>
     <Menu
       open={open}
       onClose={() => { setOpen(false) }}
@@ -112,7 +125,17 @@ export function TeamMemberSwitcher({
       onSelect={id => {
         setOpen(false)
         if (id === '__manage__') {
-          openManageTeamDialog(membership.team.id)
+          const deadline = Date.now() + 5_000
+          const settle = (): void => {
+            const tab = Array.from(document.querySelectorAll('[data-conversation-tabs] button'))
+              .find(button => button.textContent?.trim() === '团队管理')
+            if (tab !== undefined) {
+              ;(tab as HTMLElement).click()
+              return
+            }
+            if (Date.now() < deadline) setTimeout(settle, 100)
+          }
+          setTimeout(settle, 100)
           return
         }
         if (id === sessionId) return
@@ -126,19 +149,44 @@ export function TeamMemberSwitcher({
       anchor={(
         <button
           type="button"
-          className={css.teamSwitcherButton}
+          className={`${css.teamSwitcherButton} ${css.teamSwitcherButtonGrouped}`}
           aria-label={`切换团队成员，当前 ${current.displayName}`}
           aria-haspopup="menu"
           aria-expanded={open}
           onClick={() => { setOpen(value => !value) }}
         >
-          <span className={css.teamSwitcherAvatar} aria-hidden="true">{initial(current.displayName)}</span>
+          <span
+            className={css.teamSwitcherAvatar}
+            style={{ width: 20, height: 20, minWidth: 20, maxWidth: 20, flex: '0 0 20px', aspectRatio: '1 / 1' }}
+            aria-hidden="true"
+          >{initial(current.displayName)}</span>
           <span className={css.teamSwitcherName}>{current.displayName}</span>
           {current.role === 'leader' && <span className={css.teamSwitcherLeader} aria-label="Leader"><LeaderMark size={12} /></span>}
           <IconChevronDownOutlineRegular size={12} />
         </button>
       )}
     />
+    <button
+      type="button"
+      className={css.teamSwitcherAdd}
+      aria-label="添加成员"
+      title="添加成员"
+      onClick={() => { setAddMemberOpen(true) }}
+    >
+      <IconPlusOutlineRegular size={14} />
+    </button>
+    </div>
+    {addMemberOpen && (
+      <AddTeamMemberDialog
+        open={addMemberOpen}
+        team={membership.team}
+        catalog={catalog}
+        assistants={assistants}
+        onClose={() => { setAddMemberOpen(false) }}
+        onChanged={async () => { await load() }}
+      />
+    )}
+    </>
   )
 }
 

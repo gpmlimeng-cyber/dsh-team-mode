@@ -89,7 +89,7 @@ export function WorkspacePanel({
     const unsubscribe = subscribeAgentTeamWorkspace(team.id, () => {
       if (timer !== undefined) clearTimeout(timer)
       timer = setTimeout(() => { void load() }, 250)
-    }, () => {})
+    }, () => {}, () => { void load() })
     return () => {
       if (timer !== undefined) clearTimeout(timer)
       unsubscribe()

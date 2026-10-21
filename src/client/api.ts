@@ -1,6 +1,8 @@
 import {
   AGENT_TEAM_API_PATH,
   AGENT_TEAM_EVENTS_PATH,
+  AGENT_TEAM_FILE_NAME_HEADER,
+  AGENT_TEAM_REQUEST_ID_HEADER,
   AGENT_TEAM_UPLOAD_PATH,
   type AgentTeamMethod,
   type AgentTeamPayload,
@@ -57,8 +59,8 @@ export async function uploadAgentTeamFile(teamId: string, file: File): Promise<W
       method: 'POST',
       headers: {
         'Content-Type': 'application/octet-stream',
-        'X-Agent-Team-File-Name': encodeURIComponent(file.name),
-        'X-Agent-Team-Request-Id': requestId,
+        [AGENT_TEAM_FILE_NAME_HEADER]: encodeURIComponent(file.name),
+        [AGENT_TEAM_REQUEST_ID_HEADER]: requestId,
       },
       signal: controller.signal,
       body: file,
@@ -81,6 +83,7 @@ export async function uploadAgentTeamFile(teamId: string, file: File): Promise<W
 interface ChangeSubscription {
   onChange: () => void
   onError: () => void
+  onOpen?: () => void
 }
 
 interface ConversationSubscription {
@@ -100,6 +103,7 @@ interface WorkspaceSubscription {
   teamId: string
   onChange: () => void
   onError: () => void
+  onOpen?: () => void
 }
 
 const changeSubscriptions = new Set<ChangeSubscription>()
@@ -155,10 +159,14 @@ function eventSource(): EventSource {
     for (const subscription of assistantBuilderSubscriptions) subscription.onError()
     for (const subscription of workspaceSubscriptions) subscription.onError()
   }
-  source.onopen = () => {
+  const resync = (): void => {
+    for (const subscription of changeSubscriptions) subscription.onOpen?.()
     for (const subscription of conversationSubscriptions) subscription.onOpen?.()
     for (const subscription of assistantBuilderSubscriptions) subscription.onOpen?.()
+    for (const subscription of workspaceSubscriptions) subscription.onOpen?.()
   }
+  source.addEventListener('resync', resync)
+  source.onopen = resync
   sharedEventSource = source
   return source
 }
@@ -178,8 +186,14 @@ export function subscribeAgentTeamWorkspace(
   teamId: string,
   onChange: () => void,
   onError: () => void,
+  onOpen?: () => void,
 ): () => void {
-  const subscription: WorkspaceSubscription = { teamId, onChange, onError }
+  const subscription: WorkspaceSubscription = {
+    teamId,
+    onChange,
+    onError,
+    ...(onOpen === undefined ? {} : { onOpen }),
+  }
   workspaceSubscriptions.add(subscription)
   eventSource()
   return () => {
@@ -188,8 +202,12 @@ export function subscribeAgentTeamWorkspace(
   }
 }
 
-export function subscribeAgentTeam(onChange: () => void, onError: () => void): () => void {
-  const subscription: ChangeSubscription = { onChange, onError }
+export function subscribeAgentTeam(
+  onChange: () => void,
+  onError: () => void,
+  onOpen?: () => void,
+): () => void {
+  const subscription: ChangeSubscription = { onChange, onError, ...(onOpen === undefined ? {} : { onOpen }) }
   changeSubscriptions.add(subscription)
   eventSource()
   return () => {

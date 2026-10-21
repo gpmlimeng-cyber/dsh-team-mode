@@ -13,6 +13,10 @@ export const AGENT_TEAM_API_PATH = '/dsh-team-mode/api'
 export const AGENT_TEAM_EVENTS_PATH = '/dsh-team-mode/events'
 export const AGENT_TEAM_UPLOAD_PATH = '/dsh-team-mode/upload'
 
+/** Custom header names are part of the wire contract; one copy serves both halves. */
+export const AGENT_TEAM_FILE_NAME_HEADER = 'x-dsh-team-mode-file-name'
+export const AGENT_TEAM_REQUEST_ID_HEADER = 'x-dsh-team-mode-request-id'
+
 export const AGENT_TEAM_METHODS = [
   'catalog.get',
   'catalog.model.get',
@@ -39,6 +43,7 @@ export const AGENT_TEAM_METHODS = [
   'team.createDraft',
   'team.clone',
   'team.start',
+  'team.warmup.retry',
   'team.addMember',
   'team.renameMember',
   'team.removeMember',
@@ -48,6 +53,11 @@ export const AGENT_TEAM_METHODS = [
   'team.message.send',
   'team.workbench.get',
   'team.member.stop',
+  'team.member.contextReset',
+  'team.member.reconnect',
+  'team.members.reorder',
+  'team.pin',
+  'team.archive',
   'team.interaction.respond',
   'team.member.setPermissionPreset',
   'team.member.setReasoningEffort',
@@ -341,6 +351,7 @@ export interface AgentTeamRequestMap {
   'team.createDraft': { payload: CreateTeamDraftInput; result: TeamView }
   'team.clone': { payload: CloneTeamInput & { teamId: string }; result: TeamView }
   'team.start': { payload: { id: string }; result: TeamView }
+  'team.warmup.retry': { payload: { teamId: string; slotId?: string }; result: TeamView }
   'team.addMember': { payload: { teamId: string; value: AddTeamMemberInput }; result: TeamView }
   'team.renameMember': { payload: { teamId: string; slotId: string; displayName: string }; result: TeamView }
   'team.removeMember': { payload: { teamId: string; slotId: string }; result: TeamView }
@@ -353,6 +364,14 @@ export interface AgentTeamRequestMap {
   }
   'team.workbench.get': { payload: { id: string }; result: TeamWorkbenchView }
   'team.member.stop': { payload: { teamId: string; slotId: string }; result: { accepted: boolean } }
+  'team.member.contextReset': {
+    payload: { teamId: string; slotId: string }
+    result: { team: TeamView; sessionId: string; status: string }
+  }
+  'team.member.reconnect': { payload: { teamId: string; slotId: string }; result: TeamView }
+  'team.members.reorder': { payload: { teamId: string; order: string[] }; result: TeamView }
+  'team.pin': { payload: { teamId: string; pinned: boolean }; result: TeamView }
+  'team.archive': { payload: { teamId: string; archived: boolean }; result: TeamView }
   'team.interaction.respond': {
     payload: {
       teamId: string

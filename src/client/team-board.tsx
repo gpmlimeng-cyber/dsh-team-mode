@@ -11,6 +11,7 @@ import {
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import { isTeamExecuting } from './team-status.js'
 import css from './TeamBoard.module.css'
+import { setTeamConversationView } from './team-view-presence.js'
 import type { TeamMessage, TeamTask } from '../domain/types.js'
 import type { TeamView } from '../transport/contracts.js'
 
@@ -19,7 +20,7 @@ export const TEAM_BOARD_VIEW_ID = 'team-board'
 /** Tab label rendered by the native conversation header. */
 export const TEAM_BOARD_VIEW_LABEL = '看板'
 /** Tab order beside the shipped chat (0) and trajectory (10) views. */
-export const TEAM_BOARD_VIEW_ORDER = 30
+export const TEAM_BOARD_VIEW_ORDER = 7
 
 const UNASSIGNED = '__unassigned__'
 const FILTER_STORAGE_KEY = 'dsh-team-mode:team-board:filters'
@@ -438,6 +439,10 @@ function teamCounts(team: TeamView): { members: number; online: number; unassign
  */
 export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
   const sessionId = props.sessionId
+  useEffect(() => {
+    setTeamConversationView(sessionId, 'board')
+    return () => { setTeamConversationView(sessionId, undefined) }
+  }, [sessionId])
   const [teams, setTeams] = useState<TeamView[]>(teamCache.teams)
   const [teamsLoaded, setTeamsLoaded] = useState(teamCache.loaded)
   const [teamsError, setTeamsError] = useState<string>()
@@ -517,7 +522,7 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
       timer = window.setTimeout(() => { setRefreshVersion(value => value + 1) }, 220)
     }, () => {
       setLiveError('团队事件连接已中断，正在等待重连')
-    })
+    }, () => { setLiveError(undefined); setRefreshVersion(value => value + 1) })
     return () => {
       if (timer !== undefined) window.clearTimeout(timer)
       dispose()

@@ -7,7 +7,9 @@ import type { AgentTeamService, AgentTeamChange } from '../service/dsh-team-mode
 import {
   AGENT_TEAM_API_PATH,
   AGENT_TEAM_EVENTS_PATH,
+  AGENT_TEAM_FILE_NAME_HEADER,
   AGENT_TEAM_METHODS,
+  AGENT_TEAM_REQUEST_ID_HEADER,
   AGENT_TEAM_UPLOAD_PATH,
   type AgentTeamRequest,
   type AgentTeamResponse,
@@ -48,7 +50,12 @@ export function registerWebTransport(
   service: AgentTeamService,
 ): WebTransport {
   const clients = new Set<ServerResponse>()
-  const unsubscribe = service.subscribe(change => broadcast(clients, change))
+  const history: AgentTeamChange[] = []
+  const unsubscribe = service.subscribe(change => {
+    history.push(change)
+    if (history.length > 256) history.shift()
+    broadcast(clients, change)
+  })
   const heartbeat = setInterval(() => {
     for (const response of clients) response.write(': heartbeat\n\n')
   }, config.sseHeartbeatMs)
@@ -65,7 +72,7 @@ export function registerWebTransport(
     kind: 'exact',
     path: AGENT_TEAM_EVENTS_PATH,
     handler: (request, response) => {
-      handleEvents(request, response, clients)
+      handleEvents(request, response, clients, history, ctx)
     },
   })
   const disposeUpload = ctx.webServer.register({
@@ -95,19 +102,16 @@ async function handleUpload(
   service: AgentTeamService,
   ctx: Context,
 ): Promise<void> {
-  const requestId = headerValue(request.headers['x-dsh-team-mode-request-id']) ?? 'unknown'
+  const requestId = headerValue(request.headers[AGENT_TEAM_REQUEST_ID_HEADER]) ?? 'unknown'
+  if (!admit(request, response, ctx, requestId)) return
   if (request.method !== 'POST') {
     writeJson(response, 405, failure(requestId, 'METHOD_NOT_ALLOWED', 'Only POST is supported'))
-    return
-  }
-  if (!sameOrigin(request)) {
-    writeJson(response, 403, failure(requestId, 'ORIGIN_REJECTED', 'Cross-origin requests are not allowed'))
     return
   }
   try {
     const url = new URL(request.url ?? AGENT_TEAM_UPLOAD_PATH, `http://${request.headers.host ?? 'localhost'}`)
     const teamId = url.searchParams.get('teamId')?.trim()
-    const encodedName = headerValue(request.headers['x-dsh-team-mode-file-name'])
+    const encodedName = headerValue(request.headers[AGENT_TEAM_FILE_NAME_HEADER])
     if (!teamId || !encodedName) throw new AgentTeamError('INVALID_REQUEST', 'Team id and file name are required')
     let fileName: string
     try {
@@ -135,12 +139,9 @@ async function handleApi(
   service: AgentTeamService,
   ctx: Context,
 ): Promise<void> {
+  if (!admit(request, response, ctx)) return
   if (request.method !== 'POST') {
     writeJson(response, 405, failure('unknown', 'METHOD_NOT_ALLOWED', 'Only POST is supported'))
-    return
-  }
-  if (!sameOrigin(request)) {
-    writeJson(response, 403, failure('unknown', 'ORIGIN_REJECTED', 'Cross-origin requests are not allowed'))
     return
   }
   const contentType = request.headers['content-type'] ?? ''
@@ -178,13 +179,12 @@ function handleEvents(
   request: IncomingMessage,
   response: ServerResponse,
   clients: Set<ServerResponse>,
+  history: readonly AgentTeamChange[],
+  ctx: Context,
 ): void {
+  if (!admit(request, response, ctx)) return
   if (request.method !== 'GET') {
     writeJson(response, 405, failure('unknown', 'METHOD_NOT_ALLOWED', 'Only GET is supported'))
-    return
-  }
-  if (!sameOrigin(request)) {
-    writeJson(response, 403, failure('unknown', 'ORIGIN_REJECTED', 'Cross-origin requests are not allowed'))
     return
   }
   response.writeHead(200, {
@@ -194,6 +194,7 @@ function handleEvents(
     'X-Content-Type-Options': 'nosniff',
   })
   response.write('retry: 2000\n\n')
+  replayEvents(request, response, history)
   clients.add(response)
   const close = () => { clients.delete(response) }
   request.once('close', close)
@@ -316,6 +317,13 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       })
     }
     case 'team.start': return service.startTeam(idPayload.parse(request.payload).id, options)
+    case 'team.warmup.retry': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        slotId: z.string().trim().min(1).max(200).optional(),
+      }).strict().parse(request.payload)
+      return service.retryWarmup(payload.teamId, payload.slotId, options)
+    }
     case 'team.addMember': {
       const payload = z.object({ teamId: z.string().min(1), value: z.unknown() }).strict().parse(request.payload)
       return service.addMember(payload.teamId, payload.value as never, options)
@@ -354,6 +362,41 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       const payload = z.object({ teamId: z.string().min(1), slotId: z.string().min(1) }).strict().parse(request.payload)
       await service.stopMember(payload.teamId, payload.slotId)
       return { accepted: true }
+    }
+    case 'team.member.contextReset': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        slotId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.contextResetMember(payload.teamId, payload.slotId, options)
+    }
+    case 'team.member.reconnect': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        slotId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.reconnectMember(payload.teamId, payload.slotId, options)
+    }
+    case 'team.members.reorder': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        order: z.array(z.string().trim().min(1).max(200)).max(64),
+      }).strict().parse(request.payload)
+      return service.reorderMembers(payload.teamId, payload.order, options)
+    }
+    case 'team.pin': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        pinned: z.boolean(),
+      }).strict().parse(request.payload)
+      return service.setTeamPinned(payload.teamId, payload.pinned, options)
+    }
+    case 'team.archive': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        archived: z.boolean(),
+      }).strict().parse(request.payload)
+      return service.setTeamArchived(payload.teamId, payload.archived, options)
     }
     case 'team.interaction.respond': {
       const payload = z.object({
@@ -477,25 +520,83 @@ function headerValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value
 }
 
-function sameOrigin(request: IncomingMessage): boolean {
-  const origin = request.headers.origin
-  if (origin === undefined) return true
-  const host = request.headers.host
-  if (host === undefined) return false
-  try {
-    return new URL(origin).host === host
-  } catch {
-    return false
-  }
+/**
+ * Reuse the Harness connection's trusted-Host/origin fence and signed browser
+ * or API credential. A plugin-owned route must not invent its own auth.
+ */
+function admit(
+  request: IncomingMessage,
+  response: ServerResponse,
+  ctx: Context,
+  requestId = 'unknown',
+): boolean {
+  const rejection = ctx.connection.requestRejection(request)
+  if (rejection === undefined) return true
+  writeJson(
+    response,
+    rejection,
+    failure(
+      requestId,
+      rejection === 401 ? 'UNAUTHORIZED' : 'ORIGIN_REJECTED',
+      rejection === 401 ? 'Authentication required' : 'Request origin is not trusted',
+    ),
+  )
+  return false
 }
 
-function broadcast(clients: Set<ServerResponse>, change: AgentTeamChange): void {
+function eventFrame(change: AgentTeamChange): string {
   const event = change.entityType === 'conversation' ? 'conversation'
     : change.entityType === 'assistant-builder' ? 'assistant-builder-conversation'
       : change.entityType === 'workspace' ? 'workspace'
       : 'change'
-  const frame = `id: ${change.cursor}\nevent: ${event}\ndata: ${JSON.stringify(change)}\n\n`
+  return `id: ${change.cursor}\nevent: ${event}\ndata: ${JSON.stringify(change)}\n\n`
+}
+
+function broadcast(clients: Set<ServerResponse>, change: AgentTeamChange): void {
+  const frame = eventFrame(change)
   for (const response of clients) response.write(frame)
+}
+
+/**
+ * Replay the tail the client missed. EventSource sends `Last-Event-ID` on its
+ * own reconnect; `?cursor=` keeps curl and tests explicit. If the requested
+ * cursor predates the retained window, ask the client to resync instead of
+ * pretending the gap does not exist.
+ */
+function replayEvents(
+  request: IncomingMessage,
+  response: ServerResponse,
+  history: readonly AgentTeamChange[],
+): void {
+  const headerId = headerValue(request.headers['last-event-id'])
+  const queryId = (() => {
+    try {
+      return new URL(request.url ?? '', 'http://localhost').searchParams.get('cursor') ?? undefined
+    } catch {
+      return undefined
+    }
+  })()
+  const raw = headerId ?? queryId
+  if (raw === undefined || raw.trim() === '') return
+  const cursor = Number(raw)
+  if (!Number.isSafeInteger(cursor) || cursor < 0) return
+  const latest = history.at(-1)?.cursor ?? 0
+  if (cursor === latest) return
+  if (cursor > latest) {
+    // A restarted host or a different process: the client is ahead of this
+    // history, so it must reload rather than wait for events that never come.
+    response.write(`event: resync\ndata: ${JSON.stringify({ cursor: latest })}\n\n`)
+    return
+  }
+  const first = history[0]
+  if (first === undefined || cursor < first.cursor - 1) {
+    response.write(`event: resync\ndata: ${JSON.stringify({ cursor: latest })}\n\n`)
+    return
+  }
+  for (const change of history) {
+    if (change.cursor <= cursor) continue
+    response.write(eventFrame(change))
+  }
 }
 
 function normalizeError(requestId: string, error: unknown): AgentTeamResponse & { ok: false } {
@@ -529,7 +630,6 @@ function writeJson(response: ServerResponse, status: number, body: AgentTeamResp
   const json = JSON.stringify(body)
   response.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(json),
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
   })

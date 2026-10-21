@@ -14,7 +14,7 @@ import type {
 } from '../src/domain/types.js'
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import type { AgentTeamStore } from '../src/storage/store.js'
-import { TeamRuntime } from '../src/runtime/team-runtime.js'
+import { isRateLimitMessage, TeamRuntime } from '../src/runtime/team-runtime.js'
 import type { TeamCommandHandler } from '../src/runtime/team-command-handler.js'
 import type { TeamMessageDispatcher } from '../src/runtime/team-message-dispatcher.js'
 import { ASSISTANT_BUILDER_PROMPT } from '../src/runtime/assistant-builder-runtime.js'
@@ -614,6 +614,265 @@ describe('AgentTeamService', () => {
     }))
   })
 
+  it('recovers a persisted active team after a plugin restart', async () => {
+    const { ctx, service, store } = createHarness()
+    ctx.provide('sessionPersistence', { list: async () => [] } as never)
+    const assistant = await service.createAssistant(assistantInput())
+    const draft = await service.createTeamDraft({
+      name: 'Recovered Team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const active = await store.updateTeam(draft.id, team => ({ ...team, state: 'active' }))
+    const runtime = new TeamRuntime(ctx, config, service)
+    service.attachRuntime(runtime)
+    const internals = runtimeInternals(runtime)
+    const ensureMembersOnline = vi.fn(async () => {})
+    internals.ensureMembersOnline = ensureMembersOnline
+    internals.materializedSessions = vi.fn(async () => new Set<string>())
+    internals.messages.recover = vi.fn(async () => {})
+
+    await runtime.recoverTeams()
+
+    expect(ensureMembersOnline).toHaveBeenCalledOnce()
+    const recovered = service.getTeam(active.id)
+    expect(recovered.state).toBe('active')
+    expect(store.listActivities(active.id).some(activity => activity.kind === 'team.recovered')).toBe(true)
+  })
+
+  it('classifies 429 errors as rate limits', () => {
+    expect(isRateLimitMessage('429 Too Many Requests')).toBe(true)
+    expect(isRateLimitMessage('rate-limit exceeded')).toBe(true)
+    expect(isRateLimitMessage('quota exceeded for this model')).toBe(true)
+    expect(isRateLimitMessage('tool execution failed')).toBe(false)
+  })
+
+  it('cancels a stuck member and leaves a leader testament', async () => {
+    const { ctx, service, store } = createHarness()
+    ctx.provide('sessionPersistence', { list: async () => [] } as never)
+    const assistant = await service.createAssistant(assistantInput())
+    const draft = await service.createTeamDraft({
+      name: 'Watchdog Team',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader' },
+        { assistantId: assistant.id, role: 'member' },
+      ],
+    })
+    const member = Object.values(draft.members).find(value => value.id !== draft.leaderSlotId)!
+    const leader = draft.members[draft.leaderSlotId]!
+    const active = await store.updateTeam(draft.id, team => ({ ...team, state: 'active' }))
+    const runtime = new TeamRuntime(ctx, config, service)
+    service.attachRuntime(runtime)
+    const internals = runtimeInternals(runtime)
+    const stuck = { ...fakeAgent(), status: 'running' as const }
+    const leaderAgent = fakeAgent()
+    internals.owned.set(member.sessionId, {
+      ...(fakeOwned(stuck) as object),
+      teamId: active.id,
+      slotId: member.id,
+    } as never)
+    internals.owned.set(leader.sessionId, {
+      ...(fakeOwned(leaderAgent) as object),
+      teamId: active.id,
+      slotId: leader.id,
+    } as never)
+
+    await internals.handleWatchdogTimeout(active.id, member.id, member.sessionId)
+
+    expect(stuck.cancel).toHaveBeenCalledOnce()
+    const team = service.getTeam(active.id)
+    expect(team.members[member.id]?.lastRuntimeState).toBe('error')
+    expect(team.members[member.id]?.lastError).toContain('WATCHDOG')
+    const notice = service.listMessages(active.id).items.find(message =>
+      message.sender.kind === 'system' && message.content.includes('运行超时'))
+    expect(notice).toBeDefined()
+  })
+
+  it('records a rate-limit turn failure with a testament', async () => {
+    const { ctx, service, store } = createHarness()
+    ctx.provide('sessionPersistence', { list: async () => [] } as never)
+    const assistant = await service.createAssistant(assistantInput())
+    const draft = await service.createTeamDraft({
+      name: 'Rate Team',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader' },
+        { assistantId: assistant.id, role: 'member' },
+      ],
+    })
+    const member = Object.values(draft.members).find(value => value.id !== draft.leaderSlotId)!
+    const leader = draft.members[draft.leaderSlotId]!
+    const active = await store.updateTeam(draft.id, team => ({ ...team, state: 'active' }))
+    const runtime = new TeamRuntime(ctx, config, service)
+    service.attachRuntime(runtime)
+    const internals = runtimeInternals(runtime)
+    const leaderAgent = fakeAgent()
+    internals.owned.set(leader.sessionId, {
+      ...(fakeOwned(leaderAgent) as object),
+      teamId: active.id,
+      slotId: leader.id,
+    } as never)
+
+    await internals.recordTurnFailure(active.id, member.id, '429 Too Many Requests')
+
+    const team = service.getTeam(active.id)
+    expect(team.members[member.id]?.lastRuntimeState).toBe('error')
+    expect(team.members[member.id]?.lastError).toContain('RATE_LIMITED')
+    expect(service.listMessages(active.id).items.some(message =>
+      message.content.includes('速率限制'))).toBe(true)
+  })
+
+  it('uses native session-<uuid> identities for member sessions', async () => {
+    const { service } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const draft = await service.createTeamDraft({
+      name: 'Native Sessions',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader' },
+        { assistantId: assistant.id, role: 'member' },
+      ],
+    })
+    for (const member of Object.values(draft.members)) {
+      expect(member.sessionId).toMatch(/^session-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/)
+    }
+  })
+
+  it('pins, reorders and archives a draft team', async () => {
+    const { service } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const draft = await service.createTeamDraft({
+      name: 'Ordered Team',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader' },
+        { assistantId: assistant.id, role: 'member' },
+      ],
+    })
+    const member = Object.values(draft.members).find(value => value.id !== draft.leaderSlotId)!
+
+    const pinned = await service.setTeamPinned(draft.id, true, { expectedRevision: draft.revision })
+    expect(pinned.pinned).toBe(true)
+    const reordered = await service.reorderMembers(draft.id, [member.id], {
+      expectedRevision: pinned.revision,
+    })
+    expect(reordered.memberOrder).toEqual([draft.leaderSlotId, member.id])
+    const archived = await service.setTeamArchived(draft.id, true, {
+      expectedRevision: reordered.revision,
+    })
+    expect(archived.archivedAt).toBeDefined()
+    await expect(service.setTeamArchived(draft.id, true, {
+      expectedRevision: archived.revision,
+    })).resolves.toBeDefined()
+  })
+
+  it('delegates member context reset and reconnect to the runtime', async () => {
+    const { ctx, service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const draft = await service.createTeamDraft({
+      name: 'Member Ops',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader' },
+        { assistantId: assistant.id, role: 'member' },
+      ],
+    })
+    const member = Object.values(draft.members).find(value => value.id !== draft.leaderSlotId)!
+    const active = await store.updateTeam(draft.id, team => ({ ...team, state: 'active' }))
+    const runtime = new TeamRuntime(ctx, config, service)
+    service.attachRuntime(runtime)
+    const internals = runtimeInternals(runtime)
+    internals.clearMemberContext = vi.fn(async () => ({ sessionId: 'fresh-session', status: 'idle' }))
+    internals.reconnectMember = vi.fn(async () => service.getTeam(active.id))
+
+    const reset = await service.contextResetMember(active.id, member.id, {
+      expectedRevision: active.revision,
+    })
+    expect(reset.sessionId).toBe('fresh-session')
+    expect(internals.clearMemberContext).toHaveBeenCalledWith(active.id, member.id)
+
+    const reconnected = await service.reconnectMember(active.id, member.id, {
+      expectedRevision: reset.team.revision,
+    })
+    expect(reconnected.id).toBe(active.id)
+    expect(internals.reconnectMember).toHaveBeenCalledWith(active.id, member.id)
+  })
+
+  it('makes the team usable when the leader is ready and records teammate failures', async () => {
+    const { ctx, service } = createHarness()
+    ctx.provide('sessionPersistence', { list: async () => [] } as never)
+    const assistant = await service.createAssistant(assistantInput())
+    const draft = await service.createTeamDraft({
+      name: 'Partial Warmup',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader' },
+        { assistantId: assistant.id, role: 'member' },
+      ],
+    })
+    const member = Object.values(draft.members).find(value => value.id !== draft.leaderSlotId)!
+    const runtime = new TeamRuntime(ctx, config, service)
+    const internals = runtimeInternals(runtime)
+    internals.ensureWorkspaceReady = vi.fn(async () => {})
+    internals.materializedSessions = vi.fn(async () => new Set<string>())
+    internals.ensureMemberOnline = vi.fn(async (_team, target) => {
+      if (target.id !== draft.leaderSlotId) throw new Error('teammate failed')
+    })
+
+    const started = await runtime.startTeam(draft.id)
+    expect(started.state).toBe('active')
+    expect(started.warmup?.phase).toBe('leader-ready')
+
+    await vi.waitFor(() => {
+      const team = service.getTeam(draft.id)
+      expect(team.warmup?.phase).toBe('ready')
+      expect(team.warmup?.failedSlotIds).toContain(member.id)
+      expect(team.members[member.id]?.lastError).toContain('teammate failed')
+    })
+  })
+
+  it('records a per-member warmup failure and exposes it for retry', async () => {
+    const { ctx, service, store } = createHarness()
+    ctx.provide('sessionPersistence', { list: async () => [] } as never)
+    const assistant = await service.createAssistant(assistantInput())
+    const draft = await service.createTeamDraft({
+      name: 'Warmup Team',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader' },
+        { assistantId: assistant.id, role: 'member' },
+      ],
+    })
+    const member = Object.values(draft.members).find(value => value.id !== draft.leaderSlotId)!
+    const active = await store.updateTeam(draft.id, team => ({
+      ...team,
+      state: 'active',
+      warmup: { phase: 'starting', startedAt: new Date().toISOString() },
+      members: {
+        ...team.members,
+        [member.id]: {
+          ...team.members[member.id]!,
+          lastRuntimeState: 'error',
+          lastError: 'previous failure',
+        },
+      },
+    }))
+    const runtime = new TeamRuntime(ctx, config, service)
+    service.attachRuntime(runtime)
+    runtimeInternals(runtime).ensureMemberOnline = vi.fn(async () => {
+      throw new Error('spawn failed')
+    })
+
+    const result = await runtime.retryWarmup(active.id, member.id)
+
+    expect(result.members[member.id]).toMatchObject({
+      lastRuntimeState: 'error',
+      lastError: 'spawn failed',
+    })
+    expect(result.warmup?.failedSlotIds).toContain(member.id)
+  })
+
   it('atomically queues an assigned task and wakes its owner', async () => {
     const { ctx, service, store } = createHarness()
     const assistant = await service.createAssistant(assistantInput())
@@ -966,6 +1225,12 @@ interface RuntimeInternals {
   messages: TeamMessageDispatcher
   ensureMembersOnline: (team: TeamAggregate) => Promise<void>
   ensureMemberOnline: (team: TeamAggregate, member: TeamAggregate['members'][string], persisted: boolean) => Promise<void>
+  ensureWorkspaceReady: (team: TeamAggregate) => Promise<void>
+  materializedSessions: () => Promise<Set<string>>
+  clearMemberContext(teamId: string, slotId: string): Promise<{ sessionId: string; status: string }>
+  reconnectMember(teamId: string, slotId: string): Promise<TeamAggregate>
+  handleWatchdogTimeout(teamId: string, slotId: string, sessionId: string): Promise<void>
+  recordTurnFailure(teamId: string, slotId: string, message: string): Promise<void>
   stopMember(teamId: string, slotId: string): Promise<void>
 }
 

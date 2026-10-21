@@ -342,7 +342,7 @@ export function useAgentTeamData(includeTeams: boolean, active = true): {
   useEffect(() => {
     if (!active) return
     void load()
-    return subscribeAgentTeam(() => { void load() }, () => { setError('事件连接已断开，正在等待重连') })
+    return subscribeAgentTeam(() => { void load() }, () => { setError('事件连接已断开，正在等待重连') }, () => { void load() })
   }, [active, load])
 
   return { catalog, assistants, teams, loading, error, load }

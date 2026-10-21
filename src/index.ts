@@ -1,5 +1,6 @@
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
+import type {} from '@deepseek-ai/dsh-client-connection'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-permission-presets'
@@ -23,11 +24,13 @@ import {
   DomainAssistantBuilderModelPreferenceStore,
 } from './storage/assistant-builder-preferences.js'
 import { DomainAgentTeamStore } from './storage/store.js'
+import { migrateDomain } from './storage/migration.js'
 import { registerWebTransport } from './transport/web.js'
 
 export const name = 'dsh-team-mode'
 export const inject = [
   'agents',
+  'connection',
   'agentPresets',
   'llm',
   'permissionPresets',
@@ -55,6 +58,7 @@ export async function apply(ctx: Context, config: AgentTeamConfig): Promise<void
   let transport: ReturnType<typeof registerWebTransport> | undefined
   let service: AgentTeamService | undefined
   try {
+    await migrateDomain(domain)
     const store = new DomainAgentTeamStore(domain)
     const assistantBuilderModelPreferences = new DomainAssistantBuilderModelPreferenceStore(
       assistantBuilderPreferencesDomain,

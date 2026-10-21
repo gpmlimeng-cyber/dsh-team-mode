@@ -4,3 +4,7 @@ coverage/
 .DS_Store
 *.log
 
+
+# Local reverse-engineering notes and agent skills
+.agents/
+deepfork-out/

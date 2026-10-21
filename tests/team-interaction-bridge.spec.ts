@@ -49,6 +49,43 @@ describe('TeamInteractionBridge', () => {
     await bridge.dispose()
   })
 
+  it('keeps a pending question answerable after an invalid response', async () => {
+    const bridge = new TeamInteractionBridge({} as Context, {
+      acceptsSession: id => id === 'session-3',
+      onChange: vi.fn(),
+    })
+    const agent = agentContext()
+    bridge.attachAgent(agent.ctx, 'session-3')
+
+    const answered = agent.ask('user-questions/request', {
+      questions: [{
+        id: 'language',
+        question: '选择语言？',
+        options: [{ label: 'TypeScript' }, { label: 'Rust' }],
+      }],
+      wait: { callId: 'call-3' },
+    }) as Promise<AskUserQuestionAnswer>
+
+    await vi.waitFor(() => { expect(bridge.list('session-3')).toHaveLength(1) })
+
+    await expect(bridge.respond('session-3', 'question:call-3', {
+      kind: 'question',
+      answers: [{ id: 'language', selected: ['Unknown'] }],
+    })).rejects.toMatchObject({ code: 'INTERACTION_INVALID' })
+
+    expect(bridge.list('session-3')).toHaveLength(1)
+
+    await bridge.respond('session-3', 'question:call-3', {
+      kind: 'question',
+      answers: [{ id: 'language', selected: ['Rust'] }],
+    })
+    await expect(answered).resolves.toEqual({
+      answers: [{ id: 'language', selected: ['Rust'] }],
+    })
+    expect(bridge.list('session-3')).toEqual([])
+    await bridge.dispose()
+  })
+
   it('uses the one-shot approval outcome and rejects an unknown request', async () => {
     const bridge = new TeamInteractionBridge({} as Context, {
       acceptsSession: () => true,

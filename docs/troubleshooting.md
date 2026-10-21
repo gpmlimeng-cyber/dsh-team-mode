@@ -48,7 +48,7 @@ lsof -nP -iTCP:3080 -sTCP:LISTEN
 1. 安装命令使用了 `--profile web`。
 2. 安装后已经完全停止并重启 Harness。
 3. 浏览器已刷新。
-4. **设置 → 插件** 中能看到 `@limuyang2/dsh-team-mode`。
+4. **设置 → 插件** 中能看到 `@limeng/dsh-team-mode`。
 5. 当前运行的确实是安装插件的那个 Harness Profile。
 
 ## 助手或团队列表一直刷新
@@ -117,7 +117,7 @@ Harness 当前没有物理删除单个 Session 日志的公开 API。插件会�
 
 ## 提交问题
 
-在 [GitHub Issues](https://github.com/limuyang2/dsh-team-mode/issues) 提交：
+在 [GitHub Issues](https://github.com/gpmlimeng-cyber/dsh-team-mode/issues) 提交：
 
 - Harness 与插件版本。
 - Provider 和模型名称（不要提交 API Key）。

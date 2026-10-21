@@ -5,8 +5,8 @@
 ## 环境要求
 
 - Node.js `22.19.0+` 或 `24.0.0+`
-- DeepSeek Harness `0.1.1-rc.2`
-- Agent Team `0.1.2`
+- DeepSeek Harness `0.2.1-rc.2`
+- Agent Team `@limeng/dsh-team-mode` `0.3.0`
 - `pnpm` 已加入终端 `PATH`
 
 检查版本：
@@ -27,7 +27,7 @@ npm install -g pnpm
 在任意目录执行：
 
 ```bash
-npx @deepseek-ai/dsh plugin --profile web add @limuyang2/dsh-team-mode
+npx @deepseek-ai/dsh plugin --profile web add @limeng/dsh-team-mode@0.3.0
 ```
 
 Harness 会把插件加入 `web` Profile。安装完成后启动：
@@ -64,7 +64,7 @@ https://registry.npmjs.org/
 拿到 `.tgz` 文件后，在文件所在目录执行：
 
 ```bash
-npx @deepseek-ai/dsh plugin --profile web add ./limuyang2-dsh-team-mode-0.1.2.tgz
+npx @deepseek-ai/dsh plugin --profile web add ./limeng-dsh-team-mode-0.3.0.tgz
 ```
 
 文件名中的版本号可能不同，请按实际文件名替换。
@@ -91,7 +91,7 @@ npx @deepseek-ai/dsh web
 如果 Harness 正在运行，先在原终端按 `Ctrl+C` 停止服务，然后执行：
 
 ```bash
-npx @deepseek-ai/dsh plugin --profile web remove @limuyang2/dsh-team-mode
+npx @deepseek-ai/dsh plugin --profile web remove @limeng/dsh-team-mode
 ```
 
 该命令会从 `web` Profile 中移除插件依赖及其配置层。命令完成后重新启动 Harness，侧边栏和设置中的 Agent Team 入口将不再加载。

@@ -125,13 +125,15 @@ export class TeamInteractionBridge {
     if (record.sessionId !== sessionId || !this.acceptsSession(sessionId)) {
       throw new AgentTeamError('INTERACTION_NOT_FOUND', '该交互请求不属于指定的会话')
     }
-    this.records.delete(record.id)
-    this.notifyChange(record.sessionId)
     if (record.kind === 'question') {
       if (response.kind !== 'question') {
         throw new AgentTeamError('INTERACTION_INVALID', '交互响应类型与待处理请求不匹配')
       }
+      // Validate before consuming the record: a rejected answer must leave the
+      // prompt answerable instead of deleting it and hanging the Agent.
       const answers = normalizeQuestionAnswers(record.questions, response.answers)
+      this.records.delete(record.id)
+      this.notifyChange(record.sessionId)
       record.settle({
         answers: answers.map(answer => ({
           id: answer.id,
@@ -144,6 +146,8 @@ export class TeamInteractionBridge {
     if (response.kind !== 'approval') {
       throw new AgentTeamError('INTERACTION_INVALID', '交互响应类型与待处理请求不匹配')
     }
+    this.records.delete(record.id)
+    this.notifyChange(record.sessionId)
     record.settle(response.outcome)
   }
 

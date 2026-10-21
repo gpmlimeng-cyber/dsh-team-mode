@@ -2,6 +2,8 @@ import type { DomainTableSpec } from '@deepseek-ai/dsh-storage-domain'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import {
   assistantTemplateSchema,
+  migrationBackupSchema,
+  migrationRecordSchema,
   operationSchema,
   teamActivitySchema,
   teamAggregateSchema,
@@ -50,6 +52,12 @@ export const dshTeamModeDomainSpec = defineDomain({
     ),
     operations: domainTable<OperationId, Operation>(
       storedTableSchema<OperationId, Operation>(operationSchema),
+    ),
+    migrations: domainTable<string, { schemaVersion: 1, id: string, appliedAt: string, fromVersion: number, toVersion: number }>(
+      storedTableSchema<string, { schemaVersion: 1, id: string, appliedAt: string, fromVersion: number, toVersion: number }>(migrationRecordSchema),
+    ),
+    migration_backups: domainTable<string, { schemaVersion: 1, table: string, key: string, capturedAt: string, record: unknown }>(
+      storedTableSchema<string, { schemaVersion: 1, table: string, key: string, capturedAt: string, record: unknown }>(migrationBackupSchema),
     ),
   },
 })

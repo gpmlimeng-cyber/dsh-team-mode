@@ -1,14 +1,20 @@
 import { useEffect, useMemo, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { TeamView } from '../transport/contracts.js'
-import { IconPlusOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useAgentTeamData } from './components.js'
-import { AddTeamMemberDialog } from './teams/TeamPanel.js'
+import { callAgentTeam } from './api.js'
+import { assignTeamIdentityColors, teamIdentityColor } from './team-identity.js'
+import { useTeamText } from './team-i18n.js'
+import { setTeamConversationView } from './team-view-presence.js'
 import css from './AgentTeam.module.css'
 
 /** Placeholder rendered inside the native `conversation.view` tab. The overlay
  * host portals the real panes here so the native header/tabs stay intact. */
 export function TeamParallelView({ sessionId }: { sessionId?: string }): JSX.Element {
+  useEffect(() => {
+    setTeamConversationView(sessionId, 'parallel')
+    return () => { setTeamConversationView(sessionId, undefined) }
+  }, [sessionId])
   return <div className={css.teamParallelAnchor} data-team-parallel-anchor data-session-id={sessionId ?? ''} />
 }
 
@@ -20,37 +26,50 @@ interface ParallelHostProps {
   }
   SessionProvider?: ComponentType<{ session: unknown; children: ReactNode }>
   renderSlot?: (name: string, payload?: Record<string, unknown>) => ReactNode
-  onFocusSession?: (sessionId: string) => void
 }
 
-const IDENTITY_COLORS = [
-  'var(--dsw-static-blue-450)',
-  'var(--dsw-static-green-500)',
-  'var(--dsw-static-amber-500)',
-  'var(--dsw-static-deepseek-450)',
-  'var(--dsw-static-red-400)',
-  'var(--dsw-static-blue-600)',
-  'var(--dsw-static-green-400)',
-  'var(--dsw-static-amber-400)',
-] as const
-
-function identityColor(index: number): string {
-  return IDENTITY_COLORS[index % IDENTITY_COLORS.length] ?? 'var(--dsw-static-blue-450)'
-}
-
-function keepParallelView(sessionId: string): void {
+function readStored<T>(key: string, fallback: T): T {
   try {
-    // Do not point a Session at a view that is not registered yet; the shell
-    // would try to restore it before its Session binding exists.
-    const hasParallelTab = Array.from(document.querySelectorAll('[data-conversation-tabs] button'))
-      .some(button => button.textContent === '并行')
-    if (!hasParallelTab) return
-    const key = `dsh.conversation.${sessionId}`
     const raw = window.localStorage.getItem(key)
-    const current = raw === null ? {} : JSON.parse(raw) as Record<string, unknown>
-    if (current.view === 'team-parallel') return
-    window.localStorage.setItem(key, JSON.stringify({ ...current, view: 'team-parallel' }))
-  } catch { /* best effort */ }
+    return raw === null ? fallback : JSON.parse(raw) as T
+  } catch {
+    return fallback
+  }
+}
+
+function writeStored(key: string, value: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // Restricted WebViews may reject storage; the current session still works.
+  }
+}
+
+function useIdentityColors(
+  teamId: string | undefined,
+  members: readonly TeamView['members'][string][],
+): (slotId: string) => string {
+  const [colors, setColors] = useState<Record<string, number>>({})
+  const memberKey = members.map(member => member.id).join('|')
+  useEffect(() => {
+    if (teamId === undefined) {
+      setColors({})
+      return
+    }
+    const stored = readStored<Record<string, number>>(`dsh-team-mode:colors:${teamId}`, {})
+    const { colors: next, changed } = assignTeamIdentityColors(stored, members.map(member => member.id))
+    setColors(next)
+    if (changed) writeStored(`dsh-team-mode:colors:${teamId}`, next)
+  }, [teamId, memberKey])
+  return slotId => teamIdentityColor(colors[slotId] ?? 0)
+}
+
+function sortMembers(team: TeamView): TeamView['members'][string][] {
+  const order = team.memberOrder ?? Object.keys(team.members)
+  const rank = new Map(order.map((id, index) => [id, index]))
+  return Object.values(team.members).sort((left, right) =>
+    (rank.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+    || left.joinedAt.localeCompare(right.joinedAt))
 }
 
 function memberStatus(member: TeamView['members'][string]): 'running' | 'waiting' | 'idle' | 'failed' {
@@ -124,15 +143,15 @@ function RetainedPane({
 
 /** Session-scoped shell-overlay host: portals a grid of official embedded
  * conversations into the active `team-parallel` view anchor. */
+
 export function TeamParallelHost({
   sessions,
   SessionProvider,
   renderSlot,
-  onFocusSession,
 }: ParallelHostProps): JSX.Element | null {
-  const { teams, catalog, assistants, load } = useAgentTeamData(true)
+  const { teams, load } = useAgentTeamData(true)
+  const t = useTeamText()
   const [anchor, setAnchor] = useState<HTMLElement>()
-  const [addMemberOpen, setAddMemberOpen] = useState(false)
 
   useEffect(() => {
     const locate = (): void => {
@@ -149,70 +168,50 @@ export function TeamParallelHost({
   const team = useMemo(() => teams.find(candidate =>
     Object.values(candidate.members).some(member => member.sessionId === activeSessionId),
   ), [teams, activeSessionId])
-  const members = useMemo(() => {
-    if (team === undefined) return []
-    return Object.values(team.members).sort((left, right) => {
-      if (left.role !== right.role) return left.role === 'leader' ? -1 : 1
-      return left.joinedAt.localeCompare(right.joinedAt)
-    })
-  }, [team])
+  const members = useMemo(() => team === undefined ? [] : sortMembers(team), [team])
+  const colorOf = useIdentityColors(team?.id, members)
+  const [warmupTimedOut, setWarmupTimedOut] = useState(false)
+  useEffect(() => {
+    if (team?.warmup?.phase !== 'starting') {
+      setWarmupTimedOut(false)
+      return
+    }
+    const timer = setTimeout(() => { setWarmupTimedOut(true) }, 60_000)
+    return () => { clearTimeout(timer) }
+  }, [team?.warmup?.phase])
+  const retryWarmup = async (slotId?: string): Promise<void> => {
+    if (team === undefined) return
+    try {
+      await callAgentTeam(
+        'team.warmup.retry',
+        slotId === undefined ? { teamId: team.id } : { teamId: team.id, slotId },
+        team.revision,
+      )
+    } catch {
+      // A revision conflict or an unavailable member: reload and let the
+      // overlay show the current state instead of an unhandled rejection.
+    } finally {
+      await load()
+    }
+  }
   if (anchor === undefined || team === undefined || members.length === 0) return null
-
+  const warmup = team.warmup
+  const leader = team.members[team.leaderSlotId]
   return createPortal(
     <div className={css.teamParallelRoot}>
-      <div className={css.teamParallelMemberBar}>
-        <div className={css.teamParallelMemberScroll}>
-          {members.map((member, index) => {
-            const status = memberStatus(member)
-            return (
-              <div
-                key={member.id}
-                className={`${css.teamParallelMemberChip} ${member.sessionId === activeSessionId ? css.teamParallelMemberChipActive : ''}`}
-                style={{ '--team-pane-color': identityColor(index) } as CSSProperties}
-              >
-                <span className={`${css.teamParallelAvatar} ${css[`teamParallelAvatar_${status}`] ?? ''}`} aria-hidden="true">
-                  {initial(member.displayName)}
-                </span>
-                <span className={css.teamParallelMemberName}>{member.displayName}</span>
-                {member.role === 'leader' && (
-                  <span className={css.teamParallelLeaderCrown} aria-label="Leader" title="Leader">
-                    <LeaderMark size={12} />
-                  </span>
-                )}
-                <span className={`${css.teamParallelStatusDot} ${css[`teamParallelStatus_${status}`] ?? ''}`} aria-label={status} />
-              </div>
-            )
-          })}
-        </div>
-        <Tooltip label="添加成员" side="bottom" delayMs={400}>
-          <button
-            type="button"
-            className={css.teamParallelAddMember}
-            aria-label="添加成员"
-            onClick={() => { setAddMemberOpen(true) }}
-          >
-            <IconPlusOutlineRegular size={16} />
-          </button>
-        </Tooltip>
-      </div>
       <div
         className={css.teamParallelGrid}
         style={{ '--team-pane-count': members.length } as CSSProperties}
       >
-        {members.map((member, index) => {
+        {members.map(member => {
           const status = memberStatus(member)
           const active = member.sessionId === activeSessionId
           return (
             <section
               key={member.id}
               className={`${css.teamParallelPane} ${active ? css.teamParallelPaneActive : ''}`}
-              style={{ '--team-pane-color': identityColor(index) } as CSSProperties}
+              style={{ '--team-pane-color': colorOf(member.id) } as CSSProperties}
               data-team-pane={member.id}
-              onPointerDown={() => {
-                if (active) return
-                keepParallelView(member.sessionId)
-                onFocusSession?.(member.sessionId)
-              }}
             >
               <header className={css.teamParallelPaneHeader}>
                 <span className={css.teamParallelPaneIdentity}>
@@ -226,14 +225,21 @@ export function TeamParallelHost({
                     </span>
                   )}
                   {modelLabel(member) !== undefined && (
-                    <span
-                      className={css.teamParallelModelPill}
-                      title={modelLabel(member)}
-                    >
+                    <span className={css.teamParallelModelPill} title={modelLabel(member)}>
                       {modelLabel(member)}
                     </span>
                   )}
                   <span className={`${css.teamParallelStatusDot} ${css[`teamParallelStatus_${status}`] ?? ''}`} aria-label={status} />
+                  {member.lastRuntimeState === 'error' && (
+                    <button
+                      type="button"
+                      className={css.teamPaneRetry}
+                      title={member.lastError ?? '重试启动'}
+                      onClick={() => { void retryWarmup(member.id) }}
+                    >
+                      {t('member.retry')}
+                    </button>
+                  )}
                 </span>
               </header>
               <div className={css.teamParallelPaneBody}>
@@ -248,14 +254,38 @@ export function TeamParallelHost({
           )
         })}
       </div>
-      <AddTeamMemberDialog
-        open={addMemberOpen}
-        team={team}
-        catalog={catalog}
-        assistants={assistants}
-        onClose={() => { setAddMemberOpen(false) }}
-        onChanged={async () => { await load() }}
-      />
+      {(warmup?.phase === 'starting' || warmup?.phase === 'error') && (
+        <div className={css.teamWarmupOverlay} role="status" aria-live="polite">
+          <div className={css.teamWarmupCard}>
+            <div className={css.teamWarmupTitle}>
+              {warmup.phase === 'error'
+                ? t('warmup.errorTitle')
+                : (warmupTimedOut ? t('warmup.timeoutTitle') : t('warmup.title'))}
+            </div>
+            <p className={css.teamWarmupText}>
+              {warmup.phase === 'error'
+                ? (leader?.lastError ?? t('warmup.leaderFailed'))
+                : (warmupTimedOut
+                    ? t('warmup.timeoutText')
+                    : t('warmup.preparing', { name: leader?.displayName ?? 'Leader' }))}
+            </p>
+            {(warmup.failedSlotIds ?? []).length > 0 && (
+              <p className={css.teamWarmupText}>
+                {t('warmup.failed', {
+                  names: warmup.failedSlotIds?.map(id => team.members[id]?.displayName ?? id).join(', ') ?? '',
+                })}
+              </p>
+            )}
+            <button
+              type="button"
+              className={css.teamWarmupRetry}
+              onClick={() => { void retryWarmup() }}
+            >
+              {t('warmup.retry')}
+            </button>
+          </div>
+        </div>
+      )}
     </div>,
     anchor,
   )

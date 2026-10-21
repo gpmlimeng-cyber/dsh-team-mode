@@ -1,4 +1,4 @@
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Button,
@@ -38,6 +38,7 @@ import type { WorkspaceChoice } from '../types.js'
 import { ConversationColumn } from '../workbench/ConversationColumn.js'
 import { WorkspacePanel } from '../workspace/WorkspacePanel.js'
 import { TeamActivityBoard } from '../team-activity.js'
+import { useTeamText } from '../team-i18n.js'
 
 export function TeamPanel({
   catalog,
@@ -789,6 +790,7 @@ export function TeamCard({
   onChanged,
   onCloned,
   compact = false,
+  headerActions,
 }: {
   team: TeamView
   catalog: CatalogView | undefined
@@ -797,17 +799,26 @@ export function TeamCard({
   onChanged: () => Promise<void>
   onCloned: (teamId: string) => Promise<void>
   compact?: boolean
+  headerActions?: ReactNode
 }): JSX.Element {
+  const t = useTeamText()
   const [busy, setBusy] = useState(false)
   const [addingMember, setAddingMember] = useState(false)
   const [cloneOpen, setCloneOpen] = useState(false)
   const [dissolveOpen, setDissolveOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
   const [memberToRemove, setMemberToRemove] = useState<{ slotId: string; displayName: string }>()
+  const [contextTarget, setContextTarget] = useState<{ slotId: string; displayName: string }>()
   const [renaming, setRenaming] = useState<{ slotId: string; draft: string }>()
   const [renameBusy, setRenameBusy] = useState(false)
   const [error, setError] = useState<string>()
-  const members = Object.values(team.members)
+  const members = useMemo(() => {
+    const ordered = team.memberOrder ?? Object.keys(team.members)
+    const rank = new Map(ordered.map((id, index) => [id, index]))
+    return Object.values(team.members).sort((left, right) =>
+      (rank.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (rank.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+      || left.joinedAt.localeCompare(right.joinedAt))
+  }, [team])
   const tasks = Object.values(team.tasks)
   const executing = isTeamExecuting(team)
 
@@ -848,6 +859,61 @@ export function TeamCard({
         slotId: memberToRemove.slotId,
       }, team.revision)
       setMemberToRemove(undefined)
+      setError(undefined)
+      await onChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function resetMemberContext(): Promise<void> {
+    if (contextTarget === undefined) return
+    setBusy(true)
+    try {
+      await callAgentTeam('team.member.contextReset', {
+        teamId: team.id,
+        slotId: contextTarget.slotId,
+      }, team.revision)
+      setContextTarget(undefined)
+      setError(undefined)
+      await onChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function reconnectMember(memberId: string): Promise<void> {
+    setBusy(true)
+    try {
+      await callAgentTeam('team.member.reconnect', {
+        teamId: team.id,
+        slotId: memberId,
+      }, team.revision)
+      setError(undefined)
+      await onChanged()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function moveMember(memberId: string, delta: -1 | 1): Promise<void> {
+    const order = members.map(member => member.id)
+    const from = order.indexOf(memberId)
+    const to = from + delta
+    if (from < 0 || to < 1 || to >= order.length) return
+    const next = [...order]
+    const [moved] = next.splice(from, 1)
+    if (moved === undefined) return
+    next.splice(to, 0, moved)
+    setBusy(true)
+    try {
+      await callAgentTeam('team.members.reorder', { teamId: team.id, order: next }, team.revision)
       setError(undefined)
       await onChanged()
     } catch (cause) {
@@ -920,7 +986,10 @@ export function TeamCard({
           <strong className={css.teamCardName}>{team.name}</strong>
           <span className={css.teamCardWorkspace}>{team.workspacePath}</span>
         </div>
-        {executing && <span className={`${css.badge} ${css.badgeSuccess ?? ''}`}>任务执行中</span>}
+        <div className={css.teamCardHeaderTrailing}>
+          {executing && <span className={`${css.badge} ${css.badgeSuccess ?? ''}`}>任务执行中</span>}
+          {headerActions}
+        </div>
       </header>
 
       <section className={css.teamMemberSection} aria-label="团队成员">
@@ -940,7 +1009,7 @@ export function TeamCard({
           </span>
         </div>
         <div className={css.memberGrid}>
-          {members.map(member => (
+          {members.map((member, index) => (
             <div key={member.id} className={`${css.memberTile} ${member.role === 'leader' ? css.memberTileLeader : ''}`}>
               <span className={css.memberTileAvatar}>{member.displayName.slice(0, 1).toUpperCase()}</span>
               <span className={css.memberTileCopy}>
@@ -954,7 +1023,7 @@ export function TeamCard({
                           autoFocus
                           value={renaming.draft}
                           disabled={renameBusy}
-                          aria-label={`重命名 ${member.displayName}`}
+                          aria-label={`${t('member.rename')} ${member.displayName}`}
                           onChange={event => { setRenaming({ slotId: member.id, draft: event.target.value }) }}
                           onKeyDown={event => {
                             if (event.key === 'Escape') {
@@ -985,21 +1054,63 @@ export function TeamCard({
                   type="button"
                   className={css.memberEditButton}
                   aria-label={`重命名 ${member.displayName}`}
-                  title="重命名"
+                  title={t('member.rename')}
                   disabled={busy || renameBusy}
                   onClick={() => { startRename(member) }}
                 >
                   <IconEditOutlineRegular size={13} />
                 </button>
+                <button
+                  type="button"
+                  className={css.memberRoleAction}
+                  disabled={busy || renameBusy}
+                  title={t('member.reconnect')}
+                  onClick={() => { void reconnectMember(member.id) }}
+                >
+                  {t('member.reconnect')}
+                </button>
+                {member.role !== 'leader' && (
+                  <button
+                    type="button"
+                    className={css.memberRoleAction}
+                    disabled={busy || renameBusy}
+                    title={t('member.resetContext')}
+                    onClick={() => { setContextTarget({ slotId: member.id, displayName: member.displayName }) }}
+                  >
+                    {t('member.resetContext')}
+                  </button>
+                )}
+                {member.role !== 'leader' && (
+                  <>
+                    <button
+                      type="button"
+                      className={css.memberRoleAction}
+                      disabled={busy || renameBusy || index <= 1}
+                      aria-label={`${t('member.up')} ${member.displayName}`}
+                      onClick={() => { void moveMember(member.id, -1) }}
+                    >
+                      ↑
+                    </button>
+                    <button
+                      type="button"
+                      className={css.memberRoleAction}
+                      disabled={busy || renameBusy || index === members.length - 1}
+                      aria-label={`${t('member.down')} ${member.displayName}`}
+                      onClick={() => { void moveMember(member.id, 1) }}
+                    >
+                      ↓
+                    </button>
+                  </>
+                )}
                 {member.role === 'leader'
-                  ? <span className={`${css.memberRole} ${css.memberRoleLeader}`}>Leader</span>
+                  ? <span className={`${css.memberRole} ${css.memberRoleLeader}`}>{t('member.leader')}</span>
                   : <button
                     type="button"
                     className={`${css.memberRole} ${css.memberRoleAction}`}
                     disabled={busy || renameBusy}
                     onClick={() => { void changeLeader(member.id) }}
                   >
-                    设为 Leader
+                    {t('member.setLeader')}
                   </button>}
                 {member.id !== team.leaderSlotId && (
                   <button
@@ -1172,7 +1283,7 @@ export function TeamCard({
               disabled={busy}
               onClick={() => { void resetTeam() }}
             >
-              {busy ? '清空中…' : '确认清空'}
+              {busy ? t('context.busy') : t('context.confirm')}
             </button>
           </>
         )}
@@ -1182,6 +1293,49 @@ export function TeamCard({
           <div>
             <strong>确定清空“{team.name}”的任务与上下文？</strong>
             <p>所有成员会停止，任务板和待处理消息会被清空，并换用全新 Session。Workspace 文件、团队配置和旧 Session 日志会保留。</p>
+          </div>
+          {error && <div role="alert" className={css.inlineError}>{error}</div>}
+        </div>
+      </AnimatedModal>
+      <AnimatedModal
+        open={contextTarget !== undefined}
+        onClose={() => {
+          if (busy) return
+          setContextTarget(undefined)
+          setError(undefined)
+        }}
+        title={t('context.title')}
+        closeLabel="关闭"
+        description={t('context.description')}
+        className={css.teamResetDialog ?? ''}
+        footer={(
+          <>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                setContextTarget(undefined)
+                setError(undefined)
+              }}
+            >
+              取消
+            </Button>
+            <button
+              type="button"
+              className={`${css.dangerButton} ${css.confirmDangerButton}`}
+              disabled={busy}
+              onClick={() => { void resetMemberContext() }}
+            >
+              {busy ? '清空中…' : '确认清空'}
+            </button>
+          </>
+        )}
+      >
+        <div className={css.teamResetConfirm}>
+          <div className={css.teamResetIcon} aria-hidden="true">↻</div>
+          <div>
+            <strong>{t('context.confirmTitle', { name: contextTarget?.displayName ?? '' })}</strong>
+            <p>{t('context.body')}</p>
           </div>
           {error && <div role="alert" className={css.inlineError}>{error}</div>}
         </div>

@@ -2155,9 +2155,12 @@ textarea.input {
   min-width: 0;
   min-height: 72px;
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
+  grid-template-columns: 38px minmax(0, 1fr);
+  grid-template-areas:
+    'avatar copy'
+    'actions actions';
   align-items: center;
-  gap: 10px;
+  gap: 8px 10px;
   padding: 10px 11px;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: var(--dsw-radius-md);
@@ -2170,6 +2173,7 @@ textarea.input {
 }
 
 .memberTileAvatar {
+  grid-area: avatar;
   width: 38px;
   height: 38px;
   display: grid;
@@ -2183,12 +2187,18 @@ textarea.input {
 
 .memberTileCopy,
 .memberTileActions {
+  grid-area: actions;
   min-width: 0;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px;
 }
 
 .memberTileCopy {
+  grid-area: copy;
   gap: 3px;
 }
 
@@ -4127,6 +4137,7 @@ textarea.input {
 }
 
 .teamParallelRoot {
+  position: relative;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
@@ -4137,6 +4148,42 @@ textarea.input {
   padding: 10px 12px 12px;
   overflow: hidden;
   background: var(--dsw-alias-bg-page);
+}
+
+.teamViewToggle {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  flex: none;
+}
+
+.teamViewToggleButton {
+  border: 0;
+  border-radius: 6px;
+  padding: 4px 9px;
+  font-size: 12px;
+  color: var(--dsw-alias-text-3);
+  background: transparent;
+  cursor: pointer;
+}
+
+.teamViewToggleButtonActive {
+  color: var(--dsw-alias-text-1);
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+}
+
+.teamParallelMemberChip[draggable='true'] {
+  cursor: grab;
+}
+
+.teamParallelBoard {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .teamParallelMemberBar {
@@ -4730,3 +4777,182 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
 
 
 
+
+
+.teamWarmupOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-page) 76%, transparent);
+  backdrop-filter: blur(8px);
+}
+
+.teamWarmupCard {
+  width: min(380px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 22px 24px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 12%);
+  text-align: center;
+}
+
+.teamWarmupTitle {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-alias-text-1);
+}
+
+.teamWarmupText {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dsw-alias-text-3);
+}
+
+.teamWarmupRetry,
+.teamPaneRetry {
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-text-1);
+  cursor: pointer;
+}
+
+.teamWarmupRetry {
+  margin-top: 4px;
+  padding: 6px 16px;
+  font-size: 13px;
+  color: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-brand-primary);
+}
+
+.teamPaneRetry {
+  flex: none;
+  padding: 1px 6px;
+  font-size: 11px;
+  color: var(--dsw-alias-state-error-primary, var(--dsw-alias-brand-primary));
+}
+
+.teamWarmupRetry:hover,
+.teamPaneRetry:hover {
+  background: var(--dsw-alias-bg-layer-3);
+}
+
+.teamParallelPendingBadge {
+  flex: none;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--dsw-alias-brand-primary);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.teamCardHeaderTrailing {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex: none;
+}
+
+.teamSwitcherGroup {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.teamSwitcherButtonGrouped {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.teamSwitcherAdd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex: none;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-left: 0;
+  border-radius: 0 var(--dsw-radius-md) var(--dsw-radius-md) 0;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.teamSwitcherAdd:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.teamSwitcherAdd:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+@media (max-width: 900px) {
+  .teamParallelGrid {
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scroll-behavior: smooth;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .teamParallelGrid::-webkit-scrollbar {
+    display: none;
+  }
+
+  .teamParallelPane {
+    flex: 0 0 100%;
+    width: 100%;
+    max-width: 100%;
+    scroll-snap-align: start;
+    scroll-snap-stop: always;
+    border-left: 0;
+  }
+}
+
+/* The pane header is a flex row; if a host/theme rule stretches nested
+ * inline-flex children, the tiny identity avatar can otherwise become a
+ * full-width pill. Pin both avatars to their design sizes. */
+.teamParallelPaneIdentity .teamParallelAvatar,
+.teamParallelAvatar {
+  width: 22px !important;
+  height: 22px !important;
+  min-width: 22px !important;
+  max-width: 22px !important;
+  flex: 0 0 22px !important;
+  aspect-ratio: 1 / 1;
+  align-self: center;
+  box-sizing: border-box;
+}
+
+.teamSwitcherAvatar {
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  max-width: 20px !important;
+  flex: 0 0 20px !important;
+  aspect-ratio: 1 / 1;
+  box-sizing: border-box;
+}

@@ -15,6 +15,8 @@ export interface Config {
   maxTeamTasks?: number
   /** Hard cap on one team message in UTF-8 bytes (AionUi default 64 KiB). */
   maxTeamMessageBytes?: number
+  /** Cancel a member that stays `running` this long (default 10 min). */
+  memberIdleWatchdogMs?: number
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -29,4 +31,5 @@ export const Config: Schema<Config> = Schema.object({
   maxTeamMembers: Schema.number().min(1).max(64).default(8),
   maxTeamTasks: Schema.number().min(1).max(4096).default(256),
   maxTeamMessageBytes: Schema.number().min(1024).max(1024 * 1024).default(64 * 1024),
+  memberIdleWatchdogMs: Schema.number().min(30_000).max(60 * 60 * 1000).default(10 * 60 * 1000),
 })

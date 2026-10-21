@@ -56,6 +56,8 @@ export const teamMemberSlotSchema = z.object({
   sessionId: nonEmpty,
   desiredState: z.enum(['online', 'offline', 'removing']),
   lastRuntimeState: memberRuntimeStateSchema,
+  /** Last startup/context-reset failure, kept for the member's retry affordance. */
+  lastError: z.string().optional(),
   joinedAt: isoDate,
 }).strict()
 
@@ -123,7 +125,8 @@ export const teamMessageSchema = z.object({
 }).strict()
 
 export const teamAggregateSchema = z.object({
-  schemaVersion: z.literal(1),
+  // v1 records open unchanged; the store migrates them to v2 at startup.
+  schemaVersion: z.union([z.literal(1), z.literal(2)]),
   id: nonEmpty,
   name: nonEmpty,
   workspaceId: nonEmpty,
@@ -144,6 +147,18 @@ export const teamAggregateSchema = z.object({
   tasks: z.record(z.string(), teamTaskSchema),
   leases: z.record(z.string(), fileScopeLeaseSchema),
   outbox: z.record(z.string(), teamMessageSchema),
+  /** Sidebar/team-list presentation state (v2). */
+  pinned: z.boolean().optional(),
+  archivedAt: isoDate.optional(),
+  /** Stable member order for the capsule bar; Leader remains first (v2). */
+  memberOrder: z.array(nonEmpty).optional(),
+  /** Startup/warmup projection (v2); absent for a team that never warmed up. */
+  warmup: z.object({
+    phase: z.enum(['idle', 'starting', 'leader-ready', 'ready', 'error']),
+    startedAt: isoDate,
+    leaderReadyAt: isoDate.optional(),
+    failedSlotIds: z.array(nonEmpty).optional(),
+  }).strict().optional(),
   revision: z.int().positive(),
   createdAt: isoDate,
   updatedAt: isoDate,
@@ -172,6 +187,22 @@ export const operationSchema = z.object({
   errorMessage: z.string().optional(),
   createdAt: isoDate,
   updatedAt: isoDate,
+}).strict()
+
+export const migrationRecordSchema = z.object({
+  schemaVersion: z.literal(1),
+  id: nonEmpty,
+  appliedAt: isoDate,
+  fromVersion: z.int().nonnegative(),
+  toVersion: z.int().positive(),
+}).strict()
+
+export const migrationBackupSchema = z.object({
+  schemaVersion: z.literal(1),
+  table: nonEmpty,
+  key: nonEmpty,
+  capturedAt: isoDate,
+  record: z.unknown(),
 }).strict()
 
 export const createAssistantInputSchema = assistantTemplateSchema.pick({

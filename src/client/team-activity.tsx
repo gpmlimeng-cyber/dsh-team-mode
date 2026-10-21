@@ -55,7 +55,7 @@ export function TeamActivityBoard({ team }: { team: TeamView }): JSX.Element {
     void load()
     return subscribeAgentTeam(() => { void load() }, () => {
       setError('团队事件连接已断开，正在重连')
-    })
+    }, () => { void load() })
   }, [load, team.revision])
 
   const items = useMemo(() => {

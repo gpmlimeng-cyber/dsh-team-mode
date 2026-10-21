@@ -4,7 +4,7 @@
   "description": "DSH-Team Mode: AionUi-style multi-agent Team Mode for DeepSeek Harness",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/limeng/dsh-team-mode.git"
+    "url": "git+https://github.com/gpmlimeng-cyber/dsh-team-mode.git"
   },
   "license": "MIT",
   "publishConfig": {
@@ -28,11 +28,13 @@
     "lib/index.js",
     "lib/client.js",
     "lib/*.d.ts",
+    "lib/*.map",
     "cordis.patch.yml",
     "LICENSE",
     "README.md",
     "README_CN.md",
     "demo/*.png",
+    "docs/assets",
     "docs/*.md"
   ],
   "dsh": {
@@ -71,6 +73,7 @@
     "@deepseek-ai/dsh-agent-preset-registry": "^0.2.1-rc.2",
     "@deepseek-ai/dsh-api-gateway": "^0.2.1-rc.2",
     "@deepseek-ai/dsh-api-workspace-controller": "^0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-connection": "^0.2.1-rc.2",
     "@deepseek-ai/dsh-client-ui-layout": "^0.2.1-rc.2",
     "@deepseek-ai/dsh-client-ui-primitives": "^0.2.1-rc.2",
     "@deepseek-ai/dsh-client-ui-renderer": "^0.2.1-rc.2",
@@ -110,6 +113,7 @@
     "@deepseek-ai/dsh-agent-preset-registry": "0.2.1-rc.2",
     "@deepseek-ai/dsh-api-gateway": "0.2.1-rc.2",
     "@deepseek-ai/dsh-api-workspace-controller": "0.2.1-rc.2",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.2",
     "@deepseek-ai/dsh-client-ui-layout": "0.2.1-rc.2",
     "@deepseek-ai/dsh-client-ui-primitives": "0.2.1-rc.2",
     "@deepseek-ai/dsh-client-ui-renderer": "0.2.1-rc.2",

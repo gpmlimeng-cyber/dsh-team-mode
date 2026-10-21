@@ -4,7 +4,7 @@
 
 Agent Team 是 DeepSeek Harness Web 插件，用于把多个平级、独立的 AI Agent 组建为团队。每位成员拥有自己的模型、Session、上下文和工具调用，同时共享一个 Workspace，并通过团队任务与消息协作。
 
-![多成员团队工作台](../demo/4.png)
+![多成员团队工作台](./assets/dsh-team-mode/parallel-final.png)
 
 ## 与常见 Subagent 工作流的区别
 
@@ -78,7 +78,7 @@ Leader 把编码任务交给 GLM，并只接收进度、测试结果和关键产
 
 ## 获取帮助
 
-如文档未能解决问题，请在 [GitHub Issues](https://github.com/limuyang2/dsh-team-mode/issues) 提交反馈，并附上：
+如文档未能解决问题，请在 [GitHub Issues](https://github.com/gpmlimeng-cyber/dsh-team-mode/issues) 提交反馈，并附上：
 
 - DeepSeek Harness 版本。
 - Agent Team 版本。

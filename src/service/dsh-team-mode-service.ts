@@ -482,7 +482,7 @@ export class AgentTeamService extends Service {
         assistantSnapshot: snapshotAssistant(assistant),
         permissionPresetId: assistant.permissionPresetId,
         ...(assistant.reasoningEffort === undefined ? {} : { reasoningEffort: assistant.reasoningEffort }),
-        sessionId: `dsh-team-mode:${randomUUID()}`,
+        sessionId: `session-${randomUUID()}`,
         desiredState: 'offline',
         lastRuntimeState: 'offline',
         joinedAt: now,
@@ -491,7 +491,7 @@ export class AgentTeamService extends Service {
     }
 
     const team: TeamAggregate = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: randomUUID(),
       name: input.name.trim(),
       workspaceId: String(workspace.id),
@@ -499,6 +499,8 @@ export class AgentTeamService extends Service {
       leaderSlotId,
       state: 'draft',
       directMemberChat: input.directMemberChat ?? this.config.directMemberChatDefault,
+      pinned: false,
+      memberOrder: [leaderSlotId, ...Object.keys(members).filter(id => id !== leaderSlotId)],
       members,
       retiredSessions: {},
       tasks: {},
@@ -536,7 +538,7 @@ export class AgentTeamService extends Service {
     }
 
     const team: TeamAggregate = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       id: randomUUID(),
       name: input.name.trim(),
       workspaceId: String(workspace.id),
@@ -544,6 +546,8 @@ export class AgentTeamService extends Service {
       leaderSlotId,
       state: 'draft',
       directMemberChat: source.directMemberChat,
+      pinned: false,
+      memberOrder: [leaderSlotId, ...Object.keys(members).filter(id => id !== leaderSlotId)],
       members,
       retiredSessions: {},
       tasks: {},
@@ -581,6 +585,10 @@ export class AgentTeamService extends Service {
         { ...member, role: slotId === successorSlotId ? 'leader' : 'member' },
       ])),
       leaderSlotId: successorSlotId,
+      memberOrder: [
+        successorSlotId,
+        ...(team.memberOrder ?? Object.keys(team.members)).filter(id => id !== successorSlotId),
+      ],
       revision: team.revision + 1,
       updatedAt: new Date().toISOString(),
     }))
@@ -629,6 +637,7 @@ export class AgentTeamService extends Service {
     const next = await this.store.updateTeam(teamId, current => ({
       ...current,
       members: { ...current.members, [member.id]: member },
+      memberOrder: [...(current.memberOrder ?? Object.keys(current.members)), member.id],
       revision: current.revision + 1,
       updatedAt: now,
     }))
@@ -691,7 +700,13 @@ export class AgentTeamService extends Service {
       const next = await this.store.updateTeam(teamId, current => {
         const members = { ...current.members }
         delete members[slotId]
-        return { ...current, members, revision: current.revision + 1, updatedAt: new Date().toISOString() }
+        return {
+          ...current,
+          members,
+          memberOrder: (current.memberOrder ?? Object.keys(current.members)).filter(id => id !== slotId),
+          revision: current.revision + 1,
+          updatedAt: new Date().toISOString(),
+        }
       })
       await this.activity('team.member_removed', teamId, next.revision, `Member ${member.displayName} removed`)
       this.publish('team', teamId, next.revision, 'team.member_removed')
@@ -704,6 +719,103 @@ export class AgentTeamService extends Service {
     const team = requireTeam(this.store, teamId)
     assertRevision('team', team.revision, options.expectedRevision)
     return this.requireRuntime().startTeam(teamId)
+  }
+
+  async retryWarmup(
+    teamId: string,
+    slotId?: string,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertRevision('team', team.revision, options.expectedRevision)
+    return this.requireRuntime().retryWarmup(teamId, slotId)
+  }
+
+  async contextResetMember(
+    teamId: string,
+    slotId: string,
+    options: MutationOptions = {},
+  ): Promise<{ team: TeamAggregate; sessionId: string; status: string }> {
+    const team = requireTeam(this.store, teamId)
+    assertRevision('team', team.revision, options.expectedRevision)
+    const result = await this.requireRuntime().clearMemberContext(teamId, slotId)
+    return { team: this.getTeam(teamId), ...result }
+  }
+
+  async reconnectMember(
+    teamId: string,
+    slotId: string,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertRevision('team', team.revision, options.expectedRevision)
+    return this.requireRuntime().reconnectMember(teamId, slotId)
+  }
+
+  async reorderMembers(
+    teamId: string,
+    order: readonly string[],
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertRevision('team', team.revision, options.expectedRevision)
+    const known = Object.keys(team.members)
+    const unique = [...new Set(order)]
+    if (unique.some(id => !known.includes(id))) {
+      throw new AgentTeamError('INVALID_REQUEST', 'Member order contains an unknown slot')
+    }
+    const leader = team.leaderSlotId
+    const nextOrder = [
+      leader,
+      ...unique.filter(id => id !== leader),
+      ...known.filter(id => id !== leader && !unique.includes(id)),
+    ]
+    return this.updateRuntimeTeam(
+      teamId,
+      current => ({ ...current, memberOrder: nextOrder }),
+      'team.members_reordered',
+      'Team member order changed',
+    )
+  }
+
+  async setTeamPinned(
+    teamId: string,
+    pinned: boolean,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertRevision('team', team.revision, options.expectedRevision)
+    return this.updateRuntimeTeam(
+      teamId,
+      current => ({ ...current, pinned }),
+      'team.pinned',
+      pinned ? 'Team pinned' : 'Team unpinned',
+    )
+  }
+
+  async setTeamArchived(
+    teamId: string,
+    archived: boolean,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertRevision('team', team.revision, options.expectedRevision)
+    if (archived && team.state !== 'draft') {
+      // Archive is a list presentation action; a live team must be dissolved
+      // first so its members cannot keep running invisibly.
+      throw new AgentTeamError('TEAM_NOT_ACTIVE', 'Dissolve the running team before archiving it')
+    }
+    return this.updateRuntimeTeam(
+      teamId,
+      current => ({
+        ...current,
+        ...(archived
+          ? { archivedAt: new Date().toISOString() }
+          : { archivedAt: undefined }),
+      }),
+      archived ? 'team.archived' : 'team.unarchived',
+      archived ? 'Team archived' : 'Team unarchived',
+    )
   }
 
   async resetTeam(
@@ -1134,7 +1246,7 @@ function createMemberSlot(
     assistantSnapshot: snapshotAssistant(assistant),
     permissionPresetId: assistant.permissionPresetId,
     ...(assistant.reasoningEffort === undefined ? {} : { reasoningEffort: assistant.reasoningEffort }),
-    sessionId: `dsh-team-mode:${randomUUID()}`,
+    sessionId: `session-${randomUUID()}`,
     desiredState,
     lastRuntimeState: desiredState === 'online' ? 'starting' : 'offline',
     joinedAt: now,
@@ -1155,7 +1267,7 @@ function cloneMemberSlot(source: TeamMemberSlot, now: string): TeamMemberSlot {
     },
     permissionPresetId: source.permissionPresetId,
     ...(source.reasoningEffort === undefined ? {} : { reasoningEffort: source.reasoningEffort }),
-    sessionId: `dsh-team-mode:${randomUUID()}`,
+    sessionId: `session-${randomUUID()}`,
     desiredState: 'offline',
     lastRuntimeState: 'offline',
     joinedAt: now,

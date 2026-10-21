@@ -10,6 +10,8 @@ import {
 import { SidebarPortal } from './sidebar.js'
 import { TeamModeDialogs } from './team-dialogs.js'
 import { TeamParallelHost, TeamParallelView } from './team-parallel.js'
+import { TEAM_MANAGE_VIEW_ID, TEAM_MANAGE_VIEW_LABEL, TEAM_MANAGE_VIEW_ORDER, TeamManageView } from './team-manage.js'
+import { TeamSessionHider } from './team-session-hider.js'
 import { TeamParallelPane } from './team-pane.js'
 import { TeamMemberHeroHint, TeamMemberSwitcher } from './team-member-chrome.js'
 import {
@@ -19,11 +21,13 @@ import {
   TeamBoardView,
 } from './team-board.js'
 import { callAgentTeam } from './api.js'
+import { installTeamLocale, type TeamLocaleContext } from './team-i18n.js'
 
 export const name = 'dsh-team-mode-client'
-export const inject = ['slots', 'workspaces', 'uiWorkspace', 'sessions']
+export const inject = ['slots', 'workspaces', 'uiWorkspace', 'sessions', 'layout', 'locale']
 
 export function apply(ctx: AgentTeamClientContext): void {
+  installTeamLocale(ctx as unknown as TeamLocaleContext)
   // Slot names for the conversation package are shipped without .d.ts in this
   // installation; the runtime catalog still validates them. Keep the loose
   // face local to the two conversation-view registrations.
@@ -53,7 +57,22 @@ export function apply(ctx: AgentTeamClientContext): void {
   const TeamModeDialogsHost = (): JSX.Element => (
     <TeamModeDialogs pickWorkspace={pickWorkspace} openSession={openSession} />
   )
-  const SidebarTeamHost = (): JSX.Element => <SidebarPortal openSession={openSession} />
+  const openTeamPage = (teamId: string): void => {
+    void callAgentTeam('team.list')
+      .then(value => {
+        const team = value.items.find(candidate => candidate.id === teamId)
+        const leader = team === undefined ? undefined : team.members[team.leaderSlotId]
+        if (leader === undefined) return
+        openSession(leader.sessionId)
+      })
+      .catch(() => undefined)
+  }
+  const SidebarTeamHost = (): JSX.Element => (
+    <>
+      <TeamSessionHider />
+      <SidebarPortal openSession={openSession} openTeamPage={openTeamPage} />
+    </>
+  )
 
   // Only expose the two team views while a team member Session is active.
   // Registration is dynamic because `conversation.view` is a global list and
@@ -86,12 +105,16 @@ export function apply(ctx: AgentTeamClientContext): void {
           id,
           order,
           label,
-          inject: () => ({ uiWorkspace: ctx.uiWorkspace }),
+          inject: () => ({
+            uiWorkspace: ctx.uiWorkspace,
+            workspaces: ctx.workspaces,
+          }),
         }, component))
         if (typeof dispose === 'function') disposers.push(dispose)
       }
-      register('team-parallel', '并行', 20, TeamParallelView as never)
+      register('team-parallel', '并行', 6, TeamParallelView as never)
       register(TEAM_BOARD_VIEW_ID, TEAM_BOARD_VIEW_LABEL, TEAM_BOARD_VIEW_ORDER, TeamBoardView as never)
+      register(TEAM_MANAGE_VIEW_ID, TEAM_MANAGE_VIEW_LABEL, TEAM_MANAGE_VIEW_ORDER, TeamManageView as never)
       return () => { for (const dispose of disposers) dispose() }
     }, [teamSession])
     return null
@@ -109,7 +132,6 @@ export function apply(ctx: AgentTeamClientContext): void {
     <TeamParallelHost
       {...props}
       sessions={(ctx as unknown as { sessions: never }).sessions}
-      onFocusSession={(sessionId: string) => { ctx.uiWorkspace.openSession(sessionId as never) }}
     />
   )))
 

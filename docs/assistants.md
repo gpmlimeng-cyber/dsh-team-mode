@@ -8,7 +8,7 @@
 
 进入 **设置 → Agent 团队**。
 
-![助手库](../demo/2.png)
+![助手库](../assets/dsh-team-mode/create-team-styled.png)
 
 每张助手卡片会展示模型、Preset、默认权限、思考模式、Skills、MCP Servers 和角色说明。可用操作包括：
 
@@ -26,7 +26,7 @@
 
 小助手会逐项补充缺失配置，并生成完整方案。只有在你明确确认后，才会真正创建助手。
 
-![通过对话创建助手](../demo/1.png)
+![通过对话创建助手](../assets/dsh-team-mode/native-conversation.png)
 
 小助手支持多段独立历史记录。未发送首条消息的新对话不会创建真实 Session，也不会出现在历史中。
 

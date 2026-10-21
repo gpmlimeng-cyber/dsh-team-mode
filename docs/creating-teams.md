@@ -10,7 +10,7 @@
 
 ## 选择成员
 
-![新建团队](../demo/3.png)
+![新建团队](../assets/dsh-team-mode/create-team-styled.png)
 
 左侧是助手库，右侧是已选成员：
 
