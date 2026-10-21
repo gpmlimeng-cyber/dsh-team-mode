@@ -2,6 +2,7 @@ import type { DomainTableSpec } from '@deepseek-ai/dsh-storage-domain'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import {
   assistantInstanceSchema,
+  assistantSessionSchema,
   assistantTemplateSchema,
   migrationBackupSchema,
   migrationRecordSchema,
@@ -12,6 +13,7 @@ import {
 } from '../domain/schemas.js'
 import type {
   AssistantInstance,
+  AssistantSession,
   AssistantTemplate,
   Operation,
   TeamActivity,
@@ -21,6 +23,7 @@ import type {
 
 export type AssistantId = string
 export type AssistantInstanceId = string
+export type AssistantSessionId = string
 export type TeamId = string
 export type MessageId = string
 export type ActivityId = string
@@ -46,6 +49,9 @@ export const dshTeamModeDomainSpec = defineDomain({
     ),
     assistant_instances: domainTable<AssistantInstanceId, AssistantInstance>(
       storedTableSchema<AssistantInstanceId, AssistantInstance>(assistantInstanceSchema),
+    ),
+    assistant_sessions: domainTable<AssistantSessionId, AssistantSession>(
+      storedTableSchema<AssistantSessionId, AssistantSession>(assistantSessionSchema),
     ),
     teams: domainTable<TeamId, TeamAggregate>(
       storedTableSchema<TeamId, TeamAggregate>(teamAggregateSchema),

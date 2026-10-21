@@ -1,6 +1,7 @@
 import type {
   AddTeamMemberInput,
   AssistantInstance,
+  AssistantSession,
   AssistantTemplate,
   CloneTeamInput,
   CreateAssistantInput,
@@ -36,6 +37,7 @@ export const AGENT_TEAM_METHODS = [
   'assistant.instance.update',
   'assistant.instance.archive',
   'assistant.instance.ensure',
+  'assistant.task.list',
   'assistant.builder.list',
   'assistant.builder.draft.get',
   'assistant.builder.draft.configure',
@@ -336,6 +338,10 @@ export interface AgentTeamRequestMap {
   'assistant.instance.ensure': {
     payload: { id: string }
     result: { instance: AssistantInstance; sessionId: string }
+  }
+  'assistant.task.list': {
+    payload: { assistantId?: string } | undefined
+    result: PageView<AssistantSession>
   }
   'assistant.builder.list': { payload: undefined; result: AssistantBuilderConversationListView }
   'assistant.builder.draft.get': { payload: undefined; result: AssistantBuilderDraftView }

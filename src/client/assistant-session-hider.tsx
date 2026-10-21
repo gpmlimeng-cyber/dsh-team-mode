@@ -1,16 +1,18 @@
 import { useEffect } from 'react'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
+import { hiddenAssistantSessionIds } from './assistant-instances.js'
 
 const ROW_PREFIX = 'session:'
 
 /**
- * Assistant main Sessions are ordinary DSH Sessions, so their native Sidebar
- * rows would duplicate the “单聊” entry. Hide only the rows this hider owns;
- * team-hidden rows stay untouched, and both hiders can restore independently.
+ * Assistant main Sessions and their hidden worker Sessions are ordinary DSH
+ * Sessions, so their native Sidebar rows would duplicate the “单聊” entry. The
+ * hider unions both sets in one load; event-driven reloads keep worker rows
+ * hidden as soon as the main assistant creates them.
  */
 export function AssistantSessionHider(): null {
   useEffect(() => {
-    let mainSessionIds = new Set<string>()
+    let hiddenSessionIds = new Set<string>()
     const hidden = new Set<HTMLElement>()
     let live = true
 
@@ -18,7 +20,7 @@ export function AssistantSessionHider(): null {
       for (const row of document.querySelectorAll<HTMLElement>('[data-row-key^="session:"]')) {
         const key = row.dataset.rowKey
         const sessionId = key?.slice(ROW_PREFIX.length)
-        if (sessionId !== undefined && mainSessionIds.has(sessionId)) {
+        if (sessionId !== undefined && hiddenSessionIds.has(sessionId)) {
           row.style.display = 'none'
           hidden.add(row)
         } else if (hidden.delete(row)) {
@@ -29,11 +31,12 @@ export function AssistantSessionHider(): null {
 
     const load = async (): Promise<void> => {
       try {
-        const value = await callAgentTeam('assistant.instance.list')
+        const [instances, tasks] = await Promise.all([
+          callAgentTeam('assistant.instance.list'),
+          callAgentTeam('assistant.task.list', undefined),
+        ])
         if (!live) return
-        mainSessionIds = new Set(value.items
-          .map(instance => instance.mainSessionId)
-          .filter((id): id is string => id !== undefined))
+        hiddenSessionIds = hiddenAssistantSessionIds(instances.items, tasks.items)
         apply()
       } catch {
         // Keep the previous set; the SSE subscription retries on the next snapshot.

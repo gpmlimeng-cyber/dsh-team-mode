@@ -1,10 +1,12 @@
 import { Context } from '@deepseek-ai/cordis'
+import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
-import { assistantInstanceSchema } from '../src/domain/schemas.js'
+import { assistantInstanceSchema, assistantSessionSchema } from '../src/domain/schemas.js'
 import type {
   AssistantInstance,
+  AssistantSession,
   AssistantTemplate,
   Operation,
   TeamActivity,
@@ -14,7 +16,7 @@ import type {
 import type { AssistantRuntime } from '../src/runtime/assistant-runtime.js'
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import { dshTeamModeDomainSpec } from '../src/storage/domain.js'
-import type { AgentTeamStore } from '../src/storage/store.js'
+import { DomainAgentTeamStore, type AgentTeamStore } from '../src/storage/store.js'
 
 const NOW = '2026-10-21T00:00:00.000Z'
 const WORKSPACE_PATH = '/tmp/dsh-assistant-instance-workspace'
@@ -339,6 +341,202 @@ describe('Assistant instances', () => {
   })
 })
 
+describe('Assistant sessions', () => {
+  it('persists a queued task whose parent is the main Session', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+    const instance = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+    await service.bindAssistantMainSession(instance.id, 'session-main')
+
+    const task = await service.createAssistantSession({
+      assistantId: instance.id,
+      sessionId: 'session-worker',
+      title: 'Compare vendors',
+      brief: 'Return a comparison table.',
+      parentSessionId: 'session-main',
+    })
+
+    expect(task).toMatchObject({
+      schemaVersion: 1,
+      assistantId: instance.id,
+      sessionId: 'session-worker',
+      role: 'task',
+      title: 'Compare vendors',
+      brief: 'Return a comparison table.',
+      parentSessionId: 'session-main',
+      status: 'queued',
+    })
+    expect(task.id).not.toBe('')
+    expect(task.archivedAt).toBeUndefined()
+    expect(assistantSessionSchema.parse(task)).toEqual(task)
+    expect(service.getAssistantSession(task.id)).toEqual(task)
+    // Persistence is a store read, so a fresh service instance sees the record.
+    expect(new AgentTeamService(new Context(), config, store).getAssistantSession(task.id))
+      .toEqual(task)
+  })
+
+  it('lists all tasks or filters by assistant instance', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+    const first = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+    const second = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+    const a = await service.createAssistantSession({
+      assistantId: first.id,
+      sessionId: 'session-a',
+      title: 'A',
+      brief: 'A brief',
+      parentSessionId: 'session-main-a',
+    })
+    const b = await service.createAssistantSession({
+      assistantId: second.id,
+      sessionId: 'session-b',
+      title: 'B',
+      brief: 'B brief',
+      parentSessionId: 'session-main-b',
+    })
+
+    expect(service.listAssistantSessions()).toMatchObject({ total: 2 })
+    expect(service.listAssistantSessions(first.id).items.map(task => task.id)).toEqual([a.id])
+    expect(service.listAssistantSessions(second.id).items.map(task => task.id)).toEqual([b.id])
+  })
+
+  it('updates status and result summary without dropping other fields', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+    const instance = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+    const task = await service.createAssistantSession({
+      assistantId: instance.id,
+      sessionId: 'session-worker',
+      title: 'Task',
+      brief: 'Brief',
+      parentSessionId: 'session-main',
+    })
+
+    const running = await service.updateAssistantSession(task.id, { status: 'running' })
+    expect(running).toMatchObject({ status: 'running', brief: 'Brief', sessionId: 'session-worker' })
+
+    const completed = await service.updateAssistantSession(task.id, {
+      status: 'completed',
+      resultSummary: 'Done and verified.',
+    })
+    expect(completed).toMatchObject({
+      status: 'completed',
+      resultSummary: 'Done and verified.',
+      title: 'Task',
+    })
+
+    const noop = await service.updateAssistantSession(task.id, {})
+    expect(noop).toEqual(completed)
+  })
+
+  it('rejects unknown and archived assistant instances', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+    const instance = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+    await service.archiveAssistantInstance(instance.id)
+
+    await expect(service.createAssistantSession({
+      assistantId: instance.id,
+      sessionId: 'session-worker',
+      title: 'Task',
+      brief: 'Brief',
+      parentSessionId: 'session-main',
+    })).rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+
+    await expect(service.createAssistantSession({
+      assistantId: 'missing',
+      sessionId: 'session-worker',
+      title: 'Task',
+      brief: 'Brief',
+      parentSessionId: 'session-main',
+    })).rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_NOT_FOUND' })
+
+    await expect(service.updateAssistantSession('missing', { status: 'completed' }))
+      .rejects.toMatchObject({ code: 'ASSISTANT_TASK_NOT_FOUND' })
+  })
+
+  it('exposes the assistant_sessions table and round-trips it through the domain store', async () => {
+    expect(dshTeamModeDomainSpec.version).toBe(1)
+    expect(Object.keys(dshTeamModeDomainSpec.tables)).toContain('assistant_sessions')
+
+    const tables = new Map<string, FakeTable>()
+    const domain = {
+      name: 'dsh_team_mode',
+      table(name: string) {
+        let table = tables.get(name)
+        if (table === undefined) {
+          table = new FakeTable()
+          tables.set(name, table)
+        }
+        return table
+      },
+    } as unknown as Domain<typeof dshTeamModeDomainSpec>
+    const store = new DomainAgentTeamStore(domain)
+    const task: AssistantSession = {
+      schemaVersion: 1,
+      id: 'task-1',
+      assistantId: 'instance-1',
+      sessionId: 'session-worker',
+      role: 'task',
+      title: 'Task',
+      brief: 'Brief',
+      parentSessionId: 'session-main',
+      status: 'queued',
+      createdAt: NOW,
+      updatedAt: NOW,
+    }
+
+    await store.putAssistantSession(task)
+    expect(store.getAssistantSession(task.id)).toEqual(task)
+    expect(store.listAssistantSessions()).toEqual([task])
+
+    const updated = await store.updateAssistantSession(task.id, current => ({
+      ...current,
+      status: 'completed',
+      resultSummary: 'Done.',
+    }))
+    expect(updated).toMatchObject({ status: 'completed', resultSummary: 'Done.' })
+    expect(store.getAssistantSession(task.id)).toEqual(updated)
+  })
+})
+
+class FakeTable {
+  readonly values = new Map<string, unknown>()
+
+  get(key: string): unknown {
+    return this.values.get(key)
+  }
+
+  entries(): IterableIterator<[string, unknown]> {
+    return this.values.entries()
+  }
+
+  async put(key: string, value: unknown): Promise<void> {
+    this.values.set(key, value)
+  }
+
+  async update(key: string, update: (value: unknown) => unknown): Promise<unknown> {
+    const next = update(this.values.get(key))
+    this.values.set(key, next)
+    return next
+  }
+}
+
 function createHarness(): { service: AgentTeamService; store: MemoryStore } {
   const ctx = new Context()
   const workspaces = new Map([
@@ -366,6 +564,7 @@ function createHarness(): { service: AgentTeamService; store: MemoryStore } {
 class MemoryStore implements AgentTeamStore {
   private assistants = new Map<string, AssistantTemplate>()
   private assistantInstances = new Map<string, AssistantInstance>()
+  private assistantSessions = new Map<string, AssistantSession>()
   private teams = new Map<string, TeamAggregate>()
   private messages = new Map<string, TeamMessage>()
   private activities = new Map<string, TeamActivity>()
@@ -386,6 +585,13 @@ class MemoryStore implements AgentTeamStore {
     return updateMap(this.assistantInstances, id, update)
   }
   async deleteAssistantInstance(id: string) { return this.assistantInstances.delete(id) }
+
+  getAssistantSession(id: string) { return this.assistantSessions.get(id) }
+  listAssistantSessions() { return [...this.assistantSessions.values()] }
+  async putAssistantSession(value: AssistantSession) { this.assistantSessions.set(value.id, value) }
+  updateAssistantSession(id: string, update: (current: AssistantSession) => AssistantSession) {
+    return updateMap(this.assistantSessions, id, update)
+  }
 
   getTeam(id: string) { return this.teams.get(id) }
   listTeams() { return [...this.teams.values()] }

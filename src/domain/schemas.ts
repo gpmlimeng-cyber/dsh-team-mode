@@ -72,6 +72,39 @@ export const assistantInstanceSchema = z.object({
   archivedAt: isoDate.optional(),
 }).strict()
 
+export const assistantTaskStatusSchema = z.enum([
+  'queued',
+  'running',
+  'needs_input',
+  'completed',
+  'failed',
+  'cancelled',
+])
+
+/**
+ * One hidden worker Session owned by an Assistant instance. Phase 1 only
+ * creates `task` rows: the main conversation is tracked on the instance itself,
+ * and no assignment/consult lifecycle exists yet.
+ */
+export const assistantSessionSchema = z.object({
+  schemaVersion: z.literal(1),
+  id: nonEmpty,
+  assistantId: nonEmpty,
+  sessionId: nonEmpty,
+  role: z.literal('task'),
+  title: nonEmpty,
+  brief: z.string(),
+  /** The assistant instance's main Session that requested this task. */
+  parentSessionId: nonEmpty,
+  status: assistantTaskStatusSchema,
+  /** Compact result written by `assistant_task_summary`. */
+  resultSummary: z.string().optional(),
+  error: z.string().optional(),
+  createdAt: isoDate,
+  updatedAt: isoDate,
+  archivedAt: isoDate.optional(),
+}).strict()
+
 export const memberRuntimeStateSchema = z.enum([
   'offline',
   'starting',
@@ -278,6 +311,24 @@ export const updateAssistantInstanceInputSchema = z.object({
   name: nonEmpty.optional(),
   avatar: z.string().max(400_000).optional(),
   pinned: z.boolean().optional(),
+}).strict()
+
+/** Runtime-owned record of one hidden worker Session; the service assigns ids and timestamps. */
+export const createAssistantSessionInputSchema = z.object({
+  assistantId: nonEmpty,
+  sessionId: nonEmpty,
+  title: nonEmpty,
+  brief: z.string(),
+  parentSessionId: nonEmpty,
+}).strict()
+
+/** Status/result updates; an empty patch leaves the record unchanged. */
+export const updateAssistantSessionInputSchema = z.object({
+  title: nonEmpty.optional(),
+  status: assistantTaskStatusSchema.optional(),
+  resultSummary: z.string().optional(),
+  error: z.string().optional(),
+  archivedAt: isoDate.optional(),
 }).strict()
 
 export const createTeamMemberInputSchema = z.object({

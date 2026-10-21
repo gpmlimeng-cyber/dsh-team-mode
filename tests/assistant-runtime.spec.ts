@@ -7,12 +7,17 @@ import type {
   ResumeAgentOptions,
 } from '@deepseek-ai/dsh-agent'
 import { installModelSelection } from '@deepseek-ai/dsh-agent'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
-import type { AssistantInstance } from '../src/domain/types.js'
+import type {
+  AssistantInstance,
+  AssistantSession,
+  CreateAssistantSessionInput,
+  UpdateAssistantSessionInput,
+} from '../src/domain/types.js'
 import { AssistantRuntime } from '../src/runtime/assistant-runtime.js'
 import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 
@@ -23,6 +28,15 @@ vi.mock('@deepseek-ai/dsh-agent', () => ({
 const NOW = '2026-10-21T00:00:00.000Z'
 const WORKSPACE_ID = 'workspace-1'
 const WORKSPACE_PATH = '/tmp/dsh-assistant-runtime-workspace'
+
+const TASK_TOOL_NAMES = [
+  'assistant_task_create',
+  'assistant_task_send',
+  'assistant_task_list',
+  'assistant_task_wait',
+  'assistant_task_summary',
+  'assistant_task_cancel',
+]
 
 const config: Config = {
   maxRequestBytes: 128 * 1024,
@@ -40,7 +54,12 @@ interface AgentRecord {
   agent: Agent
   agentCtx: Context
   section: ReturnType<typeof vi.fn>
+  toolsRegister: ReturnType<typeof vi.fn>
   dispose: ReturnType<typeof vi.fn>
+  followup: ReturnType<typeof vi.fn>
+  cancel: ReturnType<typeof vi.fn>
+  whenIdle: ReturnType<typeof vi.fn>
+  events: SessionEvent[]
 }
 
 function instance(overrides: Partial<AssistantInstance> = {}): AssistantInstance {
@@ -76,18 +95,40 @@ function instance(overrides: Partial<AssistantInstance> = {}): AssistantInstance
 function createHarness(overrides: Partial<AssistantInstance> = {}) {
   const handles: AgentRecord[] = []
   const live = new Map<string, Agent>()
+  const listeners = new Map<string, Set<(...args: unknown[]) => void>>()
+
+  const on = vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+    const set = listeners.get(event) ?? new Set()
+    set.add(listener)
+    listeners.set(event, set)
+    return () => { set.delete(listener) }
+  })
+  const emit = (event: string, ...args: unknown[]): void => {
+    for (const listener of listeners.get(event) ?? []) listener(...args)
+  }
 
   const createHandle = async (sessionId: string, setup?: AgentSetup): Promise<AgentRecord> => {
-    const session = { id: SessionId(sessionId) }
+    const events: SessionEvent[] = []
+    const session = {
+      id: SessionId(sessionId),
+      snapshotEvents: vi.fn(() => events),
+    }
+    const followup = vi.fn()
+    const cancel = vi.fn()
+    const whenIdle = vi.fn(async () => {})
     const agent = {
       id: SessionId(sessionId),
       session,
-      cancel: vi.fn(),
+      cancel,
+      followup,
+      whenIdle,
       status: 'idle',
     } as unknown as Agent
     const section = vi.fn()
+    const toolsRegister = vi.fn()
     const agentCtx = {
       systemPrompt: { section },
+      tools: { register: toolsRegister },
     } as unknown as Context
     if (setup !== undefined) await setup(agentCtx, agent)
     const dispose = vi.fn(async () => {})
@@ -96,7 +137,12 @@ function createHarness(overrides: Partial<AssistantInstance> = {}) {
       agent,
       agentCtx,
       section,
+      toolsRegister,
       dispose,
+      followup,
+      cancel,
+      whenIdle,
+      events,
     }
     handles.push(record)
     return record
@@ -120,6 +166,7 @@ function createHarness(overrides: Partial<AssistantInstance> = {}) {
 
   const ctx = {
     logger: { warn: vi.fn() },
+    on,
     agents: { get: getMock, create: createMock, resume: resumeMock },
     agentPresets: { mount: mounted },
     permissionPresets: { set: permissionSet },
@@ -147,9 +194,64 @@ function createHarness(overrides: Partial<AssistantInstance> = {}) {
     }
     return current
   })
+
+  const tasks = new Map<string, AssistantSession>()
+  let nextTaskNumber = 1
+  const createAssistantSession = vi.fn(async (input: CreateAssistantSessionInput) => {
+    const task: AssistantSession = {
+      schemaVersion: 1,
+      id: `task-${nextTaskNumber}`,
+      assistantId: input.assistantId,
+      sessionId: input.sessionId,
+      role: 'task',
+      title: input.title,
+      brief: input.brief,
+      parentSessionId: input.parentSessionId,
+      status: 'queued',
+      createdAt: NOW,
+      updatedAt: NOW,
+    }
+    nextTaskNumber += 1
+    tasks.set(task.id, task)
+    return task
+  })
+  const getAssistantSession = vi.fn((id: string) => {
+    const task = tasks.get(id)
+    if (task === undefined) {
+      throw new AgentTeamError('ASSISTANT_TASK_NOT_FOUND', `Unknown assistant task '${id}'`)
+    }
+    return task
+  })
+  const listAssistantSessions = vi.fn((assistantId?: string) => {
+    const items = [...tasks.values()]
+      .filter(task => assistantId === undefined || task.assistantId === assistantId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
+    return { items, total: items.length }
+  })
+  const updateAssistantSession = vi.fn(async (
+    id: string,
+    patch: UpdateAssistantSessionInput,
+  ) => {
+    const task = getAssistantSession(id)
+    const defined = Object.fromEntries(
+      Object.entries(patch).filter(([, value]) => value !== undefined),
+    )
+    const next: AssistantSession = {
+      ...task,
+      ...defined,
+      updatedAt: NOW,
+    }
+    tasks.set(id, next)
+    return next
+  })
+
   const service = {
     getAssistantInstance,
     bindAssistantMainSession,
+    createAssistantSession,
+    getAssistantSession,
+    listAssistantSessions,
+    updateAssistantSession,
   } as unknown as AgentTeamService
 
   return {
@@ -158,6 +260,10 @@ function createHarness(overrides: Partial<AssistantInstance> = {}) {
     service,
     getAssistantInstance,
     bindAssistantMainSession,
+    createAssistantSession,
+    getAssistantSession,
+    listAssistantSessions,
+    updateAssistantSession,
     createMock,
     resumeMock,
     getMock,
@@ -170,11 +276,26 @@ function createHarness(overrides: Partial<AssistantInstance> = {}) {
     workspaceGet,
     handles,
     createHandle,
+    emit,
+    tasks,
     current: () => current,
     setLive(sessionId: string) {
       live.set(sessionId, { id: SessionId(sessionId) } as unknown as Agent)
     },
   }
+}
+
+function textOf(message: unknown): string {
+  const content = (message as { content?: Array<{ type: string; text?: string }> }).content ?? []
+  return content.flatMap(block => (block.type === 'text' ? [block.text ?? ''] : [])).join('\n')
+}
+
+function toolsRegistered(record: AgentRecord | undefined): string[] {
+  return (record?.toolsRegister.mock.calls ?? []).map(call => (call[0] as { name: string }).name)
+}
+
+async function settle(): Promise<void> {
+  await new Promise(resolve => setTimeout(resolve, 0))
 }
 
 beforeEach(() => {
@@ -233,6 +354,186 @@ describe('AssistantRuntime', () => {
     expect(h.createMock).toHaveBeenCalledTimes(1)
     expect(h.attachSession).toHaveBeenCalledTimes(1)
     expect(h.bindAssistantMainSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('registers exactly the task tools on the main Session', async () => {
+    const h = createHarness()
+
+    await h.runtime.ensureInstance('instance-1')
+
+    expect(toolsRegistered(h.handles[0]).sort()).toEqual([...TASK_TOOL_NAMES].sort())
+  })
+
+  it('creates a hidden worker, persists the task, and delivers the brief', async () => {
+    const h = createHarness()
+
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'Compare the three vendors and return a table.',
+    })
+
+    expect(h.createMock).toHaveBeenCalledTimes(2)
+    expect(task).toMatchObject({
+      assistantId: 'instance-1',
+      title: 'Research pricing',
+      brief: 'Compare the three vendors and return a table.',
+      role: 'task',
+      status: 'running',
+    })
+    expect(task.parentSessionId).toBe(h.current().mainSessionId)
+    expect(h.createAssistantSession).toHaveBeenCalledWith({
+      assistantId: 'instance-1',
+      sessionId: task.sessionId,
+      title: 'Research pricing',
+      brief: 'Compare the three vendors and return a table.',
+      parentSessionId: h.current().mainSessionId,
+    })
+
+    const workerOptions = h.createMock.mock.calls[1]?.[0] as CreateAgentOptions
+    expect(String(workerOptions.sessionId)).toBe(task.sessionId)
+    expect(workerOptions.sessionId).not.toBe(h.current().mainSessionId)
+    expect(workerOptions.meta).toEqual({ cwd: WORKSPACE_PATH, agentPreset: 'default' })
+    expect(workerOptions.agentOptions).toMatchObject({ provider: 'openai', model: 'gpt-5' })
+    expect(String(workerOptions.agentOptions?.reasoningEffort)).toBe('high')
+
+    const worker = h.handles[1]
+    expect(worker).toBeDefined()
+    expect(h.attachSession).toHaveBeenCalledWith(task.sessionId)
+    expect(h.flush).toHaveBeenCalledWith(worker?.agent.session)
+    expect(h.permissionSet).toHaveBeenCalledWith(worker?.agent.session, 'workspace-write')
+    expect(worker?.followup).toHaveBeenCalledTimes(1)
+    expect(textOf(worker?.followup.mock.calls[0]?.[0])).toBe(
+      'Compare the three vendors and return a table.',
+    )
+    const prompt = worker?.section.mock.calls[0]?.[0] as { name: string; text: () => string }
+    expect(prompt.name).toContain('assistant-worker')
+    expect(prompt.text()).toContain('hidden background worker')
+    expect(prompt.text()).toContain('Cite sources.')
+    expect(toolsRegistered(worker)).toEqual([])
+  })
+
+  it('sends follow-ups, tracks running/idle, and completes the task', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Task', brief: 'Start.' })
+    const worker = h.handles[1]
+    expect(worker).toBeDefined()
+
+    const sent = await h.runtime.sendTask('instance-1', task.id, 'Also cover renewals.')
+    expect(sent.status).toBe('running')
+    expect(worker?.followup).toHaveBeenCalledTimes(2)
+    expect(textOf(worker?.followup.mock.calls[1]?.[0])).toBe('Also cover renewals.')
+
+    h.emit('agent/status', { agent: worker?.agent, status: 'running' })
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+
+    expect(h.getAssistantSession(task.id).status).toBe('completed')
+
+    const waited = await h.runtime.waitTask('instance-1', task.id, 1_000)
+    expect(waited).toMatchObject({ timedOut: false })
+    expect(waited.task.status).toBe('completed')
+  })
+
+  it('marks a worker failed on a turn error and does not overwrite it on idle', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Task', brief: 'Start.' })
+    const worker = h.handles[1]
+
+    h.emit('session/event', {
+      id: worker?.agent.session.id,
+    }, {
+      type: 'turn/end',
+      seq: 2,
+      time: 2,
+      data: { reason: { kind: 'error', error: { message: 'provider exploded' } } },
+    })
+    await settle()
+    expect(h.getAssistantSession(task.id)).toMatchObject({
+      status: 'failed',
+      error: 'provider exploded',
+    })
+
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('failed')
+  })
+
+  it('times out a wait instead of blocking forever', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Task', brief: 'Start.' })
+
+    const waited = await h.runtime.waitTask('instance-1', task.id, 5)
+
+    expect(waited.timedOut).toBe(true)
+    expect(waited.task.status).toBe('running')
+  })
+
+  it('summarizes recent worker messages and persists the result summary', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Task', brief: 'Start.' })
+    const worker = h.handles[1]
+    expect(worker).toBeDefined()
+    worker!.events.push(
+      {
+        type: 'user/message',
+        seq: 1,
+        time: 1,
+        data: {
+          id: 'message-1',
+          content: [{ type: 'text', text: 'Start.' }],
+          source: { kind: 'user' },
+        },
+      } as unknown as SessionEvent,
+      {
+        type: 'assistant/message',
+        seq: 2,
+        time: 2,
+        data: {
+          turn: 1,
+          step: 1,
+          message: {
+            id: 'message-2',
+            content: [{ type: 'text', text: 'Vendors compared: A, B, C.' }],
+          },
+          stream: [],
+        },
+      } as unknown as SessionEvent,
+    )
+
+    const summary = await h.runtime.summaryTask('instance-1', task.id)
+
+    expect(summary.summary).toBe('Vendors compared: A, B, C.')
+    expect(summary.messages.map(message => message.kind)).toEqual(['user', 'assistant'])
+    expect(h.getAssistantSession(task.id).resultSummary).toBe('Vendors compared: A, B, C.')
+  })
+
+  it('cancels the live worker turn and marks the task cancelled', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Task', brief: 'Start.' })
+    const worker = h.handles[1]
+
+    const cancelled = await h.runtime.cancelTask('instance-1', task.id)
+
+    expect(cancelled.status).toBe('cancelled')
+    expect(worker?.cancel).toHaveBeenCalledWith({ kind: 'user' })
+    expect(worker?.whenIdle).toHaveBeenCalledTimes(1)
+
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('cancelled')
+  })
+
+  it('rejects task tools for a Session that is not the assistant main Session', async () => {
+    const h = createHarness()
+    await h.runtime.ensureInstance('instance-1')
+    const main = h.handles[0]
+    const registered = main?.toolsRegister.mock.calls.find(
+      call => (call[0] as { name: string }).name === 'assistant_task_list',
+    )?.[0] as { execute: (args: unknown, exec: { agent: Agent }) => Promise<unknown> }
+
+    await expect(registered.execute({}, {
+      agent: { id: SessionId('session-other') } as unknown as Agent,
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
   })
 
   it('resumes a bound Session instead of creating a replacement', async () => {

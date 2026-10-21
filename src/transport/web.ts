@@ -249,6 +249,14 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
     }
     case 'assistant.instance.ensure':
       return service.ensureAssistantInstance(idPayload.parse(request.payload).id)
+    case 'assistant.task.list': {
+      const payload = request.payload === undefined || request.payload === null
+        ? undefined
+        : z.object({
+          assistantId: z.string().trim().min(1).max(200).optional(),
+        }).strict().parse(request.payload)
+      return service.listAssistantSessions(payload?.assistantId)
+    }
     case 'assistant.builder.list': return service.listAssistantBuilderConversations()
     case 'assistant.builder.draft.get': return service.getAssistantBuilderDraft()
     case 'assistant.builder.draft.configure': {

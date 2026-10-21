@@ -10,19 +10,23 @@ import {
   addTeamMemberInputSchema,
   cloneTeamInputSchema,
   createAssistantInstanceInputSchema,
+  createAssistantSessionInputSchema,
   createTeamDraftInputSchema,
   updateAssistantInputSchema,
   updateAssistantInstanceInputSchema,
+  updateAssistantSessionInputSchema,
 } from '../domain/schemas.js'
 import {
   snapshotAssistant,
   type AddTeamMemberInput,
   type AssistantInstance,
+  type AssistantSession,
   type AssistantSnapshot,
   type AssistantTemplate,
   type CloneTeamInput,
   type CreateAssistantInput,
   type CreateAssistantInstanceInput,
+  type CreateAssistantSessionInput,
   type CreateTeamDraftInput,
   type Operation,
   type Page,
@@ -32,6 +36,7 @@ import {
   type TeamMessage,
   type UpdateAssistantInput,
   type UpdateAssistantInstanceInput,
+  type UpdateAssistantSessionInput,
 } from '../domain/types.js'
 import type { AgentTeamStore } from '../storage/store.js'
 import type { AssistantBuilderRuntime } from '../runtime/assistant-builder-runtime.js'
@@ -63,7 +68,7 @@ export interface MutationOptions {
 
 export interface AgentTeamChange {
   cursor: number
-  entityType: 'assistant' | 'assistant-instance' | 'assistant-builder' | 'team' | 'operation' | 'conversation' | 'workspace' | 'catalog'
+  entityType: 'assistant' | 'assistant-instance' | 'assistant-session' | 'assistant-builder' | 'team' | 'operation' | 'conversation' | 'workspace' | 'catalog'
   entityId: string
   revision: number
   kind: string
@@ -546,6 +551,72 @@ export class AgentTeamService extends Service {
   /** Materialize the instance's main Session through the attached runtime. */
   async ensureAssistantInstance(id: string): Promise<AssistantEnsureResult> {
     return this.requireAssistantRuntime().ensureInstance(id)
+  }
+
+  /**
+   * Persist one hidden worker Session created by the runtime. This table has no
+   * revision counter (Phase 1 only needs lifecycle truth), so the change event
+   * carries revision 0 and clients react by reloading their snapshot.
+   */
+  async createAssistantSession(raw: CreateAssistantSessionInput): Promise<AssistantSession> {
+    const input = createAssistantSessionInputSchema.parse(raw)
+    const instance = requireAssistantInstance(this.store, input.assistantId)
+    if (instance.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${instance.id}' is archived`,
+      )
+    }
+    const now = new Date().toISOString()
+    const session: AssistantSession = {
+      schemaVersion: 1,
+      id: randomUUID(),
+      assistantId: instance.id,
+      sessionId: input.sessionId,
+      role: 'task',
+      title: input.title,
+      brief: input.brief,
+      parentSessionId: input.parentSessionId,
+      status: 'queued',
+      createdAt: now,
+      updatedAt: now,
+    }
+    await this.store.putAssistantSession(session)
+    this.publish('assistant-session', session.id, 0, 'assistant.session.created')
+    return session
+  }
+
+  /** Newest-first worker Sessions, optionally scoped to one assistant instance. */
+  listAssistantSessions(assistantId?: string): Page<AssistantSession> {
+    const items = this.store.listAssistantSessions()
+      .filter(session => assistantId === undefined || session.assistantId === assistantId)
+    return { items, total: items.length }
+  }
+
+  getAssistantSession(id: string): AssistantSession {
+    return requireAssistantSession(this.store, id)
+  }
+
+  /** Apply a status/result patch; an empty patch leaves the record unchanged. */
+  async updateAssistantSession(
+    id: string,
+    raw: UpdateAssistantSessionInput,
+  ): Promise<AssistantSession> {
+    const patch = updateAssistantSessionInputSchema.parse(raw)
+    const current = requireAssistantSession(this.store, id)
+    const next = {
+      ...(patch.title === undefined ? {} : { title: patch.title }),
+      ...(patch.status === undefined ? {} : { status: patch.status }),
+      ...(patch.resultSummary === undefined ? {} : { resultSummary: patch.resultSummary }),
+      ...(patch.error === undefined ? {} : { error: patch.error }),
+      ...(patch.archivedAt === undefined ? {} : { archivedAt: patch.archivedAt }),
+    }
+    if (Object.keys(next).length === 0) return current
+    return this.store.updateAssistantSession(id, value => ({
+      ...value,
+      ...next,
+      updatedAt: new Date().toISOString(),
+    }))
   }
 
   listAssistantBuilderConversations(): Promise<AssistantBuilderConversationListView> {
@@ -1381,6 +1452,14 @@ function requireAssistantInstance(store: AgentTeamStore, id: string): AssistantI
     throw new AgentTeamError('ASSISTANT_INSTANCE_NOT_FOUND', `Unknown assistant instance '${id}'`)
   }
   return instance
+}
+
+function requireAssistantSession(store: AgentTeamStore, id: string): AssistantSession {
+  const session = store.getAssistantSession(id)
+  if (session === undefined) {
+    throw new AgentTeamError('ASSISTANT_TASK_NOT_FOUND', `Unknown assistant task '${id}'`)
+  }
+  return session
 }
 
 /**
