@@ -182,3 +182,13 @@
 验证：面板 `222×228`，右缘与选择器组对齐（1135）；选择器组宽 155；搜索框高 32。
 
 截图更新：`docs/assets/ui-review/add-member-panel.png`。
+
+---
+
+## 十五、添加成员头像底色
+
+问题：面板行头像用的是 `--dsw-alias-bg-layer-2`，浅色主题下三层背景都是纯白，头像看起来没有底。
+
+处理：改用与成员卡片一致的 `--dsw-alias-bg-module-platform`（浅色实测 `rgb(245,246,247)`），文字色 `label-secondary`，圆角 7px。这样头像、搜索框、成员卡片使用同一层灰，不再出现白块。
+
+截图更新：`docs/assets/ui-review/add-member-panel.png`。

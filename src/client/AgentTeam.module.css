@@ -5396,8 +5396,10 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
   height: 28px;
   overflow: hidden;
   border-radius: 7px;
-  background: var(--dsw-alias-bg-layer-2);
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
   font-size: 12px;
+  font-weight: 500;
 }
 
 .memberAddAvatar img {
