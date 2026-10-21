@@ -1028,7 +1028,12 @@ function AssistantForm({
 
   return (
     <form id={formId} onSubmit={(event) => { void submit(event) }} className={`${css.form} ${css.assistantForm}`}>
-      <div className={css.formGrid}>
+      <div className={css.assistantFormSection}>
+        <div className={css.assistantFormSectionHeading}>
+          <strong>身份</strong>
+          <span className={css.assistantFormSectionHint}>改动立即生效</span>
+        </div>
+        <div className={css.formGrid}>
         <Field label="名称"><input required value={name} onChange={event => { setName(event.target.value) }} className={css.input} /></Field>
         <Field label="图标（emoji，可选）">
           <input
@@ -1052,6 +1057,14 @@ function AssistantForm({
             {' '}允许被拉入团队（关闭后仅用于单聊）
           </label>
         </Field>
+      </div>
+      </div>
+      <div className={css.assistantFormSection}>
+        <div className={css.assistantFormSectionHeading}>
+          <strong>引擎与默认配置</strong>
+          <span className={css.assistantFormSectionHint}>仅对新会话生效</span>
+        </div>
+        <div className={css.formGrid}>
         <Field label="Provider">
           <select required value={provider} onChange={event => { setProvider(event.target.value) }} className={css.input}>
             <option value="">请选择</option>
@@ -1101,6 +1114,14 @@ function AssistantForm({
             ))}
           </select>
         </Field>
+      </div>
+      </div>
+      <div className={css.assistantFormSection}>
+        <div className={css.assistantFormSectionHeading}>
+          <strong>规则</strong>
+          <span className={css.assistantFormSectionHint}>仅对新会话生效</span>
+        </div>
+        <div className={css.formGrid}>
         <Field label="助手规则（可选）" className={css.fullWidth ?? ''}>
           <textarea
             value={instructions}
@@ -1111,6 +1132,14 @@ function AssistantForm({
           />
           <span className={css.hint}>随助手模板保存，在成员启动时加入系统提示词；这里不填写具体任务。</span>
         </Field>
+      </div>
+      </div>
+      <div className={css.assistantFormSection}>
+        <div className={css.assistantFormSectionHeading}>
+          <strong>可用能力</strong>
+          <span className={css.assistantFormSectionHint}>仅对新会话生效</span>
+        </div>
+        <div className={css.formGrid}>
         <Field
           label={`可用 Skills（已选择 ${selectedSkills.length} 个）`}
           className={css.fullWidth ?? ''}
@@ -1171,6 +1200,7 @@ function AssistantForm({
           </div>
           <span className={css.hint}>MCP 连接和密钥由 Harness Profile/Preset 统一管理；运行时只向助手开放已选 Server 的工具。</span>
         </Field>
+        </div>
       </div>
       {error && <div role="alert" className={css.inlineError}>{error}</div>}
     </form>

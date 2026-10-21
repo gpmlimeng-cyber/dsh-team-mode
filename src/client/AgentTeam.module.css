@@ -5013,3 +5013,36 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
   font-weight: 500;
   line-height: 1;
 }
+
+.assistantFormSection {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.assistantFormSection:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.assistantFormSectionHeading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistantFormSectionHeading strong {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--dsw-alias-label-primary);
+}
+
+.assistantFormSectionHint {
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 11px;
+  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
+  opacity: 0.75;
+}
