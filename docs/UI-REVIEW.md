@@ -559,3 +559,16 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 - 处理：本插件三个任务工具改名为 `team_mode_task_create` / `team_mode_task_update` / `team_mode_task_list`，同步更新提示词、别名描述、运行时消息与测试。
 - 结果：团队可正常启动；通过 `team.message.send` 发送的 Markdown 广播已进入成员收件箱，workbench 节点包含 `team-message`。
 - 遗留问题：成员会话面板尚未把该 `team-message` 节点绘制成气泡（fresh reload 后仍为 0 个 `.teamMessageCard`），需要继续修投影/刷新链路；等宽 CSS 已用真实类名实测 546px / 546px。
+
+---
+
+## 四十五、接入 DSH 原生 team-message source
+
+- 原来 relay 消息使用自定义 `plugin-relay` source，原生聊天只当普通执行请求。
+- 现改为原生认识的 `team-message` source（`plugin: dsh-team-mode`，成员消息带 `senderId/senderName`）：
+  ```ts
+  { kind: 'team-message', plugin: 'dsh-team-mode', senderId, senderName }
+  ```
+- 通过模块增强给 `MessageSourceMap` 增加 `team-message` 类型；projector 同步把该 source 视为可见团队消息，兼容旧 `plugin-relay` / legacy relay。
+- 效果：DSH 原生聊天会把消息识别为「收到团队消息」，而不是普通执行请求，为后续 `conversation.chat.node` 原生气泡渲染提供入口。
+- 测试更新并通过：`npm run check`。

@@ -283,6 +283,9 @@ function isVisibleUserSource(source: MessageSource): boolean {
   if (source.kind === 'plugin-relay') {
     return source.plugin === 'dsh-team-mode' && source.form === 'relay'
   }
+  if (source.kind === 'team-message') {
+    return source.plugin === 'dsh-team-mode'
+  }
   return isLegacyRelaySource(source)
 }
 

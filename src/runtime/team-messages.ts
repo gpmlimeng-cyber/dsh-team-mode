@@ -19,10 +19,20 @@ declare module '@deepseek-ai/dsh-llm' {
   }
 }
 
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'team-message': {
+      kind: 'team-message'
+      plugin: string
+      senderId?: string
+      senderName?: string
+    }
+  }
+}
+
 export const TEAM_RELAY_SOURCE = {
-  kind: 'plugin-relay',
+  kind: 'team-message',
   plugin: 'dsh-team-mode',
-  form: 'relay',
 } as const
 
 type TaskStatus = 'pending' | 'assigned' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled'
@@ -166,7 +176,7 @@ export function messageFromRecord(team: TeamAggregate, record: TeamMessage): Use
     role: 'user',
     content: [{ type: 'text', text }],
     source: record.sender.kind === 'member'
-      ? TEAM_RELAY_SOURCE
+      ? { ...TEAM_RELAY_SOURCE, senderId: record.sender.id, senderName }
       : { kind: 'user' },
   })
 }

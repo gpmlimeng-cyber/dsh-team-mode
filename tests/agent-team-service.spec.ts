@@ -686,7 +686,7 @@ describe('AgentTeamService', () => {
     expect(ensureMemberOnline).toHaveBeenCalledOnce()
     expect(leaderAgent.followup).toHaveBeenCalledOnce()
     expect(leaderAgent.followup.mock.calls[0]?.[0]).toMatchObject({
-      source: { kind: 'plugin-relay', plugin: 'dsh-team-mode', form: 'relay' },
+      source: { kind: 'team-message', plugin: 'dsh-team-mode' },
       content: [{ type: 'text', text: expect.stringContaining(member.id) }],
     })
     expect(Object.keys(added.outbox)).toHaveLength(0)
@@ -1114,7 +1114,7 @@ describe('AgentTeamService', () => {
     expect(leaderAgent.followup).toHaveBeenCalledOnce()
     expect(leaderAgent.followup.mock.calls[0]?.[0]).toMatchObject({
       role: 'user',
-      source: { kind: 'plugin-relay', plugin: 'dsh-team-mode', form: 'relay' },
+      source: { kind: 'team-message', plugin: 'dsh-team-mode' },
       content: [{ type: 'text', text: expect.stringContaining(member.id) }],
     })
     expect(Object.keys(removed.outbox)).toHaveLength(0)
