@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { AssistantInstance, AssistantSession } from '../src/domain/types.js'
 import {
+  ASSISTANT_AVATAR_MAX_DATA_URL_LENGTH,
+  ASSISTANT_AVATAR_MAX_FILE_BYTES,
+  assistantAvatarDataUrlError,
+  assistantAvatarFileError,
   assistantAvatarSource,
   assistantInitial,
   assistantInstanceForSession,
@@ -224,6 +228,30 @@ describe('relativeAssistantTime', () => {
   })
 })
 
+describe('assistant avatar validation', () => {
+  it('accepts a small inline image data URL and the clear-avatar value', () => {
+    expect(assistantAvatarDataUrlError('data:image/png;base64,AAAA')).toBeUndefined()
+    expect(assistantAvatarDataUrlError('')).toBeUndefined()
+  })
+
+  it('rejects non-image and oversized data URLs', () => {
+    expect(assistantAvatarDataUrlError('https://example.test/avatar.png')).toBe('头像必须是内嵌图片')
+    expect(assistantAvatarDataUrlError('data:text/html;base64,AAAA')).toBe('头像必须是内嵌图片')
+    expect(assistantAvatarDataUrlError(
+      `data:image/png;base64,${'A'.repeat(ASSISTANT_AVATAR_MAX_DATA_URL_LENGTH)}`,
+    )).toBe('头像图片过大')
+  })
+
+  it('validates the local file type and size before reading it', () => {
+    expect(assistantAvatarFileError({ type: 'image/png', size: 1024 })).toBeUndefined()
+    expect(assistantAvatarFileError({ type: 'image/webp', size: ASSISTANT_AVATAR_MAX_FILE_BYTES })).toBeUndefined()
+    expect(assistantAvatarFileError({ type: 'text/plain', size: 1024 })).toBe('请选择 PNG、JPEG 或 WebP 图片')
+    expect(assistantAvatarFileError({ type: 'image/gif', size: 1024 })).toBe('请选择 PNG、JPEG 或 WebP 图片')
+    expect(assistantAvatarFileError({ type: 'image/png', size: ASSISTANT_AVATAR_MAX_FILE_BYTES + 1 }))
+      .toBe('头像图片不能超过 256KB')
+  })
+})
+
 describe('assistant display identity', () => {
   it('falls back to a placeholder when the snapshot name is blank', () => {
     expect(assistantInstanceName(instance('a', '   ', '2026-01-01T00:00:00Z'))).toBe('助手')
@@ -246,6 +274,12 @@ describe('assistant display identity', () => {
       assistantSnapshot: {
         ...instance('b', 'B', '2026-01-01T00:00:00Z').assistantSnapshot,
         avatar: 'https://example.test/avatar.png',
+      },
+    }))).toBeUndefined()
+    expect(assistantAvatarSource(instance('c', 'C', '2026-01-01T00:00:00Z', {
+      assistantSnapshot: {
+        ...instance('c', 'C', '2026-01-01T00:00:00Z').assistantSnapshot,
+        avatar: 'data:text/html;base64,AAAA',
       },
     }))).toBeUndefined()
   })

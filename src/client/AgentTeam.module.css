@@ -3700,6 +3700,119 @@ textarea.input {
   margin-top: 4px;
 }
 
+.assistantSettingsDialog {
+  width: min(560px, calc(100vw - 32px));
+}
+
+.assistantSettingsForm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.assistantSettingsAvatarRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.assistantSettingsAvatarCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.assistantSettingsAvatarTitle {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.assistantSettingsAvatarActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.assistantSettingsAvatarHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.assistantSettingsSummary {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+}
+
+.assistantSettingsSummaryRow {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px;
+  padding: 8px 12px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.assistantSettingsSummaryRow + .assistantSettingsSummaryRow {
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+
+.assistantSettingsSummaryLabel {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.assistantSettingsSummaryValue {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-primary);
+}
+
+.assistantSettingsArchive {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+
+.assistantSettingsArchiveCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.assistantSettingsArchiveTitle {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.assistantSettingsArchiveHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.assistantSettingsArchiveWarning {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.assistantSettingsArchiveConfirm {
+  border-color: var(--dsw-alias-state-error-primary);
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+}
+
 .assistantTaskDialog {
   width: min(540px, calc(100vw - 32px));
   max-height: min(82vh, 640px);

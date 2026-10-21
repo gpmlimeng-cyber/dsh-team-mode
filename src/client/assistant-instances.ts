@@ -4,6 +4,10 @@ const MINUTE = 60_000
 const HOUR = 3_600_000
 const DAY = 86_400_000
 
+/** Upload and stored-value bounds shared by the avatar editor and snapshot schema. */
+export const ASSISTANT_AVATAR_MAX_FILE_BYTES = 256 * 1024
+export const ASSISTANT_AVATAR_MAX_DATA_URL_LENGTH = 400_000
+
 export type AssistantRowStatus = 'needs_input' | 'running' | 'queued' | 'none'
 
 export interface AssistantRowActivity {
@@ -32,10 +36,36 @@ export function assistantInitial(name: string): string {
   return name.trim().slice(0, 1).toLocaleUpperCase() || '?'
 }
 
-/** Only bounded data URLs are rendered as images; other strings fall back to the initial. */
+/** True for a bounded inline image URL; anything else falls back to the initial. */
+export function isAssistantAvatarDataUrl(value: string): boolean {
+  return value.startsWith('data:image/') && value.length <= ASSISTANT_AVATAR_MAX_DATA_URL_LENGTH
+}
+
+/** Only bounded inline image URLs are rendered as avatars. */
 export function assistantAvatarSource(instance: AssistantInstance): string | undefined {
   const avatar = instance.assistantSnapshot.avatar
-  return avatar !== undefined && avatar.startsWith('data:') ? avatar : undefined
+  return avatar !== undefined && isAssistantAvatarDataUrl(avatar) ? avatar : undefined
+}
+
+const ASSISTANT_AVATAR_FILE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+
+/** Validate one local avatar upload before reading it into a data URL. */
+export function assistantAvatarFileError(file: { type: string; size: number }): string | undefined {
+  if (!ASSISTANT_AVATAR_FILE_TYPES.includes(file.type)) return '请选择 PNG、JPEG 或 WebP 图片'
+  if (file.size > ASSISTANT_AVATAR_MAX_FILE_BYTES) return '头像图片不能超过 256KB'
+  return undefined
+}
+
+/**
+ * Validate a draft/stored avatar value. An empty string is the explicit
+ * “clear avatar” action, so it is valid; everything else must be a bounded
+ * inline image URL.
+ */
+export function assistantAvatarDataUrlError(value: string): string | undefined {
+  if (value === '') return undefined
+  if (!value.startsWith('data:image/')) return '头像必须是内嵌图片'
+  if (value.length > ASSISTANT_AVATAR_MAX_DATA_URL_LENGTH) return '头像图片过大'
+  return undefined
 }
 
 /** The non-archived instance whose bound main Session matches, if any. */

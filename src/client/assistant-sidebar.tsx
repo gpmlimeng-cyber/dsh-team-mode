@@ -3,6 +3,7 @@ import {
   IconChecklistOutlineRegular,
   IconChevronRightOutlineRegular,
   IconCloseFillRegular,
+  IconEditOutlineRegular,
   IconEllipsisOutlineRegular,
   IconNewChatOutlineRegular,
   IconPinFillRegular,
@@ -14,6 +15,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import { AssistantCreateDialog } from './assistant-dialogs.js'
+import { AssistantSettingsDialog } from './assistant-settings-dialog.js'
 import { AssistantTaskDialog } from './assistant-task-dialog.js'
 import {
   assistantAvatarSource,
@@ -65,6 +67,8 @@ export function AssistantSidebarSection({
   const [menuOpenId, setMenuOpenId] = useState<string>()
   const [taskAssistantId, setTaskAssistantId] = useState<string>()
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
+  const [settingsAssistant, setSettingsAssistant] = useState<AssistantInstance>()
+  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [listError, setListError] = useState<string>()
   const [error, setError] = useState<string>()
@@ -118,6 +122,12 @@ export function AssistantSidebarSection({
   const openTasks = (instance: AssistantInstance): void => {
     setTaskAssistantId(instance.id)
     setTaskDialogOpen(true)
+    setMenuOpenId(undefined)
+  }
+
+  const openSettings = (instance: AssistantInstance): void => {
+    setSettingsAssistant(instance)
+    setSettingsDialogOpen(true)
     setMenuOpenId(undefined)
   }
 
@@ -344,12 +354,14 @@ export function AssistantSidebarSection({
                         portal
                         className={css.sidebarAssistantMore ?? ''}
                         items={[
+                          { id: 'settings', label: '助手设置', icon: <IconEditOutlineRegular size={14} /> },
                           { id: 'tasks', label: '查看任务', icon: <IconChecklistOutlineRegular size={14} /> },
                           { id: 'open-main', label: '打开主会话', icon: <IconNewChatOutlineRegular size={14} /> },
                         ]}
                         onSelect={id => {
                           setMenuOpenId(undefined)
-                          if (id === 'tasks') openTasks(instance)
+                          if (id === 'settings') openSettings(instance)
+                          else if (id === 'tasks') openTasks(instance)
                           else if (id === 'open-main') void openAssistant(instance)
                         }}
                         anchor={(
@@ -388,6 +400,14 @@ export function AssistantSidebarSection({
           tasks={tasks}
           onClose={() => { setTaskDialogOpen(false) }}
           openSession={openSession}
+        />
+      )}
+      {settingsAssistant !== undefined && (
+        <AssistantSettingsDialog
+          open={settingsDialogOpen}
+          assistant={settingsAssistant}
+          onClose={() => { setSettingsDialogOpen(false) }}
+          onSaved={load}
         />
       )}
     </section>
