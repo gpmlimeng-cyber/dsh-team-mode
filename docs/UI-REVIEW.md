@@ -440,3 +440,14 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 
 实测：8 行分类，数量 `[20,8,8,8,8,8,8,8]`，无分组标题。
 截图更新：`docs/assets/ui-review/assistant-avatar-picker.png`。
+
+---
+
+## 三十五、头像弹窗的预览框与并排操作
+
+- 弹窗顶部「本地上传」「随机一个」并排；底部只保留「使用这个头像」。
+- 新增 64px 圆形预览框，随点击职业头像、DiceBear Preview、随机、上传实时更新；无头像时显示「未选择」。
+- 选择改为草稿态：点选只更新预览，不立即关闭；点「使用这个头像」才写回编辑器，关闭弹窗则放弃。
+- 实测：点 Preview 后预览框出现 data SVG（150×150），弹窗保持打开；确认后编辑器头像更新、弹窗关闭。
+
+截图更新：`docs/assets/ui-review/assistant-avatar-picker.png`。

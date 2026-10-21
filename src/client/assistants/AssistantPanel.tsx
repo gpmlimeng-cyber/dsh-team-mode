@@ -925,6 +925,7 @@ function AssistantForm({
   const [name, setName] = useState(assistant?.name ?? '')
   const [avatar, setAvatar] = useState(assistant?.avatar ?? '')
   const [pickingAvatar, setPickingAvatar] = useState(false)
+  const [draftAvatar, setDraftAvatar] = useState('')
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false)
   const avatarScrollRef = useRef<HTMLDivElement>(null)
   const [description, setDescription] = useState(assistant?.description ?? '')
@@ -1041,9 +1042,8 @@ function AssistantForm({
     const reader = new FileReader()
     reader.onload = () => {
       if (typeof reader.result === 'string') {
-        setAvatar(reader.result)
+        setDraftAvatar(reader.result)
         setError(undefined)
-        setAvatarPickerOpen(false)
       }
     }
     reader.readAsDataURL(file)
@@ -1057,6 +1057,10 @@ function AssistantForm({
     return () => { cancelAnimationFrame(frame) }
   }, [avatarPickerOpen])
 
+  useEffect(() => {
+    if (avatarPickerOpen) setDraftAvatar(avatar)
+  }, [avatarPickerOpen])
+
   async function applyGeneratedAvatar(style: string, seed: string): Promise<void> {
     if (pickingAvatar) return
     setPickingAvatar(true)
@@ -1065,8 +1069,7 @@ function AssistantForm({
       const response = await fetch(dicebearUrl(style, seed))
       if (!response.ok) throw new Error(`头像服务返回 ${response.status}`)
       const svg = await response.text()
-      setAvatar(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`)
-      setAvatarPickerOpen(false)
+      setDraftAvatar(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -1128,7 +1131,7 @@ function AssistantForm({
         <Field label="头像（可选，图片）">
           <div className={css.avatarField}>
             {avatar !== '' && <img className={css.avatarPreview} src={avatar} alt="头像预览" />}
-            <button type="button" className={css.avatarUpload} onClick={() => { setAvatarPickerOpen(true) }}>
+            <button type="button" className={css.avatarUpload} onClick={() => { setDraftAvatar(avatar); setAvatarPickerOpen(true) }}>
               选择头像
             </button>
             {avatar !== '' && (
@@ -1321,7 +1324,7 @@ function AssistantForm({
         onClose={() => { setAvatarPickerOpen(false) }}
         title="选择头像"
         closeLabel="关闭"
-        description="从职业头像、DiceBear 风格中选择，或上传本地图片。"
+        description="从职业头像、DiceBear 风格中选择，或上传本地图片，确认后应用。"
         className={css.avatarPickerDialog ?? ''}
         contentClassName={css.avatarPickerDialogContent ?? ''}
       >
@@ -1338,8 +1341,19 @@ function AssistantForm({
             />
             本地上传
           </label>
-          {pickingAvatar && <span className={css.hint}>生成中…</span>}
+          <button type="button" className={css.avatarGenerate} disabled={pickingAvatar} onClick={randomizeAvatar}>
+            {pickingAvatar ? '生成中…' : '随机一个'}
+          </button>
           {error !== undefined && <span className={css.avatarPickerError}>{error}</span>}
+        </div>
+        <div className={css.avatarPickerPreview}>
+          <span className={css.avatarPickerPreviewBox}>
+            {draftAvatar !== '' ? <img src={draftAvatar} alt="选中头像预览" /> : <span className={css.avatarPickerPreviewEmpty}>未选择</span>}
+          </span>
+          <span className={css.avatarPickerPreviewText}>
+            <strong>预览</strong>
+            <small>点击下方头像或「随机一个」，确认后使用</small>
+          </span>
         </div>
         <div ref={avatarScrollRef} className={css.avatarPickerScroll}>
           <div className={css.avatarStyleRow}>
@@ -1355,7 +1369,7 @@ function AssistantForm({
                   aria-pressed={avatar === item.data}
                   aria-label={`使用${item.label}头像`}
                   title={item.label}
-                  onClick={() => { setAvatar(item.data); setAvatarPickerOpen(false) }}
+                  onClick={() => { setDraftAvatar(item.data) }}
                 >
                   <img src={item.data} alt="" />
                 </button>
@@ -1390,9 +1404,11 @@ function AssistantForm({
         </div>
         <div className={css.avatarPickerFooter}>
           <span className={css.hint}>PNG/JPEG/WebP，≤256KB</span>
-          <button type="button" className={css.avatarRandom} disabled={pickingAvatar} onClick={randomizeAvatar}>
-            {pickingAvatar ? '生成中…' : '随机一个'}
-          </button>
+          <div className={css.avatarPickerActions}>
+            <button type="button" className={css.avatarRandom} onClick={() => { setAvatar(draftAvatar); setAvatarPickerOpen(false) }}>
+              使用这个头像
+            </button>
+          </div>
         </div>
       </AnimatedModal>
     </form>
