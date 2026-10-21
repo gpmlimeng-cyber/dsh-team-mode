@@ -123,3 +123,18 @@
 - 实测四个页签 `aria-label` 与可见性一致：`visible=true`。
 
 截图：`docs/assets/ui-review/switcher-always-visible.png`。
+
+---
+
+## 十一、成员下拉框贴住选择器
+
+问题：成员选择器使用 `portal` 渲染菜单，弹层被桌面顶栏安全区钳制，菜单顶部比选择器底部低 29px，横向也向左偏 17px。
+
+处理：移除该菜单的 `portal`，改为在锚点内就地绝对定位（`align="end"`）。原生 Menu 的就地模式会在触发器下方保留 4px 间距，并让右边缘与选择器对齐。
+
+验证（Harness）：
+- 选择器：`x=702, right=829, bottom=39`；
+- 菜单：`x=685, right=829, top=43`；
+- 右边缘一致，垂直间距 4px，菜单不再被顶栏安全区推远。
+
+截图：`docs/assets/ui-review/member-menu-attached.png`。

@@ -141,7 +141,6 @@ export function TeamMemberSwitcher({
       }}
       align="end"
       side="bottom"
-      portal
       className={css.teamSwitcherAnchor}
       anchor={(
         <button
