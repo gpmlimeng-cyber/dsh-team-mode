@@ -770,7 +770,7 @@ function AssistantCard({
           {assistant.avatar !== undefined && assistant.avatar !== ''
             ? <img className={css.assistantAvatar} src={assistant.avatar} alt="" />
             : null}
-          <strong>{assistant.icon ? `${assistant.icon} ${assistant.name}` : assistant.name}</strong>
+          <strong>{assistant.name}</strong>
           {(!assistant.enabled || !assistant.teamSelectable || assistant.source !== 'user') && (
             <div className={css.assistantCardBadges}>
               {!assistant.enabled && <span className={css.assistantBadge}>已停用</span>}
@@ -908,7 +908,6 @@ function AssistantForm({
   const presets = catalog?.agentPresets.filter(preset => preset.broken === undefined) ?? []
   const permissions = catalog?.permissionPresets ?? []
   const [name, setName] = useState(assistant?.name ?? '')
-  const [icon, setIcon] = useState(assistant?.icon ?? '')
   const [avatar, setAvatar] = useState(assistant?.avatar ?? '')
   const [description, setDescription] = useState(assistant?.description ?? '')
   const [instructions, setInstructions] = useState(assistant?.instructions ?? '')
@@ -1039,7 +1038,6 @@ function AssistantForm({
       const value = {
         name,
         avatar,
-        ...(icon.trim() ? { icon: icon.trim() } : {}),
         ...(assistant === undefined && !description.trim()
           ? {}
           : { description: description.trim() }),
@@ -1076,16 +1074,7 @@ function AssistantForm({
           <span className={css.assistantFormSectionHint}>改动立即生效</span>
         </div>
         <div className={css.formGrid}>
-        <Field label="名称"><input required value={name} onChange={event => { setName(event.target.value) }} className={css.input} /></Field>
-        <Field label="图标（emoji，可选）">
-          <input
-            value={icon}
-            maxLength={4}
-            placeholder="例如 🧭"
-            onChange={event => { setIcon(event.target.value) }}
-            className={css.input}
-          />
-        </Field>
+        <Field label="名称" className={css.fullWidth ?? ''}><input required value={name} onChange={event => { setName(event.target.value) }} className={css.input} /></Field>
         <Field label="头像（可选，图片）">
           <div className={css.avatarField}>
             {avatar !== '' && <img className={css.avatarPreview} src={avatar} alt="头像预览" />}
@@ -1123,7 +1112,7 @@ function AssistantForm({
               </button>
             ))}
           </div>
-          <span className={css.hint}>PNG/JPEG/WebP，≤256KB；存在头像时优先于 emoji 显示。</span>
+          <span className={css.hint}>PNG/JPEG/WebP，≤256KB；没有头像时显示名称首字母。</span>
         </Field>
         <Field label="说明"><input value={description} onChange={event => { setDescription(event.target.value) }} className={css.input} /></Field>
         <Field label="启用">

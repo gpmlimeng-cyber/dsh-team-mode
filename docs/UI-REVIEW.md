@@ -358,3 +358,16 @@ DSH 全局设置了 `corner-shape: superellipse(1.5)`，所以即使 `border-rad
 - 仍保留原有上传/移除头像逻辑。
 
 截图：`docs/assets/ui-review/assistant-builtin-avatars.png`（待补）。
+
+---
+
+## 二十九、内置全部 20 个 AionUI 助手头像，并移除重复的 emoji 图标
+
+- 助手编辑器的「图标（emoji）」与「头像（图片）」功能重复（头像优先），已删除图标字段、保存参数与卡片标题里的 emoji 前缀；老数据里残留的 icon 不再展示，schema 保留以兼容旧记录。
+- 名称字段改为占满整行，头像与说明并排。
+- 内置头像从 6 个扩展到 AionUI 官方 21 个助手中的人像 20 个（排除表单型 OpenClaw 助手）：
+  学术论文、AionUi 管家、Beautiful Mermaid、Cowork、数据仪表盘、Excel、财务建模、3D 游戏、HUMAN 3.0 教练、moltbook、3D Morph PPT、Morph PPT、OpenClaw 部署专家、路演 PPT、文件规划、PPT 演示、社交招聘、故事角色、UI/UX、Word。
+- 头像从 aioncore 内置资源提取，缩到 160px/JPEG 后以 data URL 打包（模块约 144KB）；选择后写入 `avatar`，与上传共用保存逻辑。
+- 验证：编辑器内 20 个「使用…头像」按钮，标签与官方助手名对应，40px 正圆网格。
+
+截图更新：`docs/assets/ui-review/assistant-builtin-avatars.png`。

@@ -249,9 +249,7 @@ export function TeamMemberSwitcher({
                 <span className={css.memberAddAvatar} aria-hidden="true">
                   {assistant.avatar !== undefined && assistant.avatar !== ''
                     ? <img src={assistant.avatar} alt="" />
-                    : assistant.icon?.trim() !== undefined && assistant.icon.trim() !== ''
-                      ? assistant.icon
-                      : initial(assistant.name)}
+                    : initial(assistant.name)}
                 </span>
                 <span className={css.memberAddName}>{assistant.name}</span>
                 <IconPlusOutlineRegular size={14} className={css.memberAddPlus} />

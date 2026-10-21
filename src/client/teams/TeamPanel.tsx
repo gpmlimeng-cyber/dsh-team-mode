@@ -1528,8 +1528,6 @@ function workspaceName(path: string): string {
 }
 
 function assistantGlyph(assistant: AssistantView): string {
-  const icon = assistant.icon?.trim()
-  if (icon !== undefined && icon !== '' && icon.length <= 4) return icon
   return assistant.name.slice(0, 1).toLocaleUpperCase()
 }
 
