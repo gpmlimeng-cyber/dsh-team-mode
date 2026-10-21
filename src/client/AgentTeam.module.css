@@ -5259,3 +5259,11 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
 .teamParallelMaximize[aria-pressed='true'] {
   color: var(--dsw-alias-label-primary);
 }
+
+/* Keep every parallel pane's composer on the same baseline. Panes with a
+   status row (tokens/steps) are 128px tall; blank panes are 106px, which
+   visually lifts their composer by 22px. Reserve the status-row space so
+   all composers share one horizontal line. */
+[data-team-pane] [data-composer-seat] {
+  min-height: 128px;
+}

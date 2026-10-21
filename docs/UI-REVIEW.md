@@ -96,3 +96,17 @@
 - 标题栏去掉成员身份色的 7% 背景，活动态也不再叠加 hover 背景，只保留 1px 底部分隔线；身份仍由姓名颜色、头像和状态点表达。
 - 验证（Harness）：pane 数 `3 → 1 → 3`；三列标题栏计算背景均为 `rgba(0, 0, 0, 0)`；还原按钮 `aria-pressed=true`。
 - 截图：`docs/assets/ui-review/parallel-maximized.png`、`parallel-transparent-header.png`。
+
+---
+
+## 九、并行底部控制栏横向对齐
+
+问题：无消息的成员 pane 使用原生 hero 布局，composer 被 hero 内容包裹而整体上移；有消息的 pane 则把 composer 钉在底部，且带一条 token/步数状态行，导致同一行三个输入框高低不一。
+
+处理：
+
+1. 团队并行 pane 强制使用 active shell（关闭 hero 变体），让 composer 始终钉在 pane 底部；「对话」页签仍保留原生 hero 与成员提示词。
+2. 在 pane 内为状态行预留空间：`[data-team-pane] [data-composer-seat] { min-height: 128px; }`，使有/无状态行的 pane 共用同一基线。
+3. 对齐验证（Harness）：三个 pane 的 `seatTop=692、seatH=128、cardTop=692、cardBottom=790`，完全一致。
+
+截图：`docs/assets/ui-review/parallel-composer-aligned.png`。
