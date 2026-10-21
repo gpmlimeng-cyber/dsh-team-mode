@@ -300,21 +300,24 @@ export function TeamMemberHeroHint({ sessionId }: { sessionId?: string }): JSX.E
     : leader
       ? ['组织一场辩论赛，让不同助手各持立场', '帮我在团队里加一个擅长 ___ 的成员', '多位专家会诊同一个问题']
       : []
+  const avatar = membership.member.assistantSnapshot.avatar
   return (
     <div className={css.teamMemberHeroHint} role="note">
-      <span className={css.teamMemberHeroAvatar} aria-hidden="true">
-        {membership.member.displayName.trim().slice(0, 1).toLocaleUpperCase() || '?'}
-      </span>
-      <span className={css.teamMemberHeroCopy}>
-        <span className={css.teamMemberHeroName}>
-          {membership.member.displayName}
+      <span className={css.teamMemberHeroHeader}>
+        <span className={css.teamMemberHeroAvatar} aria-hidden="true">
+          {avatar !== undefined && avatar !== ''
+            ? <img src={avatar} alt="" />
+            : membership.member.displayName.trim().slice(0, 1).toLocaleUpperCase() || '?'}
+        </span>
+        <span className={css.teamMemberHeroTitleGroup}>
+          <span className={css.teamMemberHeroName}>{membership.member.displayName}</span>
           <span className={css.teamMemberHeroRole}>{leader ? 'Leader' : '成员'}</span>
         </span>
-        <span className={css.teamMemberHeroLine}>
-          {leader
-            ? '你好，我是 Leader，负责理解你的目标并协调团队。描述你想做的事，我来安排。'
-            : '你好，我是团队成员，我听 Leader 和你的指挥。等待 Leader 分配任务。'}
-        </span>
+      </span>
+      <span className={css.teamMemberHeroLine}>
+        {leader
+          ? '你好，我是 Leader，负责理解你的目标并协调团队。描述你想做的事，我来安排。'
+          : '你好，我是团队成员，我听 Leader 和你的指挥。'}
       </span>
       {suggestions.length > 0 && (
         <div className={css.teamMemberHeroSuggestions}>

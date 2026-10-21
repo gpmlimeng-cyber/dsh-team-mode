@@ -4722,12 +4722,25 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   font-size: 12px;
 }
 
-.teamMemberHeroCopy {
+.teamMemberHeroHeader {
   display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
-  flex-direction: column;
-  gap: 2px;
-  text-align: left;
+}
+
+.teamMemberHeroTitleGroup {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.teamMemberHeroAvatar img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
 }
 
 .teamMemberHeroName {
@@ -5525,9 +5538,13 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   text-align: center;
 }
 
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHeader"] {
+  gap: 12px;
+}
+
 html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroAvatar"] {
-  width: 46px;
-  height: 46px;
+  width: 44px;
+  height: 44px;
   border-radius: 50%;
   background: var(--dsw-alias-bg-module-platform);
   color: var(--dsw-alias-label-primary);
@@ -5535,20 +5552,31 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroAv
   font-weight: 500;
 }
 
-html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroCopy"] {
-  align-items: center;
-  gap: 4px;
-  text-align: center;
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroTitleGroup"] {
+  gap: 8px;
 }
 
 html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroName"] {
   justify-content: center;
-  font-size: 15px;
-  line-height: 22px;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 30px;
+  letter-spacing: 0.01em;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroRole"] {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-state-business-tertiary, var(--dsw-alias-bg-layer-2));
+  color: var(--dsw-alias-state-business-primary, var(--dsw-alias-label-secondary));
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 18px;
 }
 
 html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroLine"] {
-  max-width: 270px;
+  max-width: 280px;
+  margin-top: 2px;
   font-size: 12px;
   line-height: 19px;
 }
