@@ -5907,7 +5907,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   display: grid;
   grid-template-columns: 104px minmax(0, 1fr);
   gap: 12px;
-  align-items: center;
+  align-items: start;
   padding: 8px 0;
   border-top: 1px solid var(--dsw-alias-border-l1);
 }
@@ -5917,6 +5917,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   flex-direction: column;
   gap: 2px;
   min-width: 0;
+  padding-top: 2px;
 }
 
 .avatarStyleMeta strong {

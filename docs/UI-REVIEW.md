@@ -427,3 +427,16 @@ sqlite3 "$HOME/Library/Application Support/@deepseek-ai/dsh-desktop/Cookies" \
 ```
 
 - 验证：清理后应用正常进入工作区，CDP 页面可访问，未再新增 crash-host 日志。
+
+---
+
+## 三十四、头像分类合并为「职业」
+
+- 「AionUI 内置」改名为「职业」，与 DiceBear 各风格并列为同一级分类。
+- 去掉「AionUI 内置」「DiceBear 风格」两个分组标题，弹窗内只剩一行一个分类：
+  `职业`（20 个）、`机器人`、`浮雕`、`黏土`、`小动物`、`凝视`、`情绪`、`点赞`（各 8 个）。
+- 职业行是 8 列网格，20 个头像自然换成 3 行；标签与首行顶部对齐。
+- 打开弹窗时滚动位置重置到顶部，不会停在上一类中间。
+
+实测：8 行分类，数量 `[20,8,8,8,8,8,8,8]`，无分组标题。
+截图更新：`docs/assets/ui-review/assistant-avatar-picker.png`。

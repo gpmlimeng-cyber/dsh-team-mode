@@ -926,6 +926,7 @@ function AssistantForm({
   const [avatar, setAvatar] = useState(assistant?.avatar ?? '')
   const [pickingAvatar, setPickingAvatar] = useState(false)
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false)
+  const avatarScrollRef = useRef<HTMLDivElement>(null)
   const [description, setDescription] = useState(assistant?.description ?? '')
   const [instructions, setInstructions] = useState(assistant?.instructions ?? '')
   const [promptsText, setPromptsText] = useState((assistant?.prompts ?? []).join('\n'))
@@ -1047,6 +1048,14 @@ function AssistantForm({
     }
     reader.readAsDataURL(file)
   }
+
+  useEffect(() => {
+    if (!avatarPickerOpen) return
+    const frame = requestAnimationFrame(() => {
+      avatarScrollRef.current?.scrollTo({ top: 0 })
+    })
+    return () => { cancelAnimationFrame(frame) }
+  }, [avatarPickerOpen])
 
   async function applyGeneratedAvatar(style: string, seed: string): Promise<void> {
     if (pickingAvatar) return
@@ -1312,7 +1321,7 @@ function AssistantForm({
         onClose={() => { setAvatarPickerOpen(false) }}
         title="选择头像"
         closeLabel="关闭"
-        description="从 AionUI 内置头像、DiceBear 风格中选择，或上传本地图片。"
+        description="从职业头像、DiceBear 风格中选择，或上传本地图片。"
         className={css.avatarPickerDialog ?? ''}
         contentClassName={css.avatarPickerDialogContent ?? ''}
       >
@@ -1332,24 +1341,27 @@ function AssistantForm({
           {pickingAvatar && <span className={css.hint}>生成中…</span>}
           {error !== undefined && <span className={css.avatarPickerError}>{error}</span>}
         </div>
-        <div className={css.avatarPickerScroll}>
-          <div className={css.avatarPickerHeading}>AionUI 内置</div>
-          <div className={css.avatarBuiltinGrid}>
-            {BUILTIN_ASSISTANT_AVATARS.map(item => (
-              <button
-                key={item.id}
-                type="button"
-                className={css.avatarBuiltinItem}
-                aria-pressed={avatar === item.data}
-                aria-label={`使用${item.label}头像`}
-                title={item.label}
-                onClick={() => { setAvatar(item.data); setAvatarPickerOpen(false) }}
-              >
-                <img src={item.data} alt="" />
-              </button>
-            ))}
+        <div ref={avatarScrollRef} className={css.avatarPickerScroll}>
+          <div className={css.avatarStyleRow}>
+            <div className={css.avatarStyleMeta}>
+              <strong>职业</strong>
+            </div>
+            <div className={css.avatarStyleGrid}>
+              {BUILTIN_ASSISTANT_AVATARS.map(item => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={css.avatarBuiltinItem}
+                  aria-pressed={avatar === item.data}
+                  aria-label={`使用${item.label}头像`}
+                  title={item.label}
+                  onClick={() => { setAvatar(item.data); setAvatarPickerOpen(false) }}
+                >
+                  <img src={item.data} alt="" />
+                </button>
+              ))}
+            </div>
           </div>
-          <div className={css.avatarPickerHeading}>DiceBear 风格</div>
           {DICEBEAR_STYLES.map(style => (
             <div key={style.id} className={css.avatarStyleRow}>
               <div className={css.avatarStyleMeta}>
