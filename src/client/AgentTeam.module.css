@@ -4790,8 +4790,8 @@ html:has([data-team-parallel-anchor]) [class*="heroOptions"] {
 
 /* Parallel-only AionUi empty guide, anchored to the pane (not the hero
    options row) and leaving the official composer at the bottom. */
-html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
-  display: none !important;
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHint"] {
+  display: flex !important;
 }
 
 
@@ -5492,4 +5492,116 @@ html:has([data-team-parallel-anchor]) [class*="teamMemberHeroHint"] {
 
 [data-team-pane] [class*="composerHero"] [data-slot="conversation.compose"] {
   margin-top: auto;
+}
+
+
+/* Parallel init screen: each blank member pane introduces itself like AionUi.
+   The host brand/workspace rows are hidden so the member identity is the hero. */
+html:has([data-team-parallel-anchor]) [data-team-pane] [data-slot^="conversation.hero.brand"],
+html:has([data-team-parallel-anchor]) [data-team-pane] [data-slot="conversation.hero.workspace"],
+html:has([data-team-parallel-anchor]) [data-team-pane] [data-slot="conversation.hero.agentPreset"] {
+  display: none !important;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="heroOptions"] {
+  flex: 1 1 auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100% !important;
+  min-height: 0;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHint"] {
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: min(100%, 320px);
+  margin: 0 auto;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  text-align: center;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroAvatar"] {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-primary);
+  font-size: 18px;
+  font-weight: 500;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroCopy"] {
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroName"] {
+  justify-content: center;
+  font-size: 15px;
+  line-height: 22px;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroLine"] {
+  max-width: 270px;
+  font-size: 12px;
+  line-height: 19px;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroSuggestions"] {
+  display: flex !important;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroSuggestion"] {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: left;
+}
+
+/* Equal input heights: the hero placeholder wraps to two lines and is 16px
+   taller than the active composer; reserve the same input scroll height so
+   every composer card shares one top and bottom edge. */
+[data-team-pane] [data-composer-card] [class*="scroll"] {
+  min-height: 52px;
+}
+
+/* The native hero brand block and workspace chip would compete with the member
+   identity, so hide them inside team panes and let the identity fill the hero. */
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="composerHero"] > [class*="_root"] {
+  display: none !important;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="heroWorkspaceRow"] {
+  width: 100% !important;
+  flex: 1 1 auto !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="heroWorkspaceRow"] > button {
+  display: none !important;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="heroOptions"] {
+  width: 100% !important;
+}
+
+html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHint"] {
+  width: 100%;
+  max-width: min(100%, 300px);
 }

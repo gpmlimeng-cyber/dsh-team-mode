@@ -204,3 +204,16 @@
 - 「对话」页签不受影响；成员提示卡继续在并行视图隐藏（原设计），避免与品牌 hero 重复。
 
 截图：`docs/assets/ui-review/parallel-hero-init.png`。
+
+---
+
+## 十七、并行初始化界面改为成员身份（参考 AionUI）
+
+空白成员 pane 不再显示 DSH 品牌 hero，而是由每位成员“报身份”：
+
+- 隐藏原生 `composerHero` 里的品牌块与工作区行，只保留输入框。
+- 复用 `conversation.hero.options` 的成员提示卡并改成居中竖排：46px 圆形头像、成员名 + Leader/成员角色、成员问候语；有配置提示词时显示建议卡片（Leader 默认三条）。
+- 身份区在 pane 内垂直居中，composer 仍钉在底部。
+- 统一输入区高度：`[data-composer-card] [class*="scroll"] { min-height: 52px }`，三列输入框实测顶部 `676 / 674 / 676`、底部 `790 / 788 / 790`，视觉对齐。
+
+截图更新：`docs/assets/ui-review/parallel-hero-init.png`。
