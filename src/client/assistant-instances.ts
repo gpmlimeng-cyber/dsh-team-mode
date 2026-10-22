@@ -19,7 +19,7 @@ export interface AssistantRowActivity {
 const ASSISTANT_TASK_STATUS_LABELS: Record<AssistantSession['status'], string> = {
   queued: '排队中',
   running: '运行中',
-  needs_input: '待确认',
+  needs_input: '待你处理',
   completed: '已完成',
   failed: '失败',
   cancelled: '已取消',
@@ -129,16 +129,18 @@ export function assistantRowActivity(
 
 /** Compact second-line preview for an Assistant row. */
 export function assistantRowStatusText(activity: AssistantRowActivity): string {
-  if (activity.status === 'needs_input') return '待确认'
-  if (activity.status === 'running') return `${activity.count} 个任务运行中`
-  if (activity.status === 'queued') return `${activity.count} 个任务排队中`
+  if (activity.status === 'needs_input') return '待你处理'
+  if (activity.status === 'running') return '思考中'
+  if (activity.status === 'queued') return '排队中'
   return '空闲'
 }
 
 /** Accessible title for the Assistant status dot; the preview omits counts. */
 export function assistantRowStatusTitle(activity: AssistantRowActivity): string {
-  if (activity.status === 'needs_input') return `${activity.count} 个任务待确认`
-  return assistantRowStatusText(activity)
+  if (activity.status === 'needs_input') return `${activity.count} 个任务待你处理`
+  if (activity.status === 'running') return `${activity.count} 个任务正在思考`
+  if (activity.status === 'queued') return `${activity.count} 个任务排队中`
+  return '空闲'
 }
 
 /** Human label for one worker task status. */

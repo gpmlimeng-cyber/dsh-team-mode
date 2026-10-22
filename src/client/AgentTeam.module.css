@@ -3648,6 +3648,7 @@ textarea.input {
 
 .sidebarAssistantStatusWaiting {
   color: var(--dsw-alias-state-warn-primary);
+  font-weight: 500;
 }
 
 .sidebarAssistantStatusRunning {
@@ -7320,4 +7321,65 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   height: auto !important;
   max-height: none !important;
   overflow: visible !important;
+}
+
+
+.sidebarAssistantWaitingBadge {
+  right: -2px;
+  bottom: -2px;
+  display: inline-flex;
+  width: 12px;
+  height: 12px;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-primary);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.assistantWorkingDots {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 4px;
+}
+
+.assistantWorkingDots > span {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: assistantWorkingPulse 1.1s ease-in-out infinite;
+}
+
+.assistantWorkingDots > span:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.assistantWorkingDots > span:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@keyframes assistantWorkingPulse {
+  0%, 70%, 100% { opacity: 0.35; transform: translateY(0); }
+  35% { opacity: 1; transform: translateY(-1px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .assistantWorkingDots > span {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+.sidebarAssistantSummary {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

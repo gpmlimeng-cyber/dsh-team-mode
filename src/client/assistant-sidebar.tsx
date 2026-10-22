@@ -61,6 +61,17 @@ function writeAssistantExpanded(expanded: boolean): void {
   }
 }
 
+/** Three tiny dots used while an Assistant is thinking, not a static count. */
+function AssistantWorkingDots(): JSX.Element {
+  return (
+    <span className={css.assistantWorkingDots} aria-hidden="true">
+      <span />
+      <span />
+      <span />
+    </span>
+  )
+}
+
 /** Status pill styling for the inline task threads. */
 function taskStatusClass(status: AssistantSession['status']): string {
   if (status === 'needs_input') return css.assistantTaskStatusWaiting ?? ''
@@ -124,6 +135,17 @@ export function AssistantSidebarSection({
     () => visibleAssistantInstances(instances, query),
     [instances, query],
   )
+
+  const attentionSummary = useMemo(() => {
+    let waiting = 0
+    let working = 0
+    for (const instance of visible) {
+      const activity = assistantRowActivity(tasks, instance)
+      if (activity.status === 'needs_input') waiting += 1
+      else if (activity.status === 'running') working += 1
+    }
+    return { waiting, working }
+  }, [tasks, visible])
 
   const taskAssistant = useMemo(
     () => (taskAssistantId === undefined
@@ -264,6 +286,18 @@ export function AssistantSidebarSection({
                   className={`${css.sidebarTeamChevron} ${expanded ? css.sidebarTeamChevronOpen : ''}`}
                 />
               </button>
+              {(attentionSummary.waiting > 0 || attentionSummary.working > 0) && (
+                <span
+                  className={css.sidebarAssistantSummary}
+                  aria-live="polite"
+                  aria-label={`${attentionSummary.waiting} 个助手待你处理，${attentionSummary.working} 个正在思考`}
+                  title={`${attentionSummary.waiting} 个助手待你处理，${attentionSummary.working} 个正在思考`}
+                >
+                  {attentionSummary.waiting > 0 && `${attentionSummary.waiting} 待处理`}
+                  {attentionSummary.waiting > 0 && attentionSummary.working > 0 && ' · '}
+                  {attentionSummary.working > 0 && `${attentionSummary.working} 思考中`}
+                </span>
+              )}
               <div className={css.sidebarTeamSearchSlot}>
                 <Tooltip label="搜索助手" delayMs={400}>
                   <button
@@ -357,10 +391,13 @@ export function AssistantSidebarSection({
                 const statusTitle = assistantRowStatusTitle(activity)
                 const previewText = instance.preview?.text.trim() ?? ''
                 const hasPreview = previewText !== ''
-                const secondLine = hasPreview ? previewText : statusText
-                const secondLineTitle = hasPreview
-                  ? `${instance.preview?.role === 'user' ? '你' : '助手'}：${previewText}`
-                  : statusTitle
+                const activeStatus = activity.status !== 'none'
+                const secondLine = activeStatus ? statusText : hasPreview ? previewText : statusText
+                const secondLineTitle = activeStatus
+                  ? statusTitle
+                  : hasPreview
+                    ? `${instance.preview?.role === 'user' ? '你' : '助手'}：${previewText}`
+                    : statusTitle
                 const dotClass = activity.status === 'needs_input'
                   ? css.sidebarAssistantDotWaiting
                   : activity.status === 'running'
@@ -414,9 +451,20 @@ export function AssistantSidebarSection({
                       <button
                         type="button"
                         className={`${css.sidebarTeamRow} ${css.sidebarAssistantRow}`}
-                        onClick={() => { void openAssistant(instance) }}
+                        onClick={() => {
+                          if (activity.status === 'needs_input') {
+                            const pendingTask = assistantThreadTasks(tasks, instance)
+                              .find(task => task.status === 'needs_input')
+                            if (pendingTask !== undefined) {
+                              selectAssistant(instance.id)
+                              void openThreadTask(instance, pendingTask)
+                              return
+                            }
+                          }
+                          void openAssistant(instance)
+                        }}
                         disabled={opening}
-                        aria-busy={opening}
+                        aria-busy={opening || activity.status === 'running' ? true : undefined}
                         aria-current={active ? 'page' : undefined}
                         title={`${name} · ${secondLine} · ${instance.assistantSnapshot.model}`}
                       >
@@ -429,12 +477,14 @@ export function AssistantSidebarSection({
                           />
                           {activity.status !== 'none' && (
                             <span
-                              className={`${css.sidebarAssistantDot} ${dotClass}`}
+                              className={`${css.sidebarAssistantDot} ${dotClass} ${activity.status === 'needs_input' ? css.sidebarAssistantWaitingBadge : ''}`}
                               data-dsh-assistant-status={activity.status}
                               title={statusTitle}
                               aria-label={statusTitle}
                               role="img"
-                            />
+                            >
+                              {activity.status === 'needs_input' && <span aria-hidden="true">!</span>}
+                            </span>
                           )}
                         </span>
                         <span className={`${css.sidebarTeamCopy} ${css.sidebarAssistantCopy}`}>
@@ -459,10 +509,13 @@ export function AssistantSidebarSection({
                             </span>
                           </span>
                           <span
-                            className={`${css.sidebarAssistantStatus} ${hasPreview ? css.sidebarAssistantPreview : statusClass}`}
+                            className={`${css.sidebarAssistantStatus} ${activeStatus ? statusClass : css.sidebarAssistantPreview}`}
                             title={secondLineTitle}
                             data-dsh-assistant-status-text={activity.status}
+                            role={activity.status === 'needs_input' || activity.status === 'running' ? 'status' : undefined}
+                            aria-label={activity.status === 'needs_input' || activity.status === 'running' ? statusTitle : undefined}
                           >
+                            {activity.status === 'running' && <AssistantWorkingDots />}
                             {secondLine}
                           </span>
                         </span>

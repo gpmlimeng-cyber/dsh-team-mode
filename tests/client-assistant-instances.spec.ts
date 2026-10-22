@@ -128,15 +128,15 @@ describe('assistantRowActivity', () => {
 
 describe('assistantRow status labels', () => {
   it('renders a compact second-line preview for every status', () => {
-    expect(assistantRowStatusText({ status: 'needs_input', count: 2 })).toBe('待确认')
-    expect(assistantRowStatusText({ status: 'running', count: 2 })).toBe('2 个任务运行中')
-    expect(assistantRowStatusText({ status: 'queued', count: 3 })).toBe('3 个任务排队中')
+    expect(assistantRowStatusText({ status: 'needs_input', count: 2 })).toBe('待你处理')
+    expect(assistantRowStatusText({ status: 'running', count: 2 })).toBe('思考中')
+    expect(assistantRowStatusText({ status: 'queued', count: 3 })).toBe('排队中')
     expect(assistantRowStatusText({ status: 'none', count: 0 })).toBe('空闲')
   })
 
   it('spells out the pending count for the status dot title', () => {
-    expect(assistantRowStatusTitle({ status: 'needs_input', count: 2 })).toBe('2 个任务待确认')
-    expect(assistantRowStatusTitle({ status: 'running', count: 2 })).toBe('2 个任务运行中')
+    expect(assistantRowStatusTitle({ status: 'needs_input', count: 2 })).toBe('2 个任务待你处理')
+    expect(assistantRowStatusTitle({ status: 'running', count: 2 })).toBe('2 个任务正在思考')
     expect(assistantRowStatusTitle({ status: 'queued', count: 1 })).toBe('1 个任务排队中')
     expect(assistantRowStatusTitle({ status: 'none', count: 0 })).toBe('空闲')
   })
@@ -146,7 +146,7 @@ describe('assistantTaskStatusLabel', () => {
   it.each([
     ['queued', '排队中'],
     ['running', '运行中'],
-    ['needs_input', '待确认'],
+    ['needs_input', '待你处理'],
     ['completed', '已完成'],
     ['failed', '失败'],
     ['cancelled', '已取消'],
