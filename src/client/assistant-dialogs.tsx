@@ -367,13 +367,18 @@ export function AssistantCreateDialog({
                     }}
                   />
                 </label>
-                <span
-                  className={`${css.assistantCreateAvatarName}${name.trim() === ''
-                    ? ` ${css.assistantCreateAvatarPlaceholder}`
-                    : ''}`}
-                >
-                  {name.trim() || '新助手'}
-                </span>
+                <input
+                  className={`${css.input} ${css.assistantCreateNameInput}`}
+                  value={name}
+                  disabled={busy}
+                  data-modal-autofocus
+                  placeholder="输入名称"
+                  aria-label="助手名称"
+                  onChange={event => {
+                    setName(event.target.value)
+                    setError(undefined)
+                  }}
+                />
               </div>
 
               <section className={css.assistantCreateAvatarCard} aria-label="形象">
@@ -389,20 +394,6 @@ export function AssistantCreateDialog({
                   }}
                 />
               </section>
-
-              <Field label="名称">
-                <input
-                  className={css.input}
-                  value={name}
-                  disabled={busy}
-                  data-modal-autofocus
-                  placeholder="例如：写作助手"
-                  onChange={event => {
-                    setName(event.target.value)
-                    setError(undefined)
-                  }}
-                />
-              </Field>
 
               <div className={css.assistantModelRow}>
               <Field label="模型" className={css.assistantModelField ?? ''}>

@@ -3918,13 +3918,11 @@ textarea.input {
   font-size: 12px;
 }
 
-.assistantCreateAvatarName {
+.assistantCreateNameInput {
+  width: 180px;
   max-width: 100%;
-  overflow-wrap: anywhere;
-  color: var(--dsw-alias-label-primary);
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 22px;
+  height: 32px;
+  padding: 0 12px;
   text-align: center;
 }
 
