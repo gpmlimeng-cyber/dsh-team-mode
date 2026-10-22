@@ -597,6 +597,17 @@ export function SidebarPortal({
         || (candidate.textContent ?? '').trim() === '插件广场'
       ))
       trigger?.click()
+      // On phones the sidebar is a drawer with its own backdrop above the
+      // Plaza. Leave that backdrop open and the next tap closes the whole
+      // drawer instead of only the Plaza. Collapse the drawer once Plaza has
+      // opened; desktop keeps its sidebar because it has no mobile backdrop.
+      if (document.querySelector('[data-mobile-nav="backdrop"]') !== null) {
+        const collapse = document.querySelector<HTMLButtonElement>(
+          'button[aria-label="Collapse sidebar"], button[aria-label="Close sidebar"], '
+          + 'button[aria-label="收起侧栏"], button[aria-label="关闭侧栏"]',
+        )
+        collapse?.click()
+      }
     }
 
     const ensure = (): void => {
