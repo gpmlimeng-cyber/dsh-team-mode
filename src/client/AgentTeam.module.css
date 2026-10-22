@@ -7383,3 +7383,92 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.sidebarAssistantUnread {
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-business-primary);
+}
+
+.sidebarAssistantAttention {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 2px 8px 4px;
+  padding: 3px 0 5px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.sidebarAssistantAttentionTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 3px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.sidebarAssistantAttentionCount {
+  color: var(--dsw-alias-state-warn-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebarAssistantAttentionRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 5px 4px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebarAssistantAttentionRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sidebarAssistantAttentionBadge {
+  display: inline-flex;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--dsw-alias-state-warn-primary);
+  color: var(--dsw-alias-label-primary);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.sidebarAssistantAttentionCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.sidebarAssistantAttentionTask {
+  overflow: hidden;
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarAssistantAttentionMeta {
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

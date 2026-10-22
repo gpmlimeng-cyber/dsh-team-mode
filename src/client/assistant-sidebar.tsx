@@ -22,6 +22,12 @@ import {
   useAssistantDisplayMode,
 } from './assistant-display-mode.js'
 import { AssistantSettingsDialog } from './assistant-settings-dialog.js'
+import {
+  assistantReadState,
+  isAssistantUnread,
+  markAssistantRead,
+  markAssistantUnread,
+} from './assistant-read-state.js'
 import { AssistantTaskDialog } from './assistant-task-dialog.js'
 import {
   assistantAvatarSource,
@@ -91,6 +97,7 @@ export function AssistantSidebarSection({
 }): JSX.Element {
   const { selectedAssistantId } = useAgentTeamUi()
   const [instances, setInstances] = useState<AssistantInstanceView[]>([])
+  const [readState, setReadState] = useState(assistantReadState)
   const [tasks, setTasks] = useState<AssistantSession[]>([])
   const mode = useAssistantDisplayMode()
   const [expanded, setExpanded] = useState(readAssistantExpanded)
@@ -136,16 +143,34 @@ export function AssistantSidebarSection({
     [instances, query],
   )
 
+  const attentionItems = useMemo(
+    () => visible.flatMap(instance => assistantThreadTasks(tasks, instance)
+      .filter(task => task.status === 'needs_input')
+      .map(task => ({ instance, task }))),
+    [tasks, visible],
+  )
+
   const attentionSummary = useMemo(() => {
     let waiting = 0
     let working = 0
+    let queued = 0
+    let unread = 0
     for (const instance of visible) {
       const activity = assistantRowActivity(tasks, instance)
       if (activity.status === 'needs_input') waiting += 1
       else if (activity.status === 'running') working += 1
+      else if (activity.status === 'queued') queued += 1
+      if (isAssistantUnread(instance, readState)) unread += 1
     }
-    return { waiting, working }
-  }, [tasks, visible])
+    return { waiting, working, queued, unread }
+  }, [tasks, visible, readState])
+
+  const summaryText = [
+    attentionSummary.waiting > 0 ? `${attentionSummary.waiting} 待处理` : '',
+    attentionSummary.working > 0 ? `${attentionSummary.working} 思考中` : '',
+    attentionSummary.queued > 0 ? `${attentionSummary.queued} 排队` : '',
+    attentionSummary.unread > 0 ? `${attentionSummary.unread} 未读` : '',
+  ].filter(Boolean).join(' · ')
 
   const taskAssistant = useMemo(
     () => (taskAssistantId === undefined
@@ -182,6 +207,7 @@ export function AssistantSidebarSection({
   async function openAssistant(instance: AssistantInstance): Promise<void> {
     if (openingId !== undefined) return
     selectAssistant(instance.id)
+    setReadState(markAssistantRead(instance.id))
     setOpeningId(instance.id)
     setError(undefined)
     try {
@@ -219,6 +245,7 @@ export function AssistantSidebarSection({
     task: AssistantSession,
   ): Promise<void> {
     if (openingTaskId !== undefined) return
+    setReadState(markAssistantRead(instance.id))
     setOpeningTaskId(task.id)
     setThreadError(undefined)
     try {
@@ -286,16 +313,14 @@ export function AssistantSidebarSection({
                   className={`${css.sidebarTeamChevron} ${expanded ? css.sidebarTeamChevronOpen : ''}`}
                 />
               </button>
-              {(attentionSummary.waiting > 0 || attentionSummary.working > 0) && (
+              {summaryText !== '' && (
                 <span
                   className={css.sidebarAssistantSummary}
                   aria-live="polite"
-                  aria-label={`${attentionSummary.waiting} 个助手待你处理，${attentionSummary.working} 个正在思考`}
-                  title={`${attentionSummary.waiting} 个助手待你处理，${attentionSummary.working} 个正在思考`}
+                  aria-label={summaryText}
+                  title={summaryText}
                 >
-                  {attentionSummary.waiting > 0 && `${attentionSummary.waiting} 待处理`}
-                  {attentionSummary.waiting > 0 && attentionSummary.working > 0 && ' · '}
-                  {attentionSummary.working > 0 && `${attentionSummary.working} 思考中`}
+                  {summaryText}
                 </span>
               )}
               <div className={css.sidebarTeamSearchSlot}>
@@ -359,6 +384,36 @@ export function AssistantSidebarSection({
             </>
             )}
       </div>
+      {expanded && attentionItems.length > 0 && (
+        <div
+          className={css.sidebarAssistantAttention}
+          role="region"
+          aria-label="待你处理的助手任务"
+          data-dsh-assistant-attention
+        >
+          <div className={css.sidebarAssistantAttentionTitle}>
+            <span>待你处理</span>
+            <span className={css.sidebarAssistantAttentionCount}>{attentionItems.length}</span>
+          </div>
+          {attentionItems.map(({ instance, task }) => (
+            <button
+              key={task.id}
+              type="button"
+              className={css.sidebarAssistantAttentionRow}
+              onClick={() => { void openThreadTask(instance, task) }}
+              title={`${task.title} · ${assistantInstanceName(instance)} · 待你处理`}
+            >
+              <span className={css.sidebarAssistantAttentionBadge} aria-hidden="true">!</span>
+              <span className={css.sidebarAssistantAttentionCopy}>
+                <span className={css.sidebarAssistantAttentionTask}>{task.title}</span>
+                <span className={css.sidebarAssistantAttentionMeta}>
+                  {assistantInstanceName(instance)} · 待你处理
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
       {expanded && (
         <div id="dsh-team-mode-assistant-list" className={css.sidebarTeamList}>
           {message !== undefined && <div className={css.sidebarTeamError} role="alert">{message}</div>}
@@ -392,6 +447,7 @@ export function AssistantSidebarSection({
                 const previewText = instance.preview?.text.trim() ?? ''
                 const hasPreview = previewText !== ''
                 const activeStatus = activity.status !== 'none'
+                const unread = isAssistantUnread(instance, readState)
                 const secondLine = activeStatus ? statusText : hasPreview ? previewText : statusText
                 const secondLineTitle = activeStatus
                   ? statusTitle
@@ -500,6 +556,14 @@ export function AssistantSidebarSection({
                                 <IconPinFillRegular size={11} />
                               </span>
                             )}
+                            {unread && (
+                              <span
+                                className={css.sidebarAssistantUnread}
+                                title="未读消息"
+                                aria-label="未读消息"
+                                role="img"
+                              />
+                            )}
                             <span className={css.sidebarTeamTime}>
                               {opening
                                 ? '打开中'
@@ -544,12 +608,17 @@ export function AssistantSidebarSection({
                         items={[
                           { id: 'settings', label: '助手设置', icon: <IconEditOutlineRegular size={14} /> },
                           { id: 'tasks', label: '查看任务', icon: <IconChecklistOutlineRegular size={14} /> },
+                          unread
+                            ? { id: 'mark-read', label: '标记已读', icon: <IconChecklistOutlineRegular size={14} /> }
+                            : { id: 'mark-unread', label: '标记未读', icon: <IconChecklistOutlineRegular size={14} /> },
                           { id: 'open-main', label: '打开主会话', icon: <IconNewChatOutlineRegular size={14} /> },
                         ]}
                         onSelect={id => {
                           setMenuOpenId(undefined)
                           if (id === 'settings') openSettings(instance)
                           else if (id === 'tasks') openTasks(instance)
+                          else if (id === 'mark-read') setReadState(markAssistantRead(instance.id))
+                          else if (id === 'mark-unread') setReadState(markAssistantUnread(instance.id))
                           else if (id === 'open-main') void openAssistant(instance)
                         }}
                         anchor={(
