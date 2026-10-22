@@ -7,9 +7,11 @@ import type {
   TeamTask,
 } from '../src/domain/types.js'
 import { AgentTeamError } from '../src/domain/errors.js'
+import { teamMessageSchema } from '../src/domain/schemas.js'
 import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import {
   TeamCommandHandler,
+  type ClaimTaskResult,
   type TeamCommandPort,
 } from '../src/runtime/team-command-handler.js'
 
@@ -190,6 +192,7 @@ function harness() {
   const commands = new TeamCommandHandler(service, port)
   return {
     commands,
+    port,
     service,
     team: () => team,
     otherTeam: () => other,
@@ -583,6 +586,316 @@ describe('TeamCommandHandler AionUi semantics', () => {
     })
   })
 
+  it('lets a member claim a ready unowned task and fences the claim with a fresh attempt', async () => {
+    const { commands, team } = harness()
+    const created = await commands.createTask(team().id, 'leader', { subject: 'Ready work' })
+    expect(team().tasks[created.taskId]).toMatchObject({ status: 'pending', dependencyIds: [] })
+    expect(team().tasks[created.taskId]?.ownerSlotId).toBeUndefined()
+
+    const claimed = await commands.claimTask(team().id, 'b', { task_id: created.taskId })
+    expect(claimed).toMatchObject({ taskId: created.taskId, status: 'assigned', owner: 'b' })
+    expect(claimed.attemptId).toBeTypeOf('string')
+    const claimAttempt = claimed.attemptId!
+    expect(team().tasks[created.taskId]).toMatchObject({
+      status: 'assigned',
+      ownerSlotId: 'b',
+      attemptId: claimed.attemptId,
+      revision: 2,
+    })
+    expect(commands.listTasks(team().id).find(task => task.task_id === created.taskId))
+      .toMatchObject({ owner: 'b', attempt_id: claimed.attemptId })
+
+    // The claim token is the fence for every later member update.
+    await expect(commands.updateTask(team().id, 'b', {
+      taskId: created.taskId,
+      status: 'in_progress',
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      details: { taskId: created.taskId, attemptId: claimed.attemptId },
+    })
+    await commands.updateTask(team().id, 'b', {
+      taskId: created.taskId,
+      status: 'in_progress',
+      attempt_id: claimAttempt,
+    })
+    expect(team().tasks[created.taskId]?.status).toBe('running')
+
+    // A Leader takeover mints its own attempt; the claim token stops working.
+    const takeover = await commands.updateTask(team().id, 'leader', {
+      taskId: created.taskId,
+      status: 'pending',
+      owner: 'a',
+    })
+    expect(takeover.attemptId).toBeTypeOf('string')
+    expect(takeover.attemptId).not.toBe(claimed.attemptId)
+    await expect(commands.updateTask(team().id, 'b', {
+      taskId: created.taskId,
+      status: 'in_progress',
+      attempt_id: claimAttempt,
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(team().tasks[created.taskId]).toMatchObject({
+      ownerSlotId: 'a',
+      attemptId: takeover.attemptId,
+    })
+  })
+
+  it('awards exactly one concurrent claim and returns the winner owner and attempt to the loser', async () => {
+    const { commands, team } = harness()
+    const created = await commands.createTask(team().id, 'leader', { subject: 'Contested' })
+
+    const settled = await Promise.allSettled([
+      commands.claimTask(team().id, 'a', { task_id: created.taskId }),
+      commands.claimTask(team().id, 'b', { task_id: created.taskId }),
+    ])
+    const winners = settled.filter(
+      (entry): entry is PromiseFulfilledResult<ClaimTaskResult> => entry.status === 'fulfilled',
+    )
+    const losers = settled.filter(
+      (entry): entry is PromiseRejectedResult => entry.status === 'rejected',
+    )
+    expect(winners).toHaveLength(1)
+    expect(losers).toHaveLength(1)
+    const winner = winners[0]!.value
+    const winningAttempt = winner.attemptId!
+    expect(winner.owner).toBe('a')
+    expect(losers[0]!.reason).toMatchObject({
+      code: 'INVALID_REQUEST',
+      details: {
+        taskId: created.taskId,
+        owner: winner.owner,
+        attemptId: winner.attemptId,
+      },
+    })
+    expect(team().tasks[created.taskId]).toMatchObject({
+      ownerSlotId: winner.owner,
+      attemptId: winner.attemptId,
+      revision: 2,
+    })
+
+    // The losing member's inferred token is not usable; only the winner's is.
+    await expect(commands.updateTask(team().id, 'b', {
+      taskId: created.taskId,
+      status: 'in_progress',
+      attempt_id: winningAttempt,
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await commands.updateTask(team().id, 'a', {
+      taskId: created.taskId,
+      status: 'in_progress',
+      attempt_id: winningAttempt,
+    })
+  })
+
+  it('rejects claims for owned, blocked, running and terminal tasks without mutating the board', async () => {
+    const { commands, team } = harness()
+    const owned = await commands.createTask(team().id, 'leader', { subject: 'Owned', owner: 'a' })
+    const ownedAttempt = team().tasks[owned.taskId]?.attemptId
+    await expect(commands.claimTask(team().id, 'b', { task_id: owned.taskId }))
+      .rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+        details: {
+          taskId: owned.taskId,
+          owner: 'a',
+          attemptId: ownedAttempt,
+          status: 'assigned',
+        },
+      })
+
+    const dependency = await commands.createTask(team().id, 'leader', { subject: 'First' })
+    const blocked = await commands.createTask(team().id, 'leader', {
+      subject: 'Blocked',
+      blocked_by: [dependency.taskId],
+    })
+    expect(team().tasks[blocked.taskId]).toMatchObject({
+      status: 'pending',
+      dependencyIds: [dependency.taskId],
+    })
+    await expect(commands.claimTask(team().id, 'a', { task_id: blocked.taskId }))
+      .rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+        details: { taskId: blocked.taskId, status: 'pending', blocked_by: [dependency.taskId] },
+      })
+
+    const completed = await commands.createTask(team().id, 'leader', { subject: 'Done' })
+    await commands.updateTask(team().id, 'leader', { taskId: completed.taskId, status: 'completed' })
+    await expect(commands.claimTask(team().id, 'a', { task_id: completed.taskId }))
+      .rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+        details: { taskId: completed.taskId, status: 'completed' },
+      })
+
+    const cancelled = await commands.createTask(team().id, 'leader', { subject: 'Dropped' })
+    await commands.updateTask(team().id, 'leader', { taskId: cancelled.taskId, status: 'cancelled' })
+    await expect(commands.claimTask(team().id, 'a', { task_id: cancelled.taskId }))
+      .rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+        details: { taskId: cancelled.taskId, status: 'cancelled' },
+      })
+
+    const running = await commands.createTask(team().id, 'leader', { subject: 'Busy' })
+    await commands.updateTask(team().id, 'leader', { taskId: running.taskId, status: 'running' })
+    await expect(commands.claimTask(team().id, 'a', { task_id: running.taskId }))
+      .rejects.toMatchObject({
+        code: 'INVALID_REQUEST',
+        details: { taskId: running.taskId, status: 'running' },
+      })
+
+    await expect(commands.claimTask(team().id, 'a', { task_id: 'missing-task' }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST', details: { taskId: 'missing-task' } })
+    await expect(commands.claimTask(team().id, 'a', { task_id: '   ' }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    // Every rejection left the blocked task exactly as the Leader created it.
+    expect(team().tasks[blocked.taskId]).toMatchObject({ status: 'pending', revision: 1 })
+    expect(team().tasks[blocked.taskId]?.ownerSlotId).toBeUndefined()
+    expect(team().tasks[blocked.taskId]?.attemptId).toBeUndefined()
+  })
+
+  it('keeps claims inside the team and treats a re-claim by the owner as a read', async () => {
+    const { commands, team } = harness()
+    const created = await commands.createTask(team().id, 'leader', { subject: 'Isolated' })
+    const other = await commands.createTask('team-2', 'leader-2', { subject: 'Other team work' })
+
+    // Another team's member cannot address this board at all.
+    await expect(commands.claimTask(team().id, 'a2', { task_id: created.taskId }))
+      .rejects.toMatchObject({ code: 'MEMBER_NOT_FOUND' })
+    // A task id from another board is unknown in this team.
+    await expect(commands.claimTask(team().id, 'a', { task_id: other.taskId }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST', details: { taskId: other.taskId } })
+
+    const claimed = await commands.claimTask(team().id, 'a', { task_id: created.taskId })
+    const again = await commands.claimTask(team().id, 'a', { task_id: created.taskId })
+    expect(again).toEqual(claimed)
+    // A re-claim is informational: it neither rotates the fence nor rewrites.
+    expect(team().tasks[created.taskId]).toMatchObject({
+      ownerSlotId: 'a',
+      attemptId: claimed.attemptId,
+      revision: 2,
+    })
+  })
+
+  it('projects a read-only inbox of assigned tasks, ready work, unread mail and approvals', async () => {
+    const { commands, team, messages, port } = harness()
+    const mine = await commands.createTask(team().id, 'leader', { subject: 'Mine', owner: 'a' })
+    const mineAttempt = team().tasks[mine.taskId]!.attemptId!
+    await commands.updateTask(team().id, 'a', {
+      taskId: mine.taskId,
+      status: 'in_progress',
+      attempt_id: mineAttempt,
+    })
+    await commands.createTask(team().id, 'leader', { subject: 'Someone else', owner: 'b' })
+    const ready = await commands.createTask(team().id, 'leader', { subject: 'Ready work' })
+    const dependency = await commands.createTask(team().id, 'leader', { subject: 'Dependency' })
+    await commands.createTask(team().id, 'leader', {
+      subject: 'Ready but blocked',
+      blocked_by: [dependency.taskId],
+    })
+    // Dispatch mails from the task setup above would otherwise mix into a's
+    // unread section; this test owns the message log from here.
+    messages.length = 0
+    await commands.sendMessage(team().id, 'leader', { to: 'a', message: 'first mail' })
+    await commands.sendMessage(team().id, 'leader', { to: 'a', message: 'second mail' })
+    await commands.sendMessage(team().id, 'leader', { to: 'b', message: 'not for a' })
+    ;(port as { pendingInteractions?: TeamCommandPort['pendingInteractions'] }).pendingInteractions = () => [
+      { id: 'i1', kind: 'approval', approvalId: 'ap-1', toolName: 'bash', reason: 'needs review' },
+      { id: 'q1', kind: 'question', questions: [] },
+    ]
+
+    const inbox = commands.inbox(team().id, 'a')
+
+    expect(inbox.assigned.map(task => task.task_id)).toEqual([mine.taskId])
+    expect(inbox.assigned[0]).toMatchObject({ owner: 'a', raw_status: 'running' })
+    // The dependency itself is ready; the task blocked by it is not. Created in
+    // one millisecond, so only membership is deterministic here.
+    expect(inbox.ready.map(task => task.task_id).sort())
+      .toEqual([ready.taskId, dependency.taskId].sort())
+    // Both sends can share one millisecond timestamp, so order is only stable
+    // within a timestamp; assert membership, not clock order.
+    expect(inbox.unread.map(message => message.message).sort()).toEqual(['first mail', 'second mail'])
+    // Only approvals are surfaced; a pending question stays in the workbench.
+    expect(inbox.approvals).toEqual([
+      { id: 'i1', kind: 'approval', approvalId: 'ap-1', toolName: 'bash', reason: 'needs review' },
+    ])
+    expect(inbox.remaining_unread).toBe(0)
+
+    // Read-only: the projection must not consume the mail it shows.
+    const stored = messages.filter(message => message.recipient.slotId === 'a')
+    expect(stored).toHaveLength(2)
+    for (const message of stored) {
+      expect(message.deliveryState).toBe('delivered')
+      expect(message.readBy).toEqual([])
+    }
+    expect(commands.inbox(team().id, 'a').unread).toHaveLength(2)
+  })
+
+  it('caps the inbox at 20 per section and 50 rows total in fill order', async () => {
+    const { commands, team, messages, port } = harness()
+    for (let index = 0; index < 25; index += 1) {
+      await commands.createTask(team().id, 'leader', { subject: `Mine ${index}`, owner: 'a' })
+    }
+    for (let index = 0; index < 18; index += 1) {
+      await commands.createTask(team().id, 'leader', { subject: `Ready ${index}` })
+    }
+    messages.length = 0
+    for (let index = 0; index < 18; index += 1) {
+      await commands.sendMessage(team().id, 'leader', { to: 'a', message: `mail ${index}` })
+    }
+    ;(port as { pendingInteractions?: TeamCommandPort['pendingInteractions'] }).pendingInteractions =
+      () => Array.from({ length: 18 }, (_, index) => ({
+        id: `i${index}`,
+        kind: 'approval' as const,
+        approvalId: `ap-${index}`,
+        toolName: 'bash',
+      }))
+
+    // Default limit 20: the section cap holds, and the 50-row budget is spent
+    // in the documented order (assigned, ready, unread, approvals).
+    const big = commands.inbox(team().id, 'a')
+    expect(big.assigned).toHaveLength(20)
+    expect(big.ready).toHaveLength(18)
+    expect(big.unread).toHaveLength(12)
+    expect(big.approvals).toHaveLength(0)
+    expect(big.assigned.length + big.ready.length + big.unread.length + big.approvals.length).toBe(50)
+    expect(big.remaining_unread).toBe(6)
+
+    // A smaller limit cuts every section, including approvals.
+    const small = commands.inbox(team().id, 'a', { limit: 3 })
+    expect(small.assigned).toHaveLength(3)
+    expect(small.ready).toHaveLength(3)
+    expect(small.unread).toHaveLength(3)
+    expect(small.approvals).toHaveLength(3)
+    expect(small.remaining_unread).toBe(15)
+
+    // Out-of-range limits clamp instead of throwing or returning everything.
+    expect(commands.inbox(team().id, 'a', { limit: 0 }).assigned).toHaveLength(1)
+    expect(commands.inbox(team().id, 'a', { limit: 500 }).assigned).toHaveLength(20)
+  })
+
+  it('scopes the inbox to the calling member and team', async () => {
+    const { commands, team, messages } = harness()
+    const mine = await commands.createTask(team().id, 'leader', { subject: 'Mine', owner: 'a' })
+    await commands.createTask(team().id, 'leader', { subject: 'Ready for anyone' })
+    await commands.createTask('team-2', 'leader-2', { subject: 'Other team ready' })
+    messages.length = 0
+    await commands.sendMessage(team().id, 'leader', { to: 'a', message: 'mine to read' })
+    await commands.sendMessage(team().id, 'leader', { to: 'a', message: 'a user dm' })
+    const userDm = messages.find(message => message.content === 'a user dm')!
+    userDm.sender = { kind: 'user', id: 'local-user' }
+    await commands.sendMessage(team().id, 'a', { to: '*', message: 'a broadcast by a' })
+
+    const inbox = commands.inbox(team().id, 'a')
+    expect(inbox.assigned.map(task => task.task_id)).toEqual([mine.taskId])
+    expect(inbox.ready.map(task => task.subject)).toEqual(['Ready for anyone'])
+    // A direct user message and a broadcast from the caller are not inbox mail.
+    expect(inbox.unread.map(message => message.message)).toEqual(['mine to read'])
+    // Another team's member cannot address this inbox at all.
+    expect(() => commands.inbox(team().id, 'a2')).toThrow(expect.objectContaining({ code: 'MEMBER_NOT_FOUND' }))
+    expect(() => commands.inbox(team().id, 'missing-member')).toThrow(
+      expect.objectContaining({ code: 'MEMBER_NOT_FOUND' }),
+    )
+    // No approvals provider (or a restarted runtime) degrades to an empty list.
+    expect(commands.inbox(team().id, 'a').approvals).toEqual([])
+  })
+
   it('broadcasts to every active member except the sender', async () => {
     const { commands, team, followup, messages } = harness()
     const result = await commands.sendMessage(team().id, 'leader', {
@@ -627,6 +940,211 @@ describe('TeamCommandHandler AionUi semantics', () => {
     expect(team().members['leader']).toBeDefined()
     const after = await commands.readMessages(team().id, 'leader', 10)
     expect(after.messages[0]?.was_unread).toBe(false)
+  })
+
+  it('carries the task link, thread and Goal on dispatch, reassignment and unblock mail', async () => {
+    const { commands, team, messages } = harness()
+    const goal = await commands.createGoal(team().id, 'leader', {
+      title: 'Ship parser',
+      objective: 'Parse input',
+      mode: 'single',
+    })
+    const task = await commands.createTask(team().id, 'leader', {
+      subject: 'Implement parser',
+      owner: 'a',
+      goal_id: goal.goal_id,
+    })
+    const assignment = messages.find(message => message.relatedTaskId === task.taskId)!
+    expect(assignment).toMatchObject({
+      relatedTaskId: task.taskId,
+      threadId: task.taskId,
+      goalId: goal.goal_id,
+      recipient: { kind: 'member', slotId: 'a' },
+    })
+    // Thread id and the single task link are separate fields, never a second
+    // `taskId`; a task thread is stable because every task mail reuses the id.
+    expect(assignment).not.toHaveProperty('taskId')
+
+    await commands.updateTask(team().id, 'leader', {
+      taskId: task.taskId,
+      owner: 'b',
+      status: 'assigned',
+    })
+    const reassignment = messages.filter(
+      message => message.relatedTaskId === task.taskId && message.recipient.slotId === 'b',
+    ).at(-1)!
+    expect(reassignment).toMatchObject({ threadId: task.taskId, goalId: goal.goal_id })
+
+    const dependency = await commands.createTask(team().id, 'leader', { subject: 'Prep' })
+    const blocked = await commands.createTask(team().id, 'leader', {
+      subject: 'Blocked work',
+      owner: 'a',
+      blocked_by: [dependency.taskId],
+      goal_id: goal.goal_id,
+    })
+    await commands.updateTask(team().id, 'leader', {
+      taskId: dependency.taskId,
+      status: 'completed',
+    })
+    const unblock = messages.filter(
+      message => message.relatedTaskId === blocked.taskId,
+    ).at(-1)!
+    expect(unblock).toMatchObject({
+      relatedTaskId: blocked.taskId,
+      threadId: blocked.taskId,
+      goalId: goal.goal_id,
+      recipient: { kind: 'member', slotId: 'a' },
+    })
+  })
+
+  it('round-trips thread, Goal and reply links through send_message and the read filters', async () => {
+    const { commands, team, messages } = harness()
+    const goal = await commands.createGoal(team().id, 'leader', {
+      title: 'Release',
+      objective: 'Ship',
+      mode: 'single',
+    })
+    const first = await commands.sendMessage(team().id, 'leader', {
+      to: 'a',
+      message: 'Please review the parser',
+      thread_id: 'review-thread',
+      goal_id: goal.goal_id,
+    })
+    const second = await commands.sendMessage(team().id, 'a', {
+      to: 'leader',
+      message: 'Reviewed, one nit',
+      thread_id: 'review-thread',
+      reply_to: first.messageId,
+    })
+    const unrelated = await commands.sendMessage(team().id, 'leader', {
+      to: 'a',
+      message: 'Unrelated note',
+      thread_id: 'other-thread',
+    })
+
+    const record = messages.find(message => message.id === first.messageId)!
+    expect(record).toMatchObject({ threadId: 'review-thread', goalId: goal.goal_id })
+    const reply = messages.find(message => message.id === second.messageId)!
+    expect(reply).toMatchObject({ threadId: 'review-thread', replyTo: first.messageId })
+    expect(reply.goalId).toBeUndefined()
+
+    const leaderThread = await commands.readMessages(team().id, 'leader', 10, {
+      threadId: 'review-thread',
+    })
+    expect(leaderThread.messages.map(message => message.id)).toEqual([second.messageId])
+    expect(leaderThread.messages[0]).toMatchObject({
+      thread_id: 'review-thread',
+      reply_to: first.messageId,
+    })
+    expect(leaderThread.messages[0]?.goal_id).toBeUndefined()
+
+    // A filtered read consumes only what it returns; unrelated mail stays unread.
+    const memberThread = await commands.readMessages(team().id, 'a', 10, {
+      threadId: 'review-thread',
+    })
+    expect(memberThread.messages.map(message => message.id)).toEqual([first.messageId])
+    expect(memberThread.messages[0]).toMatchObject({
+      thread_id: 'review-thread',
+      goal_id: goal.goal_id,
+    })
+    expect(memberThread.messages[0]).not.toHaveProperty('task_id')
+    expect(commands.inbox(team().id, 'a').unread.map(message => message.id))
+      .toEqual([unrelated.messageId])
+
+    // Task filtering uses the single task link and returns only that task mail.
+    const task = await commands.createTask(team().id, 'leader', { subject: 'Task mail', owner: 'a' })
+    const taskMail = await commands.readMessages(team().id, 'a', 10, { taskId: task.taskId })
+    expect(taskMail.messages.map(message => message.task_id)).toEqual([task.taskId])
+    expect(taskMail.messages[0]?.thread_id).toBe(task.taskId)
+  })
+
+  it('rejects unknown or malformed message links and ignores blank ones', async () => {
+    const { commands, team, messages, otherTeam, mutate } = harness()
+    await expect(commands.sendMessage(team().id, 'leader', {
+      to: 'a',
+      message: 'bad goal',
+      goal_id: 'no-such-goal',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(commands.sendMessage(team().id, 'leader', {
+      to: 'a',
+      message: 'bad reply',
+      reply_to: 'no-such-message',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(commands.sendMessage(team().id, 'leader', {
+      to: 'a',
+      message: 'long thread',
+      thread_id: 'x'.repeat(201),
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    // Another team's Goal is unknown here, not merely unvalidated.
+    mutate({
+      ...otherTeam(),
+      goals: {
+        'goal-other': {
+          id: 'goal-other',
+          teamId: otherTeam().id,
+          title: 'Other',
+          objective: 'Other',
+          acceptance: '',
+          mode: 'single',
+          status: 'active',
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      },
+    })
+    await expect(commands.sendMessage(team().id, 'leader', {
+      to: 'a',
+      message: 'foreign goal',
+      goal_id: 'goal-other',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    const sent = await commands.sendMessage(team().id, 'leader', {
+      to: 'a',
+      message: 'blank links',
+      thread_id: '   ',
+      goal_id: '',
+      reply_to: '',
+    })
+    const record = messages.find(message => message.id === sent.messageId)!
+    expect(record.threadId).toBeUndefined()
+    expect(record.goalId).toBeUndefined()
+    expect(record.replyTo).toBeUndefined()
+  })
+
+  it('keeps legacy messages without thread links parseable and readable unfiltered', async () => {
+    const { commands, team, messages } = harness()
+    // A record persisted before thread context existed.
+    const legacy: TeamMessage = {
+      schemaVersion: 1,
+      id: 'legacy-message',
+      teamId: team().id,
+      sender: { kind: 'member', id: 'leader' },
+      recipient: { kind: 'member', slotId: 'a' },
+      type: 'instruction',
+      content: 'legacy body',
+      attachments: [],
+      readBy: [],
+      deliveryState: 'delivered',
+      idempotencyKey: 'legacy-message',
+      createdAt: '2025-12-31T23:59:59.000Z',
+    }
+    expect(teamMessageSchema.parse(legacy)).toEqual(legacy)
+    messages.push(legacy)
+
+    const legacyRead = await commands.readMessages(team().id, 'a', 10)
+    expect(legacyRead.messages.map(message => message.id)).toEqual(['legacy-message'])
+    expect(legacyRead.messages[0]).not.toHaveProperty('thread_id')
+    expect(legacyRead.messages[0]).not.toHaveProperty('goal_id')
+    expect(legacyRead.messages[0]).not.toHaveProperty('reply_to')
+
+    // A record carrying links still parses under the same schema/version.
+    const linked = await commands.sendMessage(team().id, 'leader', {
+      to: 'a',
+      message: 'linked body',
+      thread_id: 'thread-1',
+    })
+    const linkedRecord = messages.find(message => message.id === linked.messageId)!
+    expect(teamMessageSchema.parse(linkedRecord)).toEqual(linkedRecord)
   })
 
   it('spawns and renames members only for the leader', async () => {

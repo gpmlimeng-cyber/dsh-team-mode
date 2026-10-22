@@ -303,6 +303,16 @@ export const teamMessageSchema = z.object({
   /** Short mailbox preview; the full message stays in `content`. */
   summary: z.string().optional(),
   relatedTaskId: nonEmpty.optional(),
+  /**
+   * Optional thread context, added without a schema-version bump: a thread is
+   * a conversation key shared by related messages, separate from the single
+   * task link in `relatedTaskId`. Legacy records carry none and parse as-is.
+   */
+  threadId: nonEmpty.optional(),
+  /** Goal this message contributes to; always the task's Goal for dispatch mail. */
+  goalId: nonEmpty.optional(),
+  /** Message this one replies to, for a handoff/result pair. */
+  replyTo: nonEmpty.optional(),
   attachments: z.array(attachmentRefSchema),
   /** Per-recipient read receipts; broadcast messages share one record. */
   readBy: z.array(nonEmpty).default([]),

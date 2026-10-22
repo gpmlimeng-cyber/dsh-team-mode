@@ -2,10 +2,15 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type {
+  ClaimTaskInput,
+  ClaimTaskResult,
   CreateGoalInput,
   CreateTaskInput,
   DecideMemoryInput,
+  InboxInput,
+  TeamInboxResult,
   ProposeMemoryInput,
+  ReadMessagesFilter,
   ReadMessagesResult,
   SendMessageInput,
   SendMessageResult,
@@ -34,7 +39,7 @@ export interface TeamAssistantView {
 export interface TeamToolHandlers {
   assertIdentity: (agent: Agent | undefined) => void
   members: () => TeamMemberView[]
-  readMessages: (limit?: number) => Promise<ReadMessagesResult>
+  readMessages: (limit?: number, filter?: ReadMessagesFilter) => Promise<ReadMessagesResult>
   sendMessage: (input: SendMessageInput) => Promise<SendMessageResult>
   interruptAgent: (slotId: string, message: string) => Promise<{ slot_id: string; status: 'delivered' }>
   createTask: (input: CreateTaskInput) => Promise<{
@@ -50,6 +55,8 @@ export interface TeamToolHandlers {
     woken?: string[]
     attemptId?: string
   }>
+  claimTask: (input: ClaimTaskInput) => Promise<ClaimTaskResult>
+  inbox: (input: InboxInput) => TeamInboxResult
   listTasks: (limit?: number) => TeamTaskView[]
   createGoal: (input: CreateGoalInput) => Promise<TeamGoalView>
   listGoals: () => TeamGoalView[]
@@ -127,14 +134,22 @@ export function registerTeamTools(
 
   register(defineTool({
     name: 'team_read_messages',
-    description: 'Read your team mailbox (unread first, then recent), FIFO, at most 50 messages. Marks returned messages read.',
+    description: 'Read your team mailbox (unread first, then recent), FIFO, at most 50 messages. Marks the returned messages read; a filtered read leaves messages outside the filter unread. `thread_id` narrows to one thread (task mail uses the task id as its thread), `task_id` to one task link.',
     parameters: {
       limit: { type: 'number', description: 'Maximum messages to return (1-50, default 20).' },
+      thread_id: { type: 'string', description: 'Only messages in this thread. Task dispatch mail shares the task id as its thread.' },
+      task_id: { type: 'string', description: 'Only messages linked to this task (relatedTaskId).' },
     },
     output: textOutput,
     execute: async (args, exec) => {
       handlers.assertIdentity(exec.agent)
-      return handlers.readMessages(args.limit) as never
+      const filter = args.thread_id === undefined && args.task_id === undefined
+        ? undefined
+        : {
+          ...(args.thread_id === undefined ? {} : { threadId: args.thread_id }),
+          ...(args.task_id === undefined ? {} : { taskId: args.task_id }),
+        }
+      return handlers.readMessages(args.limit, filter) as never
     },
   }))
 
@@ -146,6 +161,9 @@ export function registerTeamTools(
       message: { type: 'string', required: true, description: 'Full message content.' },
       summary: { type: 'string', description: 'Short mailbox preview (<=500 chars).' },
       files: { type: 'array', items: { type: 'string' }, description: 'Workspace-relative paths or URLs to attach.' },
+      thread_id: { type: 'string', description: 'Optional thread key shared by related messages; task mail uses the task id.' },
+      goal_id: { type: 'string', description: 'Optional Goal id of this team that the message contributes to.' },
+      reply_to: { type: 'string', description: 'Optional message id this message replies to.' },
     },
     output: textOutput,
     execute: async (args, exec) => {
@@ -155,6 +173,9 @@ export function registerTeamTools(
         message: args.message,
         ...(args.summary === undefined ? {} : { summary: args.summary }),
         ...(args.files === undefined ? {} : { files: args.files }),
+        ...(args.thread_id === undefined ? {} : { thread_id: args.thread_id }),
+        ...(args.goal_id === undefined ? {} : { goal_id: args.goal_id }),
+        ...(args.reply_to === undefined ? {} : { reply_to: args.reply_to }),
       })
       return {
         message_id: result.messageId,
@@ -339,6 +360,39 @@ export function registerTeamTools(
         ...(result.woken === undefined ? {} : { woken: result.woken }),
         ...(result.attemptId === undefined ? {} : { attempt_id: result.attemptId }),
       } as never
+    },
+  }))
+
+  register(defineTool({
+    name: 'team_mode_task_claim',
+    description: 'Claim a ready, unowned task for yourself. Only a pending task with no owner and no blockers can be claimed. The claim is atomic: if another member wins the race you get INVALID_REQUEST with that member\'s current owner and attempt_id, and you must stand down instead of retrying. A successful claim returns your fresh attempt_id, which you pass to team_mode_task_update.',
+    parameters: {
+      task_id: { type: 'string', required: true, description: 'Task id to claim, from team_mode_task_list.' },
+    },
+    output: textOutput,
+    execute: async (args, exec) => {
+      handlers.assertIdentity(exec.agent)
+      const result = await handlers.claimTask({ task_id: args.task_id })
+      return {
+        task_id: result.taskId,
+        status: toAionTaskStatus(result.status),
+        raw_status: result.status,
+        owner: result.owner,
+        ...(result.attemptId === undefined ? {} : { attempt_id: result.attemptId }),
+      } as never
+    },
+  }))
+
+  register(defineTool({
+    name: 'team_mode_inbox',
+    description: 'Read-only member inbox: tasks assigned to you, ready tasks you can claim, unread mail for you, and pending approvals. It never marks mail read, so it is safe to call at any time. Each section is capped at 20 rows (limit 1-50, default 20) and the whole inbox at 50; sections fill in the order assigned, ready, unread, approvals, and remaining_unread counts unread mail not shown. Approvals are runtime-local and may be empty or lost on restart.',
+    parameters: {
+      limit: { type: 'number', description: 'Per-section cap (1-50, default 20); each section is also capped at 20 and the whole inbox at 50.' },
+    },
+    output: textOutput,
+    execute: async (args, exec) => {
+      handlers.assertIdentity(exec.agent)
+      return handlers.inbox(args.limit === undefined ? {} : { limit: args.limit }) as never
     },
   }))
 

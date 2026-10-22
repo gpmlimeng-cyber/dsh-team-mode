@@ -60,6 +60,11 @@ export function createTeamMessage(
   }
 }
 
+/**
+ * Task mail carries both links: `relatedTaskId` is the one task link, and
+ * `threadId` is the task's conversation key, so every message about a task
+ * shares a filterable thread. `goalId` is inherited from the task when set.
+ */
 export function createTaskDispatchMessage(input: {
   team: TeamAggregate
   senderSlotId: string
@@ -69,6 +74,8 @@ export function createTaskDispatchMessage(input: {
   content: string
   summary?: string
   attachments?: TeamMessage['attachments']
+  goalId?: string
+  replyTo?: string
 }): TeamMessage {
   const id = String(MessageId(`dsh-team-mode:${randomUUID()}`))
   return createTeamMessage({
@@ -83,6 +90,9 @@ export function createTaskDispatchMessage(input: {
     ...(input.summary === undefined ? {} : { summary: input.summary }),
     ...(input.attachments === undefined ? {} : { attachments: input.attachments }),
     relatedTaskId: input.taskId,
+    threadId: input.taskId,
+    ...(input.goalId === undefined ? {} : { goalId: input.goalId }),
+    ...(input.replyTo === undefined ? {} : { replyTo: input.replyTo }),
     idempotencyKey: id,
   })
 }

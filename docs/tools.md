@@ -1,18 +1,20 @@
 # 工具清单
 
-## 模型工具（21 个）
+## 模型工具（23 个）
 
 | 工具 | 作用 |
 |---|---|
 | `team_members` | 列出团队成员、角色、状态、Session |
-| `team_read_messages` | 读取成员邮箱消息，标记已读 |
-| `team_send_message` | 向成员/Leader 发送团队消息 |
+| `team_read_messages` | 读取成员邮箱消息（可按 `thread_id` / `task_id` 过滤），标记返回的消息已读 |
+| `team_send_message` | 向成员/Leader 发送团队消息，可带 `thread_id` / `goal_id` / `reply_to` |
 | `team_interrupt_agent` | 打断正在运行的成员 |
 | `team_mode_goal_create` | Leader 专用：为一个需要交付物的目标创建 Goal（mode=`direct` / `single` / `orchestrated`） |
 | `team_mode_goal_list` | 按 Goal 汇总任务板：每个 Goal 及其 `task_ids` |
 | `team_mode_task_create` | 创建任务，指定 owner / blocked_by / 文件范围 / `goal_id` |
 | `team_mode_task_update` | 更新任务状态、owner、依赖、结果（成员需带当前 `attempt_id`） |
+| `team_mode_task_claim` | 成员认领一个就绪且无 owner 的任务：原子占用并生成新的 `attempt_id` |
 | `team_mode_task_list` | 查询任务板（含 owner、依赖、`attempt_id`、`goal_id`） |
+| `team_mode_inbox` | 只读成员收件箱：分派给我的任务、可认领任务、未读消息、待审批 |
 | `team_memory_propose` | 提议/写入团队记忆：成员提议待 Leader 决定，Leader 写入立即生效 |
 | `team_memory_list` | 列出团队记忆（状态、可见性、key、作者、版本）；只有 `active` 会进入提示 |
 | `team_memory_accept` | Leader 专用：接受或拒绝一条记忆提议（`decision=accept` / `decision=reject`） |
@@ -50,12 +52,38 @@
 
 ## 任务 attempt / 所有权围栏
 
-- 任务获得 owner 或更换 owner 时生成/轮换 `attemptId`；任务板以 `attempt_id` 返回，`task_create` / `task_update` 的结果同样带 `attempt_id`。
+- 任务获得 owner 或更换 owner 时生成/轮换 `attemptId`（成员 claim 也算一次获得 owner）；任务板以 `attempt_id` 返回，`task_create` / `task_update` / `task_claim` 的结果同样带 `attempt_id`。
 - Leader 更新任务不需要 attempt；非 Leader（当前 owner）必须带上任务当前的 `attempt_id`，否则以 `INVALID_REQUEST` 拒绝，`details.attemptId` 给出当前值。
 - 显式重派给同一 owner 不轮换；先转给他人再转回（takeover）会轮换，旧 token 永久失效。
 - 历史数据（无 `attemptId`）不受围栏限制；普通状态更新不会补发 attempt，直到下一次 owner 变更才生成。`schemaVersion` 不变，字段可缺省。
 - 工具参数：`team_mode_task_update` 用 `attempt_id`（也接受 `attemptId`），旧别名 `team_update_task` 用 `attemptId`（也接受 `attempt_id`）。
 - 派发/转派/解锁消息会附一行 `attempt_id` 提示，成员首次更新无需再查任务板。
+
+## 可选的成员 claim
+
+- `team_mode_task_claim { task_id }` 让成员自己领取任务；Leader 手动派发仍是默认路径，本轮**不加**自动调度或轮询。
+- 可认领 = `status=pending` **且** 无 owner **且** `dependencyIds` 为空。阻塞由 `dependencyIds` 表达，`status` 单独判断不够；终态任务可能被 Leader 重开，所以只允许 `pending`，不能用“非终态”。
+- 认领在串行化的团队写入闭包内复查并落地：两个成员同时认领同一任务时只有一个成功，胜者获得新的 `attemptId`（不是沿用创建者的）。这是 `updateTask` 之外的新分支，不放宽原有的 owner/attempt 校验。
+- 拒绝情形：已被认领/指派、`blocked`（依赖未完成）、`completed`/`cancelled`/`failed`、`running`、跨团队或未知任务、空 `task_id`。错误为 `INVALID_REQUEST`，`details` 给出当前的 `owner`、`attemptId`（若存在）、`status`、`blocked_by`（若被依赖阻塞），消息文本同样带上这些值，方便认领失败方直接放弃而不是重试。
+- 已拥有该任务的成员重复认领是只读操作：原样返回当前的 owner 与 `attemptId`，不轮换围栏、不写任务板。
+- 认领成功不额外发消息给 Leader（任务板立即可见，成员随后的 `in_progress` 更新会走既有状态消息路径）；Leader 重派或接管会生成新 `attemptId`，旧 claim token 随之失效。
+
+## 消息 thread / goal / reply 上下文
+
+- `TeamMessage` 新增三个**可选**字段，`schemaVersion` 不变：`threadId`（会话线索键）、`goalId`（该消息服务的团队 Goal）、`replyTo`（所回复消息的 id）。任务链接仍只有 `relatedTaskId` 一个字段，**没有**第二个 `taskId`；`TeamMessageView` 相应暴露 `thread_id`、`goal_id`、`reply_to`，旧消息无这些字段时照常解析与读取。
+- 任务派发/转派/解锁/成员状态消息：`relatedTaskId` 是任务链接，`threadId` 取**任务 id** 作为稳定线索键（同一任务的所有消息共享一条 thread），`goalId` 从 `task.goalId` 继承（任务未归属 Goal 时不带）。因此按 `task_id` 与按 `thread_id` 都能筛出同一批任务消息。
+- `team_send_message` 新增可选 `thread_id` / `goal_id` / `reply_to`：`goal_id` 必须指向**同一团队**的 Goal，`reply_to` 必须指向**本团队**已存在的消息，否则 `INVALID_REQUEST`；空白值视为未提供，超长（>200）拒绝而不是截断。
+- `team_read_messages` 新增可选 `thread_id` / `task_id`：在收件人过滤之后、上限截断之前生效；只有**被返回**的消息会被标记已读，过滤范围外的未读消息保持未读（因此过滤读取不会偷走别人的未读）；不传过滤参数时行为与旧版完全一致。
+- 有界性沿用现有约束：消息正文 4,000 字符预览 + `truncated`，单条消息 64 KB 上限，读取上限 50；本轮不做 thread UI 渲染，也不新增消息存储。
+
+## 成员 inbox（只读投影）
+
+- `team_mode_inbox { limit? }` 从既有聚合派生，**不新增任何存储、不启动轮询**；`limit` 为每段上限（1–50，默认 20），每段再封顶 20 行，整个 inbox 封顶 50 行。
+- 四个段落按固定顺序填充并消耗 50 行预算：`assigned`（`ownerSlotId=me` 且状态 `assigned`/`running`/`blocked`）、`ready`（可认领：`pending` + 无 owner + 无依赖）、`unread`（消息表中收件人是我或是广播、发送者不是我且非用户私信、`readBy` 未包含我）、`approvals`（当前运行时内存中的审批）；`remaining_unread` 给出未展示的未读消息数。
+- 只读：不复用会标记已读的 `team_read_messages` 路径，调用前后消息的 `deliveryState`/`readBy` 不变，可安全反复调用。消息正文沿用既有 4,000 字符预览与 `truncated` 标记。
+- 作用域：工具按 `(teamId, member.id)` 注册并只读本团队聚合与消息表，其他团队的任务/消息不可达；用户私信（`sender.kind='user'`）与别人收到的消息不会出现。
+- 审批只存在于运行时内存桥（`pendingInteractions`），因此该段是**可选**的：运行时未提供或重启后降级为空数组，不抛错、不落盘。P0 不含 `stale attempts` 段落：成员无法从聚合推导过期 token，该事实只在更新被拒时出现。
+- 本轮不引入自动调度：inbox 只是读视图，不会唤醒成员或改变任务状态。
 
 ## 客户端 Team API
 

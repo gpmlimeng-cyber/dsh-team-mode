@@ -26,6 +26,8 @@ function harness(): {
     interruptAgent: vi.fn(async (slotId: string) => ({ slot_id: slotId, status: 'delivered' as const })),
     createTask: vi.fn(async () => ({ taskId: 't1', status: 'assigned', deliveryState: 'delivered' as const })),
     updateTask: vi.fn(async () => ({ taskId: 't1', status: 'running', deliveryState: 'delivered' as const })),
+    claimTask: vi.fn(async () => ({ taskId: 't1', status: 'assigned' as const, owner: 'member', attemptId: 'att-1' })),
+    inbox: vi.fn(() => ({ assigned: [], ready: [], unread: [], approvals: [], remaining_unread: 0 })),
     listTasks: vi.fn(() => []),
     createGoal: vi.fn(async () => ({
       goal_id: 'g1',
@@ -98,7 +100,9 @@ describe('Team Mode tool surface', () => {
       'team_mode_goal_list',
       'team_mode_task_create',
       'team_mode_task_update',
+      'team_mode_task_claim',
       'team_mode_task_list',
+      'team_mode_inbox',
       'team_list_assistants',
       'team_describe_assistant',
       'team_spawn_agent',
@@ -113,7 +117,7 @@ describe('Team Mode tool surface', () => {
     expect(tools.has('team_get_task_board')).toBe(true)
     expect(tools.has('team_create_task')).toBe(true)
     expect(tools.has('team_update_task')).toBe(true)
-    expect(tools.size).toBe(21)
+    expect(tools.size).toBe(23)
   })
 
   it('publishes the required parameter contracts for the dangerous tools', () => {
@@ -122,6 +126,8 @@ describe('Team Mode tool surface', () => {
     expect(tools.get('team_mode_task_create')?.parameters.required).toEqual(['subject'])
     expect(tools.get('team_mode_task_update')?.parameters.required).toEqual(expect.arrayContaining(['task_id', 'status']))
     expect(tools.get('team_spawn_agent')?.parameters.required).toEqual(expect.arrayContaining(['name', 'assistant_id']))
+    expect(tools.get('team_mode_task_claim')?.parameters.required).toEqual(['task_id'])
+    expect(tools.get('team_mode_task_claim')?.description).toContain('atomic')
     expect(tools.get('team_shutdown_agent')?.description).toContain('Leader only')
     expect(tools.get('team_clear_agent_context')?.description).toContain('Leader only')
     expect(tools.get('team_mode_goal_create')?.description).toContain('Leader only')
@@ -257,6 +263,107 @@ describe('Team Mode tool surface', () => {
 
     await tools.get('team_mode_task_create')!.execute({ subject: 'Ungrouped' }, exec)
     expect(handlers.createTask).toHaveBeenLastCalledWith({ subject: 'Ungrouped' })
+  })
+
+  it('forwards thread, Goal and reply links through team_send_message', async () => {
+    const { tools, handlers } = harness()
+    const exec = { agent: { id: 'session-member' } }
+    const send = tools.get('team_send_message')!
+
+    await send.execute(
+      {
+        to: 'a',
+        message: 'reply body',
+        thread_id: 'thread-1',
+        goal_id: 'goal-1',
+        reply_to: 'message-1',
+      },
+      exec,
+    )
+    expect(handlers.sendMessage).toHaveBeenLastCalledWith({
+      to: 'a',
+      message: 'reply body',
+      thread_id: 'thread-1',
+      goal_id: 'goal-1',
+      reply_to: 'message-1',
+    })
+
+    // Legacy callers keep the exact old shape: no link keys are invented.
+    await send.execute({ to: 'a', message: 'plain body' }, exec)
+    expect(handlers.sendMessage).toHaveBeenLastCalledWith({ to: 'a', message: 'plain body' })
+  })
+
+  it('forwards thread and task filters through team_read_messages', async () => {
+    const { tools, handlers } = harness()
+    const exec = { agent: { id: 'session-member' } }
+    const read = tools.get('team_read_messages')!
+    expect(read.parameters.properties?.thread_id).toBeDefined()
+    expect(read.parameters.properties?.task_id).toBeDefined()
+    expect(read.description).toContain('leaves messages outside the filter unread')
+
+    await read.execute({ limit: 5, thread_id: 'thread-1', task_id: 'task-1' }, exec)
+    expect(handlers.readMessages).toHaveBeenLastCalledWith(5, {
+      threadId: 'thread-1',
+      taskId: 'task-1',
+    })
+
+    // Legacy unfiltered reads are byte-identical calls: no filter argument.
+    await read.execute({ limit: 5 }, exec)
+    expect(handlers.readMessages).toHaveBeenLastCalledWith(5, undefined)
+  })
+
+  it('reads the inbox through the bound handler without marking mail read', async () => {
+    const { tools, handlers } = harness()
+    const exec = { agent: { id: 'session-member' } }
+    const inbox = tools.get('team_mode_inbox')!
+    expect(inbox.description).toContain('Read-only')
+    expect(inbox.description).toContain('never marks mail read')
+    expect(inbox.parameters.required).toBeUndefined()
+
+    vi.mocked(handlers.inbox).mockReturnValue({
+      assigned: [],
+      ready: [],
+      unread: [],
+      approvals: [{ id: 'i1', kind: 'approval', approvalId: 'ap-1', toolName: 'bash' }],
+      remaining_unread: 3,
+    })
+    const result = await inbox.execute({ limit: 5 }, exec)
+    expect(handlers.assertIdentity).toHaveBeenCalledWith(exec.agent)
+    expect(handlers.inbox).toHaveBeenCalledWith({ limit: 5 })
+    expect(result).toMatchObject({
+      assigned: [],
+      ready: [],
+      unread: [],
+      approvals: [{ approvalId: 'ap-1' }],
+      remaining_unread: 3,
+    })
+
+    // An omitted limit is forwarded as an empty input, not as limit: undefined.
+    await inbox.execute({}, exec)
+    expect(handlers.inbox).toHaveBeenLastCalledWith({})
+  })
+
+  it('claims a task through the bound handler and returns the fresh attempt', async () => {
+    const { tools, handlers } = harness()
+    const exec = { agent: { id: 'session-member' } }
+    const claim = tools.get('team_mode_task_claim')!
+
+    const claimed = await claim.execute({ task_id: 't7' }, exec)
+    expect(handlers.assertIdentity).toHaveBeenCalledWith(exec.agent)
+    expect(handlers.claimTask).toHaveBeenCalledWith({ task_id: 't7' })
+    expect(claimed).toMatchObject({
+      task_id: 't1',
+      status: 'pending',
+      raw_status: 'assigned',
+      owner: 'member',
+      attempt_id: 'att-1',
+    })
+
+    // A legacy task without a fence omits attempt_id instead of printing null.
+    vi.mocked(handlers.claimTask).mockResolvedValue({ taskId: 't8', status: 'assigned', owner: 'member' })
+    const unfenced = await claim.execute({ task_id: 't8' }, exec)
+    expect(unfenced).toMatchObject({ task_id: 't8', owner: 'member' })
+    expect(unfenced).not.toHaveProperty('attempt_id')
   })
 
   it('declares the attempt token on both task update aliases', () => {

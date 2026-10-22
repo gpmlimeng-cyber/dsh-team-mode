@@ -11,6 +11,7 @@ import type {
   TeamTask,
 } from '../domain/types.js'
 import type { AgentTeamService } from '../service/dsh-team-mode-service.js'
+import type { PendingInteractionView } from '../transport/contracts.js'
 import {
   assertTeamMemoryBudget,
   liveTeamMemoryEntries,
@@ -47,6 +48,12 @@ export interface TeamCommandPort {
   clearAgentContext?: (teamId: string, slotId: string) => Promise<{ sessionId: string; status: string }>
   /** Remove one member after an approved shutdown handshake. */
   removeMember?: (teamId: string, slotId: string) => Promise<unknown>
+  /**
+   * Pending human interactions for one member session. They live only in the
+   * runtime's in-memory bridge, so the inbox treats them as optional: absent
+   * provider or a restart degrades to an empty approvals section.
+   */
+  pendingInteractions?: (sessionId: string) => PendingInteractionView[]
 }
 
 export interface TeamMemberView {
@@ -99,6 +106,10 @@ export interface TeamMessageView {
   truncated: boolean
   files: string[]
   task_id?: string
+  /** Conversation key; task mail shares the task id as its thread. */
+  thread_id?: string
+  goal_id?: string
+  reply_to?: string
   created_at: string
   was_unread: boolean
 }
@@ -106,6 +117,19 @@ export interface TeamMessageView {
 export interface ReadMessagesResult {
   messages: TeamMessageView[]
   remaining_unread: number
+}
+
+/** Optional narrowing, applied after the recipient filter and before the cap. */
+export interface ReadMessagesFilter {
+  threadId?: string
+  taskId?: string
+}
+
+/** Links a message can carry; every one must resolve inside the same team. */
+interface MessageLinks {
+  threadId?: string
+  goalId?: string
+  replyTo?: string
 }
 
 export interface SendMessageResult {
@@ -206,6 +230,40 @@ export interface UpdateTaskInput {
   attempt_id?: string
 }
 
+export interface ClaimTaskInput {
+  taskId?: string
+  task_id?: string
+}
+
+/** A successful claim always returns the caller as owner and the new fence. */
+export interface ClaimTaskResult {
+  taskId: string
+  status: InternalTaskStatus
+  owner: string
+  attemptId?: string
+}
+
+/** Only approvals are surfaced in the inbox; questions stay in the workbench. */
+export type TeamInboxApproval = Extract<PendingInteractionView, { kind: 'approval' }>
+
+export interface InboxInput {
+  limit?: number
+}
+
+/**
+ * Read-only member view over existing aggregates and the durable message log.
+ * Sections are filled in this listed order; the 50-row budget is consumed in
+ * the same order, so a full earlier section shrinks the later ones.
+ */
+export interface TeamInboxResult {
+  assigned: TeamTaskView[]
+  ready: TeamTaskView[]
+  unread: TeamMessageView[]
+  approvals: TeamInboxApproval[]
+  /** Unread messages for this member beyond the ones returned above. */
+  remaining_unread: number
+}
+
 export interface SendMessageInput {
   to?: string
   recipientSlotId?: string
@@ -214,6 +272,15 @@ export interface SendMessageInput {
   summary?: string
   files?: string[]
   type?: 'instruction' | 'progress' | 'result' | 'question' | 'warning'
+  /** Optional thread key shared by related messages. */
+  threadId?: string
+  thread_id?: string
+  /** Optional Goal of this same team that the message contributes to. */
+  goalId?: string
+  goal_id?: string
+  /** Optional message id this one replies to. */
+  replyTo?: string
+  reply_to?: string
 }
 
 export interface SpawnAgentInput {
@@ -316,6 +383,7 @@ export class TeamCommandHandler {
         taskId,
         type: 'instruction',
         content: withAttemptHint(assignmentContent(title, description, fileScopes, blockedBy, taskId), attemptId),
+        ...(goalId === undefined ? {} : { goalId }),
       })
     await this.service.updateRuntimeTeam(
       teamId,
@@ -478,6 +546,7 @@ export class TeamCommandHandler {
             taskId,
             type: 'instruction',
             content: withAttemptHint(reassignmentContent(base.title, input.result, input.error), attemptId),
+            ...(base.goalId === undefined ? {} : { goalId: base.goalId }),
           }))
         } else if (callerSlotId !== current.leaderSlotId) {
           nextNotifications.push(createTaskDispatchMessage({
@@ -487,6 +556,7 @@ export class TeamCommandHandler {
             taskId,
             type: taskMessageType(status),
             content: taskUpdateContent(base.title, status, input.result, input.error),
+            ...(base.goalId === undefined ? {} : { goalId: base.goalId }),
           }))
         }
         const nextWoken: string[] = []
@@ -502,6 +572,7 @@ export class TeamCommandHandler {
               `Task '${ready.title}' is unblocked and ready for you (task id: ${ready.id}). Use team_mode_task_update to mark it in_progress.`,
               ready.attemptId,
             ),
+            ...(ready.goalId === undefined ? {} : { goalId: ready.goalId }),
           }))
           nextWoken.push(ready.ownerSlotId)
         }
@@ -532,6 +603,109 @@ export class TeamCommandHandler {
       ...(woken.length === 0 ? {} : { woken }),
       ...(finalAttemptId === undefined ? {} : { attemptId: finalAttemptId }),
     }
+  }
+
+  /**
+   * Optional claim path: a member takes a ready, unowned task. The eligibility
+   * test runs inside the serialized update closure against the aggregate being
+   * written, so two members claiming the same task cannot both win — the
+   * second write sees the owner the first one set. This is a separate branch,
+   * never a relaxation of updateTask's owner/attempt guard.
+   */
+  async claimTask(
+    teamId: string,
+    callerSlotId: string,
+    input: ClaimTaskInput,
+  ): Promise<ClaimTaskResult> {
+    const team = this.service.getTeam(teamId)
+    this.requireMember(team, callerSlotId)
+    const taskId = (input.task_id ?? input.taskId ?? '').trim()
+    if (taskId === '') throw new AgentTeamError('INVALID_REQUEST', 'Task id is required')
+    const snapshot = team.tasks[taskId]
+    if (snapshot === undefined) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Unknown task '${taskId}' in team '${team.name}'`,
+        { taskId },
+      )
+    }
+    // Re-claiming work the caller already holds is a read, not a rotation: it
+    // returns the current fence so an interrupted turn can resume with it.
+    if (snapshot.ownerSlotId === callerSlotId) {
+      return {
+        taskId,
+        status: snapshot.status,
+        owner: callerSlotId,
+        ...(snapshot.attemptId === undefined ? {} : { attemptId: snapshot.attemptId }),
+      }
+    }
+    const attemptId = randomUUID()
+    const now = new Date().toISOString()
+    await this.service.updateRuntimeTeam(
+      teamId,
+      current => {
+        const base = current.tasks[taskId]
+        if (base === undefined) {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            `Unknown task '${taskId}' in team '${current.name}'`,
+            { taskId },
+          )
+        }
+        // Ownership first: a taken task is the common race, and the loser
+        // needs the winner's owner + attempt to stand down rather than retry.
+        if (base.ownerSlotId !== undefined) {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            `Task '${base.title}' is already owned by ${base.ownerSlotId}`
+              + `${base.attemptId === undefined ? '' : ` (attempt_id: ${base.attemptId})`}; only an unowned pending task can be claimed.`,
+            {
+              taskId,
+              owner: base.ownerSlotId,
+              ...(base.attemptId === undefined ? {} : { attemptId: base.attemptId }),
+              status: base.status,
+            },
+          )
+        }
+        // Enumerate the allowed state: terminal tasks can be reopened by the
+        // Leader, so "not terminal" would make a reopened task claimable.
+        if (base.status !== 'pending') {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            `Task '${base.title}' is ${base.status}; only a pending task can be claimed.`,
+            { taskId, status: base.status },
+          )
+        }
+        // Blocking lives in dependencyIds, not in status: a pending task can
+        // still be blocked, so this test is mandatory.
+        if (base.dependencyIds.length > 0) {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            `Task '${base.title}' is blocked by ${base.dependencyIds.length} task(s): `
+              + `${base.dependencyIds.join(', ')}. Claim it after they complete.`,
+            { taskId, status: base.status, blocked_by: [...base.dependencyIds] },
+          )
+        }
+        return {
+          ...current,
+          tasks: {
+            ...current.tasks,
+            [taskId]: {
+              ...base,
+              status: 'assigned',
+              ownerSlotId: callerSlotId,
+              attemptId,
+              revision: base.revision + 1,
+              updatedAt: now,
+            },
+          },
+        }
+      },
+      'team.task_claimed',
+      `Task ${snapshot.title} claimed by ${team.members[callerSlotId]?.displayName ?? callerSlotId}`,
+    )
+    // The closure either threw or wrote exactly these values.
+    return { taskId, status: 'assigned', owner: callerSlotId, attemptId }
   }
 
   listTasks(teamId: string, limit = 200): TeamTaskView[] {
@@ -796,14 +970,25 @@ export class TeamCommandHandler {
     }
   }
 
-  async readMessages(teamId: string, slotId: string, limit = 20): Promise<ReadMessagesResult> {
+  async readMessages(
+    teamId: string,
+    slotId: string,
+    limit = 20,
+    filter: ReadMessagesFilter = {},
+  ): Promise<ReadMessagesResult> {
     const team = this.service.getTeam(teamId)
     this.requireMember(team, slotId)
     const bounded = Math.max(1, Math.min(limit, 50))
+    // Filters narrow before the cap and before read-marking, so a filtered read
+    // never consumes mail outside the filter.
+    const threadId = normalizeMessageKey(filter.threadId, 'Thread id')
+    const taskId = normalizeMessageKey(filter.taskId, 'Task id')
     const eligible = this.service.listMessages(teamId).items
       .filter(message => message.sender.kind !== 'user')
       .filter(message => message.sender.id !== slotId)
       .filter(message => this.recipientMatches(message, slotId))
+      .filter(message => threadId === undefined || message.threadId === threadId)
+      .filter(message => taskId === undefined || message.relatedTaskId === taskId)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
     const unread = eligible.filter(message => !isReadBy(message, slotId))
     const recent = eligible.filter(message => isReadBy(message, slotId))
@@ -824,6 +1009,75 @@ export class TeamCommandHandler {
     return {
       messages: views,
       remaining_unread: Math.max(0, unread.length - unreadSelected),
+    }
+  }
+
+  /**
+   * Bounded, read-only member inbox derived from the aggregate, the durable
+   * message log, and the runtime's in-memory approvals. It never calls
+   * readMessages: that path marks mail read, and an inbox must be safe to poll.
+   */
+  inbox(teamId: string, slotId: string, input: InboxInput = {}): TeamInboxResult {
+    const team = this.service.getTeam(teamId)
+    const member = this.requireMember(team, slotId)
+    // Per-section cap: the argument is clamped 1-50, then each section is
+    // further capped at 20 rows and the whole inbox at 50.
+    const bounded = Math.min(Math.max(1, Math.trunc(input.limit ?? 20)), 50)
+    const perSection = Math.min(bounded, 20)
+    const tasks = Object.values(team.tasks)
+    const byUpdatedAt = (left: TeamTask, right: TeamTask): number =>
+      left.updatedAt.localeCompare(right.updatedAt) || left.id.localeCompare(right.id)
+    const assigned = tasks
+      .filter(task => task.ownerSlotId === slotId
+        && (task.status === 'assigned' || task.status === 'running' || task.status === 'blocked'))
+      .sort(byUpdatedAt)
+    // Claimable is the same definition as team_mode_task_claim: pending, no
+    // owner, no unresolved dependency (blocking is not expressed in status).
+    const ready = tasks
+      .filter(task => task.status === 'pending'
+        && task.ownerSlotId === undefined
+        && task.dependencyIds.length === 0)
+      .sort(byUpdatedAt)
+    const unread = this.service.listMessages(teamId).items
+      .filter(message => message.sender.kind !== 'user')
+      .filter(message => message.sender.id !== slotId)
+      .filter(message => this.recipientMatches(message, slotId))
+      .filter(message => !isReadBy(message, slotId))
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+    // Approvals exist only while this runtime owns the member session; the
+    // provider is optional so an unavailable bridge yields an empty section.
+    const approvals = (this.port.pendingInteractions?.(member.sessionId) ?? [])
+      .filter((view): view is TeamInboxApproval => view.kind === 'approval')
+      .sort((left, right) => left.id.localeCompare(right.id))
+
+    const sections: Array<[name: string, rows: readonly unknown[]]> = [
+      ['assigned', assigned],
+      ['ready', ready],
+      ['unread', unread],
+      ['approvals', approvals],
+    ]
+    const sizes = new Map<string, number>()
+    let budget = 50
+    for (const [name, rows] of sections) {
+      const take = Math.min(rows.length, perSection, budget)
+      sizes.set(name, take)
+      budget -= take
+    }
+    const assignedView = assigned
+      .slice(0, sizes.get('assigned'))
+      .map(task => this.taskView(team, task, tasks))
+    const readyView = ready
+      .slice(0, sizes.get('ready'))
+      .map(task => this.taskView(team, task, tasks))
+    const unreadView = unread
+      .slice(0, sizes.get('unread'))
+      .map(message => this.messageView(team, message, slotId))
+    return {
+      assigned: assignedView,
+      ready: readyView,
+      unread: unreadView,
+      approvals: approvals.slice(0, sizes.get('approvals')),
+      remaining_unread: Math.max(0, unread.length - unreadView.length),
     }
   }
 
@@ -848,6 +1102,9 @@ export class TeamCommandHandler {
       truncated: message.content.length > 4_000,
       files: message.attachments.map(attachment => attachment.value),
       ...(message.relatedTaskId === undefined ? {} : { task_id: message.relatedTaskId }),
+      ...(message.threadId === undefined ? {} : { thread_id: message.threadId }),
+      ...(message.goalId === undefined ? {} : { goal_id: message.goalId }),
+      ...(message.replyTo === undefined ? {} : { reply_to: message.replyTo }),
       created_at: message.createdAt,
       was_unread: !isReadBy(message, readerSlotId),
     }
@@ -896,8 +1153,9 @@ export class TeamCommandHandler {
     }
     const summary = input.summary?.trim().slice(0, 500)
     const attachments = normalizeFiles(input.files)
+    const links = this.normalizeMessageLinks(team, input)
     if (to.trim() === '*') {
-      return this.sendBroadcast(team, senderSlotId, content, type, summary, attachments)
+      return this.sendBroadcast(team, senderSlotId, content, type, summary, attachments, links)
     }
     const recipientSlotId = this.resolveMemberSlotId(team, to)
     if (recipientSlotId === senderSlotId) {
@@ -913,7 +1171,33 @@ export class TeamCommandHandler {
     return this.sendMemberMessage(teamId, senderSlotId, recipientSlotId, content, type, {
       ...(summary === undefined || summary.length === 0 ? {} : { summary }),
       ...(attachments.length === 0 ? {} : { attachments }),
+      links,
     })
+  }
+
+  /**
+   * Optional thread/goal/reply links. A blank value means "not provided"; a
+   * Goal must exist in this team and a reply must name a message of this team,
+   * so another team's id is unknown here rather than a dangling reference.
+   */
+  private normalizeMessageLinks(team: TeamAggregate, input: SendMessageInput): MessageLinks {
+    const threadId = normalizeMessageKey(input.thread_id ?? input.threadId, 'Thread id')
+    const goalId = normalizeMessageKey(input.goal_id ?? input.goalId, 'Goal id')
+    const replyTo = normalizeMessageKey(input.reply_to ?? input.replyTo, 'Reply-to message id')
+    if (goalId !== undefined) requireGoal(team, goalId)
+    if (replyTo !== undefined
+      && !this.service.listMessages(team.id).items.some(message => message.id === replyTo)) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Unknown message '${replyTo}' in team '${team.name}'`,
+        { replyTo },
+      )
+    }
+    return {
+      ...(threadId === undefined ? {} : { threadId }),
+      ...(goalId === undefined ? {} : { goalId }),
+      ...(replyTo === undefined ? {} : { replyTo }),
+    }
   }
 
   private async sendBroadcast(
@@ -923,6 +1207,7 @@ export class TeamCommandHandler {
     type: NonNullable<SendMessageInput['type']>,
     summary: string | undefined,
     attachments: TeamMessage['attachments'],
+    links: MessageLinks = {},
   ): Promise<SendMessageResult> {
     const id = `dsh-team-mode:${randomUUID()}`
     const record = createTeamMessage({
@@ -934,6 +1219,7 @@ export class TeamCommandHandler {
       content,
       ...(summary === undefined || summary.length === 0 ? {} : { summary }),
       ...(attachments.length === 0 ? {} : { attachments }),
+      ...links,
       idempotencyKey: id,
     })
     await this.service.putRuntimeMessage(record)
@@ -965,7 +1251,11 @@ export class TeamCommandHandler {
     recipientSlotId: string,
     rawContent: string,
     type: 'instruction' | 'progress' | 'result' | 'question' | 'warning' = 'progress',
-    options: { summary?: string; attachments?: TeamMessage['attachments'] } = {},
+    options: {
+      summary?: string
+      attachments?: TeamMessage['attachments']
+      links?: MessageLinks
+    } = {},
   ): Promise<SendMessageResult> {
     const team = this.service.getTeam(teamId)
     const sender = team.members[senderSlotId]
@@ -1003,6 +1293,7 @@ export class TeamCommandHandler {
       content,
       ...(options.summary === undefined ? {} : { summary: options.summary }),
       ...(options.attachments === undefined ? {} : { attachments: options.attachments }),
+      ...options.links,
       idempotencyKey: String(relay.id),
     })
     await this.service.putRuntimeMessage(record)
@@ -1296,6 +1587,17 @@ function normalizeFiles(files: readonly string[] | undefined): TeamMessage['atta
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values.map(value => value.trim()).filter(Boolean))]
+}
+
+/**
+ * A blank link means "not provided"; an over-long one is rejected instead of
+ * silently truncated, because a truncating id would point at nothing.
+ */
+function normalizeMessageKey(value: string | undefined, label: string): string | undefined {
+  const trimmed = value?.trim()
+  if (trimmed === undefined || trimmed.length === 0) return undefined
+  if (trimmed.length > 200) throw new AgentTeamError('INVALID_REQUEST', `${label} is too long`)
+  return trimmed
 }
 
 /** An absent or blank attempt token means "no token presented", not a mismatch. */

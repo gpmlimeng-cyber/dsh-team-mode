@@ -84,6 +84,7 @@ export class TeamRuntime {
       },
       clearAgentContext: (teamId, slotId) => this.clearMemberContext(teamId, slotId),
       removeMember: (teamId, slotId) => this.removeMember(teamId, slotId),
+      pendingInteractions: sessionId => this.interactions.list(sessionId),
     })
     this.interactions = new TeamInteractionBridge(ctx, {
       acceptsSession: sessionId => this.owned.has(sessionId),
@@ -1143,7 +1144,7 @@ export class TeamRuntime {
         registerTeamTools(agentCtx, {
           assertIdentity: agent => { this.assertToolIdentity(agent, team.id, member.id) },
           members: () => this.commands.members(team.id),
-          readMessages: limit => this.commands.readMessages(team.id, member.id, limit),
+          readMessages: (limit, filter) => this.commands.readMessages(team.id, member.id, limit, filter),
           sendMessage: input => this.commands.sendMessage(team.id, member.id, input),
           interruptAgent: (slotId, message) => this.commands.interruptAgent(
             team.id,
@@ -1153,6 +1154,8 @@ export class TeamRuntime {
           ),
           createTask: input => this.commands.createTask(team.id, member.id, input),
           updateTask: input => this.commands.updateTask(team.id, member.id, input),
+          claimTask: input => this.commands.claimTask(team.id, member.id, input),
+          inbox: input => this.commands.inbox(team.id, member.id, input),
           listTasks: limit => this.commands.listTasks(team.id, limit),
           createGoal: input => this.commands.createGoal(team.id, member.id, input),
           listGoals: () => this.commands.listGoals(team.id),
