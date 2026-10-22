@@ -185,6 +185,18 @@ P3  会话搜索、图关系、可选社区插件适配
 | 任务详情/重试 | 任务级查看、取消、重试、产物与摘要 | AgentTeams attempt lifecycle |
 | 成员工具策略 | 部署方声明策略 id，成员按 id 选择，不暴露原始 allow/deny | AgentTeams toolPolicies |
 
+### P1：竞品差距
+
+| 项目 | 目标 |
+|---|---|
+| Context Steward | 压缩/分段/checkpoint/handoff，解决长任务失忆 |
+| Group Chat Turn Engine | 管理员先答、顺序发言、@、迟到回复、审批胶囊 |
+| Autonomous Ops | routines、reminders、budget、busy park/resume |
+| Memory Automation | capture/recall/tidy/journal，默认只写 proposed |
+| DSH Ecosystem Reuse | 复用 MCP/Skills/Tools/Browser/UI slots，按成员策略治理 |
+
+完整分析：[竞品差距与后续路线](./COMPETITIVE-GAPS.md)
+
 ### P2：产品与可观察性
 
 | 项目 | 目标 |
@@ -194,7 +206,7 @@ P3  会话搜索、图关系、可选社区插件适配
 | 团队记忆 | 团队级记忆与成员本地记忆隔离 |
 | Workspace 模型收口 | 默认工作区、助手工作区迁移/只读策略 |
 | 多 Host | 写入所有权、冲突检测、只读协作 |
-| 发布流水线 | 正式 npm 发布、CI、版本升级冒烟 |
+| 发布流水线 | 本地打包/CI/版本说明；外部部署单独确认 |
 
 ## 明确不做
 
@@ -212,17 +224,29 @@ P3  会话搜索、图关系、可选社区插件适配
 ```text
 assistant-reload-takeover
 team-attempt-fencing
+group-chat-orchestration
+memory-p0
+assistant-identity-link
+memory-goal-ui
+raft-collaboration
+runtime-reliability
+team-epoch
+quality-gates
 ```
 
-下一阶段计划：[group-chat-orchestration-modes](./superpowers/plans/2026-10-22-group-chat-orchestration-modes.md)
-
-执行顺序：
+进行中：
 
 ```text
-团队管家提示词 / 模式判断
-→ Goal 层 + Task.goalId
-→ 持久 Goal / 进度账本 / busy park
-→ 冷恢复状态机
-→ 归档竞态
-→ 质量门禁 / 可选自动调度
+tool-policies
+```
+
+后续：
+
+```text
+Release readiness（本地/CI，不外部部署）
+→ Context Steward
+→ Group Chat Turn Engine
+→ Autonomous Ops
+→ Memory Automation
+→ DSH Ecosystem Reuse
 ```

@@ -47,6 +47,7 @@ Leader 把编码任务交给 GLM，并只接收进度、测试结果和关键产
 | 记忆管理设计 | [记忆管理方案](./MEMORY-ARCHITECTURE.md) |
 | 身份/记忆/权限边界 | [边界决策](./DECISIONS-IDENTITY-MEMORY.md) |
 | Raft 式协作借鉴 | [Raft 借鉴方案](./RAFT-ADOPTION.md) |
+| 竞品差距与下一步 | [竞品差距与后续路线](./COMPETITIVE-GAPS.md) |
 
 ## 核心概念
 
