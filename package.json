@@ -22,9 +22,14 @@
       "types": "./lib/client.d.ts",
       "default": "./lib/client.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./icon": "./icon.svg",
+    "./locale/*.json": "./locale/*.json"
   },
   "files": [
+    "lib",
+    "locale",
+    "icon.svg",
     "lib/index.js",
     "lib/client.js",
     "lib/*.d.ts",
@@ -51,7 +56,8 @@
         "@deepseek-ai/dsh-client-ui-workspace"
       ],
       "platform": "web"
-    }
+    },
+    "manifestVersion": 1
   },
   "scripts": {
     "build": "tsdown",

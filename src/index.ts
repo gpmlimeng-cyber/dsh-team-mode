@@ -47,20 +47,65 @@ export const inject = [
 export { Config }
 
 export async function apply(ctx: Context, config: AgentTeamConfig): Promise<void> {
-  const domain = await ctx.storageDomain.open(dshTeamModeDomainSpec)
-  const assistantBuilderPreferencesDomain = await ctx.storageDomain
-    .open(assistantBuilderPreferencesDomainSpec)
-    .catch(async error => {
-      await domain.close()
-      throw error
-    })
+  let disposed = false
+  let closing: Promise<void> | undefined
+  let domain: Awaited<ReturnType<Context['storageDomain']['open']>> | undefined
+  let assistantBuilderPreferencesDomain: typeof domain
   let runtime: TeamRuntime | undefined
   let assistantBuilderRuntime: AssistantBuilderRuntime | undefined
   let assistantRuntime: AssistantRuntime | undefined
   let transport: ReturnType<typeof registerWebTransport> | undefined
   let service: AgentTeamService | undefined
+
+  const closeResources = (): Promise<void> => {
+    if (closing !== undefined) return closing
+    closing = (async () => {
+      transport?.dispose()
+      await service?.disposeWorkspaceTracking()
+      await assistantBuilderRuntime?.dispose()
+      await assistantRuntime?.dispose()
+      await runtime?.dispose()
+      await assistantBuilderPreferencesDomain?.close()
+      await domain?.close()
+      assistantBuilderPreferencesDomain = undefined
+      domain = undefined
+    })()
+    return closing
+  }
+
+  // Register the teardown effect before the first await. Initialization below
+  // is intentionally split into await-for-data stages followed by one
+  // synchronous registration block, so an unload during storage open or
+  // migration cannot register resources after the plugin started UNLOADING.
+  ctx.effect(() => async () => {
+    disposed = true
+    await closeResources()
+  }, 'dsh-team-mode: ordered shutdown')
+
   try {
+    domain = await ctx.storageDomain.open(dshTeamModeDomainSpec)
+    if (disposed) {
+      await domain.close()
+      domain = undefined
+      return
+    }
+    assistantBuilderPreferencesDomain = await ctx.storageDomain.open(assistantBuilderPreferencesDomainSpec)
+    if (disposed) {
+      await assistantBuilderPreferencesDomain.close()
+      assistantBuilderPreferencesDomain = undefined
+      await domain.close()
+      domain = undefined
+      return
+    }
     await migrateDomain(domain)
+    if (disposed) {
+      await closeResources()
+      return
+    }
+
+    // From here to registerWebTransport(), do not await: all tool, service,
+    // session, and transport registrations must land in one synchronous chunk
+    // after the final data await.
     const store = new DomainAgentTeamStore(domain)
     const assistantBuilderModelPreferences = new DomainAssistantBuilderModelPreferenceStore(
       assistantBuilderPreferencesDomain,
@@ -79,25 +124,12 @@ export async function apply(ctx: Context, config: AgentTeamConfig): Promise<void
     service.attachAssistantBuilderRuntime(assistantBuilderRuntime)
     service.attachAssistantRuntime(assistantRuntime)
     transport = registerWebTransport(ctx, config, service)
-    ctx.effect(() => async () => {
-      transport?.dispose()
-      await service?.disposeWorkspaceTracking()
-      await assistantBuilderRuntime?.dispose()
-      await assistantRuntime?.dispose()
-      await runtime?.dispose()
-      await assistantBuilderPreferencesDomain.close()
-      await domain.close()
-    }, 'dsh-team-mode: ordered shutdown')
+
     await runtime.recoverTeams()
+    if (disposed) return
     service.startWorkspaceTracking()
   } catch (error) {
-    transport?.dispose()
-    await service?.disposeWorkspaceTracking()
-    await assistantBuilderRuntime?.dispose()
-    await assistantRuntime?.dispose()
-    await runtime?.dispose()
-    await assistantBuilderPreferencesDomain.close()
-    await domain.close()
+    await closeResources()
     throw error
   }
 }
