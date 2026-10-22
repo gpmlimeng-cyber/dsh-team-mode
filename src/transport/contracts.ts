@@ -1,6 +1,7 @@
 import type {
   AddTeamMemberInput,
   AssistantInstance,
+  AssistantMemory,
   AssistantPreview,
   AssistantSession,
   AssistantTemplate,
@@ -8,10 +9,12 @@ import type {
   CreateAssistantInput,
   CreateAssistantInstanceInput,
   CreateTeamDraftInput,
+  MemoryEntry,
   TeamAggregate,
   TeamMessage,
   UpdateAssistantInput,
   UpdateAssistantInstanceInput,
+  WriteAssistantMemoryEntryInput,
 } from '../domain/types.js'
 
 export type AssistantInstanceView = AssistantInstance & { preview?: AssistantPreview }
@@ -40,6 +43,9 @@ export const AGENT_TEAM_METHODS = [
   'assistant.instance.update',
   'assistant.instance.archive',
   'assistant.instance.ensure',
+  'assistant.memory.get',
+  'assistant.memory.write',
+  'assistant.memory.entry.write',
   'assistant.task.list',
   'assistant.task.interactions',
   'assistant.task.interaction.respond',
@@ -75,6 +81,8 @@ export const AGENT_TEAM_METHODS = [
   'team.members.reorder',
   'team.pin',
   'team.archive',
+  'team.memory.write',
+  'team.memory.decide',
   'team.interaction.respond',
   'team.member.setPermissionPreset',
   'team.member.setReasoningEffort',
@@ -321,6 +329,29 @@ export interface WorkspaceUploadView {
   bytes: number
 }
 
+/** A missing assistant memory document is null, not an invented empty row. */
+export interface AssistantMemoryView {
+  memory: AssistantMemory | null
+}
+
+export interface AssistantMemoryEntryWriteView {
+  memory: AssistantMemory
+  entry: MemoryEntry
+}
+
+/** User-authority team memory write; visibility is always `team-safe`. */
+export interface TeamMemoryWriteInput {
+  id?: string
+  key?: string
+  title: string
+  body: string
+}
+
+export interface TeamMemoryWriteView {
+  memoryRevision: number
+  entry: MemoryEntry
+}
+
 export interface AgentTeamRequestMap {
   'catalog.get': { payload: undefined; result: CatalogView }
   'catalog.model.get': {
@@ -345,6 +376,28 @@ export interface AgentTeamRequestMap {
   'assistant.instance.ensure': {
     payload: { id: string }
     result: { instance: AssistantInstance; sessionId: string }
+  }
+  'assistant.memory.get': {
+    payload: { assistantId: string }
+    result: AssistantMemoryView
+  }
+  'assistant.memory.write': {
+    payload: {
+      assistantId: string
+      content: string
+      mode?: 'replace' | 'append'
+      /** Memory document revision; 0 means "no memory written yet". */
+      expectedRevision?: number
+    }
+    result: AssistantMemory
+  }
+  'assistant.memory.entry.write': {
+    payload: {
+      assistantId: string
+      expectedRevision?: number
+      entry: WriteAssistantMemoryEntryInput
+    }
+    result: AssistantMemoryEntryWriteView
   }
   'assistant.task.list': {
     payload: { assistantId?: string } | undefined
@@ -418,6 +471,24 @@ export interface AgentTeamRequestMap {
   'team.members.reorder': { payload: { teamId: string; order: string[] }; result: TeamView }
   'team.pin': { payload: { teamId: string; pinned: boolean }; result: TeamView }
   'team.archive': { payload: { teamId: string; archived: boolean }; result: TeamView }
+  /** User-authority team memory write; the fence is the memory revision, not the aggregate revision. */
+  'team.memory.write': {
+    payload: {
+      teamId: string
+      expectedMemoryRevision?: number
+      value: TeamMemoryWriteInput
+    }
+    result: TeamMemoryWriteView
+  }
+  'team.memory.decide': {
+    payload: {
+      teamId: string
+      entryId: string
+      expectedMemoryRevision?: number
+      decision: 'accept' | 'reject'
+    }
+    result: TeamMemoryWriteView
+  }
   'team.interaction.respond': {
     payload: {
       teamId: string

@@ -12,6 +12,16 @@ import type {
 } from '../domain/types.js'
 import type { AgentTeamService } from '../service/dsh-team-mode-service.js'
 import {
+  assertTeamMemoryBudget,
+  liveTeamMemoryEntries,
+  normalizeTeamMemoryKey,
+  normalizeTeamMemoryRevision,
+  requireTeamMemoryRevision,
+  TEAM_MEMORY_MAX_BODY_CHARS,
+  TEAM_MEMORY_MAX_ENTRIES,
+  TEAM_MEMORY_MAX_TITLE_CHARS,
+} from '../service/dsh-team-mode-service.js'
+import {
   assignmentContent,
   createTaskDispatchMessage,
   createSystemTeamMessage,
@@ -217,10 +227,6 @@ export interface ShutdownRequest {
   requesterSlotId: string
   requestedAt: string
 }
-
-/** Team core stays small: the same budget bounds storage and prompt injection. */
-const TEAM_MEMORY_MAX_CHARS = 8_000
-const TEAM_MEMORY_MAX_ENTRIES = 100
 
 const TASK_STATUS_ALIASES: Readonly<Record<string, InternalTaskStatus>> = {
   pending: 'pending',
@@ -650,17 +656,17 @@ export class TeamCommandHandler {
   ): Promise<TeamMemoryWriteResult> {
     const team = this.service.getTeam(teamId)
     this.requireMember(team, proposerSlotId)
-    const title = requireShortText(input.title ?? '', 'Memory title', 200)
-    const body = requireShortText(input.body ?? '', 'Memory body', 4_000)
-    const key = normalizeKey(input.key)
-    const expected = normalizeRevision(input.expected_revision ?? input.expectedRevision)
+    const title = requireShortText(input.title ?? '', 'Memory title', TEAM_MEMORY_MAX_TITLE_CHARS)
+    const body = requireShortText(input.body ?? '', 'Memory body', TEAM_MEMORY_MAX_BODY_CHARS)
+    const key = normalizeTeamMemoryKey(input.key)
+    const expected = normalizeTeamMemoryRevision(input.expected_revision ?? input.expectedRevision)
     const now = new Date().toISOString()
     const entryId = randomUUID()
     const next = await this.service.updateRuntimeTeam(
       teamId,
       current => {
         this.requireMember(current, proposerSlotId)
-        requireMemoryRevision(expected, current.memory?.revision ?? 0)
+        requireTeamMemoryRevision(expected, current.memory?.revision ?? 0)
         // Leadership is dynamic: decide the proposal shape against the value
         // being written, not the snapshot read before this serialized update.
         const isLeader = current.leaderSlotId === proposerSlotId
@@ -668,7 +674,7 @@ export class TeamCommandHandler {
         // Archived and superseded entries are history: stored for audit but not
         // counted, so rejecting a proposal or superseding a key never
         // permanently consumes the budget.
-        if (liveMemoryEntries(entries).length >= TEAM_MEMORY_MAX_ENTRIES) {
+        if (liveTeamMemoryEntries(entries).length >= TEAM_MEMORY_MAX_ENTRIES) {
           throw new AgentTeamError(
             'INVALID_REQUEST',
             `Team memory already holds ${TEAM_MEMORY_MAX_ENTRIES} live entries (active or proposed)`,
@@ -728,7 +734,7 @@ export class TeamCommandHandler {
     const entryId = (input.entry_id ?? input.entryId ?? '').trim()
     if (entryId === '') throw new AgentTeamError('INVALID_REQUEST', 'Memory entry id is required')
     const decision = normalizeDecision(input.decision)
-    const expected = normalizeRevision(input.expected_revision ?? input.expectedRevision)
+    const expected = normalizeTeamMemoryRevision(input.expected_revision ?? input.expectedRevision)
     const now = new Date().toISOString()
     const next = await this.service.updateRuntimeTeam(
       teamId,
@@ -740,7 +746,7 @@ export class TeamCommandHandler {
             'Only the team leader may accept or reject team memory proposals',
           )
         }
-        requireMemoryRevision(expected, current.memory?.revision ?? 0)
+        requireTeamMemoryRevision(expected, current.memory?.revision ?? 0)
         const entries = [...(current.memory?.entries ?? [])]
         const index = entries.findIndex(entry => entry.id === entryId)
         if (index === -1) {
@@ -1227,26 +1233,6 @@ export class TeamCommandHandler {
   }
 }
 
-/** A memory fence is a whole non-negative number; anything else means "unfenced". */
-function normalizeRevision(value: number | undefined): number | undefined {
-  if (value === undefined || !Number.isFinite(value)) return undefined
-  return Math.max(Math.floor(value), 0)
-}
-
-function requireMemoryRevision(expected: number | undefined, actual: number): void {
-  if (expected === undefined || expected === actual) return
-  throw new AgentTeamError(
-    'MEMORY_REVISION_CONFLICT',
-    `Team memory revision conflict: expected ${expected}, current ${actual}`,
-    { expected, actual },
-  )
-}
-
-function normalizeKey(value: string | undefined): string | undefined {
-  const trimmed = value?.trim()
-  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed
-}
-
 function requireMemoryEntry(team: TeamAggregate, entryId: string): MemoryEntry {
   const entry = team.memory?.entries.find(value => value.id === entryId)
   if (entry === undefined) {
@@ -1255,26 +1241,6 @@ function requireMemoryEntry(team: TeamAggregate, entryId: string): MemoryEntry {
   return entry
 }
 
-/** Entries that still participate in the caps and the prompt decision. */
-function liveMemoryEntries(entries: readonly MemoryEntry[]): MemoryEntry[] {
-  return entries.filter(entry => entry.status === 'active' || entry.status === 'proposed')
-}
-
-function assertTeamMemoryBudget(entries: readonly MemoryEntry[]): void {
-  const totalChars = liveMemoryEntries(entries).reduce(
-    (sum, entry) => sum + entry.title.length + entry.body.length,
-    0,
-  )
-  if (totalChars > TEAM_MEMORY_MAX_CHARS) {
-    throw new AgentTeamError(
-      'INVALID_REQUEST',
-      `Team memory exceeds ${TEAM_MEMORY_MAX_CHARS} characters across live entries`,
-      { length: totalChars, limit: TEAM_MEMORY_MAX_CHARS },
-    )
-  }
-}
-
-/** Undefined keeps the documented default; anything else must be explicit. */
 function normalizeDecision(value: unknown): 'accept' | 'reject' {
   if (value === undefined) return 'accept'
   if (value === 'accept' || value === 'reject') return value

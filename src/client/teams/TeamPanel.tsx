@@ -21,11 +21,30 @@ import type {
   TeamView,
   TeamWorkbenchView,
 } from '../../transport/contracts.js'
+import type { MemoryEntry, TeamTask } from '../../domain/types.js'
 import { callAgentTeam, subscribeAgentTeamConversation } from '../api.js'
 import { AssistantPanel } from '../assistants/AssistantPanel.js'
 import css from '../AgentTeam.module.css'
 import { CrownIcon } from '../icons/CrownIcon.js'
-import { memberStatusLabel, TASK_STATE_LABELS } from '../labels.js'
+import {
+  filterGoalGroups,
+  GOAL_CARD_RENDER_LIMIT,
+  GOAL_FILTER_ALL,
+  GOAL_FILTER_UNGROUPED,
+  GOAL_TASK_RENDER_LIMIT,
+  goalModeLabel,
+  goalStatusLabel,
+  hasTeamGoals,
+  memberStatusLabel,
+  memorySourceLabel,
+  memoryStatusLabel,
+  memoryVisibilityLabel,
+  TASK_STATE_LABELS,
+  taskDependencyView,
+  teamGoalGroups,
+  teamMemoryView,
+} from '../labels.js'
+import type { GoalTaskGroup } from '../labels.js'
 import {
   initialVisibleMemberSlots,
   reconcileVisibleMemberSlots,
@@ -830,6 +849,7 @@ export function TeamCard({
   const [contextTarget, setContextTarget] = useState<{ slotId: string; displayName: string }>()
   const [renaming, setRenaming] = useState<{ slotId: string; draft: string }>()
   const [renameBusy, setRenameBusy] = useState(false)
+  const [goalFilter, setGoalFilter] = useState<string>(GOAL_FILTER_ALL)
   const [error, setError] = useState<string>()
   const members = useMemo(() => {
     const ordered = team.memberOrder ?? Object.keys(team.members)
@@ -840,6 +860,18 @@ export function TeamCard({
   }, [team])
   const tasks = Object.values(team.tasks)
   const executing = isTeamExecuting(team)
+  const goalsPresent = hasTeamGoals(team)
+
+  useEffect(() => {
+    if (!goalsPresent) {
+      setGoalFilter(GOAL_FILTER_ALL)
+      return
+    }
+    const goalIds = new Set(Object.keys(team.goals ?? {}))
+    if (goalFilter !== GOAL_FILTER_ALL && goalFilter !== GOAL_FILTER_UNGROUPED && !goalIds.has(goalFilter)) {
+      setGoalFilter(GOAL_FILTER_ALL)
+    }
+  }, [goalFilter, goalsPresent, team.goals])
 
   async function dissolve(): Promise<void> {
     setBusy(true)
@@ -1182,6 +1214,12 @@ export function TeamCard({
           ))}
         </div>
       </section>
+      {goalsPresent && (
+        <GoalSummary team={team} selected={goalFilter} onSelect={setGoalFilter} />
+      )}
+      {(compact || team.memory !== undefined) && (
+        <TeamMemorySection team={team} onChanged={onChanged} />
+      )}
       <div className={`${css.contextResetPanel} ${css.cloneTeamPanel ?? ''}`}>
         <div className={css.contextResetCopy}>
           <strong>复制团队</strong>
@@ -1198,17 +1236,19 @@ export function TeamCard({
           复制团队
         </Button>
       </div>
-      {tasks.length > 0 && (
-        <div className={css.taskList}>
-          <strong className={css.taskTitle}>任务板</strong>
-          {tasks.map(task => (
-            <div key={task.id} className={css.memberRow}>
-              <span>{task.title}</span>
-              <span className={css.muted}>{TASK_STATE_LABELS[task.status] ?? task.status}{task.ownerSlotId ? ` · ${team.members[task.ownerSlotId]?.displayName ?? '已移除成员'}` : ''}</span>
+      {goalsPresent
+        ? <GoalTaskBoard team={team} filter={goalFilter} onFilterChange={setGoalFilter} />
+        : tasks.length > 0 && (
+            <div className={css.taskList}>
+              <strong className={css.taskTitle}>任务板</strong>
+              {tasks.map(task => (
+                <div key={task.id} className={css.memberRow}>
+                  <span>{task.title}</span>
+                  <span className={css.muted}>{TASK_STATE_LABELS[task.status] ?? task.status}{task.ownerSlotId ? ` · ${team.members[task.ownerSlotId]?.displayName ?? '已移除成员'}` : ''}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      )}
+          )}
       {team.state !== 'deleting' && team.state !== 'delete_blocked' && (
         <div className={css.contextResetPanel}>
           <div className={css.contextResetCopy}>
@@ -1484,6 +1524,515 @@ export function TeamCard({
         {teamRenameError && <div role="alert" className={css.inlineError}>{teamRenameError}</div>}
       </AnimatedModal>
     </>
+  )
+}
+
+const DEPENDENCY_PREVIEW = 3
+
+function progressPercent(group: GoalTaskGroup): number {
+  return Math.round(group.completionRate * 100)
+}
+
+function taskCountLabel(group: GoalTaskGroup): string {
+  const parts = [`${group.total} 项任务`, `完成 ${group.completed}`]
+  if (group.running > 0) parts.push(`进行中 ${group.running}`)
+  if (group.assigned > 0) parts.push(`待启动 ${group.assigned}`)
+  if (group.blocked > 0) parts.push(`阻塞 ${group.blocked}`)
+  if (group.failed > 0) parts.push(`失败 ${group.failed}`)
+  return parts.join(' · ')
+}
+
+/**
+ * Goal cards sit above the team card's task board. Clicking one sets the filter
+ * shared with GoalTaskBoard, so the card and chips always select the same view.
+ * Only real goals are counted: the synthetic ungrouped bucket belongs to the
+ * task board, never to this header or its render limit.
+ */
+export function GoalSummary({
+  team,
+  selected,
+  onSelect,
+}: {
+  team: TeamView
+  selected: string
+  onSelect: (filter: string) => void
+}): JSX.Element | null {
+  const groups = useMemo(
+    () => teamGoalGroups(team).filter(group => group.goal !== undefined),
+    [team],
+  )
+  const [limit, setLimit] = useState(GOAL_CARD_RENDER_LIMIT)
+  if (groups.length === 0) return null
+  const visible = groups.slice(0, limit)
+  return (
+    <section className={css.goalSummary} aria-label="团队目标">
+      <div className={css.goalSummaryHeader}>
+        <strong>目标</strong>
+        <span>{groups.length} 个 · 点击目标筛选任务</span>
+      </div>
+      <div className={css.goalCardRow}>
+        {visible.map(group => {
+          const goal = group.goal!
+          const percent = progressPercent(group)
+          return (
+            <button
+              key={group.id}
+              type="button"
+              className={[
+                css.goalCard,
+                selected === group.id ? css.goalCardSelected : '',
+                goal.status === 'cancelled' ? css.goalCardCancelled : '',
+              ].filter(Boolean).join(' ')}
+              aria-pressed={selected === group.id}
+              title={goal.objective}
+              onClick={() => { onSelect(group.id) }}
+            >
+              <span className={css.goalCardTop}>
+                <strong>{goal.title}</strong>
+                <span className={css.goalModeBadge}>{goalModeLabel(goal.mode)}</span>
+              </span>
+              <span className={css.goalCardObjective}>{goal.objective}</span>
+              {goal.acceptance.trim() !== '' && (
+                <span className={css.goalCardAcceptance}>验收：{goal.acceptance}</span>
+              )}
+              <span className={css.goalProgressRow}>
+                <span>{taskCountLabel(group)}</span>
+                <span>{percent}%</span>
+              </span>
+              <span className={css.goalProgressTrack} aria-hidden="true">
+                <span className={css.goalProgressFill} style={{ width: `${percent}%` }} />
+              </span>
+              {goal.status !== 'active' && (
+                <span className={`${css.goalStatusBadge} ${goal.status === 'cancelled' ? css.goalStatusBadgeMuted : ''}`}>
+                  {goalStatusLabel(goal.status)}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </div>
+      {groups.length > visible.length && (
+        <button
+          type="button"
+          className={css.goalMoreButton}
+          onClick={() => { setLimit(current => current + GOAL_CARD_RENDER_LIMIT) }}
+        >
+          显示更多目标（还有 {groups.length - visible.length} 个）
+        </button>
+      )}
+    </section>
+  )
+}
+
+/**
+ * Goal-grouped task board with dependency state. Filter state is owned by the
+ * live team card so a Goal card click and the board chips select the same view.
+ */
+export function GoalTaskBoard({
+  team,
+  filter,
+  onFilterChange,
+}: {
+  team: TeamView
+  filter: string
+  onFilterChange: (filter: string) => void
+}): JSX.Element {
+  const groups = useMemo(() => teamGoalGroups(team), [team])
+  const visibleGroups = filterGoalGroups(groups, filter)
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set())
+  const filterable = groups.filter(group => group.goal !== undefined)
+  const ungrouped = groups.find(group => group.goal === undefined)
+
+  function toggleExpanded(groupId: string): void {
+    setExpanded(current => {
+      const next = new Set(current)
+      if (next.has(groupId)) next.delete(groupId)
+      else next.add(groupId)
+      return next
+    })
+  }
+
+  return (
+    <div className={css.goalTaskBoard}>
+      <div className={css.goalFilterRow} role="group" aria-label="按目标筛选任务">
+        <button
+          type="button"
+          className={`${css.goalFilterChip} ${filter === GOAL_FILTER_ALL ? css.goalFilterChipActive : ''}`}
+          aria-pressed={filter === GOAL_FILTER_ALL}
+          onClick={() => { onFilterChange(GOAL_FILTER_ALL) }}
+        >
+          全部任务
+        </button>
+        {filterable.map(group => (
+          <button
+            key={group.id}
+            type="button"
+            className={`${css.goalFilterChip} ${filter === group.id ? css.goalFilterChipActive : ''}`}
+            aria-pressed={filter === group.id}
+            onClick={() => { onFilterChange(group.id) }}
+          >
+            {group.goal?.title}
+          </button>
+        ))}
+        {ungrouped !== undefined && (
+          <button
+            type="button"
+            className={`${css.goalFilterChip} ${filter === ungrouped.id ? css.goalFilterChipActive : ''}`}
+            aria-pressed={filter === ungrouped.id}
+            onClick={() => { onFilterChange(ungrouped.id) }}
+          >
+            未归入目标 · {ungrouped.total}
+          </button>
+        )}
+      </div>
+      {visibleGroups.length === 0
+        ? <p className={css.goalEmpty}>该目标下暂无任务。</p>
+        : visibleGroups.map(group => {
+            const expandedGroup = expanded.has(group.id)
+            const tasks = expandedGroup ? group.tasks : group.tasks.slice(0, GOAL_TASK_RENDER_LIMIT)
+            return (
+              <section key={group.id} className={css.goalTaskGroup} aria-label={group.goal?.title ?? '未归入目标'}>
+                <div className={css.goalTaskGroupHeader}>
+                  <span className={css.goalTaskGroupTitle}>
+                    <strong>{group.goal?.title ?? '未归入目标'}</strong>
+                    {group.goal !== undefined && (
+                      <span className={css.goalModeBadge}>{goalModeLabel(group.goal.mode)}</span>
+                    )}
+                    {group.goal !== undefined && group.goal.status !== 'active' && (
+                      <span className={`${css.goalStatusBadge} ${group.goal.status === 'cancelled' ? css.goalStatusBadgeMuted : ''}`}>
+                        {goalStatusLabel(group.goal.status)}
+                      </span>
+                    )}
+                  </span>
+                  <span className={css.goalTaskGroupMeta}>{taskCountLabel(group)}</span>
+                </div>
+                {group.goal !== undefined && group.goal.acceptance.trim() !== '' && (
+                  <p className={css.goalAcceptanceLine}>验收：{group.goal.acceptance}</p>
+                )}
+                {tasks.length === 0
+                  ? <p className={css.goalEmpty}>还没有任务。</p>
+                  : tasks.map(task => (
+                      <GoalTaskRow key={task.id} team={team} task={task} />
+                    ))}
+                {group.tasks.length > tasks.length && (
+                  <button
+                    type="button"
+                    className={css.goalMoreButton}
+                    onClick={() => { toggleExpanded(group.id) }}
+                  >
+                    显示更多任务（还有 {group.tasks.length - tasks.length} 项）
+                  </button>
+                )}
+                {expandedGroup && group.tasks.length > GOAL_TASK_RENDER_LIMIT && (
+                  <button
+                    type="button"
+                    className={css.goalMoreButton}
+                    onClick={() => { toggleExpanded(group.id) }}
+                  >
+                    收起任务
+                  </button>
+                )}
+              </section>
+            )
+          })}
+    </div>
+  )
+}
+
+function GoalTaskRow({ team, task }: { team: TeamView; task: TeamTask }): JSX.Element {
+  const dependencies = taskDependencyView(team, task)
+  const waitingNames = dependencies.waitingOn
+    .slice(0, DEPENDENCY_PREVIEW)
+    .map(item => item.title)
+    .join('、')
+  const waitingLabel = dependencies.waitingOn.length > DEPENDENCY_PREVIEW
+    ? `${waitingNames} 等 ${dependencies.waitingOn.length} 项`
+    : waitingNames
+  return (
+    <div className={css.taskBoardRow}>
+      <div className={css.taskBoardRowMain}>
+        <span className={css.goalTaskTitleLine}>
+          <strong>{task.title}</strong>
+          {dependencies.isBlocked && <span className={css.goalBlockedBadge}>阻塞</span>}
+        </span>
+        {task.description !== '' && <span className={css.taskBoardDescription}>{task.description}</span>}
+        {(dependencies.waitingOn.length > 0 || dependencies.blocks.length > 0) && (
+          <span className={css.goalDependencyRow}>
+            {dependencies.waitingOn.length > 0 && (
+              <span
+                className={`${css.goalDependencyChip} ${css.goalDependencyChipWait}`}
+                title={dependencies.waitingOn.map(item => `${item.title}${item.status === 'completed' ? '' : `（${TASK_STATE_LABELS[item.status] ?? item.status}）`}`).join('\n')}
+              >
+                等待依赖：{waitingLabel}
+              </span>
+            )}
+            {dependencies.blocks.length > 0 && (
+              <span
+                className={css.goalDependencyChip}
+                title={dependencies.blocks.map(item => item.title).join('\n')}
+              >
+                阻塞 {dependencies.blocks.length} 项后续任务
+              </span>
+            )}
+          </span>
+        )}
+      </div>
+      <div className={css.taskBoardRowMeta}>
+        <span className={`${css.taskBoardStatus} ${task.status === 'completed' ? css.taskBoardStatusDone : ''}`}>
+          {TASK_STATE_LABELS[task.status] ?? task.status}
+        </span>
+        <span className={css.muted}>
+          {task.ownerSlotId ? team.members[task.ownerSlotId]?.displayName ?? '已移除成员' : '未分配'}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function memoryErrorMessage(cause: unknown): string {
+  const code = typeof cause === 'object' && cause !== null && 'code' in cause
+    ? (cause as { code?: unknown }).code
+    : undefined
+  if (code === 'MEMORY_REVISION_CONFLICT') return '团队记忆已被其他操作更新，请刷新后重试。'
+  return cause instanceof Error ? cause.message : String(cause)
+}
+
+function memoryTime(value: string): string {
+  return value.slice(0, 16).replace('T', ' ')
+}
+
+/**
+ * Team memory lives inside the team aggregate, so the panel renders straight
+ * from `team.memory` and refetches through `onChanged` after every mutation.
+ * Only team-safe team entries reach the view (see `teamMemoryView`); private
+ * assistant memory has no path into this component.
+ */
+function TeamMemorySection({
+  team,
+  onChanged,
+}: {
+  team: TeamView
+  onChanged: () => Promise<void>
+}): JSX.Element {
+  const memory = team.memory
+  const view = useMemo(() => teamMemoryView(memory), [memory])
+  const [draft, setDraft] = useState<{ id?: string; title: string; body: string; key: string }>()
+  const [saving, setSaving] = useState(false)
+  const [deciding, setDeciding] = useState<string>()
+  const [error, setError] = useState<string>()
+  const [historyOpen, setHistoryOpen] = useState(false)
+
+  async function save(): Promise<void> {
+    if (draft === undefined || saving) return
+    const title = draft.title.trim()
+    if (title === '') {
+      setError('记忆标题不能为空。')
+      return
+    }
+    setSaving(true)
+    setError(undefined)
+    try {
+      await callAgentTeam('team.memory.write', {
+        teamId: team.id,
+        expectedMemoryRevision: view.revision,
+        value: {
+          ...(draft.id === undefined ? {} : { id: draft.id }),
+          ...(draft.key.trim() === '' ? {} : { key: draft.key.trim() }),
+          title,
+          body: draft.body,
+        },
+      })
+      setDraft(undefined)
+      await onChanged()
+    } catch (cause) {
+      setError(memoryErrorMessage(cause))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function decide(entryId: string, decision: 'accept' | 'reject'): Promise<void> {
+    if (deciding !== undefined) return
+    setDeciding(entryId)
+    setError(undefined)
+    try {
+      await callAgentTeam('team.memory.decide', {
+        teamId: team.id,
+        entryId,
+        expectedMemoryRevision: view.revision,
+        decision,
+      })
+      await onChanged()
+    } catch (cause) {
+      setError(memoryErrorMessage(cause))
+    } finally {
+      setDeciding(undefined)
+    }
+  }
+
+  function entryCard(entry: MemoryEntry, actions?: JSX.Element): JSX.Element {
+    return (
+      <article key={entry.id} className={css.memoryEntryCard}>
+        <div className={css.memoryEntryHeader}>
+          <strong>{entry.title}</strong>
+          <span className={css.memoryBadges}>
+            <span className={css.memoryBadge}>{memoryVisibilityLabel(entry.visibility)}</span>
+            <span className={`${css.memoryBadge} ${entry.status === 'proposed' ? css.memoryBadgeProposed : ''}`}>
+              {memoryStatusLabel(entry.status)}
+            </span>
+            <span className={css.memoryBadge}>v{entry.revision}</span>
+          </span>
+        </div>
+        {entry.body !== '' && <p className={css.memoryEntryBody}>{entry.body}</p>}
+        <div className={css.memoryEntryMeta}>
+          <span>
+            {memorySourceLabel(entry.source)}
+            {entry.key === undefined ? '' : ` · ${entry.key}`}
+            {` · ${memoryTime(entry.updatedAt)}`}
+          </span>
+          {actions}
+        </div>
+      </article>
+    )
+  }
+
+  return (
+    <section className={css.teamMemorySection} aria-label="团队记忆">
+      <div className={css.teamSectionHeader}>
+        <strong>团队记忆</strong>
+        <span className={css.teamSectionActions}>
+          <span>版本 {view.revision}</span>
+          <button
+            type="button"
+            className={css.addMemberButton}
+            disabled={saving || draft !== undefined}
+            onClick={() => {
+              setError(undefined)
+              setDraft({ title: '', body: '', key: '' })
+            }}
+          >
+            <IconPlusOutlineRegular size={14} />
+            添加记忆
+          </button>
+        </span>
+      </div>
+      {error !== undefined && <div role="alert" className={css.inlineError}>{error}</div>}
+      {view.empty && draft === undefined && (
+        <p className={css.memoryEmpty}>还没有团队记忆。成员可以提案，Leader 或你可以直接写入。</p>
+      )}
+      {view.proposed.length > 0 && (
+        <div className={css.memoryGroup}>
+          <strong className={css.memoryGroupTitle}>待确认提案 · {view.proposed.length}</strong>
+          {view.proposed.map(entry => entryCard(
+            entry,
+            <span className={css.memoryEntryActions}>
+              <button
+                type="button"
+                className={css.memoryAction}
+                disabled={deciding !== undefined}
+                onClick={() => { void decide(entry.id, 'accept') }}
+              >
+                {deciding === entry.id ? '处理中…' : '接受'}
+              </button>
+              <button
+                type="button"
+                className={css.memoryAction}
+                disabled={deciding !== undefined}
+                onClick={() => { void decide(entry.id, 'reject') }}
+              >
+                驳回
+              </button>
+            </span>,
+          ))}
+        </div>
+      )}
+      {view.active.length > 0 && (
+        <div className={css.memoryGroup}>
+          <strong className={css.memoryGroupTitle}>生效记忆 · {view.active.length}</strong>
+          {view.active.map(entry => entryCard(
+            entry,
+            <button
+              type="button"
+              className={css.memoryAction}
+              disabled={saving || deciding !== undefined}
+              onClick={() => {
+                setError(undefined)
+                setDraft({
+                  id: entry.id,
+                  title: entry.title,
+                  body: entry.body,
+                  key: entry.key ?? '',
+                })
+              }}
+            >
+              编辑
+            </button>,
+          ))}
+        </div>
+      )}
+      {view.historyTotal > 0 && (
+        <div className={css.memoryGroup}>
+          <button
+            type="button"
+            className={css.memoryHistoryToggle}
+            aria-expanded={historyOpen}
+            onClick={() => { setHistoryOpen(open => !open) }}
+          >
+            <IconChevronDownOutlineRegular size={13} />
+            历史记录 · {view.historyTotal}
+          </button>
+          {historyOpen && (
+            <>
+              {view.history.map(entry => entryCard(entry))}
+              {view.historyTotal > view.history.length && (
+                <p className={css.memoryEmpty}>仅显示最近 {view.history.length} 条历史记录。</p>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {draft !== undefined && (
+        <form
+          className={css.memoryForm}
+          onSubmit={event => { event.preventDefault(); void save() }}
+        >
+          <Field label="标题">
+            <Input
+              value={draft.title}
+              maxLength={200}
+              disabled={saving}
+              onChange={event => { setDraft({ ...draft, title: event.target.value }) }}
+            />
+          </Field>
+          <Field label="内容">
+            <textarea
+              className={`${css.input} ${css.memoryTextarea}`}
+              value={draft.body}
+              rows={3}
+              maxLength={4_000}
+              disabled={saving}
+              onChange={event => { setDraft({ ...draft, body: event.target.value }) }}
+            />
+          </Field>
+          <Field label="键（可选，同键的旧条目会被替代）">
+            <Input
+              value={draft.key}
+              maxLength={200}
+              disabled={saving}
+              onChange={event => { setDraft({ ...draft, key: event.target.value }) }}
+            />
+          </Field>
+          <div className={css.memoryFormActions}>
+            <Button variant="outline" type="button" disabled={saving} onClick={() => { setDraft(undefined) }}>
+              取消
+            </Button>
+            <Button variant="primary" type="submit" disabled={saving}>
+              {saving ? '保存中…' : draft.id === undefined ? '添加' : '保存'}
+            </Button>
+          </div>
+        </form>
+      )}
+    </section>
   )
 }
 

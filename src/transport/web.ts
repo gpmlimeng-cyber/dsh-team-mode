@@ -249,6 +249,33 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
     }
     case 'assistant.instance.ensure':
       return service.ensureAssistantInstance(idPayload.parse(request.payload).id)
+    case 'assistant.memory.get': {
+      const payload = z.object({
+        assistantId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return { memory: service.getAssistantMemory(payload.assistantId) ?? null }
+    }
+    case 'assistant.memory.write': {
+      const payload = z.object({
+        assistantId: z.string().trim().min(1).max(200),
+        content: z.string(),
+        mode: z.enum(['replace', 'append']).optional(),
+        expectedRevision: z.int().nonnegative().optional(),
+      }).strict().parse(request.payload)
+      return service.writeAssistantMemory(payload.assistantId, payload.content, payload.mode, {
+        ...(payload.expectedRevision === undefined ? {} : { expectedRevision: payload.expectedRevision }),
+      })
+    }
+    case 'assistant.memory.entry.write': {
+      const payload = z.object({
+        assistantId: z.string().trim().min(1).max(200),
+        expectedRevision: z.int().nonnegative().optional(),
+        entry: z.unknown(),
+      }).strict().parse(request.payload)
+      return service.writeAssistantMemoryEntry(payload.assistantId, payload.entry as never, {
+        ...(payload.expectedRevision === undefined ? {} : { expectedRevision: payload.expectedRevision }),
+      })
+    }
     case 'assistant.task.list': {
       const payload = request.payload === undefined || request.payload === null
         ? undefined
@@ -452,6 +479,41 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
         archived: z.boolean(),
       }).strict().parse(request.payload)
       return service.setTeamArchived(payload.teamId, payload.archived, options)
+    }
+    case 'team.memory.write': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        expectedMemoryRevision: z.int().nonnegative().optional(),
+        value: z.object({
+          id: z.string().trim().min(1).max(200).optional(),
+          key: z.string().max(200).optional(),
+          title: z.string(),
+          body: z.string(),
+        }).strict(),
+      }).strict().parse(request.payload)
+      return service.writeUserTeamMemory(payload.teamId, {
+        ...(payload.value.id === undefined ? {} : { id: payload.value.id }),
+        ...(payload.value.key === undefined ? {} : { key: payload.value.key }),
+        title: payload.value.title,
+        body: payload.value.body,
+      }, {
+        ...(payload.expectedMemoryRevision === undefined
+          ? {}
+          : { expectedMemoryRevision: payload.expectedMemoryRevision }),
+      })
+    }
+    case 'team.memory.decide': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        entryId: z.string().trim().min(1).max(200),
+        expectedMemoryRevision: z.int().nonnegative().optional(),
+        decision: z.enum(['accept', 'reject']),
+      }).strict().parse(request.payload)
+      return service.decideUserTeamMemory(payload.teamId, payload.entryId, payload.decision, {
+        ...(payload.expectedMemoryRevision === undefined
+          ? {}
+          : { expectedMemoryRevision: payload.expectedMemoryRevision }),
+      })
     }
     case 'team.interaction.respond': {
       const payload = z.object({

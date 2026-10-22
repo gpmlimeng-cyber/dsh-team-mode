@@ -65,6 +65,8 @@ import type {
   InteractionResponseInput,
   MemberConversationView,
   PendingInteractionView,
+  TeamMemoryWriteInput,
+  TeamMemoryWriteView,
   TeamWorkbenchView,
   WorkspaceEntryView,
   WorkspaceGitStatusView,
@@ -94,6 +96,16 @@ export const ASSISTANT_MEMORY_MAX_CHARS = 16_000
  * a runaway writer would keep growing the record with no reader able to show it.
  */
 export const ASSISTANT_MEMORY_MAX_ENTRIES = 100
+
+/**
+ * Team memory keeps a much smaller shared budget than an assistant's private
+ * memory. The caps live here so member/Leader tools and the user-facing
+ * transport share one limit instead of drifting apart.
+ */
+export const TEAM_MEMORY_MAX_CHARS = 8_000
+export const TEAM_MEMORY_MAX_ENTRIES = 100
+export const TEAM_MEMORY_MAX_TITLE_CHARS = 200
+export const TEAM_MEMORY_MAX_BODY_CHARS = 4_000
 
 export interface WriteAssistantMemoryOptions {
   /** Expected memory revision; 0 means "no memory written yet". */
@@ -1201,6 +1213,175 @@ export class AgentTeamService extends Service {
   }
 
   /**
+   * User-authority write of one team memory entry. Team entries are always
+   * `team-safe` and active: a private or proposed entry has no meaning for the
+   * human owner of the team. `expectedMemoryRevision` fences the memory
+   * container (0 means "no team memory yet") and is re-checked inside the
+   * serialized aggregate update, so a concurrent proposal cannot be lost. An
+   * existing `id` is revised in place; a new `key` supersedes the active entry
+   * it replaces, matching the Leader write path.
+   */
+  async writeUserTeamMemory(
+    teamId: string,
+    input: TeamMemoryWriteInput,
+    options: { expectedMemoryRevision?: number } = {},
+  ): Promise<TeamMemoryWriteView> {
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    const title = input.title.trim()
+    if (title === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Team memory title is required')
+    }
+    requireTeamMemoryText(title.length, TEAM_MEMORY_MAX_TITLE_CHARS, 'Team memory title')
+    requireTeamMemoryText(input.body.length, TEAM_MEMORY_MAX_BODY_CHARS, 'Team memory body')
+    const key = normalizeTeamMemoryKey(input.key)
+    const expected = normalizeTeamMemoryRevision(options.expectedMemoryRevision)
+    const now = new Date().toISOString()
+    const entryId = input.id ?? `mem-${randomUUID()}`
+    const next = await this.updateRuntimeTeam(
+      teamId,
+      current => {
+        requireTeamMemoryRevision(expected, current.memory?.revision ?? 0)
+        const entries = [...(current.memory?.entries ?? [])]
+        const index = input.id === undefined
+          ? -1
+          : entries.findIndex(entry => entry.id === input.id)
+        if (input.id !== undefined && index === -1) {
+          throw new AgentTeamError('INVALID_REQUEST', `Unknown team memory entry '${input.id}'`, {
+            entryId: input.id,
+          })
+        }
+        const existing = index === -1 ? undefined : entries[index]!
+        const wasLive = existing !== undefined
+          && (existing.status === 'active' || existing.status === 'proposed')
+        if (!wasLive && liveTeamMemoryEntries(entries).length >= TEAM_MEMORY_MAX_ENTRIES) {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            `Team memory already holds ${TEAM_MEMORY_MAX_ENTRIES} live entries (active or proposed)`,
+            { limit: TEAM_MEMORY_MAX_ENTRIES },
+          )
+        }
+        const entry: MemoryEntry = existing === undefined
+          ? {
+              id: entryId,
+              scope: 'team',
+              visibility: 'team-safe',
+              status: 'active',
+              source: 'user',
+              ...(key === undefined ? {} : { key }),
+              title,
+              body: input.body,
+              revision: 1,
+              createdAt: now,
+              updatedAt: now,
+            }
+          : {
+              ...existing,
+              visibility: 'team-safe',
+              status: 'active',
+              source: 'user',
+              ...(key === undefined ? {} : { key }),
+              title,
+              body: input.body,
+              revision: existing.revision + 1,
+              updatedAt: now,
+            }
+        if (existing === undefined) entries.push(entry)
+        else entries[index] = entry
+        if (key !== undefined) {
+          for (let position = 0; position < entries.length; position += 1) {
+            const other = entries[position]!
+            if (other.id === entry.id || other.status !== 'active' || other.key !== key) continue
+            entries[position] = {
+              ...other,
+              status: 'superseded',
+              revision: other.revision + 1,
+              updatedAt: now,
+            }
+          }
+        }
+        assertTeamMemoryBudget(entries)
+        return {
+          ...current,
+          memory: { revision: (current.memory?.revision ?? 0) + 1, entries, updatedAt: now },
+        }
+      },
+      'team.memory_written',
+      `Team memory entry '${title}' written`,
+    )
+    return { memoryRevision: next.memory?.revision ?? 0, entry: requireTeamMemoryEntry(next, entryId) }
+  }
+
+  /**
+   * User-authority decision on a member proposal. The human owner is not a
+   * member, so the "cannot decide your own proposal" rule does not apply, but
+   * the entry must still be pending. Accepting activates it and supersedes a
+   * conflicting active entry with the same key; rejecting archives it.
+   */
+  async decideUserTeamMemory(
+    teamId: string,
+    entryId: string,
+    decision: 'accept' | 'reject',
+    options: { expectedMemoryRevision?: number } = {},
+  ): Promise<TeamMemoryWriteView> {
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    const id = entryId.trim()
+    if (id === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Memory entry id is required')
+    }
+    if (decision !== 'accept' && decision !== 'reject') {
+      throw new AgentTeamError('INVALID_REQUEST', `Unknown memory decision '${String(decision)}'`)
+    }
+    const expected = normalizeTeamMemoryRevision(options.expectedMemoryRevision)
+    const now = new Date().toISOString()
+    const next = await this.updateRuntimeTeam(
+      teamId,
+      current => {
+        requireTeamMemoryRevision(expected, current.memory?.revision ?? 0)
+        const entries = [...(current.memory?.entries ?? [])]
+        const index = entries.findIndex(entry => entry.id === id)
+        if (index === -1) {
+          throw new AgentTeamError('INVALID_REQUEST', `Unknown team memory entry '${id}'`, { entryId: id })
+        }
+        const entry = entries[index]!
+        if (entry.status !== 'proposed') {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            `Team memory entry '${id}' is ${entry.status}, not proposed`,
+            { entryId: id, status: entry.status },
+          )
+        }
+        entries[index] = {
+          ...entry,
+          status: decision === 'reject' ? 'archived' : 'active',
+          revision: entry.revision + 1,
+          updatedAt: now,
+        }
+        if (decision === 'accept' && entry.key !== undefined) {
+          for (let position = 0; position < entries.length; position += 1) {
+            const other = entries[position]!
+            if (other.id === entry.id || other.status !== 'active' || other.key !== entry.key) continue
+            entries[position] = {
+              ...other,
+              status: 'superseded',
+              revision: other.revision + 1,
+              updatedAt: now,
+            }
+          }
+        }
+        return {
+          ...current,
+          memory: { revision: (current.memory?.revision ?? 0) + 1, entries, updatedAt: now },
+        }
+      },
+      decision === 'accept' ? 'team.memory_accepted' : 'team.memory_rejected',
+      `Team memory entry ${id} ${decision === 'accept' ? 'accepted' : 'rejected'}`,
+    )
+    return { memoryRevision: next.memory?.revision ?? 0, entry: requireTeamMemoryEntry(next, id) }
+  }
+
+  /**
    * Create a draft team. Assistant instance links named by `members[]` are
    * validated pre-write only: the aggregate does not exist yet, so there is no
    * record whose atomic update could re-check them. `addMemberWithSlot` and
@@ -2304,6 +2485,61 @@ function appendMemory(current: string, addition: string): string {
   if (current === '') return addition
   if (addition === '') return current
   return `${current}\n${addition}`
+}
+
+/** A memory fence is a whole non-negative number; anything else means "unfenced". */
+export function normalizeTeamMemoryRevision(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined
+  return Math.max(Math.floor(value), 0)
+}
+
+export function requireTeamMemoryRevision(expected: number | undefined, actual: number): void {
+  if (expected === undefined || expected === actual) return
+  throw new AgentTeamError(
+    'MEMORY_REVISION_CONFLICT',
+    `Team memory revision conflict: expected ${expected}, current ${actual}`,
+    { expected, actual },
+  )
+}
+
+export function normalizeTeamMemoryKey(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed
+}
+
+/** Entries that still participate in the caps and the prompt decision. */
+export function liveTeamMemoryEntries(entries: readonly MemoryEntry[]): MemoryEntry[] {
+  return entries.filter(entry => entry.status === 'active' || entry.status === 'proposed')
+}
+
+export function assertTeamMemoryBudget(entries: readonly MemoryEntry[]): void {
+  const totalChars = liveTeamMemoryEntries(entries).reduce(
+    (sum, entry) => sum + entry.title.length + entry.body.length,
+    0,
+  )
+  if (totalChars > TEAM_MEMORY_MAX_CHARS) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Team memory exceeds ${TEAM_MEMORY_MAX_CHARS} characters across live entries`,
+      { length: totalChars, limit: TEAM_MEMORY_MAX_CHARS },
+    )
+  }
+}
+
+function requireTeamMemoryText(actual: number, limit: number, label: string): void {
+  if (actual <= limit) return
+  throw new AgentTeamError('INVALID_REQUEST', `${label} exceeds ${limit} characters`, {
+    length: actual,
+    limit,
+  })
+}
+
+function requireTeamMemoryEntry(team: TeamAggregate, entryId: string): MemoryEntry {
+  const entry = team.memory?.entries.find(value => value.id === entryId)
+  if (entry === undefined) {
+    throw new AgentTeamError('INVALID_REQUEST', `Unknown team memory entry '${entryId}'`)
+  }
+  return entry
 }
 
 function requireTeam(store: AgentTeamStore, id: string): TeamAggregate {  const team = store.getTeam(id)

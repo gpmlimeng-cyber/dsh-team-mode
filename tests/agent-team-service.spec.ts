@@ -11,6 +11,7 @@ import type {
   AssistantMemory,
   AssistantSession,
   AssistantTemplate,
+  MemoryEntry,
   Operation,
   TeamActivity,
   TeamAggregate,
@@ -527,6 +528,113 @@ describe('AgentTeamService', () => {
 
     await service.linkTaskToGoal(own.id, task.id, ownGoal.id)
     expect(store.getTeam(own.id)!.tasks[task.id]?.goalId).toBe(ownGoal.id)
+  })
+
+  it('lets the human user write team memory with a memory revision fence', async () => {
+    const { service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const team = await service.createTeamDraft({
+      name: 'Memory team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+
+    const created = await service.writeUserTeamMemory(
+      team.id,
+      { title: 'Fact', body: 'One', key: 'fact' },
+      { expectedMemoryRevision: 0 },
+    )
+    expect(created.memoryRevision).toBe(1)
+    expect(created.entry).toMatchObject({
+      scope: 'team',
+      visibility: 'team-safe',
+      status: 'active',
+      source: 'user',
+      key: 'fact',
+      title: 'Fact',
+      body: 'One',
+      revision: 1,
+    })
+
+    const edited = await service.writeUserTeamMemory(
+      team.id,
+      { id: created.entry.id, title: 'Fact v2', body: 'Two' },
+      { expectedMemoryRevision: 1 },
+    )
+    expect(edited.memoryRevision).toBe(2)
+    expect(edited.entry).toMatchObject({ id: created.entry.id, revision: 2, title: 'Fact v2' })
+    expect(edited.entry.key).toBe('fact')
+
+    const replacement = await service.writeUserTeamMemory(
+      team.id,
+      { title: 'New fact', body: 'Three', key: 'fact' },
+      { expectedMemoryRevision: 2 },
+    )
+    expect(store.getTeam(team.id)!.memory!.entries).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: created.entry.id, status: 'superseded' }),
+      expect.objectContaining({ id: replacement.entry.id, status: 'active' }),
+    ]))
+
+    await expect(service.writeUserTeamMemory(
+      team.id,
+      { title: 'Stale', body: 'Stale' },
+      { expectedMemoryRevision: 1 },
+    )).rejects.toMatchObject({ code: 'MEMORY_REVISION_CONFLICT' })
+    expect(store.getTeam(team.id)!.memory?.entries).toHaveLength(2)
+  })
+
+  it('lets the user accept or reject a member team-memory proposal once', async () => {
+    const { service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const team = await service.createTeamDraft({
+      name: 'Proposal team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const now = new Date().toISOString()
+    const proposed: MemoryEntry = {
+      id: 'proposal-1',
+      scope: 'team',
+      visibility: 'team-safe',
+      status: 'proposed',
+      source: 'member',
+      authorSlotId: 'slot-1',
+      title: 'Proposal',
+      body: 'Pending fact',
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+    }
+    await store.updateTeam(team.id, current => ({
+      ...current,
+      memory: { revision: 3, entries: [proposed], updatedAt: now },
+    }))
+
+    const accepted = await service.decideUserTeamMemory(team.id, proposed.id, 'accept', {
+      expectedMemoryRevision: 3,
+    })
+    expect(accepted.memoryRevision).toBe(4)
+    expect(accepted.entry).toMatchObject({ status: 'active', source: 'member', revision: 2 })
+
+    await expect(service.decideUserTeamMemory(team.id, proposed.id, 'reject', {
+      expectedMemoryRevision: 4,
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(store.getTeam(team.id)!.memory?.entries[0]?.status).toBe('active')
+
+    const second: MemoryEntry = { ...proposed, id: 'proposal-2', title: 'Second proposal' }
+    await store.updateTeam(team.id, current => ({
+      ...current,
+      memory: {
+        revision: 5,
+        entries: [...current.memory!.entries, second],
+        updatedAt: now,
+      },
+    }))
+    const rejected = await service.decideUserTeamMemory(team.id, second.id, 'reject', {
+      expectedMemoryRevision: 5,
+    })
+    expect(rejected.entry.status).toBe('archived')
+    expect(rejected.memoryRevision).toBe(6)
   })
 
   it('clones team configuration into fresh members and sessions without runtime records', async () => {

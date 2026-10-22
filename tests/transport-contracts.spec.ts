@@ -1,6 +1,21 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
-import type { AssistantInstance, AssistantSession, CreateAssistantInstanceInput, UpdateAssistantInstanceInput } from '../src/domain/types.js'
-import type { AssistantInstanceView, TeamView } from '../src/transport/contracts.js'
+import type {
+  AssistantInstance,
+  AssistantMemory,
+  AssistantSession,
+  CreateAssistantInstanceInput,
+  MemoryEntry,
+  UpdateAssistantInstanceInput,
+  WriteAssistantMemoryEntryInput,
+} from '../src/domain/types.js'
+import type {
+  AssistantInstanceView,
+  AssistantMemoryEntryWriteView,
+  AssistantMemoryView,
+  TeamMemoryWriteInput,
+  TeamMemoryWriteView,
+  TeamView,
+} from '../src/transport/contracts.js'
 import {
   AGENT_TEAM_METHODS,
   type AgentTeamPayload,
@@ -60,5 +75,47 @@ describe('Agent Team transport contracts', () => {
       assistantInstanceId: string | null
     }>()
     expectTypeOf<AgentTeamResult<'team.member.setAssistantInstance'>>().toEqualTypeOf<TeamView>()
+  })
+
+  it('associates assistant memory methods with their payload and result types', () => {
+    expect(AGENT_TEAM_METHODS).toContain('assistant.memory.get')
+    expect(AGENT_TEAM_METHODS).toContain('assistant.memory.write')
+    expect(AGENT_TEAM_METHODS).toContain('assistant.memory.entry.write')
+    expectTypeOf<AgentTeamPayload<'assistant.memory.get'>>().toEqualTypeOf<{ assistantId: string }>()
+    expectTypeOf<AgentTeamResult<'assistant.memory.get'>>().toEqualTypeOf<AssistantMemoryView>()
+    expectTypeOf<AgentTeamPayload<'assistant.memory.write'>>().toEqualTypeOf<{
+      assistantId: string
+      content: string
+      mode?: 'replace' | 'append'
+      expectedRevision?: number
+    }>()
+    expectTypeOf<AgentTeamResult<'assistant.memory.write'>>().toEqualTypeOf<AssistantMemory>()
+    expectTypeOf<AgentTeamPayload<'assistant.memory.entry.write'>>().toEqualTypeOf<{
+      assistantId: string
+      expectedRevision?: number
+      entry: WriteAssistantMemoryEntryInput
+    }>()
+    expectTypeOf<AgentTeamResult<'assistant.memory.entry.write'>>()
+      .toEqualTypeOf<AssistantMemoryEntryWriteView>()
+    expectTypeOf<AssistantMemoryEntryWriteView['entry']>().toEqualTypeOf<MemoryEntry>()
+  })
+
+  it('associates user-authority team memory methods with the memory revision fence', () => {
+    expect(AGENT_TEAM_METHODS).toContain('team.memory.write')
+    expect(AGENT_TEAM_METHODS).toContain('team.memory.decide')
+    expectTypeOf<AgentTeamPayload<'team.memory.write'>>().toEqualTypeOf<{
+      teamId: string
+      expectedMemoryRevision?: number
+      value: TeamMemoryWriteInput
+    }>()
+    expectTypeOf<AgentTeamResult<'team.memory.write'>>().toEqualTypeOf<TeamMemoryWriteView>()
+    expectTypeOf<AgentTeamPayload<'team.memory.decide'>>().toEqualTypeOf<{
+      teamId: string
+      entryId: string
+      expectedMemoryRevision?: number
+      decision: 'accept' | 'reject'
+    }>()
+    expectTypeOf<AgentTeamResult<'team.memory.decide'>>().toEqualTypeOf<TeamMemoryWriteView>()
+    expectTypeOf<TeamMemoryWriteView['entry']>().toEqualTypeOf<MemoryEntry>()
   })
 })
