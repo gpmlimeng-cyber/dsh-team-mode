@@ -3578,6 +3578,15 @@ textarea.input {
   flex: none;
 }
 
+.sidebarAssistantAvatar .sidebarAssistantAvatarShape {
+  corner-shape: superellipse(1.5);
+  border-radius: 7px !important;
+}
+
+.sidebarAssistantAvatar .sidebarAssistantAvatarShape img {
+  border-radius: inherit;
+}
+
 .sidebarAssistantDot {
   position: absolute;
   right: -1px;
