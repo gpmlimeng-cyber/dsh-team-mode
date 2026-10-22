@@ -15,6 +15,45 @@
 
 AgentTeams 值得借鉴的是 **任务所有权/调度协议**；不是照搬“当前会话即队长”，也不是把成员做成临时 subagent。
 
+## 核心竞品结论
+
+| 竞品 | 主要机制 | 我们采用 |
+|---|---|---|
+| **DS Bot** | 群管理员先答；一次一人顺序发言；`@` 叫人；群记忆、群权限、群工作文件夹；长任务后台完成后再回群 | 群聊秩序与发言体验 |
+| **OpenMausBot** | Chief of Staff；room + responder；`coordinate_bots` 持久委派；Goal 记录、忙时 park/resume、团队记忆、审批继承 | 持久目标与委派账本 |
+| **dsh-agent-teams** | Captain + DAG + attempt + 调度器 + 质量门禁 | 任务所有权与门禁协议 |
+
+结论：
+
+```text
+DS Bot      教群聊怎么“像群聊”
+OpenMausBot 教团队怎么“不丢活”
+AgentTeams  教任务怎么“防旧结果覆盖”
+```
+
+我们不直接运行 AgentTeams 作为群聊内核，也不照搬 OpenMausBot 的整套房间系统。
+
+## 团队管家
+
+群聊管理员由 Leader 承担，不新增第二个 Manager。
+完整设定：[团队管家设定](./TEAM-STEWARD.md)。
+
+职责：
+
+```text
+判断模式 → 建 Goal → 拆 Task → 选成员
+→ 派 attempt → 跟踪/解锁 → 验收 → 收口
+```
+
+原则：
+
+- 普通聊天不建 Goal
+- 简单交付一个 Task
+- 复杂目标才建 DAG
+- 一次只有一个人说话
+- 成员长任务不占群聊发言位
+- 管家是运营者，不是所有工作的执行者
+
 ## 已有能力
 
 - 团队、成员、Leader、共享 Workspace
@@ -59,10 +98,11 @@ Assistant DM Main Session
 
 | 项目 | 目标 | 状态 |
 |---|---|---|
-| 重载/冷启动主会话接管 | 重载后恢复助手工具与记忆，或明确报错，不静默打开无工具主会话 | 进行中 |
-| 任务 attempt / ownership fencing | 每次分配/转派生成 attempt；旧 attempt 的迟到更新被拒绝 | 待开始 |
+| 重载/冷启动主会话接管 | 已 live 的外来主会话返回可恢复冲突，不再静默打开无工具会话 | 已完成（显式恢复） |
+| 任务 attempt / ownership fencing | 每次分配/转派生成 attempt；旧 attempt 的迟到更新被拒绝 | 已完成 |
 | 冷恢复状态机 | 区分进程内中断、插件重载、Host 冷启动；遗留任务生成新 attempt | 待开始 |
 | 归档并发竞态 | 归档状态与停止 worker 在同一实例锁内完成 | 待开始 |
+| 提示词 attempt 提示 | 派发/更新提示补 attempt_id，避免成员首次更新被拒 | 低优先补丁 |
 
 ### P1：群聊编排模式
 
@@ -113,12 +153,21 @@ Assistant DM Main Session
 
 ## 当前执行
 
-进行中计划：[assistant-reload-takeover](./superpowers/plans/2026-10-22-assistant-reload-takeover.md)
-
-完成后再依次进入：
+已完成：
 
 ```text
-attempt/ownership fencing
+assistant-reload-takeover
+team-attempt-fencing
+```
+
+下一阶段计划：[group-chat-orchestration-modes](./superpowers/plans/2026-10-22-group-chat-orchestration-modes.md)
+
+执行顺序：
+
+```text
+团队管家提示词 / 模式判断
+→ Goal 层 + Task.goalId
+→ 持久 Goal / 进度账本 / busy park
 → 冷恢复状态机
 → 归档竞态
 → 质量门禁 / 可选自动调度
