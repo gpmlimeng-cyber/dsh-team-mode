@@ -152,6 +152,8 @@ P3  会话搜索、图关系、可选社区插件适配
 
 完整方案：[记忆管理方案](./MEMORY-ARCHITECTURE.md)
 
+已定边界：[身份、记忆与权限决策](./DECISIONS-IDENTITY-MEMORY.md)
+
 ### P1：任务协议
 
 | 项目 | 目标 | 借鉴点 |
