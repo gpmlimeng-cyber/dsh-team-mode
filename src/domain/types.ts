@@ -81,6 +81,19 @@ export type AddTeamMemberInput = z.infer<typeof addTeamMemberInputSchema>
 export type CreateTeamDraftInput = z.infer<typeof createTeamDraftInputSchema>
 export type CloneTeamInput = z.infer<typeof cloneTeamInputSchema>
 
+/** How a member's explicit Assistant instance link resolved for prompt injection. */
+export type AssistantMemoryLinkState = 'unlinked' | 'linked' | 'archived' | 'unavailable'
+
+/**
+ * Prompt-facing read of one linked Assistant instance's memory. A stale or
+ * unavailable link degrades to a non-`linked` state with no entries instead of
+ * throwing, so an archived instance never breaks a running member session.
+ */
+export interface LinkedAssistantMemory {
+  state: AssistantMemoryLinkState
+  entries: MemoryEntry[]
+}
+
 export interface Page<T> {
   items: T[]
   total: number

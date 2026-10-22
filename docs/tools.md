@@ -21,7 +21,7 @@
 | `team_get_task_board` | 兼容别名：查询任务板 |
 | `team_list_assistants` | 列出可添加的助手模板 |
 | `team_describe_assistant` | 查看助手模板详情 |
-| `team_spawn_agent` | 创建/唤醒团队成员 Agent |
+| `team_spawn_agent` | 创建/唤醒团队成员 Agent；可选 `assistant_instance_id` 显式关联单聊助手实例 |
 | `team_rename_agent` | 重命名成员 |
 | `team_clear_agent_context` | 清空单个成员上下文 |
 | `team_shutdown_agent` | 优雅下线成员 |
@@ -46,7 +46,7 @@
 - 注入：只有 `active`、`visibility=team-safe`、`scope=team` 的条目进入团队成员提示（与 roster 同一动态区段，每轮重读，接受后下一轮即可见），`proposed` / `superseded` / `archived` 以及任何 `private` 条目不加载；注入预算 2,000 字符。
 - 上限：只统计 `active` / `proposed` 的活条目——title+body 合计 8,000 字符、最多 100 条；`archived` 与 `superseded` 属于历史，仍保留在存储里但不计入上限、不进入提示，因此拒绝提议或按 key 取代不会永久占用额度。活条目没有删除/归档操作，达到 100 条后只能先接受或拒绝未决提议、或用同 key 条目取代现有决定。
 - 隔离：记忆按团队聚合存储，DM 会话和单聊助手从不读取团队记忆；其他团队也无法引用本团队条目。`team.reset` **保留**团队记忆（团队、成员、条目与可见性都不变）；解散团队时整个聚合被删除，记忆随之消失。
-- 助手侧 `team-safe` 记忆在本轮仍不注入团队：团队成员还无法解析到所属助手实例（成员 → 助手实例身份关联属于 P1），因此不会伪造该链接。本轮不含记忆 UI、自动捕获和上下文压缩。
+- 助手侧 `team-safe` 记忆只在成员被显式关联到该助手实例时注入：成员提示词只加载该实例 `active`、`scope=assistant`、`team-safe` 的结构化条目（只读、有界），不加载旧版 `content`、`private`、提案或归档条目；未关联成员不加载任何助手记忆。关联入口为创建/添加成员时的 `assistantInstanceId`、`team_spawn_agent` 的 `assistant_instance_id`，以及 `team.member.setAssistantInstance`（`null` 解除）。创建团队时的校验是写入前尽力而为（团队尚不存在，无法在聚合更新中复查）；添加成员与更新关联都会在 `store.updateTeam` 的原子更新内复查，跨团队唯一性仍是每团队原子更新下的尽力而为，没有全局锁。本轮不含记忆 UI、自动捕获和上下文压缩。
 
 ## 任务 attempt / 所有权围栏
 
@@ -71,6 +71,7 @@
 | `team.pin` / `team.archive` | 置顶 / 归档 |
 | `team.warmup.retry` | 重试 Leader 或失败成员的 warmup |
 | `team.member.stop` | 停止单个成员 |
+| `team.member.setAssistantInstance` | 显式关联成员与单聊助手实例；`assistantInstanceId=null` 解除 |
 | `team.reset` / `team.dissolve` | 重置 / 解散团队 |
 | `team.message.send` / `team.message.list` | 团队消息 |
 | `team.task.*` | 任务板读写 |

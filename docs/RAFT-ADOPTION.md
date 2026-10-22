@@ -77,8 +77,8 @@ TeamMember {
 
 规则：
 
-- 创建团队时，如果模板有对应实例，记录实例 ID
-- 没有实例则保持 `undefined`，不猜测
+- 只有创建/更新成员时显式提供 `assistantInstanceId` 才建立链接
+- 不根据模板、Workspace 或名称推断实例；未提供则保持 `undefined`
 - 成员读取 assistant memory 时只使用显式链接
 - 链接不可跨 Workspace/用户
 - 旧团队无链接 → 不注入 assistant memory，继续兼容

@@ -12,7 +12,12 @@ import {
   taskMessageType,
   teamMessageHeader,
 } from '../src/runtime/team-messages.js'
-import { memberPrompt, rosterPrompt, teamMemoryPrompt } from '../src/runtime/team-prompts.js'
+import {
+  linkedAssistantMemoryPrompt,
+  memberPrompt,
+  rosterPrompt,
+  teamMemoryPrompt,
+} from '../src/runtime/team-prompts.js'
 
 describe('team runtime support', () => {
   it('builds identity and roster prompts with stable member ids', () => {
@@ -152,6 +157,107 @@ describe('team runtime support', () => {
       ...team,
       memory: { revision: 1, entries: [proposed], updatedAt: '2026-01-01T00:00:00.000Z' },
     } as TeamAggregate)).toBe('')
+  })
+
+  it('injects only active team-safe memory from an explicitly linked assistant instance', () => {
+    const active = memoryEntry('mem-active', 'active', 'Style', 'SHARED-BODY', { scope: 'assistant' })
+    const privateEntry = memoryEntry('mem-private', 'active', 'Private', 'PRIVATE-BODY', {
+      scope: 'assistant',
+      visibility: 'private',
+    })
+    const proposed = memoryEntry('mem-proposed', 'proposed', 'Proposal', 'PROPOSED-BODY', {
+      scope: 'assistant',
+    })
+    const archived = memoryEntry('mem-archived', 'archived', 'Old', 'ARCHIVED-BODY', {
+      scope: 'assistant',
+    })
+    const wrongScope = memoryEntry('mem-team', 'active', 'Team row', 'TEAM-SCOPE-BODY')
+    const prompt = linkedAssistantMemoryPrompt({
+      state: 'linked',
+      entries: [active, privateEntry, proposed, archived, wrongScope],
+    })
+
+    expect(prompt).toContain('Assistant memory')
+    expect(prompt).toContain('Style: SHARED-BODY')
+    expect(prompt).not.toContain('PRIVATE-BODY')
+    expect(prompt).not.toContain('PROPOSED-BODY')
+    expect(prompt).not.toContain('ARCHIVED-BODY')
+    expect(prompt).not.toContain('TEAM-SCOPE-BODY')
+
+    // Unlinked members and stale links inject nothing at all.
+    expect(linkedAssistantMemoryPrompt({ state: 'unlinked', entries: [active] })).toBe('')
+    expect(linkedAssistantMemoryPrompt({ state: 'archived', entries: [active] })).toBe('')
+    expect(linkedAssistantMemoryPrompt({ state: 'unavailable', entries: [active] })).toBe('')
+    expect(linkedAssistantMemoryPrompt({ state: 'linked', entries: [privateEntry] })).toBe('')
+  })
+
+  it('bounds the injected linked assistant memory block', () => {
+    const entries = Array.from({ length: 40 }, (_, index) => memoryEntry(
+      `assistant-mem-${index}`,
+      'active',
+      `Entry ${index}`,
+      'x'.repeat(500),
+      { scope: 'assistant' },
+    ))
+    const prompt = linkedAssistantMemoryPrompt({ state: 'linked', entries })
+    expect(prompt.length).toBeLessThan(2_400)
+    expect(prompt.endsWith('…')).toBe(true)
+  })
+
+  it('loads legacy members without an assistant instance link', () => {
+    const legacyMember = {
+      id: 'legacy-slot',
+      assistantId: 'assistant-1',
+      displayName: 'Legacy',
+      role: 'member' as const,
+      assistantSnapshot: {
+        assistantId: 'assistant-1',
+        revision: 1,
+        name: 'Legacy',
+        instructions: '',
+        provider: 'test',
+        model: 'test-model',
+        agentPresetId: 'standard',
+        permissionPresetId: 'read-only',
+        skillAllowlist: [],
+        mcpServers: [],
+        prompts: [],
+      },
+      permissionPresetId: 'read-only',
+      sessionId: 'session-legacy',
+      desiredState: 'offline' as const,
+      lastRuntimeState: 'offline' as const,
+      joinedAt: '2026-01-01T00:00:00.000Z',
+    }
+    const base = {
+      schemaVersion: 1 as const,
+      id: 'team-legacy',
+      name: 'Legacy Team',
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/legacy-team',
+      leaderSlotId: 'leader-slot',
+      state: 'draft' as const,
+      directMemberChat: true,
+      members: { 'legacy-slot': legacyMember },
+      retiredSessions: {},
+      tasks: {},
+      leases: {},
+      outbox: {},
+      revision: 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    const legacy = teamAggregateSchema.parse(base)
+    expect(legacy.schemaVersion).toBe(1)
+    expect(legacy.members['legacy-slot']?.assistantInstanceId).toBeUndefined()
+
+    const linked = teamAggregateSchema.parse({
+      ...base,
+      members: { 'legacy-slot': { ...legacyMember, assistantInstanceId: 'instance-1' } },
+    })
+    expect(linked.schemaVersion).toBe(1)
+    expect(linked.members['legacy-slot']?.assistantInstanceId).toBe('instance-1')
   })
 
   it('bounds the injected team memory block', () => {

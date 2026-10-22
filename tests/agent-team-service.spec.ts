@@ -1550,6 +1550,270 @@ describe('AgentTeamService', () => {
       message: expect.stringContaining('archive unused entries first'),
     })
   })
+
+  it('links a member to an explicit assistant instance and injects only its active team-safe memory', async () => {
+    const { service } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Linked assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    await service.writeAssistantMemoryEntry(instance.id, {
+      title: 'Shared style',
+      body: 'SHARED-BODY',
+      visibility: 'team-safe',
+    })
+    await service.writeAssistantMemoryEntry(instance.id, {
+      title: 'Private note',
+      body: 'PRIVATE-BODY',
+    })
+    await service.writeAssistantMemoryEntry(instance.id, {
+      title: 'Withdrawn note',
+      body: 'ARCHIVED-BODY',
+      visibility: 'team-safe',
+      status: 'archived',
+    })
+    await service.writeAssistantMemory(instance.id, 'LEGACY-BODY')
+
+    const team = await service.createTeamDraft({
+      name: 'Linked team',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader', assistantInstanceId: instance.id },
+        { assistantId: assistant.id, role: 'member' },
+      ],
+    })
+    const leader = team.members[team.leaderSlotId]!
+    const teammate = Object.values(team.members).find(member => member.role === 'member')!
+
+    expect(leader.assistantInstanceId).toBe(instance.id)
+    // Nothing is inferred: the unlinked teammate has no link even though the
+    // same template and workspace have one instance.
+    expect(teammate.assistantInstanceId).toBeUndefined()
+    expect(service.getTeam(team.id).members[leader.id]?.assistantInstanceId).toBe(instance.id)
+
+    const linked = service.readMemberAssistantMemory(team.id, leader.id)
+    expect(linked.state).toBe('linked')
+    expect(linked.entries.map(entry => entry.body)).toEqual(['SHARED-BODY'])
+    expect(service.readMemberAssistantMemory(team.id, teammate.id)).toEqual({
+      state: 'unlinked',
+      entries: [],
+    })
+  })
+
+  it('validates a supplied assistant instance link and persists updates', async () => {
+    const { service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Linkable assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    const team = await service.createTeamDraft({
+      name: 'Unlinked team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const slotId = team.leaderSlotId
+    expect(team.members[slotId]?.assistantInstanceId).toBeUndefined()
+
+    const linked = await service.setMemberAssistantInstance(team.id, slotId, instance.id)
+    expect(linked.members[slotId]?.assistantInstanceId).toBe(instance.id)
+    // Same value is a no-op and does not bump the team revision.
+    expect(await service.setMemberAssistantInstance(team.id, slotId, instance.id)).toBe(linked)
+    const cleared = await service.setMemberAssistantInstance(team.id, slotId, null)
+    expect(cleared.members[slotId]?.assistantInstanceId).toBeUndefined()
+    expect(cleared.revision).toBe(linked.revision + 1)
+    expect(await service.setMemberAssistantInstance(team.id, slotId, null)).toBe(cleared)
+
+    await expect(service.setMemberAssistantInstance(team.id, slotId, 'missing-instance'))
+      .rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_NOT_FOUND' })
+
+    // Same-workspace uniqueness: one member per instance, one team per instance.
+    await service.setMemberAssistantInstance(team.id, slotId, instance.id)
+    await expect(service.addMember(team.id, {
+      assistantId: assistant.id,
+      assistantInstanceId: instance.id,
+    })).rejects.toMatchObject({ code: 'ASSISTANT_IN_USE' })
+    await expect(service.createTeamDraft({
+      name: 'Second team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader', assistantInstanceId: instance.id }],
+    })).rejects.toMatchObject({ code: 'ASSISTANT_IN_USE' })
+
+    // Archived instances cannot be linked, and a linked instance that is
+    // archived later degrades to an empty read instead of throwing.
+    await service.archiveAssistantInstance(instance.id)
+    await expect(service.addMember(team.id, {
+      assistantId: assistant.id,
+      assistantInstanceId: instance.id,
+    })).rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+    expect(service.readMemberAssistantMemory(team.id, slotId)).toEqual({
+      state: 'archived',
+      entries: [],
+    })
+
+    // A workspace mismatch is rejected explicitly; no owner field exists in
+    // this repository, so the workspace pair is the enforceable scope.
+    const other = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Other workspace assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    await store.updateAssistantInstance(other.id, value => ({
+      ...value,
+      workspaceId: 'workspace-2',
+      workspacePath: '/tmp/other-workspace',
+    }))
+    await expect(service.addMember(team.id, {
+      assistantId: assistant.id,
+      assistantInstanceId: other.id,
+    })).rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_WORKSPACE_MISMATCH' })
+  })
+
+  it('persists member assistant instance links across create, add, and clear', async () => {
+    const { service } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const leaderInstance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Leader assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    const addedInstance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Added assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    const team = await service.createTeamDraft({
+      name: 'Link lifecycle',
+      workspaceId: 'workspace-1',
+      members: [{
+        assistantId: assistant.id,
+        role: 'leader',
+        assistantInstanceId: leaderInstance.id,
+      }],
+    })
+    const leaderSlotId = team.leaderSlotId
+    expect(service.getTeam(team.id).members[leaderSlotId]?.assistantInstanceId)
+      .toBe(leaderInstance.id)
+
+    const added = await service.addMemberWithSlot(team.id, {
+      assistantId: assistant.id,
+      displayName: 'Second',
+      assistantInstanceId: addedInstance.id,
+    })
+    expect(added.member.assistantInstanceId).toBe(addedInstance.id)
+    expect(service.getTeam(team.id).members[added.member.id]?.assistantInstanceId)
+      .toBe(addedInstance.id)
+
+    const cleared = await service.setMemberAssistantInstance(team.id, leaderSlotId, null)
+    expect(cleared.members[leaderSlotId]?.assistantInstanceId).toBeUndefined()
+    expect(service.getTeam(team.id).members[leaderSlotId]?.assistantInstanceId).toBeUndefined()
+
+    // The cleared instance becomes linkable again; the link is persisted.
+    const relinked = await service.setMemberAssistantInstance(
+      team.id,
+      added.member.id,
+      leaderInstance.id,
+    )
+    expect(relinked.members[added.member.id]?.assistantInstanceId).toBe(leaderInstance.id)
+    expect(service.getTeam(team.id).members[added.member.id]?.assistantInstanceId)
+      .toBe(leaderInstance.id)
+  })
+
+  it('re-checks the instance link inside the add-member atomic update', async () => {
+    const { service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Race assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    const team = await service.createTeamDraft({
+      name: 'Race team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const other = await service.createTeamDraft({
+      name: 'Other team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const otherSlotId = other.leaderSlotId
+    const commitUpdate = store.updateTeam.bind(store)
+    let raced = false
+    store.updateTeam = async (teamId, update) => {
+      if (!raced && teamId === team.id) {
+        raced = true
+        // Simulate a concurrent writer linking the instance to another team
+        // after addMember's pre-check but before its atomic updater runs.
+        const currentOther = service.getTeam(other.id)
+        await store.putTeam({
+          ...currentOther,
+          members: {
+            ...currentOther.members,
+            [otherSlotId]: {
+              ...currentOther.members[otherSlotId]!,
+              assistantInstanceId: instance.id,
+            },
+          },
+        })
+      }
+      return commitUpdate(teamId, update)
+    }
+
+    await expect(service.addMember(team.id, {
+      assistantId: assistant.id,
+      assistantInstanceId: instance.id,
+    })).rejects.toMatchObject({ code: 'ASSISTANT_IN_USE' })
+    // The rejected add left the aggregate untouched.
+    expect(Object.keys(service.getTeam(team.id).members)).toHaveLength(1)
+  })
+
+  it('drops assistant instance links when a team is cloned', async () => {
+    const { service } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Clone source assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    const source = await service.createTeamDraft({
+      name: 'Source team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader', assistantInstanceId: instance.id }],
+    })
+    expect(source.members[source.leaderSlotId]?.assistantInstanceId).toBe(instance.id)
+
+    const clone = await service.cloneTeam(source.id, {
+      name: 'Clone team',
+      workspaceId: 'workspace-1',
+    })
+    expect(Object.values(clone.members).every(member => member.assistantInstanceId === undefined))
+      .toBe(true)
+  })
 })
 
 function createHarness(workspacePath = '/tmp/dsh-team-mode-workspace'): {

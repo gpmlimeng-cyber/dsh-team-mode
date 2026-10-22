@@ -38,7 +38,12 @@ import {
   createTeamMessage as teamMessage,
   requireMessageContent as requireContent,
 } from './team-messages.js'
-import { memberPrompt, rosterPrompt, teamMemoryPrompt } from './team-prompts.js'
+import {
+  linkedAssistantMemoryPrompt,
+  memberPrompt,
+  rosterPrompt,
+  teamMemoryPrompt,
+} from './team-prompts.js'
 import { registerTeamTools, type TeamAssistantView } from './team-tools.js'
 
 interface OwnedAgent {
@@ -1100,6 +1105,17 @@ export class TeamRuntime {
         installModelSelection(agentCtx, modelSelection)
         const identitySection = `dsh-team-mode:identity:${member.id}`
         const rosterSection = `dsh-team-mode:roster:${team.id}`
+        const assistantMemorySection = `dsh-team-mode:linked-assistant-memory:${member.id}`
+        // The explicit Assistant instance link is read live every turn, so
+        // linking, clearing, or archiving it reaches the next turn without
+        // restarting the member Session.
+        agentCtx.systemPrompt.section({
+          name: assistantMemorySection,
+          order: 9,
+          text: () => linkedAssistantMemoryPrompt(
+            this.service.readMemberAssistantMemory(team.id, member.id),
+          ),
+        })
         agentCtx.systemPrompt.section({
           name: identitySection,
           order: 10,
@@ -1261,7 +1277,7 @@ export class TeamRuntime {
         )
         const assembly = await agentCtx.systemPrompt.assemble(assembleContextFor(agent))
         const names = new Set(assembly.sections.map(section => section.name))
-        if (!names.has(identitySection) || !names.has(rosterSection)) {
+        if (!names.has(identitySection) || !names.has(rosterSection) || !names.has(assistantMemorySection)) {
           throw new AgentTeamError(
             'PRESET_PROMPT_INCOMPATIBLE',
             `Preset '${member.assistantSnapshot.agentPresetId}' replaced Agent Team prompt sections`,

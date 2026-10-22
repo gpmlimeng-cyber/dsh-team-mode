@@ -58,7 +58,11 @@ export interface TeamToolHandlers {
   decideMemory: (input: DecideMemoryInput) => Promise<TeamMemoryWriteResult>
   listAssistants: () => TeamAssistantView[]
   describeAssistant: (assistantId: string) => TeamAssistantView
-  spawnAgent: (input: { name: string; assistantId: string }) => Promise<TeamMemberView>
+  spawnAgent: (input: {
+    name: string
+    assistantId: string
+    assistantInstanceId?: string
+  }) => Promise<TeamMemberView>
   renameAgent: (slotId: string, newName: string) => Promise<{ slot_id: string; name: string }>
   clearAgentContext: (slotId: string) => Promise<{ slot_id: string; session_id: string; status: string }>
   shutdownAgent: (slotId: string, message?: string) => Promise<{
@@ -377,15 +381,25 @@ export function registerTeamTools(
 
   register(defineTool({
     name: 'team_spawn_agent',
-    description: 'Leader only. Add one new member from an assistant template and activate it. Returns the new slot id.',
+    description: 'Leader only. Add one new member from an assistant template and activate it. Pass assistant_instance_id only to link an existing Assistant instance explicitly; the link must share this team’s workspace and may be used by only one member in one team. Returns the new slot id.',
     parameters: {
       name: { type: 'string', required: true, description: 'Team-local display name for the new member.' },
       assistant_id: { type: 'string', required: true, description: 'Assistant template id.' },
+      assistant_instance_id: {
+        type: 'string',
+        description: 'Optional Assistant instance id to link explicitly. Never inferred from the template.',
+      },
     },
     output: textOutput,
     execute: async (args, exec) => {
       handlers.assertIdentity(exec.agent)
-      const member = await handlers.spawnAgent({ name: args.name, assistantId: args.assistant_id })
+      const member = await handlers.spawnAgent({
+        name: args.name,
+        assistantId: args.assistant_id,
+        ...(args.assistant_instance_id === undefined
+          ? {}
+          : { assistantInstanceId: args.assistant_instance_id }),
+      })
       return {
         slot_id: member.slot_id,
         name: member.name,

@@ -1,4 +1,9 @@
-import type { MemoryEntry, TeamAggregate, TeamMemberSlot } from '../domain/types.js'
+import type {
+  LinkedAssistantMemory,
+  MemoryEntry,
+  TeamAggregate,
+  TeamMemberSlot,
+} from '../domain/types.js'
 
 const SHARED_RULES = [
   'You are part of a team that shares one Workspace. All members can read and write the same files, so coordinate before touching overlapping paths.',
@@ -74,6 +79,35 @@ export function teamMemoryPrompt(team: TeamAggregate): string {
 function memoryEntryLine(entry: MemoryEntry): string {
   const label = entry.key === undefined ? entry.title : `${entry.key}: ${entry.title}`
   return `${truncate(label, TEAM_MEMORY_ENTRY_TITLE_LIMIT)}: ${boundedText(entry.body, TEAM_MEMORY_ENTRY_BODY_LIMIT)}`
+}
+
+/** Assistant memory is background context, not an agreement; bound it tightly. */
+const LINKED_ASSISTANT_MEMORY_PROMPT_LIMIT = 2_000
+const LINKED_ASSISTANT_MEMORY_TITLE_LIMIT = 80
+const LINKED_ASSISTANT_MEMORY_BODY_LIMIT = 200
+
+/**
+ * The explicitly linked Assistant instance's active team-safe memory, or an
+ * empty string when the member is unlinked or the link cannot be resolved.
+ * Only `active`, `assistant`-scoped, `team-safe` entries load: private entries,
+ * proposals, archived rows, and the legacy `content` note never enter a team
+ * prompt. Read-only: members have no assistant_memory_* write tools.
+ */
+export function linkedAssistantMemoryPrompt(memory: LinkedAssistantMemory): string {
+  if (memory.state !== 'linked') return ''
+  const active = memory.entries.filter(entry => entry.status === 'active'
+    && entry.scope === 'assistant'
+    && entry.visibility === 'team-safe')
+  if (active.length === 0) return ''
+  const header = [
+    'Assistant memory — durable context from the Assistant instance explicitly linked to this member.',
+    'Read-only in this prompt: use it as background, not as a team decision.',
+  ].join(' ')
+  const entries = active.map(entry => {
+    const label = entry.key === undefined ? entry.title : `${entry.key}: ${entry.title}`
+    return `- ${truncate(label, LINKED_ASSISTANT_MEMORY_TITLE_LIMIT)}: ${boundedText(entry.body, LINKED_ASSISTANT_MEMORY_BODY_LIMIT)}`
+  }).join('\n')
+  return `${header}\n${boundedText(entries, LINKED_ASSISTANT_MEMORY_PROMPT_LIMIT)}`
 }
 
 function truncate(value: string, limit: number): string {

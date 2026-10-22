@@ -14,6 +14,7 @@ import {
   createAssistantSessionInputSchema,
   createTeamDraftInputSchema,
   createTeamGoalInputSchema,
+  memberAssistantInstanceLinkSchema,
   updateAssistantInputSchema,
   updateAssistantInstanceInputSchema,
   updateAssistantSessionInputSchema,
@@ -36,6 +37,7 @@ import {
   type CreateAssistantSessionInput,
   type CreateTeamDraftInput,
   type CreateTeamGoalInput,
+  type LinkedAssistantMemory,
   type MemoryEntry,
   type Operation,
   type Page,
@@ -794,6 +796,33 @@ export class AgentTeamService extends Service {
   }
 
   /**
+   * Prompt-facing read of one member's explicitly linked Assistant memory. Read
+   * live on every turn: a link, a clear, or an archive is reflected on the next
+   * turn without restarting the member Session. A stale link never throws — a
+   * missing, archived, or workspace-mismatched instance degrades to an empty
+   * projection. Only `active`, `assistant`-scoped, `team-safe` structured
+   * entries qualify; the legacy `content` note is never injected.
+   */
+  readMemberAssistantMemory(teamId: string, slotId: string): LinkedAssistantMemory {
+    const team = this.store.getTeam(teamId)
+    const member = team?.members[slotId]
+    if (team === undefined || member?.assistantInstanceId === undefined) {
+      return { state: 'unlinked', entries: [] }
+    }
+    const instance = this.store.getAssistantInstance(member.assistantInstanceId)
+    if (instance === undefined) return { state: 'unavailable', entries: [] }
+    if (instance.status === 'archived') return { state: 'archived', entries: [] }
+    if (instance.workspaceId !== team.workspaceId || instance.workspacePath !== team.workspacePath) {
+      return { state: 'unavailable', entries: [] }
+    }
+    const entries = (this.store.getAssistantMemory(instance.id)?.entries ?? [])
+      .filter(entry => entry.status === 'active'
+        && entry.scope === 'assistant'
+        && entry.visibility === 'team-safe')
+    return { state: 'linked', entries }
+  }
+
+  /**
    * Create or update one structured entry. `options.expectedRevision` fences the
    * whole memory document (not the entry): 0 means "no memory row yet". Writes
    * are serialized per instance, and the fence is re-checked inside the store's
@@ -1171,6 +1200,14 @@ export class AgentTeamService extends Service {
     return requireTask(next, taskId)
   }
 
+  /**
+   * Create a draft team. Assistant instance links named by `members[]` are
+   * validated pre-write only: the aggregate does not exist yet, so there is no
+   * record whose atomic update could re-check them. `addMemberWithSlot` and
+   * `setMemberAssistantInstance` both re-check inside `store.updateTeam`; a
+   * concurrent creation can therefore win a workspace-uniqueness race, which is
+   * documented as best-effort (no global lock).
+   */
   async createTeamDraft(raw: CreateTeamDraftInput): Promise<TeamAggregate> {
     const input = createTeamDraftInputSchema.parse(raw)
     const leaders = input.members.filter(member => member.role === 'leader')
@@ -1192,13 +1229,25 @@ export class AgentTeamService extends Service {
 
     const now = new Date().toISOString()
     const members: Record<string, TeamMemberSlot> = {}
+    // A brand-new team is not stored yet, so its link scope uses an empty team
+    // id; every existing team is still checked for an existing link.
+    const linkScope: AssistantInstanceLinkScope = {
+      teamId: '',
+      workspaceId: String(workspace.id),
+      workspacePath: workspace.path,
+      members,
+    }
     let leaderSlotId = ''
     for (const item of input.members) {
       const assistant = requireAssistant(this.store, item.assistantId)
+      const assistantInstanceId = item.assistantInstanceId === undefined
+        ? undefined
+        : this.requireLinkableAssistantInstance(linkScope, item.assistantInstanceId).id
       const slotId = randomUUID()
       members[slotId] = {
         id: slotId,
         assistantId: assistant.id,
+        ...(assistantInstanceId === undefined ? {} : { assistantInstanceId }),
         displayName: assistant.name,
         role: item.role,
         assistantSnapshot: snapshotAssistant(assistant),
@@ -1354,15 +1403,33 @@ export class AgentTeamService extends Service {
     const assistant = requireAssistant(this.store, input.assistantId)
     const displayName = normalizeMemberDisplayName(input.displayName ?? assistant.name)
     if (input.displayName !== undefined) assertMemberDisplayNameAvailable(team, displayName)
+    const assistantInstanceId = input.assistantInstanceId === undefined
+      ? undefined
+      : this.requireLinkableAssistantInstance(linkScopeOf(team), input.assistantInstanceId).id
     const now = new Date().toISOString()
-    const member = createMemberSlot(assistant, displayName, 'member', now, team.state === 'draft' ? 'offline' : 'online')
-    const next = await this.store.updateTeam(teamId, current => ({
-      ...current,
-      members: { ...current.members, [member.id]: member },
-      memberOrder: [...(current.memberOrder ?? Object.keys(current.members)), member.id],
-      revision: current.revision + 1,
-      updatedAt: now,
-    }))
+    const member = createMemberSlot(
+      assistant,
+      displayName,
+      'member',
+      now,
+      team.state === 'draft' ? 'offline' : 'online',
+      assistantInstanceId,
+    )
+    const next = await this.store.updateTeam(teamId, current => {
+      // Re-check inside the atomic update: another team may have linked the
+      // instance after the pre-check. The new slot id is not in `current` yet,
+      // so it can never be excluded accidentally.
+      if (assistantInstanceId !== undefined) {
+        this.requireLinkableAssistantInstance(linkScopeOf(current), assistantInstanceId, member.id)
+      }
+      return {
+        ...current,
+        members: { ...current.members, [member.id]: member },
+        memberOrder: [...(current.memberOrder ?? Object.keys(current.members)), member.id],
+        revision: current.revision + 1,
+        updatedAt: now,
+      }
+    })
     await this.activity('team.member_added', teamId, next.revision, `Member ${displayName} added`)
     this.publish('team', teamId, next.revision, 'team.member_added')
     if (next.state !== 'draft') {
@@ -1401,6 +1468,59 @@ export class AgentTeamService extends Service {
     }))
     await this.activity('team.member_renamed', teamId, next.revision, `Member renamed to ${displayName}`)
     this.publish('team', teamId, next.revision, 'team.member_renamed')
+    return next
+  }
+
+  /**
+   * Link or unlink one member to an Assistant instance. The link is explicit:
+   * nothing is inferred from the member's template id or from the workspace.
+   * `null` clears it and an unchanged value is a no-op. The link is validated
+   * again inside the atomic team update so a concurrent link cannot slip in
+   * between the pre-check and the write.
+   */
+  async setMemberAssistantInstance(
+    teamId: string,
+    slotId: string,
+    rawAssistantInstanceId: string | null,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const link = memberAssistantInstanceLinkSchema.parse(rawAssistantInstanceId)
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    assertRevision('team', team.revision, options.expectedRevision)
+    const member = team.members[slotId]
+    if (member === undefined) throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown member '${slotId}'`)
+    if (link === null) {
+      if (member.assistantInstanceId === undefined) return team
+    } else {
+      this.requireLinkableAssistantInstance(linkScopeOf(team), link, slotId)
+      if (member.assistantInstanceId === link) return team
+    }
+    const next = await this.store.updateTeam(teamId, current => {
+      const currentMember = current.members[slotId]
+      if (currentMember === undefined) {
+        throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown member '${slotId}'`)
+      }
+      if (link !== null) this.requireLinkableAssistantInstance(linkScopeOf(current), link, slotId)
+      return {
+        ...current,
+        members: {
+          ...current.members,
+          [slotId]: withAssistantInstanceId(currentMember, link),
+        },
+        revision: current.revision + 1,
+        updatedAt: new Date().toISOString(),
+      }
+    })
+    await this.activity(
+      'team.member_assistant_linked',
+      teamId,
+      next.revision,
+      link === null
+        ? `Member ${member.displayName} assistant link cleared`
+        : `Member ${member.displayName} linked to assistant instance ${link}`,
+    )
+    this.publish('team', teamId, next.revision, 'team.member_assistant_linked')
     return next
   }
 
@@ -1817,6 +1937,63 @@ export class AgentTeamService extends Service {
   }
 
   /**
+   * Validate one explicit member→Assistant instance link before it is stored.
+   * The instance must exist, must not be archived, and must share the team's
+   * workspace id and path. It must not already be linked by this team or by any
+   * other stored team. This repository models no Assistant owner, so owner
+   * identity cannot be checked; the workspace pair is the strongest available
+   * scope. Cross-team uniqueness is best-effort: it is checked before and
+   * inside the per-team atomic update, not under a global lock.
+   */
+  private requireLinkableAssistantInstance(
+    scope: AssistantInstanceLinkScope,
+    assistantInstanceId: string,
+    exceptSlotId?: string,
+  ): AssistantInstance {
+    const instance = requireAssistantInstance(this.store, assistantInstanceId)
+    if (instance.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${instance.id}' is archived and cannot be linked`,
+        { instanceId: instance.id },
+      )
+    }
+    if (instance.workspaceId !== scope.workspaceId || instance.workspacePath !== scope.workspacePath) {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_WORKSPACE_MISMATCH',
+        `Assistant instance '${instance.id}' belongs to a different workspace than this team`,
+        {
+          instanceId: instance.id,
+          instanceWorkspaceId: instance.workspaceId,
+          teamWorkspaceId: scope.workspaceId,
+        },
+      )
+    }
+    const sameTeam = Object.values(scope.members).find(member => (
+      member.id !== exceptSlotId && member.assistantInstanceId === instance.id
+    ))
+    if (sameTeam !== undefined) {
+      throw new AgentTeamError(
+        'ASSISTANT_IN_USE',
+        `Assistant instance '${instance.id}' is already linked to member '${sameTeam.id}'`,
+        { instanceId: instance.id, memberId: sameTeam.id },
+      )
+    }
+    const otherTeam = this.store.listTeams().find(team => (
+      team.id !== scope.teamId
+      && Object.values(team.members).some(member => member.assistantInstanceId === instance.id)
+    ))
+    if (otherTeam !== undefined) {
+      throw new AgentTeamError(
+        'ASSISTANT_IN_USE',
+        `Assistant instance '${instance.id}' is already linked by team '${otherTeam.id}'`,
+        { instanceId: instance.id, teamId: otherTeam.id },
+      )
+    }
+    return instance
+  }
+
+  /**
    * Validate the final instance snapshot exactly like an Assistant template
    * draft. Direct creation has no template row to lean on, so this is the only
    * place that checks the model/reasoning pair, agent preset, permission
@@ -2229,11 +2406,13 @@ function createMemberSlot(
   role: 'leader' | 'member',
   now: string,
   desiredState: 'online' | 'offline',
+  assistantInstanceId?: string,
 ): TeamMemberSlot {
   const slotId = randomUUID()
   return {
     id: slotId,
     assistantId: assistant.id,
+    ...(assistantInstanceId === undefined ? {} : { assistantInstanceId }),
     displayName,
     role,
     assistantSnapshot: snapshotAssistant(assistant),
@@ -2246,6 +2425,10 @@ function createMemberSlot(
   }
 }
 
+/**
+ * A clone is a new team: it deliberately drops every member's explicit
+ * Assistant instance link instead of sharing memory with the source team.
+ */
 function cloneMemberSlot(source: TeamMemberSlot, now: string): TeamMemberSlot {
   const slotId = randomUUID()
   return {
@@ -2273,6 +2456,33 @@ function withReasoningEffort(
 ): TeamMemberSlot {
   const { reasoningEffort: _current, ...rest } = member
   return reasoningEffort === undefined ? rest : { ...rest, reasoningEffort }
+}
+
+/** The team fields needed to validate a member's Assistant instance link. */
+interface AssistantInstanceLinkScope {
+  /** Empty while a new team draft is not stored yet. */
+  teamId: string
+  workspaceId: string
+  workspacePath: string
+  members: Record<string, TeamMemberSlot>
+}
+
+function linkScopeOf(team: TeamAggregate): AssistantInstanceLinkScope {
+  return {
+    teamId: team.id,
+    workspaceId: team.workspaceId,
+    workspacePath: team.workspacePath,
+    members: team.members,
+  }
+}
+
+/** Apply or clear the explicit link; `null` removes the field entirely. */
+function withAssistantInstanceId(
+  member: TeamMemberSlot,
+  assistantInstanceId: string | null,
+): TeamMemberSlot {
+  const { assistantInstanceId: _current, ...rest } = member
+  return assistantInstanceId === null ? rest : { ...rest, assistantInstanceId }
 }
 
 export function normalizeMemberDisplayName(value: string): string {

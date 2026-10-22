@@ -195,6 +195,12 @@ export const memberRuntimeStateSchema = z.enum([
 export const teamMemberSlotSchema = z.object({
   id: nonEmpty,
   assistantId: nonEmpty,
+  /**
+   * Explicitly linked Assistant instance. Added without a schema-version bump:
+   * a member stored before the link existed carries no field and loads
+   * unchanged, and no template or workspace inference ever fills it in.
+   */
+  assistantInstanceId: nonEmpty.optional(),
   displayName: nonEmpty,
   role: z.enum(['leader', 'member']),
   assistantSnapshot: assistantSnapshotSchema,
@@ -492,7 +498,15 @@ export const updateAssistantSessionInputSchema = z.object({
 export const createTeamMemberInputSchema = z.object({
   assistantId: nonEmpty,
   role: z.enum(['leader', 'member']),
+  /** Optional explicit Assistant instance link; never inferred. */
+  assistantInstanceId: nonEmpty.optional(),
 }).strict()
+
+/**
+ * One member→Assistant instance link update. `null` clears the link; a string
+ * must name an existing, linkable instance of the same workspace.
+ */
+export const memberAssistantInstanceLinkSchema = z.string().trim().min(1).nullable()
 
 export const addTeamMemberInputSchema = createTeamMemberInputSchema.omit({ role: true }).extend({
   /** Team-local display name; defaults to the assistant template name. */

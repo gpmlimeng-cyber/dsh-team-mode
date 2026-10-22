@@ -121,9 +121,14 @@ function harness() {
     }),
     addMemberWithSlot: vi.fn(async (
       _teamId: string,
-      input: { assistantId: string; displayName?: string },
+      input: { assistantId: string; displayName?: string; assistantInstanceId?: string },
     ) => {
-      const added = member(`spawn-${input.assistantId}`, input.displayName ?? 'Spawned', 'member', 'session-spawn')
+      const added = {
+        ...member(`spawn-${input.assistantId}`, input.displayName ?? 'Spawned', 'member', 'session-spawn'),
+        ...(input.assistantInstanceId === undefined
+          ? {}
+          : { assistantInstanceId: input.assistantInstanceId }),
+      }
       team = { ...team, members: { ...team.members, [added.id]: added } }
       return { team, member: added }
     }),
@@ -639,6 +644,28 @@ describe('TeamCommandHandler AionUi semantics', () => {
 
     const renamed = await commands.renameAgent('team-1', 'leader', spawned.slot_id, 'Delta')
     expect(renamed).toEqual({ slot_id: spawned.slot_id, name: 'Delta' })
+  })
+
+  it('forwards an explicit assistant instance link when spawning', async () => {
+    const { commands, service } = harness()
+    const spawned = await commands.spawnAgent('team-1', 'leader', {
+      name: 'Linked',
+      assistantId: 'assistant-linked',
+      assistantInstanceId: 'instance-1',
+    })
+    expect(service.addMemberWithSlot).toHaveBeenCalledWith(
+      'team-1',
+      expect.objectContaining({ assistantInstanceId: 'instance-1' }),
+    )
+    expect(spawned.assistant_instance_id).toBe('instance-1')
+
+    // Whitespace is not an id: the explicit link is validated like every other
+    // tool input rather than being silently dropped.
+    await expect(commands.spawnAgent('team-1', 'leader', {
+      name: 'Blank link',
+      assistantId: 'assistant-linked',
+      assistantInstanceId: '   ',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
   })
 
   it('wakes the leader when a shutdown is rejected', async () => {

@@ -44,6 +44,8 @@ export interface TeamMemberView {
   name: string
   role: 'leader' | 'member'
   assistant_id: string
+  /** Explicit Assistant instance link; absent for unlinked and legacy members. */
+  assistant_instance_id?: string
   assistant_name: string
   provider: string
   model: string
@@ -207,6 +209,8 @@ export interface SendMessageInput {
 export interface SpawnAgentInput {
   name: string
   assistantId: string
+  /** Optional explicit Assistant instance link; the service validates scope. */
+  assistantInstanceId?: string
 }
 
 export interface ShutdownRequest {
@@ -252,6 +256,9 @@ export class TeamCommandHandler {
       name: member.displayName,
       role: member.role,
       assistant_id: member.assistantId,
+      ...(member.assistantInstanceId === undefined
+        ? {}
+        : { assistant_instance_id: member.assistantInstanceId }),
       assistant_name: member.assistantSnapshot.name,
       provider: member.assistantSnapshot.provider,
       model: member.assistantSnapshot.model,
@@ -1037,9 +1044,13 @@ export class TeamCommandHandler {
     this.assertLeader(team, callerSlotId, 'spawn agents')
     const name = requireShortText(input.name, 'Agent name', 80)
     const assistantId = requireShortText(input.assistantId, 'Assistant id', 200)
+    const assistantInstanceId = input.assistantInstanceId === undefined
+      ? undefined
+      : requireShortText(input.assistantInstanceId, 'Assistant instance id', 200)
     const result = await this.service.addMemberWithSlot(teamId, {
       assistantId,
       displayName: name,
+      ...(assistantInstanceId === undefined ? {} : { assistantInstanceId }),
     })
     return this.memberView(result.team, result.member)
   }

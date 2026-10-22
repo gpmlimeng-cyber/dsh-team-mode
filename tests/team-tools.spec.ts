@@ -133,6 +133,34 @@ describe('Team Mode tool surface', () => {
       .toEqual(expect.arrayContaining(['entry_id', 'expected_revision']))
     expect(tools.get('team_memory_accept')?.description).toContain('Leader only')
     expect(tools.get('team_memory_list')?.description).toContain('only active entries')
+    expect(tools.get('team_spawn_agent')?.parameters.properties?.assistant_instance_id).toBeDefined()
+  })
+
+  it('forwards an explicit assistant instance link through team_spawn_agent', async () => {
+    const { tools, handlers } = harness()
+    const spawn = tools.get('team_spawn_agent')!
+    const spawned = await spawn.execute(
+      { name: 'Linked', assistant_id: 'assistant-1', assistant_instance_id: 'instance-1' },
+      { agent: { id: 'session-leader' } },
+    )
+
+    expect(handlers.spawnAgent).toHaveBeenCalledWith({
+      name: 'Linked',
+      assistantId: 'assistant-1',
+      assistantInstanceId: 'instance-1',
+    })
+    expect(spawned.member).toMatchObject({ slot_id: 's1' })
+
+    // An omitted link keeps the legacy call shape so existing callers are
+    // unaffected.
+    await spawn.execute(
+      { name: 'Plain', assistant_id: 'assistant-1' },
+      { agent: { id: 'session-leader' } },
+    )
+    expect(handlers.spawnAgent).toHaveBeenLastCalledWith({
+      name: 'Plain',
+      assistantId: 'assistant-1',
+    })
   })
 
   it('executes the team memory tools through the bound handlers', async () => {

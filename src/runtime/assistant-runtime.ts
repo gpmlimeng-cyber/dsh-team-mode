@@ -969,9 +969,10 @@ function assistantPrompt(snapshot: AssistantSnapshot): string {
  * Durable memory is injected before identity so every turn starts from the same
  * shared note. The stored document may hold 16k characters, but only a 4k
  * excerpt enters the prompt to keep the context bounded. Structured entries are
- * main-only in P0: a worker is the same assistant but cannot mutate them, and
- * team-member injection would need the membership identity link that does not
- * exist yet.
+ * main-only: a worker is the same assistant but cannot mutate them. Linked team
+ * members instead receive only active, assistant-scoped, team-safe entries,
+ * read-only, from their explicitly linked instance; main sessions keep the
+ * existing assistant memory view.
  */
 function memoryPrompt(memory: AssistantMemory | undefined, role: 'main' | 'worker'): string {
   const intro = role === 'main'

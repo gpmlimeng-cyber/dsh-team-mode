@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { AssistantInstance, AssistantSession, CreateAssistantInstanceInput, UpdateAssistantInstanceInput } from '../src/domain/types.js'
-import type { AssistantInstanceView } from '../src/transport/contracts.js'
+import type { AssistantInstanceView, TeamView } from '../src/transport/contracts.js'
 import {
   AGENT_TEAM_METHODS,
   type AgentTeamPayload,
@@ -50,5 +50,15 @@ describe('Agent Team transport contracts', () => {
       task: AssistantSession
       sessionId: string
     }>()
+  })
+
+  it('maps the explicit member assistant-instance update method', () => {
+    expect(AGENT_TEAM_METHODS).toContain('team.member.setAssistantInstance')
+    expectTypeOf<AgentTeamPayload<'team.member.setAssistantInstance'>>().toEqualTypeOf<{
+      teamId: string
+      slotId: string
+      assistantInstanceId: string | null
+    }>()
+    expectTypeOf<AgentTeamResult<'team.member.setAssistantInstance'>>().toEqualTypeOf<TeamView>()
   })
 })

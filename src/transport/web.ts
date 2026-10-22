@@ -503,6 +503,19 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
         options,
       )
     }
+    case 'team.member.setAssistantInstance': {
+      const payload = z.object({
+        teamId: z.string().min(1),
+        slotId: z.string().min(1),
+        assistantInstanceId: z.string().trim().min(1).max(200).nullable(),
+      }).strict().parse(request.payload)
+      return service.setMemberAssistantInstance(
+        payload.teamId,
+        payload.slotId,
+        payload.assistantInstanceId,
+        options,
+      )
+    }
     case 'team.workspace.list': {
       const payload = z.object({
         teamId: z.string().min(1),

@@ -78,6 +78,7 @@ export const AGENT_TEAM_METHODS = [
   'team.interaction.respond',
   'team.member.setPermissionPreset',
   'team.member.setReasoningEffort',
+  'team.member.setAssistantInstance',
   'team.workspace.list',
   'team.workspace.search',
   'team.workspace.changes',
@@ -432,6 +433,11 @@ export interface AgentTeamRequestMap {
   }
   'team.member.setReasoningEffort': {
     payload: { teamId: string; slotId: string; reasoningEffort?: string }
+    result: TeamView
+  }
+  /** Explicit member→Assistant instance link; null clears it. */
+  'team.member.setAssistantInstance': {
+    payload: { teamId: string; slotId: string; assistantInstanceId: string | null }
     result: TeamView
   }
   'team.workspace.list': {
