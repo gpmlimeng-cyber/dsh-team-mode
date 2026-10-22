@@ -46,6 +46,7 @@ Leader 把编码任务交给 GLM，并只接收进度、测试结果和关键产
 | 群聊 Leader 的运营设定 | [团队管家设定](./TEAM-STEWARD.md) |
 | 记忆管理设计 | [记忆管理方案](./MEMORY-ARCHITECTURE.md) |
 | 身份/记忆/权限边界 | [边界决策](./DECISIONS-IDENTITY-MEMORY.md) |
+| Raft 式协作借鉴 | [Raft 借鉴方案](./RAFT-ADOPTION.md) |
 
 ## 核心概念
 

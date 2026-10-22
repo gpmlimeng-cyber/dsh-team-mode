@@ -154,6 +154,28 @@ P3  会话搜索、图关系、可选社区插件适配
 
 已定边界：[身份、记忆与权限决策](./DECISIONS-IDENTITY-MEMORY.md)
 
+### P1：Raft 式身份与协作
+
+借鉴 Raft，但保留 DSH 的 Session 约束。
+
+| 项目 | 目标 | 优先级 |
+|---|---|---|
+| membership → assistantInstance 链接 | 团队成员可解析真实助手身份，解锁 team-safe memory | P1 |
+| task claim + member inbox | 可选自动领取 ready task；inbox 先做投影 | P1 |
+| thread / task context | 消息带 threadId/taskId/goalId/replyTo | P1 |
+| reminder / follow-up | dueAt/remindAt + 超时事件 | P2 |
+| 新成员有界历史 | 注入摘要 + active memory + 相关 thread | P2 |
+| 成员私有 workspace | 团队共享目录 + 成员 scratch | P2 |
+
+不照搬：
+
+- 一个成员永久 Session 跨团队
+- 无 attempt 的 claim
+- 自由抢话
+- 全局共享 memory
+
+完整方案：[Raft 借鉴方案](./RAFT-ADOPTION.md)
+
 ### P1：任务协议
 
 | 项目 | 目标 | 借鉴点 |
