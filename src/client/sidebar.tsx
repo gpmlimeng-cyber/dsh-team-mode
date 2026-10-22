@@ -599,32 +599,44 @@ export function SidebarPortal({
     }
 
     const ensure = (): void => {
+      // DSH has changed this component's class names over time. The account
+      // footer is the stable direct child that stays outside the scroll region,
+      // so discover the root from it instead of requiring a particular
+      // `_topStrip` class. Fall back to the old marker only for compatibility.
+      const foot = document.querySelector<HTMLElement>('[class*="_footArea"]')
       const topStrip = document.querySelector<HTMLElement>('[class*="_topStrip"]')
-      const nextRoot = topStrip?.parentElement
+      const nextRoot = foot?.parentElement ?? topStrip?.parentElement
       if (nextRoot === null || nextRoot === undefined) return
       root = nextRoot
+      const existingWrapper = nextRoot.querySelector<HTMLDivElement>(':scope > [data-dsh-sidebar-scroll="true"]')
       const newSession = nextRoot.querySelector<HTMLElement>(':scope > [class*="_newSession"]')
+        ?? existingWrapper?.querySelector<HTMLElement>(':scope > [class*="_newSession"]')
+        ?? null
       const nav = nextRoot.querySelector<HTMLElement>(':scope > [class*="_panelList"]')
+        ?? existingWrapper?.querySelector<HTMLElement>(':scope > [class*="_panelList"]')
+        ?? null
       const region = nextRoot.querySelector<HTMLElement>(':scope > [class*="_regionArea"]')
-      const foot = nextRoot.querySelector<HTMLElement>(':scope > [class*="_footArea"]')
+        ?? existingWrapper?.querySelector<HTMLElement>(':scope > [class*="_regionArea"]')
+        ?? null
       if (newSession === null || nav === null || region === null || foot === null) return
-      if (wrapper === undefined || !wrapper.isConnected) {
-        wrapper = document.createElement('div')
-        wrapper.className = css.sidebarScrollArea ?? ''
-        wrapper.dataset.dshSidebarScroll = 'true'
-      }
-      if (wrapper.parentElement !== nextRoot) nextRoot.insertBefore(wrapper, newSession)
-      if (scrollBound !== wrapper) {
+      const scrollWrapper: HTMLDivElement = wrapper?.isConnected === true
+        ? wrapper
+        : (existingWrapper ?? document.createElement('div'))
+      wrapper = scrollWrapper
+      scrollWrapper.className = css.sidebarScrollArea ?? ''
+      scrollWrapper.dataset.dshSidebarScroll = 'true'
+      if (scrollWrapper.parentElement !== nextRoot) nextRoot.insertBefore(scrollWrapper, newSession)
+      if (scrollBound !== scrollWrapper) {
         scrollBound?.removeEventListener('scroll', showScrollbar)
         scrollBound?.removeEventListener('wheel', showScrollbar)
         scrollBound?.removeEventListener('pointermove', showScrollbar)
-        wrapper.addEventListener('scroll', showScrollbar, { passive: true })
-        wrapper.addEventListener('wheel', showScrollbar, { passive: true })
-        wrapper.addEventListener('pointermove', showScrollbar, { passive: true })
-        scrollBound = wrapper
+        scrollWrapper.addEventListener('scroll', showScrollbar, { passive: true })
+        scrollWrapper.addEventListener('wheel', showScrollbar, { passive: true })
+        scrollWrapper.addEventListener('pointermove', showScrollbar, { passive: true })
+        scrollBound = scrollWrapper
       }
       for (const child of [newSession, nav, region]) {
-        if (child.parentElement !== wrapper) wrapper.append(child)
+        if (child.parentElement !== scrollWrapper) scrollWrapper.append(child)
       }
     }
 
