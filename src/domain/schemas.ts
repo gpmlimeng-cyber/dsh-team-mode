@@ -52,14 +52,16 @@ export const assistantTemplateSchema = z.object({
 }).strict()
 
 /**
- * One persisted Assistant: a template snapshot bound to a workspace, with the
- * lazily created main Session recorded on first open. Creation never makes a
- * Session; `mainSessionId` stays absent until the runtime binds it.
+ * One persisted Assistant: a snapshot bound to a workspace, with the lazily
+ * created main Session recorded on first open. Creation never makes a Session;
+ * `mainSessionId` stays absent until the runtime binds it. `templateId` is
+ * present only when the instance was derived from an assistant template; a
+ * directly configured instance has none.
  */
 export const assistantInstanceSchema = z.object({
   schemaVersion: z.literal(1),
   id: nonEmpty,
-  templateId: nonEmpty,
+  templateId: nonEmpty.optional(),
   assistantSnapshot: assistantSnapshotSchema,
   workspaceId: nonEmpty,
   workspacePath: nonEmpty,
@@ -313,13 +315,46 @@ export const updateAssistantInputSchema = createAssistantInputSchema.partial().e
   sortOrder: z.int().nonnegative().optional(),
 }).strict()
 
-export const createAssistantInstanceInputSchema = z.object({
-  templateId: nonEmpty,
+/**
+ * Fields shared by both creation shapes. A template-backed instance may name
+ * any of them to override the template snapshot; a direct instance must supply
+ * the identity and engine fields.
+ */
+const assistantInstanceOverrides = {
+  workspaceId: nonEmpty,
   name: nonEmpty.optional(),
   avatar: z.string().max(400_000).optional(),
-  workspaceId: nonEmpty,
+  provider: nonEmpty.optional(),
+  model: nonEmpty.optional(),
+  /** Empty clears the inherited effort; an absent field keeps it. */
+  reasoningEffort: z.string().trim().optional(),
+  agentPresetId: nonEmpty.optional(),
+  permissionPresetId: nonEmpty.optional(),
+  instructions: z.string().optional(),
   pinned: z.boolean().optional(),
-}).strict()
+} as const
+
+/**
+ * Create an Assistant instance from a template (with optional snapshot
+ * overrides) or directly from a complete configuration. The direct shape is
+ * what the DS Bot-style create dialog sends: no template row is needed, but
+ * name, provider, model, agent preset, and permission preset are required.
+ */
+export const createAssistantInstanceInputSchema = z.union([
+  z.object({
+    ...assistantInstanceOverrides,
+    templateId: nonEmpty,
+  }).strict(),
+  z.object({
+    ...assistantInstanceOverrides,
+    templateId: z.undefined().optional(),
+    name: nonEmpty,
+    provider: nonEmpty,
+    model: nonEmpty,
+    agentPresetId: nonEmpty,
+    permissionPresetId: nonEmpty,
+  }).strict(),
+])
 
 /**
  * Patch an instance snapshot; an empty object leaves every field unchanged.

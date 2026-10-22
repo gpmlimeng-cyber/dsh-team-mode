@@ -96,13 +96,6 @@ export function AssistantSettingsDialog({
     setSaving(false)
     setArchiving(false)
     setError(undefined)
-    callAgentTeam('assistant.list')
-      .then(assistantPage => {
-        if (live) setTemplateName(assistantPage.items.find(item => item.id === assistant.templateId)?.name)
-      })
-      .catch(() => {
-        // The summary degrades to the stored template id; editing still works.
-      })
     callAgentTeam('catalog.get')
       .then(value => {
         if (!live) return
@@ -117,6 +110,15 @@ export function AssistantSettingsDialog({
       .finally(() => {
         if (live) setCatalogLoading(false)
       })
+    if (assistant.templateId !== undefined) {
+      callAgentTeam('assistant.list')
+        .then(assistantPage => {
+          if (live) setTemplateName(assistantPage.items.find(item => item.id === assistant.templateId)?.name)
+        })
+        .catch(() => {
+          // The summary degrades to the stored template id; editing still works.
+        })
+    }
     return () => { live = false }
   }, [open, assistant.id])
 
@@ -239,9 +241,11 @@ export function AssistantSettingsDialog({
   }
 
   const displayName = name.trim() === '' ? '助手' : name.trim()
-  const templateLabel = templateName === undefined
-    ? assistant.templateId
-    : `${templateName}（${assistant.templateId}）`
+  const templateLabel = assistant.templateId === undefined
+    ? '无（直接创建）'
+    : templateName === undefined
+      ? assistant.templateId
+      : `${templateName}（${assistant.templateId}）`
   const workspaceLabel = workspaceTitle === undefined
     ? assistant.workspacePath
     : `${workspaceTitle} — ${assistant.workspacePath}`

@@ -461,20 +461,36 @@ export class AgentTeamService extends Service {
     return requireAssistantInstance(this.store, id)
   }
 
-  /** Persist a template snapshot for a workspace; no Session is created here. */
+  /**
+   * Persist a snapshot for a workspace; no Session is created here. A payload
+   * with `templateId` uses the template as its base and applies any provided
+   * fields as overrides. A payload without `templateId` is a direct Assistant:
+   * it must carry a complete configuration, builds its own snapshot, and does
+   * not reference any template row.
+   */
   async createAssistantInstance(raw: CreateAssistantInstanceInput): Promise<AssistantInstance> {
     const input = createAssistantInstanceInputSchema.parse(raw)
-    const assistant = requireAssistant(this.store, input.templateId)
+    const id = randomUUID()
+    let templateId: string | undefined
+    let assistantSnapshot: AssistantSnapshot
+    if (input.templateId === undefined) {
+      assistantSnapshot = directAssistantSnapshot(id, input)
+    } else {
+      const assistant = requireAssistant(this.store, input.templateId)
+      templateId = assistant.id
+      assistantSnapshot = applyAssistantSnapshotOverrides(snapshotAssistant(assistant), input)
+    }
     const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(input.workspaceId))
     if (workspace === undefined || await workspace.status() !== 'ok') {
       throw new AgentTeamError('WORKSPACE_UNAVAILABLE', `Workspace '${input.workspaceId}' is unavailable`)
     }
+    await this.validateAssistantInstanceSnapshot(assistantSnapshot)
     const now = new Date().toISOString()
     const instance: AssistantInstance = {
       schemaVersion: 1,
-      id: randomUUID(),
-      templateId: assistant.id,
-      assistantSnapshot: overrideAssistantSnapshot(snapshotAssistant(assistant), input.name, input.avatar),
+      id,
+      ...(templateId === undefined ? {} : { templateId }),
+      assistantSnapshot,
       workspaceId: String(workspace.id),
       workspacePath: workspace.path,
       status: 'idle',
@@ -1493,6 +1509,29 @@ export class AgentTeamService extends Service {
     return operation
   }
 
+  /**
+   * Validate the final instance snapshot exactly like an Assistant template
+   * draft. Direct creation has no template row to lean on, so this is the only
+   * place that checks the model/reasoning pair, agent preset, permission
+   * preset, and Skill/MCP references before the instance is persisted.
+   */
+  private async validateAssistantInstanceSnapshot(snapshot: AssistantSnapshot): Promise<void> {
+    const candidate: CreateAssistantInput = {
+      name: snapshot.name,
+      instructions: snapshot.instructions,
+      provider: snapshot.provider,
+      model: snapshot.model,
+      ...(snapshot.reasoningEffort === undefined ? {} : { reasoningEffort: snapshot.reasoningEffort }),
+      agentPresetId: snapshot.agentPresetId,
+      permissionPresetId: snapshot.permissionPresetId,
+      skillAllowlist: [...snapshot.skillAllowlist],
+      mcpServers: [...snapshot.mcpServers],
+      prompts: [...snapshot.prompts],
+      ...(snapshot.avatar === undefined ? {} : { avatar: snapshot.avatar }),
+    }
+    await this.validateAssistantReferences(candidate)
+  }
+
   private async validateAssistantReferences(input: CreateAssistantInput): Promise<void> {
     const invalidSkill = input.skillAllowlist.find(name => !isSkillName(name))
     if (invalidSkill !== undefined) {
@@ -1652,6 +1691,83 @@ function overrideAssistantSnapshot(
     return rest
   }
   return { ...next, avatar: trimmedAvatar }
+}
+
+interface AssistantSnapshotOverrides {
+  name?: string | undefined
+  avatar?: string | undefined
+  provider?: string | undefined
+  model?: string | undefined
+  reasoningEffort?: string | undefined
+  agentPresetId?: string | undefined
+  permissionPresetId?: string | undefined
+  instructions?: string | undefined
+}
+
+interface DirectAssistantSnapshotInput {
+  name: string
+  avatar?: string | undefined
+  provider: string
+  model: string
+  reasoningEffort?: string | undefined
+  agentPresetId: string
+  permissionPresetId: string
+  instructions?: string | undefined
+}
+
+/**
+ * Build the snapshot of a template-less Assistant. The snapshot is owned by the
+ * new instance (`assistantId` equals its id) and starts at revision 1 with no
+ * Skills, MCP Servers, or prompts.
+ */
+function directAssistantSnapshot(id: string, input: DirectAssistantSnapshotInput): AssistantSnapshot {
+  const avatar = input.avatar?.trim()
+  const reasoningEffort = input.reasoningEffort?.trim()
+  return {
+    assistantId: id,
+    revision: 1,
+    name: input.name.trim(),
+    ...(avatar === undefined || avatar === '' ? {} : { avatar }),
+    instructions: input.instructions ?? '',
+    provider: input.provider.trim(),
+    model: input.model.trim(),
+    ...(reasoningEffort === undefined || reasoningEffort === '' ? {} : { reasoningEffort }),
+    agentPresetId: input.agentPresetId.trim(),
+    permissionPresetId: input.permissionPresetId.trim(),
+    skillAllowlist: [],
+    mcpServers: [],
+    prompts: [],
+  }
+}
+
+/**
+ * Apply explicit creation overrides on top of a template snapshot. Absent
+ * fields keep the template value; an empty reasoning effort clears it, and an
+ * empty avatar clears the template avatar (matching update semantics).
+ */
+function applyAssistantSnapshotOverrides(
+  snapshot: AssistantSnapshot,
+  overrides: AssistantSnapshotOverrides,
+): AssistantSnapshot {
+  const display = overrideAssistantSnapshot(snapshot, overrides.name, overrides.avatar)
+  const {
+    reasoningEffort: previousReasoning,
+    ...rest
+  } = display
+  const reasoningEffort = overrides.reasoningEffort === undefined
+    ? previousReasoning
+    : overrides.reasoningEffort.trim() || undefined
+  return {
+    ...rest,
+    ...(overrides.provider === undefined ? {} : { provider: overrides.provider.trim() }),
+    ...(overrides.model === undefined ? {} : { model: overrides.model.trim() }),
+    ...(overrides.agentPresetId === undefined ? {} : { agentPresetId: overrides.agentPresetId.trim() }),
+    ...(overrides.permissionPresetId === undefined
+      ? {}
+      : { permissionPresetId: overrides.permissionPresetId.trim() }),
+    ...(overrides.instructions === undefined ? {} : { instructions: overrides.instructions }),
+    ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+  }
 }
 
 /**

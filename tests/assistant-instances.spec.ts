@@ -108,6 +108,193 @@ describe('Assistant instances', () => {
     expect(store.getAssistant(assistant.id)).toEqual(assistant)
   })
 
+  it('creates a template-less instance directly without a template row', async () => {
+    const { service, store } = createHarness()
+
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: '  Direct Researcher  ',
+      instructions: 'Answer directly.',
+      provider: 'openai',
+      model: 'gpt-5',
+      reasoningEffort: 'medium',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+      pinned: true,
+    })
+
+    expect(instance).toMatchObject({
+      schemaVersion: 1,
+      workspaceId: 'workspace-1',
+      workspacePath: WORKSPACE_PATH,
+      status: 'idle',
+      pinned: true,
+      revision: 1,
+    })
+    expect(instance.templateId).toBeUndefined()
+    expect(instance.mainSessionId).toBeUndefined()
+    expect(instance.assistantSnapshot).toEqual({
+      assistantId: instance.id,
+      revision: 1,
+      name: 'Direct Researcher',
+      instructions: 'Answer directly.',
+      provider: 'openai',
+      model: 'gpt-5',
+      reasoningEffort: 'medium',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+      skillAllowlist: [],
+      mcpServers: [],
+      prompts: [],
+    })
+    expect(assistantInstanceSchema.parse(instance)).toEqual(instance)
+    const persisted = store.getAssistantInstance(instance.id)
+    expect(persisted).toEqual(instance)
+    expect(persisted?.templateId).toBeUndefined()
+    expect(Object.hasOwn(persisted as object, 'templateId')).toBe(false)
+    // Direct creation needs no template row and creates no Session.
+    expect(store.listAssistants()).toEqual([])
+    expect(store.listAssistantSessions()).toEqual([])
+
+    const minimal = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Minimal',
+      provider: 'openai',
+      model: 'no-reasoning',
+      agentPresetId: 'default',
+      permissionPresetId: 'workspace-write',
+    })
+    expect(minimal.templateId).toBeUndefined()
+    expect(minimal.assistantSnapshot.instructions).toBe('')
+    expect(minimal.assistantSnapshot.reasoningEffort).toBeUndefined()
+  })
+
+  it('applies explicit fields on top of a template snapshot', async () => {
+    const { service, store } = createHarness()
+    const source = template({ avatar: avatar('AAAA') })
+    await store.putAssistant(source)
+
+    const instance = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+      name: 'Override Researcher',
+      avatar: avatar('BBBB'),
+      instructions: 'Use the override brief.',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      reasoningEffort: 'low',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+      pinned: true,
+    })
+
+    expect(instance.templateId).toBe('template-1')
+    expect(instance.pinned).toBe(true)
+    expect(instance.assistantSnapshot).toEqual({
+      assistantId: 'template-1',
+      revision: 3,
+      name: 'Override Researcher',
+      avatar: avatar('BBBB'),
+      instructions: 'Use the override brief.',
+      provider: 'anthropic',
+      model: 'claude-sonnet',
+      reasoningEffort: 'low',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+      skillAllowlist: ['code-review'],
+      mcpServers: [],
+      prompts: ['Plan the work'],
+    })
+    expect(assistantInstanceSchema.parse(instance)).toEqual(instance)
+    expect(store.getAssistant(source.id)).toEqual(source)
+
+    // Fields the payload omits keep the template snapshot values.
+    const partial = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+      permissionPresetId: 'read-only',
+    })
+    expect(partial.assistantSnapshot).toMatchObject({
+      assistantId: 'template-1',
+      revision: 3,
+      name: 'Research assistant',
+      provider: 'openai',
+      model: 'gpt-5',
+      reasoningEffort: 'high',
+      permissionPresetId: 'read-only',
+      skillAllowlist: ['code-review'],
+    })
+  })
+
+  it('rejects direct creation when a required field is missing or the payload is not strict', async () => {
+    const { service, store } = createHarness()
+    const base = {
+      workspaceId: 'workspace-1',
+      name: 'Direct',
+      provider: 'openai',
+      model: 'gpt-5',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+    }
+
+    for (const field of ['name', 'provider', 'model', 'agentPresetId', 'permissionPresetId'] as const) {
+      const { [field]: _omitted, ...payload } = base
+      await expect(service.createAssistantInstance(payload as never)).rejects.toBeInstanceOf(Error)
+    }
+    const { workspaceId: _workspaceId, ...withoutWorkspace } = base
+    await expect(service.createAssistantInstance(withoutWorkspace as never)).rejects.toBeInstanceOf(Error)
+    await expect(service.createAssistantInstance({ ...base, templateId: '' } as never))
+      .rejects.toBeInstanceOf(Error)
+    await expect(service.createAssistantInstance({ ...base, skillAllowlist: [] } as never))
+      .rejects.toBeInstanceOf(Error)
+    expect(store.listAssistantInstances()).toEqual([])
+  })
+
+  it('rejects invalid direct and override references without persisting', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+    const base = {
+      workspaceId: 'workspace-1',
+      name: 'Direct',
+      provider: 'openai',
+      model: 'gpt-5',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+    }
+
+    await expect(service.createAssistantInstance({ ...base, model: 'missing-model' }))
+      .rejects.toMatchObject({ code: 'MODEL_REFERENCE_INVALID' })
+    await expect(service.createAssistantInstance({ ...base, reasoningEffort: 'ultra' }))
+      .rejects.toMatchObject({ code: 'MODEL_REFERENCE_INVALID' })
+    await expect(service.createAssistantInstance({ ...base, permissionPresetId: 'root-access' }))
+      .rejects.toMatchObject({ code: 'PERMISSION_PRESET_INVALID' })
+    await expect(service.createAssistantInstance({ ...base, agentPresetId: 'missing-preset' }))
+      .rejects.toMatchObject({ code: 'PRESET_REFERENCE_INVALID' })
+    await expect(service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+      provider: 'anthropic',
+      model: 'missing-model',
+    })).rejects.toMatchObject({ code: 'MODEL_REFERENCE_INVALID' })
+    await expect(service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+      reasoningEffort: 'ultra',
+    })).rejects.toMatchObject({ code: 'MODEL_REFERENCE_INVALID' })
+    await expect(service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+      permissionPresetId: 'root-access',
+    })).rejects.toMatchObject({ code: 'PERMISSION_PRESET_INVALID' })
+    await expect(service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+      agentPresetId: 'missing-preset',
+    })).rejects.toMatchObject({ code: 'PRESET_REFERENCE_INVALID' })
+
+    expect(store.listAssistantInstances()).toEqual([])
+  })
+
   it('allows duplicate display names', async () => {
     const { service, store } = createHarness()
     await store.putAssistant(template())
@@ -482,6 +669,50 @@ describe('Assistant instances', () => {
       .toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
     await expect(service.bindAssistantMainSession(created.id, 'session-main')).rejects
       .toBeInstanceOf(AgentTeamError)
+  })
+
+  it('round-trips a template-less instance through the domain store', async () => {
+    const tables = new Map<string, FakeTable>()
+    const domain = {
+      name: 'dsh_team_mode',
+      table(name: string) {
+        let table = tables.get(name)
+        if (table === undefined) {
+          table = new FakeTable()
+          tables.set(name, table)
+        }
+        return table
+      },
+    } as unknown as Domain<typeof dshTeamModeDomainSpec>
+    const store = new DomainAgentTeamStore(domain)
+    const instance: AssistantInstance = {
+      schemaVersion: 1,
+      id: 'instance-direct',
+      assistantSnapshot: {
+        assistantId: 'instance-direct',
+        revision: 1,
+        name: 'Direct',
+        instructions: '',
+        provider: 'openai',
+        model: 'gpt-5',
+        agentPresetId: 'default',
+        permissionPresetId: 'read-only',
+        skillAllowlist: [],
+        mcpServers: [],
+        prompts: [],
+      },
+      workspaceId: 'workspace-1',
+      workspacePath: WORKSPACE_PATH,
+      status: 'idle',
+      pinned: false,
+      revision: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+    }
+
+    await store.putAssistantInstance(instance)
+    expect(store.getAssistantInstance(instance.id)).toEqual(instance)
+    expect(store.getAssistantInstance(instance.id)?.templateId).toBeUndefined()
   })
 
   it('adds assistant_instances to the v1 domain spec without a data migration', () => {
@@ -882,6 +1113,13 @@ function createHarness(): { service: AgentTeamService; store: MemoryStore } {
   ctx.provide('permissionPresets', {
     names: ['standard', 'workspace-write', 'read-only'],
     optionOf: (name: string) => ({ value: name, name }),
+  } as never)
+  ctx.provide('agentPresets', {
+    list: async () => [{ id: 'default', name: 'Default' }],
+    resolve: async (id: string) => {
+      if (id !== 'default') throw new Error(`Unknown agent preset '${id}'`)
+      return { id, name: 'Default' }
+    },
   } as never)
   const store = new MemoryStore()
   return { service: new AgentTeamService(ctx, config, store), store }
