@@ -3214,7 +3214,6 @@ textarea.input {
   max-height: min(38vh, 300px);
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-gutter: stable;
 }
 
 .sidebarTeamGroup {
@@ -3670,11 +3669,21 @@ textarea.input {
 }
 
 .sidebarAssistantTop .sidebarTeamTime {
+  margin-right: -2px;
   padding-left: 8px;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 16px;
+  font-size: 10px;
+  line-height: 15px;
   font-variant-numeric: tabular-nums;
+}
+
+.sidebarAssistantActions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  margin-right: -4px;
 }
 
 .sidebarAssistantMore {

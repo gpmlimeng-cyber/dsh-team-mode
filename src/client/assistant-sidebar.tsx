@@ -462,6 +462,7 @@ export function AssistantSidebarSection({
                           </span>
                         </span>
                       </button>
+                      <span className={css.sidebarAssistantActions}>
                       <Tooltip label={instance.pinned === true ? '取消置顶' : '置顶'} delayMs={400}>
                         <button
                           type="button"
@@ -510,6 +511,7 @@ export function AssistantSidebarSection({
                           </Tooltip>
                         )}
                       />
+                      </span>
                     </div>
                     {threadsOpen && (
                       <div
