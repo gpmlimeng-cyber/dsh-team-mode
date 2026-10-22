@@ -1001,6 +1001,8 @@ describe('AgentTeamService', () => {
       taskId: created.taskId,
       status: 'completed',
       result: 'Parser implemented and tested.',
+      // Members now fence on the task's current attempt token.
+      attemptId: created.attemptId!,
     })
 
     expect(updated.deliveryState).toBe('delivered')

@@ -9,14 +9,22 @@
 | `team_send_message` | 向成员/Leader 发送团队消息 |
 | `team_interrupt_agent` | 打断正在运行的成员 |
 | `team_task_create` | 创建任务，指定 owner / blocked_by / 文件范围 |
-| `team_task_update` | 更新任务状态、owner、依赖、结果 |
-| `team_task_list` | 查询任务板 |
+| `team_task_update` | 更新任务状态、owner、依赖、结果（成员需带当前 `attempt_id`） |
+| `team_task_list` | 查询任务板（含 owner、依赖、`attempt_id`） |
 | `team_list_assistants` | 列出可添加的助手模板 |
 | `team_describe_assistant` | 查看助手模板详情 |
 | `team_spawn_agent` | 创建/唤醒团队成员 Agent |
 | `team_rename_agent` | 重命名成员 |
 | `team_clear_agent_context` | 清空单个成员上下文 |
 | `team_shutdown_agent` | 优雅下线成员 |
+
+## 任务 attempt / 所有权围栏
+
+- 任务获得 owner 或更换 owner 时生成/轮换 `attemptId`；任务板以 `attempt_id` 返回，`task_create` / `task_update` 的结果同样带 `attempt_id`。
+- Leader 更新任务不需要 attempt；非 Leader（当前 owner）必须带上任务当前的 `attempt_id`，否则以 `INVALID_REQUEST` 拒绝，`details.attemptId` 给出当前值。
+- 显式重派给同一 owner 不轮换；先转给他人再转回（takeover）会轮换，旧 token 永久失效。
+- 历史数据（无 `attemptId`）不受围栏限制；普通状态更新不会补发 attempt，直到下一次 owner 变更才生成。`schemaVersion` 不变，字段可缺省。
+- 工具参数：`team_mode_task_update` 用 `attempt_id`（也接受 `attemptId`），旧别名 `team_update_task` 用 `attemptId`（也接受 `attempt_id`）。
 
 ## 客户端 Team API
 

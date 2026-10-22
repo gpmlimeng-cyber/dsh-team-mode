@@ -120,6 +120,85 @@ describe('Team Mode tool surface', () => {
     expect(result).toMatchObject({ message_id: 'm1', delivery_state: 'delivered' })
   })
 
+  it('declares the attempt token on both task update aliases', () => {
+    const { tools } = harness()
+    expect(tools.get('team_mode_task_update')?.parameters.properties?.attempt_id).toBeDefined()
+    expect(tools.get('team_update_task')?.parameters.properties?.attemptId).toBeDefined()
+  })
+
+  it('returns the attempt of an assigned task from both create aliases', async () => {
+    const { tools, handlers } = harness()
+    const exec = { agent: { id: 'agent-1' } }
+    vi.mocked(handlers.createTask).mockResolvedValue({
+      taskId: 't9',
+      status: 'assigned',
+      deliveryState: 'delivered',
+      attemptId: 'att-9',
+    })
+    const primary = await tools.get('team_mode_task_create')!.execute({ subject: 's', owner: 'a' }, exec)
+    expect(primary).toMatchObject({ task_id: 't9', attempt_id: 'att-9' })
+    const legacy = await tools.get('team_create_task')!.execute({ title: 's', ownerSlotId: 'a' }, exec)
+    expect(legacy).toMatchObject({ task_id: 't9', attempt_id: 'att-9' })
+
+    vi.mocked(handlers.createTask).mockResolvedValue({ taskId: 't10', status: 'pending' })
+    const unowned = await tools.get('team_mode_task_create')!.execute({ subject: 's' }, exec)
+    expect(unowned).not.toHaveProperty('attempt_id')
+  })
+
+  it('forwards either attempt spelling through either update alias and returns the current attempt', async () => {
+    const { tools, handlers } = harness()
+    const exec = { agent: { id: 'agent-1' } }
+    vi.mocked(handlers.updateTask).mockResolvedValue({
+      taskId: 't1',
+      status: 'running',
+      deliveryState: 'delivered',
+      attemptId: 'att-1',
+    })
+
+    const primary = await tools.get('team_mode_task_update')!.execute(
+      { task_id: 't1', status: 'in_progress', attempt_id: 'att-1' },
+      exec,
+    )
+    expect(handlers.updateTask).toHaveBeenLastCalledWith({
+      task_id: 't1',
+      status: 'in_progress',
+      attemptId: 'att-1',
+    })
+    expect(primary).toMatchObject({ task_id: 't1', attempt_id: 'att-1' })
+
+    // The camelCase spelling works on the snake_case tool too, and vice versa.
+    await tools.get('team_mode_task_update')!.execute(
+      { task_id: 't1', status: 'in_progress', attemptId: 'att-1' },
+      exec,
+    )
+    expect(handlers.updateTask).toHaveBeenLastCalledWith({
+      task_id: 't1',
+      status: 'in_progress',
+      attemptId: 'att-1',
+    })
+
+    const legacy = await tools.get('team_update_task')!.execute(
+      { taskId: 't1', status: 'in_progress', attemptId: 'att-1' },
+      exec,
+    )
+    expect(handlers.updateTask).toHaveBeenLastCalledWith({
+      taskId: 't1',
+      status: 'in_progress',
+      attemptId: 'att-1',
+    })
+    expect(legacy).toMatchObject({ task_id: 't1', attempt_id: 'att-1' })
+
+    await tools.get('team_update_task')!.execute(
+      { taskId: 't1', status: 'in_progress', attempt_id: 'att-1' },
+      exec,
+    )
+    expect(handlers.updateTask).toHaveBeenLastCalledWith({
+      taskId: 't1',
+      status: 'in_progress',
+      attemptId: 'att-1',
+    })
+  })
+
   it('maps internal task statuses to AionUi statuses', async () => {
     const { tools } = harness()
     const result = await tools.get('team_mode_task_update')!.execute(

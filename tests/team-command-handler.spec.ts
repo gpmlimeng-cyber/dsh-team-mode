@@ -188,6 +188,7 @@ describe('TeamCommandHandler AionUi semantics', () => {
     await commands.updateTask(team().id, 'a', {
       taskId: blocker.taskId,
       status: 'completed',
+      attempt_id: team().tasks[blocker.taskId]!.attemptId!,
     })
     expect(followup).toHaveBeenCalledWith('session-b', expect.anything())
   })
@@ -224,6 +225,7 @@ describe('TeamCommandHandler AionUi semantics', () => {
     await commands.updateTask(team().id, 'a', {
       taskId: first.taskId,
       status: 'in_progress',
+      attempt_id: team().tasks[first.taskId]!.attemptId!,
     })
 
     expect(team().tasks[extra.id]).toBeDefined()
@@ -244,6 +246,7 @@ describe('TeamCommandHandler AionUi semantics', () => {
     const result = await commands.updateTask(team().id, 'a', {
       taskId: first.taskId,
       status: 'completed',
+      attempt_id: team().tasks[first.taskId]!.attemptId!,
     })
 
     expect(result.woken).toContain('b')
@@ -275,6 +278,248 @@ describe('TeamCommandHandler AionUi semantics', () => {
     expect(updated.deliveryState).toBe('delivered')
     expect(followup).toHaveBeenCalledWith('session-b', expect.anything())
     expect(team().tasks[created.taskId]?.ownerSlotId).toBe('b')
+  })
+
+  it('mints an attempt when a task gains an owner and exposes it on the board', async () => {
+    const { commands, team } = harness()
+    const owned = await commands.createTask(team().id, 'leader', { subject: 'Owned', owner: 'a' })
+    const attempt = owned.attemptId
+    expect(attempt).toBeTypeOf('string')
+    expect(team().tasks[owned.taskId]?.attemptId).toBe(attempt)
+    expect(commands.listTasks(team().id).find(task => task.task_id === owned.taskId)).toMatchObject({
+      owner: 'a',
+      attempt_id: attempt,
+    })
+
+    const unowned = await commands.createTask(team().id, 'leader', { subject: 'Unowned' })
+    expect(unowned.attemptId).toBeUndefined()
+    expect(team().tasks[unowned.taskId]?.attemptId).toBeUndefined()
+    expect(commands.listTasks(team().id).find(task => task.task_id === unowned.taskId))
+      .not.toHaveProperty('attempt_id')
+
+    // Assignment of a previously unowned task mints its first attempt.
+    const assigned = await commands.updateTask(team().id, 'leader', {
+      taskId: unowned.taskId,
+      status: 'assigned',
+      owner: 'b',
+    })
+    expect(assigned.attemptId).toBeTypeOf('string')
+    expect(team().tasks[unowned.taskId]?.attemptId).toBe(assigned.attemptId)
+  })
+
+  it('rejects a member update with a missing or stale attempt and accepts the current one', async () => {
+    const { commands, team } = harness()
+    const created = await commands.createTask(team().id, 'leader', { subject: 'Fenced', owner: 'a' })
+    const attempt = created.attemptId!
+
+    await expect(commands.updateTask(team().id, 'a', {
+      taskId: created.taskId,
+      status: 'in_progress',
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      details: { taskId: created.taskId, attemptId: attempt },
+    })
+    await expect(commands.updateTask(team().id, 'a', {
+      taskId: created.taskId,
+      status: 'in_progress',
+      attempt_id: 'not-the-current-attempt',
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      details: { taskId: created.taskId, attemptId: attempt },
+    })
+    expect(team().tasks[created.taskId]).toMatchObject({ status: 'assigned', revision: 1 })
+
+    const accepted = await commands.updateTask(team().id, 'a', {
+      taskId: created.taskId,
+      status: 'in_progress',
+      attemptId: attempt,
+    })
+    expect(accepted).toMatchObject({ status: 'running', attemptId: attempt })
+    expect(team().tasks[created.taskId]?.status).toBe('running')
+  })
+
+  it('rotates the attempt on reassignment and keeps leader updates token-free', async () => {
+    const { commands, team } = harness()
+    const created = await commands.createTask(team().id, 'leader', { subject: 'Handoff', owner: 'a' })
+    const first = created.attemptId!
+
+    // The leader needs no token and a plain update must not rotate the fence.
+    const leaderUpdate = await commands.updateTask(team().id, 'leader', {
+      taskId: created.taskId,
+      status: 'running',
+    })
+    expect(leaderUpdate).toMatchObject({ status: 'running', attemptId: first })
+
+    // Naming the current owner explicitly is not an ownership change.
+    const sameOwner = await commands.updateTask(team().id, 'leader', {
+      taskId: created.taskId,
+      status: 'running',
+      owner: 'a',
+    })
+    expect(sameOwner.attemptId).toBe(first)
+
+    const moved = await commands.updateTask(team().id, 'leader', {
+      taskId: created.taskId,
+      status: 'pending',
+      owner: 'b',
+    })
+    const second = moved.attemptId
+    expect(second).toBeDefined()
+    expect(second).not.toBe(first)
+
+    // Handing the task back to the previous member does not revive its token.
+    const back = await commands.updateTask(team().id, 'leader', {
+      taskId: created.taskId,
+      status: 'pending',
+      owner: 'a',
+    })
+    const third = back.attemptId
+    expect(third).not.toBe(first)
+    expect(third).not.toBe(second)
+    await expect(commands.updateTask(team().id, 'a', {
+      taskId: created.taskId,
+      status: 'in_progress',
+      attempt_id: second!,
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      details: { taskId: created.taskId, attemptId: third },
+    })
+    await commands.updateTask(team().id, 'a', {
+      taskId: created.taskId,
+      status: 'in_progress',
+      attempt_id: third!,
+    })
+    expect(team().tasks[created.taskId]?.status).toBe('running')
+  })
+
+  it('leaves a legacy task without an attempt unfenced until its owner changes', async () => {
+    const { commands, team, mutate } = harness()
+    // A board record persisted before attemptId existed.
+    const legacy: TeamTask = {
+      id: 'legacy',
+      title: 'Legacy task',
+      description: '',
+      status: 'running',
+      ownerSlotId: 'a',
+      dependencyIds: [],
+      fileScopes: [],
+      revision: 3,
+      createdAt: NOW,
+      updatedAt: NOW,
+    }
+    mutate({ ...team(), tasks: { ...team().tasks, [legacy.id]: legacy } })
+
+    const done = await commands.updateTask(team().id, 'a', { taskId: legacy.id, status: 'completed' })
+    expect(done.status).toBe('completed')
+    // A plain status update never lazy-mints an attempt for a legacy task.
+    expect(team().tasks[legacy.id]?.attemptId).toBeUndefined()
+
+    // Reopening with the same owner is not an ownership change either.
+    const reopened = await commands.updateTask(team().id, 'leader', {
+      taskId: legacy.id,
+      status: 'running',
+      owner: 'a',
+    })
+    expect(reopened.attemptId).toBeUndefined()
+
+    // The next real owner change mints one, and fencing starts there.
+    const moved = await commands.updateTask(team().id, 'leader', {
+      taskId: legacy.id,
+      status: 'running',
+      owner: 'b',
+    })
+    expect(moved.attemptId).toBeTypeOf('string')
+    await expect(commands.updateTask(team().id, 'b', { taskId: legacy.id, status: 'completed' }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await commands.updateTask(team().id, 'b', {
+      taskId: legacy.id,
+      status: 'completed',
+      attempt_id: moved.attemptId!,
+    })
+  })
+
+  it('fences a member write when the attempt rotates between the board read and the write', async () => {
+    const { commands, service, team, mutate } = harness()
+    const created = await commands.createTask(team().id, 'leader', { subject: 'Race', owner: 'a' })
+    const staleAttempt = team().tasks[created.taskId]!.attemptId!
+    const baseUpdate = (service as unknown as {
+      updateRuntimeTeam: (...args: never[]) => Promise<TeamAggregate>
+    }).updateRuntimeTeam
+    let injected = false
+    ;(service as unknown as { updateRuntimeTeam: unknown }).updateRuntimeTeam = vi.fn(async (
+      ...args: never[]
+    ) => {
+      if (!injected) {
+        injected = true
+        // Takeover and hand-back land after the member read the board: same
+        // owner, new attempt.
+        mutate({
+          ...team(),
+          tasks: {
+            ...team().tasks,
+            [created.taskId]: { ...team().tasks[created.taskId]!, attemptId: 'rotated-attempt' },
+          },
+        })
+      }
+      return baseUpdate(...args)
+    })
+
+    await expect(commands.updateTask(team().id, 'a', {
+      taskId: created.taskId,
+      status: 'in_progress',
+      attempt_id: staleAttempt,
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      details: { taskId: created.taskId, attemptId: 'rotated-attempt' },
+    })
+    // The rejected write must not have partially updated the board.
+    expect(team().tasks[created.taskId]).toMatchObject({
+      ownerSlotId: 'a',
+      attemptId: 'rotated-attempt',
+      status: 'assigned',
+      revision: 1,
+    })
+  })
+
+  it('rejects a member write when ownership moved between the board read and the write', async () => {
+    const { commands, service, team, mutate } = harness()
+    const created = await commands.createTask(team().id, 'leader', { subject: 'Race 2', owner: 'a' })
+    const currentAttempt = team().tasks[created.taskId]!.attemptId!
+    const baseUpdate = (service as unknown as {
+      updateRuntimeTeam: (...args: never[]) => Promise<TeamAggregate>
+    }).updateRuntimeTeam
+    let injected = false
+    ;(service as unknown as { updateRuntimeTeam: unknown }).updateRuntimeTeam = vi.fn(async (
+      ...args: never[]
+    ) => {
+      if (!injected) {
+        injected = true
+        mutate({
+          ...team(),
+          tasks: {
+            ...team().tasks,
+            [created.taskId]: {
+              ...team().tasks[created.taskId]!,
+              ownerSlotId: 'b',
+              attemptId: 'reassigned-attempt',
+            },
+          },
+        })
+      }
+      return baseUpdate(...args)
+    })
+
+    await expect(commands.updateTask(team().id, 'a', {
+      taskId: created.taskId,
+      status: 'in_progress',
+      attempt_id: currentAttempt,
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST', details: { taskId: created.taskId } })
+    expect(team().tasks[created.taskId]).toMatchObject({
+      ownerSlotId: 'b',
+      attemptId: 'reassigned-attempt',
+      status: 'assigned',
+      revision: 1,
+    })
   })
 
   it('broadcasts to every active member except the sender', async () => {

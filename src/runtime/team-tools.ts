@@ -31,12 +31,18 @@ export interface TeamToolHandlers {
   readMessages: (limit?: number) => Promise<ReadMessagesResult>
   sendMessage: (input: SendMessageInput) => Promise<SendMessageResult>
   interruptAgent: (slotId: string, message: string) => Promise<{ slot_id: string; status: 'delivered' }>
-  createTask: (input: CreateTaskInput) => Promise<{ taskId: string; status: string; deliveryState?: 'queued' | 'delivered' }>
+  createTask: (input: CreateTaskInput) => Promise<{
+    taskId: string
+    status: string
+    deliveryState?: 'queued' | 'delivered'
+    attemptId?: string
+  }>
   updateTask: (input: UpdateTaskInput) => Promise<{
     taskId: string
     status: string
     deliveryState?: 'queued' | 'delivered'
     woken?: string[]
+    attemptId?: string
   }>
   listTasks: (limit?: number) => TeamTaskView[]
   listAssistants: () => TeamAssistantView[]
@@ -52,6 +58,12 @@ export interface TeamToolHandlers {
 }
 
 type ToolResult = Record<string, unknown>
+
+/** Both update aliases accept the attempt token under either spelling. */
+function attemptToken(args: { attempt_id?: string; attemptId?: string }): string | undefined {
+  const token = args.attempt_id ?? args.attemptId
+  return token === undefined || token.trim().length === 0 ? undefined : token.trim()
+}
 
 const textOutput = {
   schema: { type: 'object', additionalProperties: true } as const,
@@ -155,7 +167,7 @@ export function registerTeamTools(
 
   register(defineTool({
     name: 'team_mode_task_create',
-    description: 'Leader only. Create a task on the shared task board. `blocked_by` lists task ids that must finish first. Assigning an owner wakes that member automatically.',
+    description: 'Leader only. Create a task on the shared task board. `blocked_by` lists task ids that must finish first. Assigning an owner wakes that member automatically and returns the task attempt_id.',
     parameters: {
       subject: { type: 'string', required: true, description: 'Short task subject.' },
       description: { type: 'string', description: 'Task details.' },
@@ -175,13 +187,14 @@ export function registerTeamTools(
         task_id: result.taskId,
         status: toAionTaskStatus(result.status),
         delivery_state: result.deliveryState ?? 'queued',
+        ...(result.attemptId === undefined ? {} : { attempt_id: result.attemptId }),
       } as never
     },
   }))
 
   register(defineTool({
     name: 'team_mode_task_update',
-    description: 'Update a task you own (the Leader may update any task). Completing a task clears its downstream blockers. The task owner or Leader may reassign an owner or change blockers; reassignment wakes the new owner.',
+    description: 'Update a task you own (the Leader may update any task). Completing a task clears its downstream blockers. The task owner or Leader may reassign an owner or change blockers; reassignment wakes the new owner and rotates the attempt_id. When you are not the Leader, pass the attempt_id listed for the task or the update is rejected as stale.',
     parameters: {
       task_id: { type: 'string', required: true, description: 'Task id.' },
       status: {
@@ -192,21 +205,25 @@ export function registerTeamTools(
       },
       owner: { type: 'string', description: 'New owner slot id or name (Leader or current owner).' },
       blocked_by: { type: 'array', items: { type: 'string' }, description: 'Replacement blocker task ids (Leader or current owner).' },
+      attempt_id: { type: 'string', description: "The task's current attempt_id (attemptId is accepted too). Required from members once the task is fenced; read it with team_mode_task_list." },
     },
     output: textOutput,
     execute: async (args, exec) => {
       handlers.assertIdentity(exec.agent)
+      const attemptId = attemptToken(args as { attempt_id?: string; attemptId?: string })
       const result = await handlers.updateTask({
         task_id: args.task_id,
         status: args.status as NonNullable<UpdateTaskInput['status']>,
         ...(args.owner === undefined ? {} : { owner: args.owner }),
         ...(args.blocked_by === undefined ? {} : { blocked_by: args.blocked_by }),
+        ...(attemptId === undefined ? {} : { attemptId }),
       })
       return {
         task_id: result.taskId,
         status: toAionTaskStatus(result.status),
         delivery_state: result.deliveryState ?? 'delivered',
         ...(result.woken === undefined ? {} : { woken: result.woken }),
+        ...(result.attemptId === undefined ? {} : { attempt_id: result.attemptId }),
       } as never
     },
   }))
@@ -344,6 +361,7 @@ export function registerTeamTools(
         task_id: result.taskId,
         status: toAionTaskStatus(result.status),
         delivery_state: result.deliveryState ?? 'queued',
+        ...(result.attemptId === undefined ? {} : { attempt_id: result.attemptId }),
       } as never
     },
   }))
@@ -361,22 +379,26 @@ export function registerTeamTools(
       result: { type: 'string' },
       error: { type: 'string' },
       ownerSlotId: { type: 'string', description: 'Leader-only reassignment target.' },
+      attemptId: { type: 'string', description: "The task's current attempt_id (attempt_id is accepted too). Required from members once the task is fenced." },
     },
     output: textOutput,
     execute: async (args, exec) => {
       handlers.assertIdentity(exec.agent)
+      const attemptId = attemptToken(args as { attempt_id?: string; attemptId?: string })
       const result = await handlers.updateTask({
         taskId: args.taskId,
         status: args.status as NonNullable<UpdateTaskInput['status']>,
         ...(args.result === undefined ? {} : { result: args.result }),
         ...(args.error === undefined ? {} : { error: args.error }),
         ...(args.ownerSlotId === undefined ? {} : { ownerSlotId: args.ownerSlotId }),
+        ...(attemptId === undefined ? {} : { attemptId }),
       })
       return {
         task_id: result.taskId,
         status: toAionTaskStatus(result.status),
         delivery_state: result.deliveryState ?? 'delivered',
         ...(result.woken === undefined ? {} : { woken: result.woken }),
+        ...(result.attemptId === undefined ? {} : { attempt_id: result.attemptId }),
       } as never
     },
   }))

@@ -160,6 +160,13 @@ export const teamTaskSchema = z.object({
   description: z.string(),
   status: z.enum(['pending', 'assigned', 'running', 'blocked', 'completed', 'failed', 'cancelled']),
   ownerSlotId: nonEmpty.optional(),
+  /**
+   * Ownership fence, added without a schema-version bump: minted whenever the
+   * task gains or changes an owner. Member updates must present this token, so
+   * a late update from a taken-over owner is rejected. Tasks stored before this
+   * field existed carry no token and stay unfenced (see updateTask).
+   */
+  attemptId: nonEmpty.optional(),
   createdBySlotId: nonEmpty.optional(),
   dependencyIds: z.array(nonEmpty),
   fileScopes: z.array(nonEmpty),

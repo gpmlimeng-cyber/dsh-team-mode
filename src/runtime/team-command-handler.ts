@@ -59,6 +59,8 @@ export interface TeamTaskView {
   raw_status: InternalTaskStatus
   owner?: string
   owner_name?: string
+  /** Current ownership fence token; absent for unowned and pre-fence tasks. */
+  attempt_id?: string
   created_by?: string
   blocked_by: string[]
   blocks: string[]
@@ -118,6 +120,9 @@ export interface UpdateTaskInput {
   owner?: string
   blockedBy?: string[]
   blocked_by?: string[]
+  /** Current attempt token of the task; required from members when the task is fenced. */
+  attemptId?: string
+  attempt_id?: string
 }
 
 export interface SendMessageInput {
@@ -189,7 +194,7 @@ export class TeamCommandHandler {
     teamId: string,
     creatorSlotId: string,
     input: CreateTaskInput,
-  ): Promise<{ taskId: string; status: string; deliveryState?: 'queued' | 'delivered' }> {
+  ): Promise<{ taskId: string; status: string; deliveryState?: 'queued' | 'delivered'; attemptId?: string }> {
     const team = this.service.getTeam(teamId)
     this.assertLeader(team, creatorSlotId, 'create tasks')
     const title = requireShortText(input.subject ?? input.title ?? '', 'Task subject', 500)
@@ -208,6 +213,9 @@ export class TeamCommandHandler {
     const now = new Date().toISOString()
     const taskId = randomUUID()
     const status: InternalTaskStatus = ownerSlotId === undefined ? 'pending' : 'assigned'
+    // An owner means someone can later be stale; fence the task from day one.
+    // An unowned task has nothing to fence until it gains an owner.
+    const attemptId = ownerSlotId === undefined ? undefined : randomUUID()
     const owner = ownerSlotId === undefined ? undefined : team.members[ownerSlotId]
     // A blocked task is not dispatched yet; completing its blockers sends the
     // unblock notification instead.
@@ -233,6 +241,7 @@ export class TeamCommandHandler {
             description,
             status,
             ...(ownerSlotId === undefined ? {} : { ownerSlotId }),
+            ...(attemptId === undefined ? {} : { attemptId }),
             createdBySlotId: creatorSlotId,
             dependencyIds: blockedBy,
             fileScopes,
@@ -248,9 +257,14 @@ export class TeamCommandHandler {
       'team.task_created',
       `Task ${title} created`,
     )
-    if (assignment === undefined) return { taskId, status }
+    if (assignment === undefined) return { taskId, status, ...(attemptId === undefined ? {} : { attemptId }) }
     const delivered = await this.port.deliverMessage(teamId, assignment.id)
-    return { taskId, status, deliveryState: delivered ? 'delivered' : 'queued' }
+    return {
+      taskId,
+      status,
+      ...(attemptId === undefined ? {} : { attemptId }),
+      deliveryState: delivered ? 'delivered' : 'queued',
+    }
   }
 
   async updateTask(
@@ -262,6 +276,7 @@ export class TeamCommandHandler {
     status: string
     deliveryState?: 'queued' | 'delivered'
     woken?: string[]
+    attemptId?: string
   }> {
     const team = this.service.getTeam(teamId)
     const taskId = input.task_id ?? input.taskId ?? ''
@@ -270,6 +285,7 @@ export class TeamCommandHandler {
     if (callerSlotId !== team.leaderSlotId && task.ownerSlotId !== callerSlotId) {
       throw new AgentTeamError('INVALID_REQUEST', 'A member may update only its own task')
     }
+    const presentedAttempt = normalizeAttemptToken(input.attempt_id ?? input.attemptId)
     const nextStatus = input.status === undefined
       ? task.status
       : TASK_STATUS_ALIASES[input.status] ?? (() => {
@@ -294,18 +310,47 @@ export class TeamCommandHandler {
     let notifications: TeamMessage[] = []
     let woken: string[] = []
     let finalStatus = nextStatus
+    let finalAttemptId = task.attemptId
     await this.service.updateRuntimeTeam(
       teamId,
       current => {
         // Rebase on the latest aggregate: two members may update different tasks
         // concurrently, and the board must not lose either change.
         const base = current.tasks[taskId] ?? task
+        // Ownership and the attempt fence are re-checked against `base`, not the
+        // snapshot read above: a reassignment/takeover can land between that read
+        // and this serialized write, and leadership itself is dynamic.
+        if (callerSlotId !== current.leaderSlotId) {
+          if (base.ownerSlotId !== callerSlotId) {
+            throw new AgentTeamError(
+              'INVALID_REQUEST',
+              'A member may update only its own task',
+              { taskId },
+            )
+          }
+          // A task without an attemptId predates the fence (or never had an
+          // owner); it stays unfenced so legacy boards keep working. Once an
+          // owner change mints one, every later member update must present it.
+          if (base.attemptId !== undefined && base.attemptId !== presentedAttempt) {
+            throw new AgentTeamError(
+              'INVALID_REQUEST',
+              presentedAttempt === undefined
+                ? `Task '${taskId}' requires the current attempt_id; read team_mode_task_list and retry with the listed attempt_id.`
+                : `Task '${taskId}' attempt is stale; ownership changed since you read the board.`,
+              { taskId, attemptId: base.attemptId },
+            )
+          }
+        }
         const status = input.status === undefined ? base.status : nextStatus
         const ownerSlotId = requestedOwner === undefined ? base.ownerSlotId : nextOwnerSlotId
         const dependencyIds = requestedBlockedBy === undefined
           ? base.dependencyIds
           : nextBlockedBy
+        // Only an owner change rotates the fence. Re-sending the current owner
+        // is a no-op (a takeover runs through an actual owner change), and a
+        // plain status/result update never mints a token for a legacy task.
         const ownerChanged = requestedOwner !== undefined && nextOwnerSlotId !== base.ownerSlotId
+        const attemptId = ownerChanged ? randomUUID() : base.attemptId
         const updated: TeamTask = {
           ...base,
           status,
@@ -315,8 +360,14 @@ export class TeamCommandHandler {
           revision: base.revision + 1,
           updatedAt: now,
         }
-        if (ownerSlotId === undefined) delete updated.ownerSlotId
-        else updated.ownerSlotId = ownerSlotId
+        if (ownerSlotId === undefined) {
+          delete updated.ownerSlotId
+          delete updated.attemptId
+        } else {
+          updated.ownerSlotId = ownerSlotId
+          if (attemptId === undefined) delete updated.attemptId
+          else updated.attemptId = attemptId
+        }
 
         let tasks: Record<string, TeamTask> = { ...current.tasks, [taskId]: updated }
         const unblocked: TeamTask[] = []
@@ -327,6 +378,7 @@ export class TeamCommandHandler {
         }
         const stored = tasks[taskId] ?? updated
         finalStatus = stored.status
+        finalAttemptId = stored.attemptId
 
         const nextNotifications: TeamMessage[] = []
         if (ownerChanged && ownerSlotId !== undefined && ownerSlotId !== callerSlotId) {
@@ -386,6 +438,7 @@ export class TeamCommandHandler {
       status: finalStatus,
       ...(notifications.length === 0 ? {} : { deliveryState: delivered ? 'delivered' as const : 'queued' as const }),
       ...(woken.length === 0 ? {} : { woken }),
+      ...(finalAttemptId === undefined ? {} : { attemptId: finalAttemptId }),
     }
   }
 
@@ -409,6 +462,7 @@ export class TeamCommandHandler {
       raw_status: task.status,
       ...(task.ownerSlotId === undefined ? {} : { owner: task.ownerSlotId }),
       ...(owner === undefined ? {} : { owner_name: owner.displayName }),
+      ...(task.attemptId === undefined ? {} : { attempt_id: task.attemptId }),
       ...(task.createdBySlotId === undefined ? {} : { created_by: task.createdBySlotId }),
       blocked_by: [...task.dependencyIds],
       blocks: allTasks
@@ -901,6 +955,12 @@ function normalizeFiles(files: readonly string[] | undefined): TeamMessage['atta
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values.map(value => value.trim()).filter(Boolean))]
+}
+
+/** An absent or blank attempt token means "no token presented", not a mismatch. */
+function normalizeAttemptToken(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed
 }
 
 function requireShortText(value: string, label: string, maxLength: number): string {
