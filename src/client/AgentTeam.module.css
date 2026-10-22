@@ -3835,12 +3835,6 @@ textarea.input {
 .assistantCreateAvatarFrame {
   display: inline-grid;
   place-items: center;
-  width: 72px;
-  height: 72px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 50%;
-  background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--dsw-alias-bg-layer-1) 82%, transparent);
 }
 
 .assistantCreateAvatarName {
