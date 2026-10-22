@@ -3820,7 +3820,7 @@ textarea.input {
 .assistantCreateForm {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -3828,15 +3828,15 @@ textarea.input {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding-top: 2px;
+  gap: 4px;
+  padding-top: 0;
 }
 
 .assistantCreateAvatarFrame {
   display: inline-grid;
   place-items: center;
-  width: 96px;
-  height: 96px;
+  width: 72px;
+  height: 72px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 50%;
   background: var(--dsw-alias-bg-layer-1);
@@ -3860,8 +3860,8 @@ textarea.input {
 
 .assistantCreateAvatarCard {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 8px;
+  padding: 10px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
@@ -6665,12 +6665,12 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 }
 
 .avatarGrid .avatarStyleGrid {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 6px;
 }
 
 .avatarGrid .avatarStyleThumb {
-  max-width: 44px;
+  max-width: 40px;
 }
 
 .avatarStyleThumb {

@@ -186,10 +186,6 @@ export function AssistantCreateDialog({
       reasoningLabelFor(group.provider.id, modelEntry.id),
     ),
   })))
-  const selectedModelLabel = modelOptions.find(option => (
-    option.providerId === provider && option.modelId === model
-  ))?.label
-
   const close = (): void => {
     if (saving) return
     onClose()
@@ -297,7 +293,7 @@ export function AssistantCreateDialog({
       >
         {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
         {loading
-          ? <div className={css.dialogEmpty}>正在读取模型、Agent Preset 与 Workspace…</div>
+          ? <div className={css.dialogEmpty}>正在读取配置…</div>
           : (
             <>
               <div className={css.assistantCreateHero}>
@@ -305,7 +301,7 @@ export function AssistantCreateDialog({
                   <MemberAvatar
                     name={name.trim() || '助手'}
                     avatar={avatar !== '' ? avatar : undefined}
-                    size={88}
+                    size={64}
                   />
                 </span>
                 <span
@@ -320,7 +316,6 @@ export function AssistantCreateDialog({
               <section className={css.assistantCreateAvatarCard} aria-label="形象">
                 <div className={css.assistantCreateCardHeading}>
                   <strong>形象</strong>
-                  <span className={css.assistantCreateCardHint}>内置 DiceBear 或本地上传</span>
                 </div>
                 <AvatarGrid
                   value={avatar}
@@ -344,7 +339,6 @@ export function AssistantCreateDialog({
                     setError(undefined)
                   }}
                 />
-                <span className={css.hint}>必填；预览会随着输入实时更新。</span>
               </Field>
 
               <Field label="模型">
@@ -373,11 +367,6 @@ export function AssistantCreateDialog({
                     </option>
                   ))}
                 </select>
-                <span className={css.hint}>
-                  {selectedModelLabel === undefined
-                    ? '选择模型后会显示完整的模型名、Provider 与思考档位。'
-                    : `当前：${selectedModelLabel}。创建后仍可在助手设置中修改。`}
-                </span>
               </Field>
 
               {reasoningEfforts.length > 0 && (
@@ -398,9 +387,6 @@ export function AssistantCreateDialog({
                       </option>
                     ))}
                   </select>
-                  <span className={css.hint}>
-                    由当前模型决定可用档位；选择「模型默认」会使用模型默认档位。
-                  </span>
                 </Field>
               )}
 
