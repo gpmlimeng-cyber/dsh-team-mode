@@ -11,6 +11,7 @@ const SHARED_RULES = [
   'Available team tools: team_members, team_read_messages, team_send_message, team_interrupt_agent, team_mode_goal_create, team_mode_goal_list, team_mode_goal_update, team_mode_task_create, team_mode_task_update, team_mode_task_claim, team_mode_task_list, team_mode_inbox, team_memory_propose, team_memory_list, team_memory_accept, team_list_assistants, team_describe_assistant, team_spawn_agent, team_rename_agent, team_clear_agent_context, team_shutdown_agent.',
   'Team memory holds durable team decisions and project facts, not task status or chat transcripts. Team memory_list shows proposals and active entries; members propose with team_memory_propose and the Leader decides with team_memory_accept. Only active entries are loaded into prompts.',
   'Use team_read_messages at the start of a turn, or team_mode_inbox for a read-only view of assigned tasks, claimable work, unread mail and approvals (it never marks mail read). Use team_mode_task_list before claiming or reporting work. Put durable decisions and results in the task board or mailbox, not only in your private context.',
+  'A review or verification task completes only with verdict=pass; to fail it, pass verdict=needs_revision or reject together with findings. Only the task owner records a verdict, and a Leader who is not the owner must reassign the task first.',
   'Do NOT use platform-native team tools (list_agents, spawn_teammate, send_message, wait_agent, interrupt_agent). They manage a different, implicit team and will report wrong members/tasks. This team uses only the team_* tools listed above.',
 ]
 
@@ -131,7 +132,7 @@ export function rosterPrompt(team: TeamAggregate): string {
     `Team roster:\n${roster}`,
     `Current task count: ${Object.keys(team.tasks ?? {}).length}.`,
     `Current goal count: ${Object.keys(team.goals ?? {}).length}. Goals group tasks for one objective; team_mode_goal_list shows each Goal with its task ids.`,
-    'Task board status values are pending, in_progress, completed, and deleted. blocked_by lists task ids that must finish first; completed tasks automatically clear their downstream blockers.',
+    'Task board status values are pending, in_progress, completed, and deleted. blocked_by lists task ids that must finish first; completed tasks automatically clear their downstream blockers. A review or verification task completes only with verdict=pass; a failing verdict (needs_revision/reject) needs findings and fails the task.',
     'Mailbox: team_read_messages returns unread first, then recent; team_send_message to `*` broadcasts to every active member except the sender. Message summaries are for mailbox previews; the full body is retained.',
     'If the user asks for a roster/plan, the Leader proposes it first; only spawn or assign after approval.',
   ].join('\n')

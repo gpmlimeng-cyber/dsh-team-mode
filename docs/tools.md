@@ -11,10 +11,10 @@
 | `team_mode_goal_create` | Leader 专用：为一个需要交付物的目标创建 Goal（mode=`direct` / `single` / `orchestrated`） |
 | `team_mode_goal_list` | 按 Goal 汇总任务板：每个 Goal 及其 `task_ids` |
 | `team_mode_goal_update` | Leader 专用：修改 Goal 状态（`active` 恢复被纪元暂停的 Goal，`paused` 暂停，`completed` / `cancelled` 结束） |
-| `team_mode_task_create` | 创建任务，指定 owner / blocked_by / 文件范围 / `goal_id` |
-| `team_mode_task_update` | 更新任务状态、owner、依赖、结果（成员需带当前 `attempt_id`） |
+| `team_mode_task_create` | 创建任务，指定 owner / blocked_by / 文件范围 / `goal_id`，可选 `kind` / `acceptance` / `reviewed_task_id` |
+| `team_mode_task_update` | 更新任务状态、owner、依赖、结果；review/verification 用 `verdict` / `findings` 结案；成员需带当前 `attempt_id` |
 | `team_mode_task_claim` | 成员认领一个就绪且无 owner 的任务：原子占用并生成新的 `attempt_id` |
-| `team_mode_task_list` | 查询任务板（含 owner、依赖、`attempt_id`、`goal_id`） |
+| `team_mode_task_list` | 查询任务板（含 owner、依赖、`attempt_id`、`goal_id`、`kind`、`verdict`） |
 | `team_mode_inbox` | 只读成员收件箱：分派给我的任务、可认领任务、未读消息、待审批 |
 | `team_memory_propose` | 提议/写入团队记忆：成员提议待 Leader 决定，Leader 写入立即生效 |
 | `team_memory_list` | 列出团队记忆（状态、可见性、key、作者、版本）；只有 `active` 会进入提示 |
@@ -41,7 +41,7 @@
 - `team.updateGoal` 提供 Leader 权限的 Goal 状态写入（`{teamId, goalId, value}` → `TeamGoal`），与工具走同一服务方法。
 - `team_mode_task_create` 的 `goal_id` 可选，必须指向**同一团队**的 Goal，否则以 `INVALID_REQUEST` 拒绝；缺省时任务不归属任何 Goal，旧任务/旧调用保持有效。
 - Goal 与 `goal_id` 都是可选字段，`schemaVersion` 不变；`team.reset` 会同时清空任务与 Goal，避免遗留孤立 Goal。
-- 本轮不包含 Goal UI、自动调度与质量门禁。
+- 本轮不包含 Goal UI、自动调度与自动修复循环；质量门禁见下节。
 
 ## 团队记忆（P0）
 
@@ -70,6 +70,19 @@
 - 拒绝情形：已被认领/指派、`blocked`（依赖未完成）、`completed`/`cancelled`/`failed`、`running`、跨团队或未知任务、空 `task_id`。错误为 `INVALID_REQUEST`，`details` 给出当前的 `owner`、`attemptId`（若存在）、`status`、`blocked_by`（若被依赖阻塞），消息文本同样带上这些值，方便认领失败方直接放弃而不是重试。
 - 已拥有该任务的成员重复认领是只读操作：原样返回当前的 owner 与 `attemptId`，不轮换围栏、不写任务板。
 - 认领成功不额外发消息给 Leader（任务板立即可见，成员随后的 `in_progress` 更新会走既有状态消息路径）；Leader 重派或接管会生成新 `attemptId`，旧 claim token 随之失效。
+
+## 任务质量门禁（P0）
+
+- 任务新增四个**可选**字段，`schemaVersion` 不变，无迁移：`kind`（`work` / `implementation` / `repair` / `verification` / `review`，缺省即 `work`）、`acceptance`（验收标准，trim，≤2,000 字符）、`reviewedTaskId`（被评审的实现/修复任务）、`verdict`（`pass` / `needs_revision` / `reject`）。旧任务没有这些字段，`taskKindOf` 按 `work` 读取，行为与之前完全一致。
+- 创建时（Leader 专用）：`team_mode_task_create` 接受 `kind` / `acceptance` / `reviewed_task_id`，新任务总会落盘 `kind`。`reviewed_task_id` 只能用于 `review` / `verification`，必须指向**同一团队**的 `implementation` / `repair` 任务；无 kind 的历史任务视为实现类目标仍可被评审，`review` / `verification` 任务永远不能作为目标。`kind` / `acceptance` / `reviewedTaskId` 只在创建时可写，更新接口没有对应参数。
+- 结案唯一入口：`team_mode_task_update` 的 `verdict` / `findings`。门禁在串行化的团队写入闭包内、owner/attempt 校验之后复查，因此并发改派不会让旧 owner 成功写入裁决。
+  - `review` / `verification` 置为 `completed` 必须同时给 `verdict=pass`；缺失或不一致以 `INVALID_REQUEST` 拒绝，任务保持不变。
+  - 判失败必须 `verdict=needs_revision` 或 `reject` **且** 带非空 `findings`，任务置为 `failed`，findings 存入既有 `error` 字段（看板与状态邮件本来就会渲染它，不新增字段）。
+  - `verdict=pass` 只能与 `completed` 搭配，`needs_revision` / `reject` 只能与 `failed` 搭配；普通任务（`work` 等）不接受 `verdict` 或 `findings`，旧调用保持有效。
+  - 只有任务 owner 能写 `verdict`；Leader 若不是该任务 owner 也不能代写，必须先 `team_mode_task_update {owner}` 改派（会轮换 `attempt_id`）再以成员身份结案。
+- 裁决只属于本次终态写入：任务离开终态（重开、回到 in_progress 等）时 `verdict` 被删除，再次结案需要新的裁决；`pass` 会清掉上一轮遗留的 `error`，任务板不会显示过期的 `pass`。
+- 本流程**没有自动修复/自动评审循环**：`needs_revision` 只把评审任务置为 `failed` 并把 findings 邮给 Leader，是否新建修复任务由 Leader 手动决定。`requirements` / `integration` 两类暂不引入（当前没有可执行规则），自评审（实现者评审自己）也未在 P0 禁止。
+- 工具参数：`team_mode_task_update` 用 `verdict` / `findings`；兼容别名 `team_update_task` / `team_create_task` 参数保持冻结，不暴露新字段。工具总数仍为 24。
 
 ## 消息 thread / goal / reply 上下文
 
@@ -106,10 +119,11 @@
 | `team.member.setAssistantInstance` | 显式关联成员与单聊助手实例；`assistantInstanceId=null` 解除 |
 | `team.reset` / `team.dissolve` | 重置 / 解散团队 |
 | `team.message.send` / `team.message.list` | 团队消息 |
-| `team.task.*` | 任务板读写 |
 | `team.activity.list` | 活动流 |
 | `team.workspace.*` | 工作区树、搜索、Git 变更 / diff、上传 |
 | `team.interaction.respond` | 回答提问 / 审批 |
+
+任务板没有独立的 `team.task.*` 客户端 API：`TeamView` 就是团队聚合，看板直接读取其中的 `tasks`，所以新增的任务字段随聚合一起到达 UI，不需要额外传输方法。
 
 ## 原生 Slot / UI
 

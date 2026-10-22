@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { taskKindOf } from '../src/domain/types.js'
 import type {
   TeamAggregate,
   TeamGoal,
@@ -7,7 +8,7 @@ import type {
   TeamTask,
 } from '../src/domain/types.js'
 import { AgentTeamError } from '../src/domain/errors.js'
-import { teamMessageSchema } from '../src/domain/schemas.js'
+import { teamAggregateSchema, teamMessageSchema, teamTaskSchema } from '../src/domain/schemas.js'
 import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import {
   TeamCommandHandler,
@@ -1726,5 +1727,462 @@ describe('Team Epoch writes and Goal status', () => {
       attempt_id: 'attempt-1',
     }, 2)
     expect(team().tasks[taskId]?.status).toBe('completed')
+  })
+})
+
+
+describe('TeamCommandHandler task quality gates', () => {
+  async function createImplementation(h: ReturnType<typeof harness>, subject = 'Implement parser'): Promise<string> {
+    const created = await h.commands.createTask(h.team().id, 'leader', {
+      subject,
+      kind: 'implementation',
+    })
+    return created.taskId
+  }
+
+  async function createGateTask(
+    h: ReturnType<typeof harness>,
+    kind: 'review' | 'verification' = 'review',
+    options: { owner?: string; acceptance?: string } = {},
+  ): Promise<{ taskId: string; reviewedTaskId: string }> {
+    const reviewedTaskId = await createImplementation(h)
+    const created = await h.commands.createTask(h.team().id, 'leader', {
+      subject: 'Review parser',
+      ...(options.owner === undefined ? {} : { owner: options.owner }),
+      kind,
+      acceptance: options.acceptance ?? 'tests pass',
+      reviewed_task_id: reviewedTaskId,
+    })
+    return { taskId: created.taskId, reviewedTaskId }
+  }
+
+  it('stores kind, acceptance and the reviewed task on a Leader-created review task', async () => {
+    const h = harness()
+    const { commands, team } = h
+    const reviewedTaskId = await createImplementation(h)
+    const created = await commands.createTask(team().id, 'leader', {
+      subject: 'Review parser',
+      owner: 'a',
+      kind: 'review',
+      acceptance: '  tests pass  ',
+      reviewed_task_id: reviewedTaskId,
+    })
+
+    expect(created).toMatchObject({ kind: 'review', reviewedTaskId })
+    expect(team().tasks[created.taskId]).toMatchObject({
+      kind: 'review',
+      acceptance: 'tests pass',
+      reviewedTaskId,
+    })
+
+    const work = await commands.createTask(team().id, 'leader', { subject: 'Plain work' })
+    expect(work.kind).toBe('work')
+    expect(team().tasks[work.taskId]?.kind).toBe('work')
+
+    const blank = await commands.createTask(team().id, 'leader', { subject: 'Blank acceptance', acceptance: '   ' })
+    expect(team().tasks[blank.taskId]).not.toHaveProperty('acceptance')
+  })
+
+  it('refuses an unknown kind, a foreign target and a non-implementation target', async () => {
+    const h = harness()
+    const { commands, team, otherTeam } = h
+
+    await expect(commands.createTask(team().id, 'leader', { subject: 'Bad', kind: 'requirements' }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST', message: expect.stringContaining('Unknown task kind') })
+    await expect(commands.createTask(team().id, 'leader', {
+      subject: 'Too long',
+      acceptance: 'x'.repeat(2_001),
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST', message: 'Task acceptance is too long' })
+
+    await expect(commands.createTask(team().id, 'leader', {
+      subject: 'Review',
+      kind: 'review',
+      reviewed_task_id: 'missing-task',
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: 'reviewed_task_id must name an implementation or repair task of this team.',
+    })
+
+    const foreign = await commands.createTask(otherTeam().id, 'leader-2', {
+      subject: 'Foreign implementation',
+      kind: 'implementation',
+    })
+    await expect(commands.createTask(team().id, 'leader', {
+      subject: 'Review',
+      kind: 'review',
+      reviewed_task_id: foreign.taskId,
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: 'reviewed_task_id must name an implementation or repair task of this team.',
+    })
+
+    const work = await commands.createTask(team().id, 'leader', { subject: 'Plain work' })
+    await expect(commands.createTask(team().id, 'leader', {
+      subject: 'Review work',
+      kind: 'review',
+      reviewed_task_id: work.taskId,
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: 'reviewed_task_id must name an implementation or repair task of this team.',
+    })
+
+    await expect(commands.createTask(team().id, 'leader', {
+      subject: 'Implementation with a target',
+      kind: 'implementation',
+      reviewed_task_id: work.taskId,
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: 'reviewed_task_id applies only to review and verification tasks.',
+    })
+  })
+
+  it('requires verdict=pass before a review task can complete', async () => {
+    const h = harness()
+    const { commands, team } = h
+    const { taskId } = await createGateTask(h, 'review', { owner: 'a' })
+    const attempt = team().tasks[taskId]!.attemptId!
+
+    await expect(commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: attempt,
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: "Review or verification task 'Review parser' can complete only with verdict=pass.",
+      details: { taskId, kind: 'review' },
+    })
+    expect(team().tasks[taskId]).toMatchObject({ status: 'assigned', revision: 1 })
+    expect(team().tasks[taskId]).not.toHaveProperty('verdict')
+
+    // A non-passing verdict cannot complete it either.
+    await expect(commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: attempt,
+      verdict: 'needs_revision',
+      findings: 'Not yet.',
+    })).rejects.toMatchObject({ message: 'verdict=needs_revision requires status=failed.' })
+  })
+
+  it('fails a review task with needs_revision findings and stores them as the error', async () => {
+    const h = harness()
+    const { commands, team } = h
+    const { taskId } = await createGateTask(h, 'review', { owner: 'a' })
+    const attempt = team().tasks[taskId]!.attemptId!
+
+    const result = await commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'failed',
+      attempt_id: attempt,
+      verdict: 'needs_revision',
+      findings: '  Add trailing-byte tests.  ',
+    })
+
+    expect(result).toMatchObject({ status: 'failed', verdict: 'needs_revision' })
+    expect(team().tasks[taskId]).toMatchObject({
+      status: 'failed',
+      verdict: 'needs_revision',
+      error: 'Add trailing-byte tests.',
+    })
+
+    // A failed re-report that only updates the result keeps the decision;
+    // leaving the terminal status is what clears it.
+    await commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'failed',
+      attempt_id: attempt,
+      result: 'Still failing on edge cases.',
+    })
+    expect(team().tasks[taskId]).toMatchObject({
+      status: 'failed',
+      verdict: 'needs_revision',
+      error: 'Add trailing-byte tests.',
+    })
+  })
+
+  it('refuses a failing verdict without findings and findings without a failing verdict', async () => {
+    const h = harness()
+    const { commands, team } = h
+    const { taskId } = await createGateTask(h, 'review', { owner: 'a' })
+    const attempt = team().tasks[taskId]!.attemptId!
+
+    await expect(commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'failed',
+      attempt_id: attempt,
+      verdict: 'reject',
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: 'verdict=reject requires findings; the task fails with them.',
+    })
+    expect(team().tasks[taskId]).toMatchObject({ status: 'assigned', revision: 1 })
+
+    await expect(commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: attempt,
+      verdict: 'pass',
+      findings: 'Contradictory.',
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: 'findings are accepted only with verdict=needs_revision or reject.',
+    })
+    expect(team().tasks[taskId]).toMatchObject({ status: 'assigned', revision: 1 })
+  })
+
+  it('refuses a verdict from a member who does not own the task, including the Leader', async () => {
+    const h = harness()
+    const { commands, team } = h
+    const { taskId } = await createGateTask(h, 'review', { owner: 'a' })
+
+    await expect(commands.updateTask(team().id, 'leader', {
+      task_id: taskId,
+      status: 'completed',
+      verdict: 'pass',
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: 'Only the task owner may record a verdict.',
+      details: { taskId, owner: 'a' },
+    })
+
+    await expect(commands.updateTask(team().id, 'b', {
+      task_id: taskId,
+      status: 'completed',
+      verdict: 'pass',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST', message: 'A member may update only its own task' })
+
+    expect(team().tasks[taskId]).toMatchObject({ status: 'assigned' })
+  })
+
+  it('lets a Leader who owns the review task record a verdict', async () => {
+    const h = harness()
+    const { commands, team } = h
+    const { taskId } = await createGateTask(h, 'review', { owner: 'leader' })
+
+    await commands.updateTask(team().id, 'leader', {
+      task_id: taskId,
+      status: 'completed',
+      verdict: 'pass',
+    })
+
+    expect(team().tasks[taskId]).toMatchObject({ status: 'completed', verdict: 'pass' })
+  })
+
+  it('applies the same gate to verification tasks', async () => {
+    const h = harness()
+    const { commands, team } = h
+    const { taskId } = await createGateTask(h, 'verification', { owner: 'a' })
+    const attempt = team().tasks[taskId]!.attemptId!
+
+    await expect(commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: attempt,
+    })).rejects.toMatchObject({ message: expect.stringContaining('can complete only with verdict=pass') })
+
+    await commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: attempt,
+      verdict: 'pass',
+    })
+    expect(team().tasks[taskId]).toMatchObject({ status: 'completed', verdict: 'pass' })
+  })
+
+  it('rejects verdict and findings on an ordinary work task', async () => {
+    const h = harness()
+    const { commands, team } = h
+    const work = await commands.createTask(team().id, 'leader', { subject: 'Plain work', owner: 'a' })
+    const attempt = team().tasks[work.taskId]!.attemptId!
+
+    await expect(commands.updateTask(team().id, 'a', {
+      task_id: work.taskId,
+      status: 'completed',
+      attempt_id: attempt,
+      verdict: 'pass',
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: "Task 'Plain work' is kind 'work'; a verdict applies only to review and verification tasks.",
+      details: { taskId: work.taskId, kind: 'work' },
+    })
+    await expect(commands.updateTask(team().id, 'a', {
+      task_id: work.taskId,
+      status: 'completed',
+      attempt_id: attempt,
+      findings: 'Nope.',
+    })).rejects.toMatchObject({ message: 'findings are accepted only with verdict=needs_revision or reject.' })
+
+    // The legacy path still completes with no verdict at all.
+    await commands.updateTask(team().id, 'a', {
+      task_id: work.taskId,
+      status: 'completed',
+      attempt_id: attempt,
+    })
+    expect(team().tasks[work.taskId]?.status).toBe('completed')
+  })
+
+  it('requires a fresh verdict after a completed review is reopened', async () => {
+    const h = harness()
+    const { commands, team } = h
+    const { taskId } = await createGateTask(h, 'review', { owner: 'a' })
+    const attempt = team().tasks[taskId]!.attemptId!
+
+    await commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: attempt,
+      verdict: 'pass',
+    })
+    expect(team().tasks[taskId]?.verdict).toBe('pass')
+
+    await commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'in_progress',
+      attempt_id: attempt,
+    })
+    expect(team().tasks[taskId]).toMatchObject({ status: 'running' })
+    expect(team().tasks[taskId]).not.toHaveProperty('verdict')
+
+    await expect(commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: attempt,
+    })).rejects.toMatchObject({ message: expect.stringContaining('can complete only with verdict=pass') })
+
+    await commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: attempt,
+      verdict: 'pass',
+    })
+    expect(team().tasks[taskId]).toMatchObject({ status: 'completed', verdict: 'pass' })
+  })
+
+  it('clears stale findings when a later pass completes the review', async () => {
+    const h = harness()
+    const { commands, team } = h
+    const { taskId } = await createGateTask(h, 'review', { owner: 'a' })
+    const attempt = team().tasks[taskId]!.attemptId!
+
+    await commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'failed',
+      attempt_id: attempt,
+      verdict: 'needs_revision',
+      findings: 'Fix the edge case.',
+    })
+    expect(team().tasks[taskId]?.error).toBe('Fix the edge case.')
+
+    await commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'in_progress',
+      attempt_id: attempt,
+    })
+    await commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: attempt,
+      verdict: 'pass',
+    })
+
+    expect(team().tasks[taskId]).toMatchObject({ status: 'completed', verdict: 'pass' })
+    expect(team().tasks[taskId]).not.toHaveProperty('error')
+  })
+
+  it('lets the claiming member complete a claimed review task with a verdict', async () => {
+    const h = harness()
+    const { commands, team } = h
+    const reviewedTaskId = await createImplementation(h)
+    const created = await commands.createTask(team().id, 'leader', {
+      subject: 'Review parser',
+      kind: 'review',
+      reviewed_task_id: reviewedTaskId,
+    })
+
+    const claim = await commands.claimTask(team().id, 'b', { task_id: created.taskId })
+    await commands.updateTask(team().id, 'b', {
+      task_id: created.taskId,
+      status: 'completed',
+      attempt_id: claim.attemptId!,
+      verdict: 'pass',
+    })
+
+    expect(team().tasks[created.taskId]).toMatchObject({
+      status: 'completed',
+      ownerSlotId: 'b',
+      verdict: 'pass',
+    })
+  })
+
+  it('keeps a legacy task parseable, claimable and completable without a verdict', async () => {
+    const h = harness()
+    const { commands, team, mutate } = h
+    const legacy: TeamTask = {
+      id: 'legacy-task',
+      title: 'Old work',
+      description: '',
+      status: 'pending',
+      dependencyIds: [],
+      fileScopes: [],
+      revision: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+    }
+    mutate({ ...team(), tasks: { ...team().tasks, [legacy.id]: legacy } })
+
+    // Legacy shape survives a parse -> serialize round trip with no new keys.
+    const parsed = teamTaskSchema.parse(legacy)
+    expect(parsed).not.toHaveProperty('kind')
+    expect(taskKindOf(parsed)).toBe('work')
+    expect(teamTaskSchema.parse(parsed)).toEqual(parsed)
+    expect(Object.keys(teamAggregateSchema.parse(team()).tasks[legacy.id] ?? {}).sort())
+      .toEqual(Object.keys(legacy).sort())
+
+    // A kindless task is still a valid review target (it predates the enum).
+    const review = await commands.createTask(team().id, 'leader', {
+      subject: 'Review legacy work',
+      owner: 'a',
+      kind: 'review',
+      reviewed_task_id: legacy.id,
+    })
+    expect(team().tasks[review.taskId]?.reviewedTaskId).toBe(legacy.id)
+
+    const claimed = await commands.claimTask(team().id, 'b', { task_id: legacy.id })
+    await commands.updateTask(team().id, 'b', {
+      task_id: legacy.id,
+      status: 'completed',
+      attempt_id: claimed.attemptId!,
+    })
+    expect(team().tasks[legacy.id]).toMatchObject({ status: 'completed', ownerSlotId: 'b' })
+  })
+
+  it('exposes the quality fields on the board view only when present', async () => {
+    const h = harness()
+    const { commands, team } = h
+    const { taskId, reviewedTaskId } = await createGateTask(h, 'review', { owner: 'a' })
+
+    const view = commands.listTasks(team().id).find(task => task.task_id === taskId)!
+    expect(view).toMatchObject({
+      kind: 'review',
+      acceptance: 'tests pass',
+      reviewed_task_id: reviewedTaskId,
+    })
+    expect(view).not.toHaveProperty('verdict')
+
+    const attempt = team().tasks[taskId]!.attemptId!
+    await commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'failed',
+      attempt_id: attempt,
+      verdict: 'reject',
+      findings: 'Wrong approach.',
+    })
+    const failedView = commands.listTasks(team().id).find(task => task.task_id === taskId)!
+    expect(failedView).toMatchObject({ status: 'deleted', verdict: 'reject', error: 'Wrong approach.' })
+
+    const work = await commands.createTask(team().id, 'leader', { subject: 'Plain work' })
+    const workView = commands.listTasks(team().id).find(task => task.task_id === work.taskId)!
+    expect(workView).toMatchObject({ kind: 'work' })
+    expect(workView).not.toHaveProperty('reviewed_task_id')
   })
 })

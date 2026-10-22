@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { AgentTeamError } from '../domain/errors.js'
+import { teamTaskKindSchema, teamTaskVerdictSchema } from '../domain/schemas.js'
+import { taskKindOf } from '../domain/types.js'
 import type {
   MemoryEntry,
   TeamAggregate,
@@ -9,6 +11,8 @@ import type {
   TeamMemberSlot,
   TeamMessage,
   TeamTask,
+  TeamTaskKind,
+  TeamTaskVerdict,
 } from '../domain/types.js'
 import type { AgentTeamService } from '../service/dsh-team-mode-service.js'
 import type { PendingInteractionView } from '../transport/contracts.js'
@@ -89,6 +93,14 @@ export interface TeamTaskView {
   file_scopes: string[]
   /** Goal this task contributes to; absent for ungrouped legacy tasks. */
   goal_id?: string
+  /** Task kind; absent for tasks created before the kind vocabulary existed. */
+  kind?: TeamTaskKind
+  /** Done-when statement stated at create time. */
+  acceptance?: string
+  /** Implementation/repair task this review or verification task judges. */
+  reviewed_task_id?: string
+  /** Recorded review decision; absent until a review/verification completes. */
+  verdict?: TeamTaskVerdict
   result?: string
   error?: string
   revision: number
@@ -152,6 +164,13 @@ export interface CreateTaskInput {
   /** Goal of the same team that this task contributes to. */
   goalId?: string
   goal_id?: string
+  /** Optional kind; omitted means `work`, which keeps the legacy behavior. */
+  kind?: string
+  /** Done-when statement for a reviewable task. */
+  acceptance?: string
+  /** Implementation/repair task judged by a review or verification task. */
+  reviewedTaskId?: string
+  reviewed_task_id?: string
 }
 
 export interface CreateGoalInput {
@@ -235,6 +254,10 @@ export interface UpdateTaskInput {
   /** Current attempt token of the task; required from members when the task is fenced. */
   attemptId?: string
   attempt_id?: string
+  /** Review decision; review/verification tasks only, recorded by their owner. */
+  verdict?: string
+  /** Findings required with verdict=needs_revision or reject; stored as `error`. */
+  findings?: string
 }
 
 export interface ClaimTaskInput {
@@ -355,7 +378,14 @@ export class TeamCommandHandler {
     creatorSlotId: string,
     input: CreateTaskInput,
     epoch?: number,
-  ): Promise<{ taskId: string; status: string; deliveryState?: 'queued' | 'delivered'; attemptId?: string }> {
+  ): Promise<{
+    taskId: string
+    status: string
+    kind: TeamTaskKind
+    reviewedTaskId?: string
+    deliveryState?: 'queued' | 'delivered'
+    attemptId?: string
+  }> {
     const team = this.service.getTeam(teamId)
     this.assertLeader(team, creatorSlotId, 'create tasks')
     const title = requireShortText(input.subject ?? input.title ?? '', 'Task subject', 500)
@@ -365,6 +395,13 @@ export class TeamCommandHandler {
     const fileScopes = uniqueStrings(input.fileScopes ?? []).slice(0, 64)
     const goalId = normalizeGoalId(input.goal_id ?? input.goalId)
     if (goalId !== undefined) requireGoal(team, goalId)
+    const kind = normalizeTaskKind(input.kind)
+    const acceptance = normalizeTaskAcceptance(input.acceptance)
+    const reviewedTaskId = normalizeTaskReviewedId(
+      team,
+      kind,
+      input.reviewed_task_id ?? input.reviewedTaskId,
+    )
     const taskLimit = this.service.config.maxTeamTasks ?? 256
     if (Object.keys(team.tasks).length >= taskLimit) {
       throw new AgentTeamError(
@@ -410,6 +447,11 @@ export class TeamCommandHandler {
             dependencyIds: blockedBy,
             fileScopes,
             ...(goalId === undefined ? {} : { goalId }),
+            // New tasks always record their kind so the gate never has to guess;
+            // `taskKindOf` exists only for rows written before the vocabulary.
+            kind,
+            ...(acceptance === undefined ? {} : { acceptance }),
+            ...(reviewedTaskId === undefined ? {} : { reviewedTaskId }),
             revision: 1,
             createdAt: now,
             updatedAt: now,
@@ -423,12 +465,17 @@ export class TeamCommandHandler {
       `Task ${title} created`,
       this.epochOption(epoch),
     )
-    if (assignment === undefined) return { taskId, status, ...(attemptId === undefined ? {} : { attemptId }) }
-    const delivered = await this.port.deliverMessage(teamId, assignment.id)
-    return {
+    const created = {
       taskId,
       status,
+      kind,
+      ...(reviewedTaskId === undefined ? {} : { reviewedTaskId }),
       ...(attemptId === undefined ? {} : { attemptId }),
+    }
+    if (assignment === undefined) return created
+    const delivered = await this.port.deliverMessage(teamId, assignment.id)
+    return {
+      ...created,
       deliveryState: delivered ? 'delivered' : 'queued',
     }
   }
@@ -441,6 +488,7 @@ export class TeamCommandHandler {
   ): Promise<{
     taskId: string
     status: string
+    verdict?: TeamTaskVerdict
     deliveryState?: 'queued' | 'delivered'
     woken?: string[]
     attemptId?: string
@@ -453,6 +501,8 @@ export class TeamCommandHandler {
       throw new AgentTeamError('INVALID_REQUEST', 'A member may update only its own task')
     }
     const presentedAttempt = normalizeAttemptToken(input.attempt_id ?? input.attemptId)
+    const requestedVerdict = normalizeTaskVerdict(input.verdict)
+    const requestedFindings = normalizeTaskFindings(input.findings)
     const nextStatus = input.status === undefined
       ? task.status
       : TASK_STATUS_ALIASES[input.status] ?? (() => {
@@ -478,6 +528,7 @@ export class TeamCommandHandler {
     let woken: string[] = []
     let finalStatus = nextStatus
     let finalAttemptId = task.attemptId
+    let finalVerdict: TeamTaskVerdict | undefined
     await this.service.updateRuntimeTeam(
       teamId,
       current => {
@@ -509,6 +560,17 @@ export class TeamCommandHandler {
           }
         }
         const status = input.status === undefined ? base.status : nextStatus
+        // The gate belongs here, after the owner/attempt fence: it must judge
+        // the task as it exists in the aggregate being written, so a concurrent
+        // reassignment cannot let the old owner record a verdict.
+        const decision = decideTaskQuality({
+          task: base,
+          taskId,
+          callerSlotId,
+          status,
+          ...(requestedVerdict === undefined ? {} : { verdict: requestedVerdict }),
+          ...(requestedFindings === undefined ? {} : { findings: requestedFindings }),
+        })
         const ownerSlotId = requestedOwner === undefined ? base.ownerSlotId : nextOwnerSlotId
         const dependencyIds = requestedBlockedBy === undefined
           ? base.dependencyIds
@@ -526,6 +588,23 @@ export class TeamCommandHandler {
           ...(input.error === undefined ? {} : { error: input.error }),
           revision: base.revision + 1,
           updatedAt: now,
+        }
+        // A verdict describes the task's current terminal decision: leaving a
+        // terminal status drops it, and a failed task never keeps a stale
+        // `pass`. A `failed` re-report without a verdict keeps its findings
+        // decision; `completed` always comes with a fresh `pass` from the gate.
+        if (status !== 'completed' && status !== 'failed') delete updated.verdict
+        if (status === 'failed' && decision.verdict === undefined && base.verdict === 'pass') {
+          delete updated.verdict
+        }
+        if (decision.verdict !== undefined) {
+          updated.verdict = decision.verdict
+          if (decision.findings === undefined) {
+            // A pass supersedes findings left by an earlier failed round.
+            if (input.error === undefined) delete updated.error
+          } else {
+            updated.error = decision.findings
+          }
         }
         if (ownerSlotId === undefined) {
           delete updated.ownerSlotId
@@ -546,6 +625,7 @@ export class TeamCommandHandler {
         const stored = tasks[taskId] ?? updated
         finalStatus = stored.status
         finalAttemptId = stored.attemptId
+        finalVerdict = stored.verdict
 
         const nextNotifications: TeamMessage[] = []
         if (ownerChanged && ownerSlotId !== undefined && ownerSlotId !== callerSlotId) {
@@ -610,6 +690,7 @@ export class TeamCommandHandler {
     return {
       taskId: task.id,
       status: finalStatus,
+      ...(finalVerdict === undefined ? {} : { verdict: finalVerdict }),
       ...(notifications.length === 0 ? {} : { deliveryState: delivered ? 'delivered' as const : 'queued' as const }),
       ...(woken.length === 0 ? {} : { woken }),
       ...(finalAttemptId === undefined ? {} : { attemptId: finalAttemptId }),
@@ -744,6 +825,10 @@ export class TeamCommandHandler {
       ...(task.attemptId === undefined ? {} : { attempt_id: task.attemptId }),
       ...(task.createdBySlotId === undefined ? {} : { created_by: task.createdBySlotId }),
       ...(task.goalId === undefined ? {} : { goal_id: task.goalId }),
+      ...(task.kind === undefined ? {} : { kind: task.kind }),
+      ...(task.acceptance === undefined ? {} : { acceptance: task.acceptance }),
+      ...(task.reviewedTaskId === undefined ? {} : { reviewed_task_id: task.reviewedTaskId }),
+      ...(task.verdict === undefined ? {} : { verdict: task.verdict }),
       blocked_by: [...task.dependencyIds],
       blocks: allTasks
         .filter(other => other.dependencyIds.includes(task.id))
@@ -1669,6 +1754,165 @@ function normalizeMessageKey(value: string | undefined, label: string): string |
 function normalizeAttemptToken(value: string | undefined): string | undefined {
   const trimmed = value?.trim()
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed
+}
+
+/**
+ * Task kind is a create-time label. An omitted kind means `work`, which is the
+ * pre-vocabulary behavior; an unknown value is a caller mistake, not a default.
+ */
+function normalizeTaskKind(value: string | undefined): TeamTaskKind {
+  const trimmed = value?.trim()
+  if (trimmed === undefined || trimmed.length === 0) return 'work'
+  const parsed = teamTaskKindSchema.safeParse(trimmed)
+  if (!parsed.success) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Unknown task kind '${trimmed}'; use ${teamTaskKindSchema.options.join(', ')}.`,
+    )
+  }
+  return parsed.data
+}
+
+/** Blank acceptance means "not stated"; an over-long one is rejected, not truncated. */
+function normalizeTaskAcceptance(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  if (trimmed === undefined || trimmed.length === 0) return undefined
+  if (trimmed.length > 2_000) {
+    throw new AgentTeamError('INVALID_REQUEST', 'Task acceptance is too long')
+  }
+  return trimmed
+}
+
+/**
+ * A review/verification task names the implementation or repair task it judges.
+ * A legacy target without a kind predates the vocabulary and is accepted as an
+ * implementation; an explicit non-implementation kind is rejected.
+ */
+function normalizeTaskReviewedId(
+  team: TeamAggregate,
+  kind: TeamTaskKind,
+  value: string | undefined,
+): string | undefined {
+  const reviewedTaskId = normalizeMessageKey(value, 'Reviewed task id')
+  if (reviewedTaskId === undefined) return undefined
+  if (kind !== 'review' && kind !== 'verification') {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      'reviewed_task_id applies only to review and verification tasks.',
+      { kind },
+    )
+  }
+  const target = team.tasks[reviewedTaskId]
+  const targetKind = target?.kind
+  if (target === undefined || (targetKind !== undefined && targetKind !== 'implementation' && targetKind !== 'repair')) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      'reviewed_task_id must name an implementation or repair task of this team.',
+      { taskId: reviewedTaskId },
+    )
+  }
+  return reviewedTaskId
+}
+
+function normalizeTaskVerdict(value: string | undefined): TeamTaskVerdict | undefined {
+  const trimmed = value?.trim()
+  if (trimmed === undefined || trimmed.length === 0) return undefined
+  const parsed = teamTaskVerdictSchema.safeParse(trimmed)
+  if (!parsed.success) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Unknown task verdict '${trimmed}'; use ${teamTaskVerdictSchema.options.join(', ')}.`,
+    )
+  }
+  return parsed.data
+}
+
+/** Blank findings mean "not provided"; a failing verdict then has no evidence. */
+function normalizeTaskFindings(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  if (trimmed === undefined || trimmed.length === 0) return undefined
+  if (trimmed.length > 16_000) {
+    throw new AgentTeamError('INVALID_REQUEST', 'Task findings are too long')
+  }
+  return trimmed
+}
+
+interface TaskQualityDecision {
+  verdict?: TeamTaskVerdict
+  /** Non-empty findings for a failing verdict; stored in the task's `error`. */
+  findings?: string
+}
+
+/**
+ * The only quality gate. Runs inside updateTask's serialized closure against
+ * the task being written, so the verdict authority and the kind are judged on
+ * fresh state. A `review`/`verification` task completes only with
+ * `verdict=pass`; failing it requires `needs_revision`/`reject` plus findings.
+ * Ordinary tasks accept neither a verdict nor findings, preserving the legacy
+ * update path exactly.
+ */
+function decideTaskQuality(input: {
+  task: TeamTask
+  taskId: string
+  callerSlotId: string
+  status: InternalTaskStatus
+  verdict?: TeamTaskVerdict
+  findings?: string
+}): TaskQualityDecision {
+  const { task, taskId, callerSlotId, status, verdict, findings } = input
+  const kind = taskKindOf(task)
+  const qualityGate = kind === 'review' || kind === 'verification'
+  if (verdict !== undefined && !qualityGate) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Task '${task.title}' is kind '${kind}'; a verdict applies only to review and verification tasks.`,
+      { taskId, kind },
+    )
+  }
+  if (verdict !== undefined && task.ownerSlotId !== callerSlotId) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      'Only the task owner may record a verdict.',
+      { taskId, owner: task.ownerSlotId ?? null },
+    )
+  }
+  if (verdict === 'pass' && status !== 'completed') {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      'verdict=pass requires status=completed.',
+      { taskId, status },
+    )
+  }
+  if ((verdict === 'needs_revision' || verdict === 'reject') && status !== 'failed') {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `verdict=${verdict} requires status=failed.`,
+      { taskId, status },
+    )
+  }
+  if (qualityGate && status === 'completed' && verdict !== 'pass') {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Review or verification task '${task.title}' can complete only with verdict=pass.`,
+      { taskId, kind },
+    )
+  }
+  if ((verdict === 'needs_revision' || verdict === 'reject') && findings === undefined) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `verdict=${verdict} requires findings; the task fails with them.`,
+      { taskId, verdict },
+    )
+  }
+  if (findings !== undefined && verdict !== 'needs_revision' && verdict !== 'reject') {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      'findings are accepted only with verdict=needs_revision or reject.',
+      { taskId },
+    )
+  }
+  if (verdict === undefined) return {}
+  return findings === undefined ? { verdict } : { verdict, findings }
 }
 
 function requireShortText(value: string, label: string, maxLength: number): string {

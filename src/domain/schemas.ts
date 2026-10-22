@@ -248,12 +248,38 @@ export const teamGoalSchema = z.object({
   updatedAt: isoDate,
 }).strict()
 
+/**
+ * Optional task protocol vocabulary, added without a schema-version bump. Only
+ * `review` and `verification` carry an enforced rule: they complete only with
+ * `verdict=pass`. A task without a kind is legacy and reads as `work` through
+ * `taskKindOf`, so old boards behave exactly as before.
+ */
+export const teamTaskKindSchema = z.enum([
+  'work',
+  'implementation',
+  'repair',
+  'verification',
+  'review',
+])
+export const teamTaskVerdictSchema = z.enum(['pass', 'needs_revision', 'reject'])
+
 export const teamTaskSchema = z.object({
   id: nonEmpty,
   title: nonEmpty,
   description: z.string(),
   status: z.enum(['pending', 'assigned', 'running', 'blocked', 'completed', 'failed', 'cancelled']),
   ownerSlotId: nonEmpty.optional(),
+  /** Task kind; absent on legacy rows, which read as `work`. */
+  kind: teamTaskKindSchema.optional(),
+  /** Done-when statement for a reviewable task; absent when not stated. */
+  acceptance: z.string().optional(),
+  /** The implementation/repair task a review or verification task judges. */
+  reviewedTaskId: nonEmpty.optional(),
+  /**
+   * Decision recorded by the review/verification owner; findings for a failing
+   * verdict stay in `error`. Cleared whenever the task leaves a terminal state.
+   */
+  verdict: teamTaskVerdictSchema.optional(),
   /**
    * Ownership fence, added without a schema-version bump: minted whenever the
    * task gains or changes an owner. Member updates must present this token, so

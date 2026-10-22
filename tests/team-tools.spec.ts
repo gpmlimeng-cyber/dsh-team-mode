@@ -24,7 +24,7 @@ function harness(): {
     readMessages: vi.fn(async () => ({ messages: [], remaining_unread: 0 })),
     sendMessage: vi.fn(async () => ({ messageId: 'm1', deliveryState: 'delivered' as const, deliveredTo: ['member'] })),
     interruptAgent: vi.fn(async (slotId: string) => ({ slot_id: slotId, status: 'delivered' as const })),
-    createTask: vi.fn(async () => ({ taskId: 't1', status: 'assigned', deliveryState: 'delivered' as const })),
+    createTask: vi.fn(async () => ({ taskId: 't1', status: 'assigned', kind: 'work' as const, deliveryState: 'delivered' as const })),
     updateTask: vi.fn(async () => ({ taskId: 't1', status: 'running', deliveryState: 'delivered' as const })),
     claimTask: vi.fn(async () => ({ taskId: 't1', status: 'assigned' as const, owner: 'member', attemptId: 'att-1' })),
     inbox: vi.fn(() => ({ assigned: [], ready: [], unread: [], approvals: [], remaining_unread: 0 })),
@@ -404,6 +404,7 @@ describe('Team Mode tool surface', () => {
     vi.mocked(handlers.createTask).mockResolvedValue({
       taskId: 't9',
       status: 'assigned',
+      kind: 'work',
       deliveryState: 'delivered',
       attemptId: 'att-9',
     })
@@ -412,7 +413,7 @@ describe('Team Mode tool surface', () => {
     const legacy = await tools.get('team_create_task')!.execute({ title: 's', ownerSlotId: 'a' }, exec)
     expect(legacy).toMatchObject({ task_id: 't9', attempt_id: 'att-9' })
 
-    vi.mocked(handlers.createTask).mockResolvedValue({ taskId: 't10', status: 'pending' })
+    vi.mocked(handlers.createTask).mockResolvedValue({ taskId: 't10', status: 'pending', kind: 'work' })
     const unowned = await tools.get('team_mode_task_create')!.execute({ subject: 's' }, exec)
     expect(unowned).not.toHaveProperty('attempt_id')
   })
@@ -478,6 +479,113 @@ describe('Team Mode tool surface', () => {
       { agent: { id: 'agent-1' } },
     )
     expect(result).toMatchObject({ task_id: 't1', status: 'in_progress' })
+  })
+
+  it('declares the quality parameters and their enums on task create and update', () => {
+    const { tools } = harness()
+    const create = tools.get('team_mode_task_create')!
+    expect(create.parameters.properties?.kind).toMatchObject({
+      enum: ['work', 'implementation', 'repair', 'verification', 'review'],
+    })
+    expect(create.parameters.properties?.acceptance).toBeDefined()
+    expect(create.parameters.properties?.reviewed_task_id).toBeDefined()
+
+    const update = tools.get('team_mode_task_update')!
+    expect(update.parameters.properties?.verdict).toMatchObject({
+      enum: ['pass', 'needs_revision', 'reject'],
+    })
+    expect(update.parameters.properties?.findings).toBeDefined()
+
+    // The legacy aliases stay frozen at their pre-quality shape.
+    expect(tools.get('team_create_task')?.parameters.properties).not.toHaveProperty('kind')
+    expect(tools.get('team_update_task')?.parameters.properties).not.toHaveProperty('verdict')
+  })
+
+  it('forwards kind, acceptance and reviewed_task_id from create and omits absent defaults', async () => {
+    const { tools, handlers } = harness()
+    const exec = { agent: { id: 'agent-1' } }
+    const create = tools.get('team_mode_task_create')!
+
+    await create.execute(
+      {
+        subject: 'Review parser',
+        kind: 'review',
+        acceptance: 'tests pass',
+        reviewed_task_id: 'task-impl',
+      },
+      exec,
+    )
+    expect(handlers.createTask).toHaveBeenLastCalledWith({
+      subject: 'Review parser',
+      kind: 'review',
+      acceptance: 'tests pass',
+      reviewed_task_id: 'task-impl',
+    })
+
+    vi.mocked(handlers.createTask).mockResolvedValue({
+      taskId: 'task-review',
+      status: 'assigned',
+      kind: 'review',
+      reviewedTaskId: 'task-impl',
+      deliveryState: 'delivered',
+    })
+    const created = await create.execute(
+      { subject: 'Review parser', kind: 'review', reviewed_task_id: 'task-impl' },
+      exec,
+    )
+    expect(created).toMatchObject({ kind: 'review', reviewed_task_id: 'task-impl' })
+
+    await create.execute({ subject: 'Plain work' }, exec)
+    expect(handlers.createTask).toHaveBeenLastCalledWith({ subject: 'Plain work' })
+  })
+
+  it('forwards verdict and findings from update and leaves the legacy alias without them', async () => {
+    const { tools, handlers } = harness()
+    const exec = { agent: { id: 'agent-1' } }
+    const update = tools.get('team_mode_task_update')!
+
+    vi.mocked(handlers.updateTask).mockResolvedValue({
+      taskId: 't1',
+      status: 'failed',
+      verdict: 'reject',
+      deliveryState: 'delivered',
+    })
+    const failed = await update.execute(
+      {
+        task_id: 't1',
+        status: 'failed',
+        attempt_id: 'att-1',
+        verdict: 'reject',
+        findings: 'Parser drops trailing bytes.',
+      },
+      exec,
+    )
+    expect(handlers.updateTask).toHaveBeenLastCalledWith({
+      task_id: 't1',
+      status: 'failed',
+      attemptId: 'att-1',
+      verdict: 'reject',
+      findings: 'Parser drops trailing bytes.',
+    })
+    expect(failed).toMatchObject({ verdict: 'reject' })
+
+    // A pass needs no findings, and the alias has no quality parameters at all.
+    await update.execute({ task_id: 't2', status: 'completed', verdict: 'pass' }, exec)
+    expect(handlers.updateTask).toHaveBeenLastCalledWith({
+      task_id: 't2',
+      status: 'completed',
+      verdict: 'pass',
+    })
+
+    await tools.get('team_update_task')!.execute(
+      { taskId: 't3', status: 'completed', attemptId: 'att-3' },
+      exec,
+    )
+    expect(handlers.updateTask).toHaveBeenLastCalledWith({
+      taskId: 't3',
+      status: 'completed',
+      attemptId: 'att-3',
+    })
   })
 })
 

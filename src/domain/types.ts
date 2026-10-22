@@ -30,7 +30,9 @@ import type {
   teamMemberSlotSchema,
   teamMemorySchema,
   teamMessageSchema,
+  teamTaskKindSchema,
   teamTaskSchema,
+  teamTaskVerdictSchema,
   updateAssistantInputSchema,
   updateAssistantInstanceInputSchema,
   updateAssistantSessionInputSchema,
@@ -65,6 +67,16 @@ export type MemberRuntimeState = z.infer<typeof memberRuntimeStateSchema>
 export type TeamMemberSlot = z.infer<typeof teamMemberSlotSchema>
 export type RetiredMemberSession = z.infer<typeof retiredMemberSessionSchema>
 export type TeamTask = z.infer<typeof teamTaskSchema>
+export type TeamTaskKind = z.infer<typeof teamTaskKindSchema>
+export type TeamTaskVerdict = z.infer<typeof teamTaskVerdictSchema>
+
+/**
+ * The single reader for the optional task kind: absent means `work`, the
+ * pre-vocabulary behavior. Never write `?? 'work'` inline.
+ */
+export function taskKindOf(task: Pick<TeamTask, 'kind'>): TeamTaskKind {
+  return task.kind ?? 'work'
+}
 export type TeamGoal = z.infer<typeof teamGoalSchema>
 export type TeamGoalMode = z.infer<typeof teamGoalModeSchema>
 export type TeamGoalStatus = z.infer<typeof teamGoalStatusSchema>

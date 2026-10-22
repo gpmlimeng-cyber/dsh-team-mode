@@ -1,6 +1,7 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import type { TeamTaskKind, TeamTaskVerdict } from '../domain/types.js'
 import type {
   ClaimTaskInput,
   ClaimTaskResult,
@@ -45,12 +46,15 @@ export interface TeamToolHandlers {
   createTask: (input: CreateTaskInput) => Promise<{
     taskId: string
     status: string
+    kind: TeamTaskKind
+    reviewedTaskId?: string
     deliveryState?: 'queued' | 'delivered'
     attemptId?: string
   }>
   updateTask: (input: UpdateTaskInput) => Promise<{
     taskId: string
     status: string
+    verdict?: TeamTaskVerdict
     deliveryState?: 'queued' | 'delivered'
     woken?: string[]
     attemptId?: string
@@ -322,13 +326,20 @@ export function registerTeamTools(
 
   register(defineTool({
     name: 'team_mode_task_create',
-    description: 'Leader only. Create a task on the shared task board. `blocked_by` lists task ids that must finish first; `goal_id` groups it under an existing Goal of this team. Assigning an owner wakes that member automatically and returns the task attempt_id.',
+    description: 'Leader only. Create a task on the shared task board. `blocked_by` lists task ids that must finish first; `goal_id` groups it under an existing Goal of this team. `kind` defaults to work: a review or verification task completes only with verdict=pass, and `reviewed_task_id` names the implementation/repair task it judges. Assigning an owner wakes that member automatically and returns the task attempt_id.',
     parameters: {
       subject: { type: 'string', required: true, description: 'Short task subject.' },
       description: { type: 'string', description: 'Task details.' },
       owner: { type: 'string', description: 'Owner slot id or member name.' },
       blocked_by: { type: 'array', items: { type: 'string' }, description: 'Task ids that must complete before this task can start.' },
       goal_id: { type: 'string', description: 'Goal id from team_mode_goal_list to group this task under.' },
+      kind: {
+        type: 'string',
+        enum: ['work', 'implementation', 'repair', 'verification', 'review'],
+        description: 'Task kind; omit for work. review/verification require verdict=pass to complete.',
+      },
+      acceptance: { type: 'string', description: 'Done-when statement for this task.' },
+      reviewed_task_id: { type: 'string', description: 'Implementation or repair task judged by a review/verification task.' },
     },
     output: textOutput,
     execute: async (args, exec) => {
@@ -339,10 +350,15 @@ export function registerTeamTools(
         ...(args.owner === undefined ? {} : { owner: args.owner }),
         ...(args.blocked_by === undefined ? {} : { blocked_by: args.blocked_by }),
         ...(args.goal_id === undefined ? {} : { goal_id: args.goal_id }),
+        ...(args.kind === undefined ? {} : { kind: args.kind }),
+        ...(args.acceptance === undefined ? {} : { acceptance: args.acceptance }),
+        ...(args.reviewed_task_id === undefined ? {} : { reviewed_task_id: args.reviewed_task_id }),
       })
       return {
         task_id: result.taskId,
         status: toAionTaskStatus(result.status),
+        kind: result.kind,
+        ...(result.reviewedTaskId === undefined ? {} : { reviewed_task_id: result.reviewedTaskId }),
         delivery_state: result.deliveryState ?? 'queued',
         ...(result.attemptId === undefined ? {} : { attempt_id: result.attemptId }),
       } as never
@@ -351,18 +367,24 @@ export function registerTeamTools(
 
   register(defineTool({
     name: 'team_mode_task_update',
-    description: 'Update a task you own (the Leader may update any task). Completing a task clears its downstream blockers. The task owner or Leader may reassign an owner or change blockers; reassignment wakes the new owner and rotates the attempt_id. When you are not the Leader, pass the attempt_id listed for the task or the update is rejected as stale.',
+    description: 'Update a task you own (the Leader may update any task). Completing a task clears its downstream blockers. The task owner or Leader may reassign an owner or change blockers; reassignment wakes the new owner and rotates the attempt_id. A review or verification task completes only with verdict=pass; to fail it, the owner passes verdict=needs_revision or reject together with findings. When you are not the Leader, pass the attempt_id listed for the task or the update is rejected as stale.',
     parameters: {
       task_id: { type: 'string', required: true, description: 'Task id.' },
       status: {
         type: 'string',
         required: true,
-        enum: ['pending', 'in_progress', 'completed', 'deleted'],
-        description: 'New task status.',
+        enum: ['pending', 'in_progress', 'completed', 'failed', 'deleted'],
+        description: 'New task status. Use failed with verdict=needs_revision or reject to fail a review.',
       },
       owner: { type: 'string', description: 'New owner slot id or name (Leader or current owner).' },
       blocked_by: { type: 'array', items: { type: 'string' }, description: 'Replacement blocker task ids (Leader or current owner).' },
       attempt_id: { type: 'string', description: "The task's current attempt_id (attemptId is accepted too). Required from members once the task is fenced; read it with team_mode_task_list." },
+      verdict: {
+        type: 'string',
+        enum: ['pass', 'needs_revision', 'reject'],
+        description: 'Review decision; review/verification tasks only, recorded by the task owner. pass requires completed; needs_revision/reject require failed plus findings.',
+      },
+      findings: { type: 'string', description: 'Required with verdict=needs_revision or reject; stored as the task error.' },
     },
     output: textOutput,
     execute: async (args, exec) => {
@@ -374,10 +396,13 @@ export function registerTeamTools(
         ...(args.owner === undefined ? {} : { owner: args.owner }),
         ...(args.blocked_by === undefined ? {} : { blocked_by: args.blocked_by }),
         ...(attemptId === undefined ? {} : { attemptId }),
+        ...(args.verdict === undefined ? {} : { verdict: args.verdict }),
+        ...(args.findings === undefined ? {} : { findings: args.findings }),
       })
       return {
         task_id: result.taskId,
         status: toAionTaskStatus(result.status),
+        ...(result.verdict === undefined ? {} : { verdict: result.verdict }),
         delivery_state: result.deliveryState ?? 'delivered',
         ...(result.woken === undefined ? {} : { woken: result.woken }),
         ...(result.attemptId === undefined ? {} : { attempt_id: result.attemptId }),
