@@ -4,6 +4,7 @@ import {
   Button,
   IconChevronDownOutlineRegular,
   IconSparkleRegular,
+  IconThinkOutlineRegular,
   Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
@@ -61,6 +62,7 @@ export function AssistantCreateDialog({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
   const [modelMenuOpen, setModelMenuOpen] = useState(false)
+  const [reasoningMenuOpen, setReasoningMenuOpen] = useState(false)
 
   const modelCapabilities = useModelCapabilities(provider, model)
   const locked = createdId !== undefined
@@ -84,6 +86,7 @@ export function AssistantCreateDialog({
     setInstructions('')
     setReasoningLabels({})
     setModelMenuOpen(false)
+    setReasoningMenuOpen(false)
     callAgentTeam('catalog.get')
       .then(value => {
         if (!live) return
@@ -196,14 +199,21 @@ export function AssistantCreateDialog({
   ))?.label ?? (provider === '' ? '选择模型' : assistantModelOptionLabel(provider, model))
   const selectedModelName = modelGroups.find(group => group.provider.id === provider)
     ?.models.find(modelEntry => modelEntry.id === model)?.name ?? model
-  const selectedModelEffort = reasoningLabelFor(provider, model)
+  const selectedReasoningLabel = reasoningEffort === ''
+    ? defaultReasoningLabel(modelCapabilities.value)
+    : reasoningEffortLabel(modelCapabilities.value, reasoningEffort)
+  const reasoningMenuItems = [
+    { id: '__default__', label: defaultReasoningLabel(modelCapabilities.value) },
+    ...reasoningEfforts.map(effort => ({
+      id: effort.id,
+      label: effort.name === effort.id ? effort.name : `${effort.name}（${effort.id}）`,
+    })),
+  ]
   const modelMenuItems = modelGroups.flatMap(group => [
     { type: 'label' as const, id: `provider-${group.provider.id}`, text: group.provider.name },
     ...group.models.map(modelEntry => ({
       id: JSON.stringify([group.provider.id, modelEntry.id]),
-      label: `${modelEntry.name}${reasoningLabelFor(group.provider.id, modelEntry.id) === undefined
-        ? ''
-        : ` · ${reasoningLabelFor(group.provider.id, modelEntry.id)}`}`,
+      label: modelEntry.name,
     })),
   ])
   function uploadAvatar(file: File): void {
@@ -419,13 +429,13 @@ export function AssistantCreateDialog({
                       aria-haspopup="menu"
                       aria-expanded={modelMenuOpen}
                       title={selectedModelLabel}
-                      onClick={() => { setModelMenuOpen(value => !value) }}
+                      onClick={() => {
+                        setReasoningMenuOpen(false)
+                        setModelMenuOpen(value => !value)
+                      }}
                     >
                       <IconSparkleRegular size={16} className={css.modelTriggerIcon} />
                       <span className={css.modelTriggerLabel}>{selectedModelName || '选择模型'}</span>
-                      {selectedModelEffort !== undefined && (
-                        <span className={css.modelTriggerEffort}>{selectedModelEffort}</span>
-                      )}
                       <IconChevronDownOutlineRegular size={14} />
                     </button>
                   )}
@@ -434,22 +444,39 @@ export function AssistantCreateDialog({
 
               {reasoningEfforts.length > 0 && (
                 <Field label="思考模式">
-                  <select
-                    className={css.input}
-                    value={reasoningEffort}
-                    disabled={busy || modelCapabilities.loading}
-                    onChange={event => {
-                      setReasoningEffort(event.target.value)
+                  <Menu
+                    open={reasoningMenuOpen}
+                    onClose={() => { setReasoningMenuOpen(false) }}
+                    items={reasoningMenuItems}
+                    selectedId={reasoningEffort === '' ? '__default__' : reasoningEffort}
+                    align="start"
+                    side="bottom"
+                    portal
+                    onSelect={id => {
+                      setReasoningEffort(id === '__default__' ? '' : id)
+                      setReasoningMenuOpen(false)
                       setError(undefined)
                     }}
-                  >
-                    <option value="">{defaultReasoningLabel(modelCapabilities.value)}</option>
-                    {reasoningEfforts.map(effort => (
-                      <option key={effort.id} value={effort.id}>
-                        {effort.name === effort.id ? effort.name : `${effort.name}（${effort.id}）`}
-                      </option>
-                    ))}
-                  </select>
+                    anchor={(
+                      <button
+                        type="button"
+                        className={css.modelTrigger}
+                        disabled={busy || modelCapabilities.loading}
+                        aria-label={`选择思考模式，当前 ${selectedReasoningLabel}`}
+                        aria-haspopup="menu"
+                        aria-expanded={reasoningMenuOpen}
+                        title={selectedReasoningLabel}
+                        onClick={() => {
+                          setModelMenuOpen(false)
+                          setReasoningMenuOpen(value => !value)
+                        }}
+                      >
+                        <IconThinkOutlineRegular size={16} className={css.modelTriggerIcon} />
+                        <span className={css.modelTriggerLabel}>{selectedReasoningLabel}</span>
+                        <IconChevronDownOutlineRegular size={14} />
+                      </button>
+                    )}
+                  />
                 </Field>
               )}
 
