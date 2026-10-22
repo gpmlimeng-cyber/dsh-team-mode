@@ -23,6 +23,11 @@ import {
 } from './assistant-display-mode.js'
 import { AssistantSettingsDialog } from './assistant-settings-dialog.js'
 import {
+  approvalDecisionLabel,
+  approvalHistory,
+  rememberApproval,
+} from './approval-history.js'
+import {
   assistantReadState,
   isAssistantUnread,
   markAssistantRead,
@@ -102,6 +107,10 @@ export function AssistantSidebarSection({
   const [interactionsByTask, setInteractionsByTask] = useState<Record<string, PendingInteractionView[]>>({})
   const [interactionBusy, setInteractionBusy] = useState<string>()
   const [interactionError, setInteractionError] = useState<string>()
+  const [approvalHistoryState, setApprovalHistoryState] = useState(approvalHistory)
+  const [approvalFeedback, setApprovalFeedback] = useState<string>()
+  const feedbackTimerRef = useRef<number | undefined>(undefined)
+  const browserNotificationsRef = useRef<Map<string, Notification>>(new Map())
   const knownWaitingRef = useRef<Set<string> | undefined>(undefined)
   const [tasks, setTasks] = useState<AssistantSession[]>([])
   const mode = useAssistantDisplayMode()
@@ -121,6 +130,12 @@ export function AssistantSidebarSection({
   const [listError, setListError] = useState<string>()
   const [error, setError] = useState<string>()
   const [threadError, setThreadError] = useState<{ assistantId: string; message: string }>()
+
+  useEffect(() => () => {
+    if (feedbackTimerRef.current !== undefined) window.clearTimeout(feedbackTimerRef.current)
+    for (const notification of browserNotificationsRef.current.values()) notification.close()
+    browserNotificationsRef.current.clear()
+  }, [])
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -218,11 +233,13 @@ export function AssistantSidebarSection({
           body: `${assistantInstanceName(first.instance)} · ${first.task.title}`,
           tag: `dsh-assistant:${first.task.id}`,
         })
+        browserNotificationsRef.current.set(first.task.id, notification)
         notification.onclick = () => {
           window.focus()
           selectAssistant(first.instance.id)
           void openThreadTask(first.instance, first.task)
           notification.close()
+          browserNotificationsRef.current.delete(first.task.id)
         }
       }
     } catch {
@@ -309,6 +326,7 @@ export function AssistantSidebarSection({
     taskId: string,
     interactionId: string,
     outcome: 'allowed-once' | 'rejected',
+    toolName: string,
   ): Promise<void> {
     setInteractionBusy(interactionId)
     setInteractionError(undefined)
@@ -324,6 +342,19 @@ export function AssistantSidebarSection({
         if (next[taskId].length === 0) delete next[taskId]
         return next
       })
+      setApprovalHistoryState(rememberApproval(toolName, outcome))
+      setApprovalFeedback(`${approvalDecisionLabel(outcome)} · ${toolName}`)
+      if (feedbackTimerRef.current !== undefined) window.clearTimeout(feedbackTimerRef.current)
+      feedbackTimerRef.current = window.setTimeout(() => {
+        setApprovalFeedback(undefined)
+        feedbackTimerRef.current = undefined
+      }, 4000)
+      const browserNotification = browserNotificationsRef.current.get(taskId)
+      if (browserNotification !== undefined) {
+        browserNotification.close()
+        browserNotificationsRef.current.delete(taskId)
+      }
+      setNotice(current => current?.taskId === taskId ? undefined : current)
       await load()
     } catch (cause) {
       setInteractionError(`审批处理失败：${cause instanceof Error ? cause.message : String(cause)}`)
@@ -543,12 +574,17 @@ export function AssistantSidebarSection({
                     {approval.reason !== undefined && approval.reason.trim() !== '' && (
                       <div className={css.sidebarAssistantApprovalReason}>{approval.reason}</div>
                     )}
+                    {approvalHistoryState[approval.toolName] !== undefined && (
+                      <div className={css.sidebarAssistantApprovalHistory}>
+                        上次：{approvalDecisionLabel(approvalHistoryState[approval.toolName]!)}
+                      </div>
+                    )}
                     <div className={css.sidebarAssistantApprovalActions}>
                       <button
                         type="button"
                         className={css.sidebarAssistantApprovalAllow}
                         disabled={interactionBusy === approval.id}
-                        onClick={() => { void respondInteraction(task.id, approval.id, 'allowed-once') }}
+                        onClick={() => { void respondInteraction(task.id, approval.id, 'allowed-once', approval.toolName) }}
                       >
                         允许一次
                       </button>
@@ -556,7 +592,7 @@ export function AssistantSidebarSection({
                         type="button"
                         className={css.sidebarAssistantApprovalDeny}
                         disabled={interactionBusy === approval.id}
-                        onClick={() => { void respondInteraction(task.id, approval.id, 'rejected') }}
+                        onClick={() => { void respondInteraction(task.id, approval.id, 'rejected', approval.toolName) }}
                       >
                         拒绝
                       </button>
@@ -566,6 +602,9 @@ export function AssistantSidebarSection({
               </div>
             )
           })}
+          {approvalFeedback !== undefined && (
+            <div className={css.sidebarAssistantApprovalFeedback} role="status">{approvalFeedback}</div>
+          )}
           {interactionError !== undefined && (
             <div className={css.sidebarAssistantInteractionError} role="alert">{interactionError}</div>
           )}

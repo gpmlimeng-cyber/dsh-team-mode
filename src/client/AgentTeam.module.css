@@ -7628,3 +7628,17 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   font-size: 10px;
   line-height: 14px;
 }
+
+.sidebarAssistantApprovalHistory {
+  margin-top: 1px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.sidebarAssistantApprovalFeedback {
+  padding: 2px 4px 3px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 10px;
+  line-height: 14px;
+}
