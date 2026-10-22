@@ -3,7 +3,7 @@ import type { FormEvent } from 'react'
 import {
   Button,
   IconChevronDownOutlineRegular,
-  Input,
+  IconSparkleRegular,
   Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
@@ -194,6 +194,9 @@ export function AssistantCreateDialog({
   const selectedModelLabel = modelOptions.find(option => (
     option.providerId === provider && option.modelId === model
   ))?.label ?? (provider === '' ? '选择模型' : assistantModelOptionLabel(provider, model))
+  const selectedModelName = modelGroups.find(group => group.provider.id === provider)
+    ?.models.find(modelEntry => modelEntry.id === model)?.name ?? model
+  const selectedModelEffort = reasoningLabelFor(provider, model)
   const modelMenuItems = modelGroups.flatMap(group => [
     { type: 'label' as const, id: `provider-${group.provider.id}`, text: group.provider.name },
     ...group.models.map(modelEntry => ({
@@ -408,30 +411,23 @@ export function AssistantCreateDialog({
                     setError(undefined)
                   }}
                   anchor={(
-                    <span className={css.modelTrigger}>
-                      <Input
-                        readOnly
-                        value={selectedModelLabel}
-                        className={css.modelTriggerInput ?? ''}
-                        aria-label={`选择模型，当前 ${selectedModelLabel}`}
-                        aria-haspopup="menu"
-                        aria-expanded={modelMenuOpen}
-                        onClick={() => {
-                          if (busy || modelGroups.length === 0) return
-                          setModelMenuOpen(value => !value)
-                        }}
-                        onKeyDown={event => {
-                          if (event.key !== 'Enter' && event.key !== ' ') return
-                          event.preventDefault()
-                          if (busy || modelGroups.length === 0) return
-                          setModelMenuOpen(true)
-                        }}
-                      />
-                      <IconChevronDownOutlineRegular
-                        size={14}
-                        className={css.modelTriggerChevron}
-                      />
-                    </span>
+                    <button
+                      type="button"
+                      className={css.modelTrigger}
+                      disabled={busy || modelGroups.length === 0}
+                      aria-label={`选择模型，当前 ${selectedModelLabel}`}
+                      aria-haspopup="menu"
+                      aria-expanded={modelMenuOpen}
+                      title={selectedModelLabel}
+                      onClick={() => { setModelMenuOpen(value => !value) }}
+                    >
+                      <IconSparkleRegular size={16} className={css.modelTriggerIcon} />
+                      <span className={css.modelTriggerLabel}>{selectedModelName || '选择模型'}</span>
+                      {selectedModelEffort !== undefined && (
+                        <span className={css.modelTriggerEffort}>{selectedModelEffort}</span>
+                      )}
+                      <IconChevronDownOutlineRegular size={14} />
+                    </button>
                   )}
                 />
               </Field>

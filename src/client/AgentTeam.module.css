@@ -3858,27 +3858,47 @@ textarea.input {
 }
 
 .modelTrigger {
-  display: block;
-  position: relative;
-  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  min-width: 0;
+  padding: 0 4px 0 8px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  cursor: pointer;
 }
 
-.modelTrigger > span {
-  width: 100%;
+.modelTrigger:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
 }
 
-.modelTriggerInput {
-  width: 100%;
-  padding-right: 28px;
+.modelTrigger:disabled {
+  cursor: default;
+  opacity: .5;
 }
 
-.modelTriggerChevron {
-  position: absolute;
-  top: 50%;
-  right: 10px;
+.modelTriggerIcon {
+  flex: none;
   color: var(--dsw-alias-label-tertiary);
-  pointer-events: none;
-  transform: translateY(-50%);
+}
+
+.modelTriggerLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelTriggerEffort {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
 }
 
 .assistantCreateAvatarName {
