@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   IconChecklistOutlineRegular,
   IconChevronRightOutlineRegular,
@@ -98,6 +98,8 @@ export function AssistantSidebarSection({
   const { selectedAssistantId } = useAgentTeamUi()
   const [instances, setInstances] = useState<AssistantInstanceView[]>([])
   const [readState, setReadState] = useState(assistantReadState)
+  const [notice, setNotice] = useState<{ assistantId: string; taskId: string; name: string; title: string }>()
+  const knownWaitingRef = useRef<Set<string> | undefined>(undefined)
   const [tasks, setTasks] = useState<AssistantSession[]>([])
   const mode = useAssistantDisplayMode()
   const [expanded, setExpanded] = useState(readAssistantExpanded)
@@ -143,11 +145,16 @@ export function AssistantSidebarSection({
     [instances, query],
   )
 
-  const attentionItems = useMemo(
-    () => visible.flatMap(instance => assistantThreadTasks(tasks, instance)
+  const allPending = useMemo(
+    () => instances.flatMap(instance => assistantThreadTasks(tasks, instance)
       .filter(task => task.status === 'needs_input')
       .map(task => ({ instance, task }))),
-    [tasks, visible],
+    [tasks, instances],
+  )
+
+  const attentionItems = useMemo(
+    () => allPending.filter(item => visible.some(instance => instance.id === item.instance.id)),
+    [allPending, visible],
   )
 
   const attentionSummary = useMemo(() => {
@@ -164,6 +171,42 @@ export function AssistantSidebarSection({
     }
     return { waiting, working, queued, unread }
   }, [tasks, visible, readState])
+
+  useEffect(() => {
+    if (knownWaitingRef.current === undefined) {
+      knownWaitingRef.current = new Set(allPending.map(item => item.task.id))
+      return
+    }
+    const known = knownWaitingRef.current
+    const fresh = allPending.filter(item => !known.has(item.task.id))
+    for (const item of allPending) known.add(item.task.id)
+    const first = fresh[0]
+    if (first === undefined) return
+    setNotice({
+      assistantId: first.instance.id,
+      taskId: first.task.id,
+      name: assistantInstanceName(first.instance),
+      title: first.task.title,
+    })
+    // Desktop notification is best-effort: never prompt for permission here,
+    // and never block the in-app notice if the WebView has no Notification.
+    try {
+      if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'granted') {
+        const notification = new window.Notification('助手需要你处理', {
+          body: `${assistantInstanceName(first.instance)} · ${first.task.title}`,
+          tag: `dsh-assistant:${first.task.id}`,
+        })
+        notification.onclick = () => {
+          window.focus()
+          selectAssistant(first.instance.id)
+          void openThreadTask(first.instance, first.task)
+          notification.close()
+        }
+      }
+    } catch {
+      // Notification is optional; the in-app notice remains.
+    }
+  }, [allPending])
 
   const summaryText = [
     attentionSummary.waiting > 0 ? `${attentionSummary.waiting} 待处理` : '',
@@ -384,6 +427,35 @@ export function AssistantSidebarSection({
             </>
             )}
       </div>
+      {expanded && notice !== undefined && (
+        <div className={css.sidebarAssistantNotice} role="status" data-dsh-assistant-notice>
+          <span className={css.sidebarAssistantNoticeBadge} aria-hidden="true">!</span>
+          <button
+            type="button"
+            className={css.sidebarAssistantNoticeOpen}
+            onClick={() => {
+              const entry = allPending.find(item => item.task.id === notice.taskId)
+              setNotice(undefined)
+              if (entry !== undefined) {
+                selectAssistant(notice.assistantId)
+                void openThreadTask(entry.instance, entry.task)
+              }
+            }}
+            title={`${notice.name} · ${notice.title} · 打开任务`}
+          >
+            <span className={css.sidebarAssistantNoticeTitle}>{notice.title}</span>
+            <span className={css.sidebarAssistantNoticeMeta}>{notice.name} · 待你处理</span>
+          </button>
+          <button
+            type="button"
+            className={css.sidebarAssistantNoticeClose}
+            onClick={() => { setNotice(undefined) }}
+            aria-label="关闭通知"
+          >
+            <IconCloseFillRegular size={11} />
+          </button>
+        </div>
+      )}
       {expanded && attentionItems.length > 0 && (
         <div
           className={css.sidebarAssistantAttention}
