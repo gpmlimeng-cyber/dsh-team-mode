@@ -122,6 +122,36 @@ Assistant DM Main Session
 
 计划：[group-chat-orchestration-modes](./superpowers/plans/2026-10-22-group-chat-orchestration-modes.md)
 
+### P1：记忆管理
+
+分四个 scope：
+
+```text
+Assistant memory  身份与偏好
+Team memory       团队约定、项目事实、决策
+Goal memory       单次目标结论
+Working memory    任务板 / attempt / 进度
+```
+
+三层：
+
+```text
+Core      每轮加载
+Topic     按需召回
+Archive   不加载，可搜索/恢复
+```
+
+顺序：
+
+```text
+P0  结构化 MemoryEntry + Assistant/Team scope + 旧字符串兼容
+P1  Team memory 提案/接受、pin、journal、UI
+P2  recall、自动 capture、去重/冲突整理
+P3  会话搜索、图关系、可选社区插件适配
+```
+
+完整方案：[记忆管理方案](./MEMORY-ARCHITECTURE.md)
+
 ### P1：任务协议
 
 | 项目 | 目标 | 借鉴点 |
