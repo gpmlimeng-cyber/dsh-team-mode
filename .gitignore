@@ -5,6 +5,9 @@ coverage/
 *.log
 
 
+# AgentTeams local state
+.agent-teams/
+
 # Local reverse-engineering notes and agent skills
 .agents/
 deepfork-out/
