@@ -224,7 +224,12 @@ export const retiredMemberSessionSchema = z.object({
 /** How much orchestration one Goal warrants; the Leader classifies before creating tasks. */
 export const teamGoalModeSchema = z.enum(['direct', 'single', 'orchestrated'])
 
-export const teamGoalStatusSchema = z.enum(['active', 'completed', 'cancelled'])
+/**
+ * `paused` is set by the epoch transition (a Leader change) and cleared by the
+ * new Leader through `team_mode_goal_update`; a Goal that was already
+ * completed or cancelled stays as history.
+ */
+export const teamGoalStatusSchema = z.enum(['active', 'paused', 'completed', 'cancelled'])
 
 /**
  * One objective above the task board. Added without a schema-version bump: a
@@ -353,6 +358,13 @@ export const teamAggregateSchema = z.object({
   archivedAt: isoDate.optional(),
   /** Stable member order for the capsule bar; Leader remains first (v2). */
   memberOrder: z.array(nonEmpty).optional(),
+  /**
+   * Leadership generation (`epochOf` = this ?? 1). Optional on purpose: no
+   * schema-version bump, no migration, and every v1/v2 record opens unchanged
+   * (same precedent as `goals` and `memory`). Only `changeLeader` writes it, and
+   * it only ever increases.
+   */
+  epoch: z.int().positive().optional(),
   /** Startup/warmup projection (v2); absent for a team that never warmed up. */
   warmup: z.object({
     phase: z.enum(['idle', 'starting', 'leader-ready', 'ready', 'error']),

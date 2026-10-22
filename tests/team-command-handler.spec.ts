@@ -115,8 +115,16 @@ function harness() {
     updateRuntimeTeam: vi.fn(async (
       teamId: string,
       update: (current: TeamAggregate) => TeamAggregate,
+      _kind?: string,
+      _summary?: string,
+      options?: { expectedEpoch?: number },
     ) => {
-      const next = update(requireAggregate(teamId))
+      const current = requireAggregate(teamId)
+      // Model the real service's serialized epoch fence.
+      if (options?.expectedEpoch !== undefined && (current.epoch ?? 1) !== options.expectedEpoch) {
+        throw new AgentTeamError('EPOCH_STALE', `Team epoch changed to ${current.epoch ?? 1}`)
+      }
+      const next = update(current)
       if (next.id === other.id) other = next
       else team = next
       return next
@@ -156,6 +164,23 @@ function harness() {
       }
       team = { ...team, goals: { ...team.goals, [goal.id]: goal } }
       return goal
+    }),
+    updateGoal: vi.fn(async (
+      _teamId: string,
+      goalId: string,
+      value: { status?: TeamGoal['status'] },
+    ) => {
+      const existing = team.goals?.[goalId]
+      if (existing === undefined) {
+        throw new AgentTeamError('INVALID_REQUEST', `Unknown goal '${goalId}' in team '${team.id}'`)
+      }
+      const updated: TeamGoal = {
+        ...existing,
+        ...(value.status === undefined ? {} : { status: value.status }),
+        updatedAt: NOW,
+      }
+      team = { ...team, goals: { ...team.goals, [goalId]: updated } }
+      return updated
     }),
     renameMember: vi.fn(async (_teamId: string, slotId: string, newName: string) => {
       team = {
@@ -1620,5 +1645,86 @@ describe('TeamCommandHandler AionUi semantics', () => {
       code: 'INVALID_REQUEST',
       message: expect.stringContaining('100 live entries'),
     })
+  })
+})
+
+describe('Team Epoch writes and Goal status', () => {
+  it('resumes a paused Goal through the Leader-only status write', async () => {
+    const { commands, team, mutate } = harness()
+    const goal = await commands.createGoal(team().id, 'leader', {
+      title: 'Epoch goal',
+      objective: 'Survive a Leader change',
+    })
+    mutate({
+      ...team(),
+      goals: {
+        ...team().goals,
+        [goal.goal_id]: { ...team().goals![goal.goal_id]!, status: 'paused' },
+      },
+    })
+
+    // Only the Leader may move a Goal.
+    await expect(commands.updateGoal(team().id, 'a', {
+      goal_id: goal.goal_id,
+      status: 'active',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    const resumed = await commands.updateGoal(team().id, 'leader', {
+      goal_id: goal.goal_id,
+      status: 'active',
+    })
+    expect(resumed).toMatchObject({ goal_id: goal.goal_id, status: 'active' })
+    expect(team().goals?.[goal.goal_id]?.status).toBe('active')
+
+    await expect(commands.updateGoal(team().id, 'leader', {
+      goal_id: 'missing',
+      status: 'active',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(commands.updateGoal(team().id, 'leader', {
+      goal_id: goal.goal_id,
+      status: 'unknown',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    // A blank goal id never reaches the service.
+    await expect(commands.updateGoal(team().id, 'leader', { status: 'active' }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  })
+
+  it('rejects a member write that presents a previous epoch', async () => {
+    const { commands, team, mutate } = harness()
+    const taskId = 'task-epoch'
+    mutate({
+      ...team(),
+      epoch: 2,
+      tasks: {
+        [taskId]: {
+          id: taskId,
+          title: 'Old work',
+          description: '',
+          status: 'running',
+          ownerSlotId: 'a',
+          attemptId: 'attempt-1',
+          dependencyIds: [],
+          fileScopes: [],
+          revision: 1,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      },
+    })
+
+    await expect(commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: 'attempt-1',
+    }, 1)).rejects.toMatchObject({ code: 'EPOCH_STALE' })
+    expect(team().tasks[taskId]).toMatchObject({ status: 'running', revision: 1 })
+
+    // The same write under the current epoch is accepted.
+    await commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: 'attempt-1',
+    }, 2)
+    expect(team().tasks[taskId]?.status).toBe('completed')
   })
 })

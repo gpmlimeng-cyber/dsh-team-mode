@@ -13,13 +13,16 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import { isModelInvocable, isUserInvocable } from '@deepseek-ai/dsh-skill'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type { Config } from '../config.js'
-import { AgentTeamError } from '../domain/errors.js'
+import { AgentTeamError, epochStaleError } from '../domain/errors.js'
 import { mcpServerFromToolName } from '../domain/mcp.js'
+import { epochOf } from '../domain/types.js'
 import type {
   AssistantTemplate,
   TeamAggregate,
+  TeamGoal,
   TeamMemberSlot,
   TeamMessage,
+  TeamTask,
 } from '../domain/types.js'
 import type { AgentTeamService } from '../service/dsh-team-mode-service.js'
 import type {
@@ -49,13 +52,22 @@ import { registerTeamTools, type TeamAssistantView } from './team-tools.js'
 interface OwnedAgent {
   teamId: string
   slotId: string
+  /** The Session this handle belongs to; a tool closure carries the same id. */
+  sessionId: string
+  /** Leadership generation that activated this handle. */
+  epoch: number
   handle: AgentHandle
   modelSelection: ModelSelectionRef
 }
 
 export class TeamRuntime {
   private readonly owned = new Map<string, OwnedAgent>()
-  private readonly activating = new Map<string, { teamId: string; slotId: string }>()
+  private readonly activating = new Map<string, {
+    teamId: string
+    slotId: string
+    sessionId: string
+    epoch: number
+  }>()
   private readonly operations = new Map<string, Promise<unknown>>()
   private readonly disposeStatusListener: () => void
   private readonly disposeConversationListener: () => void
@@ -645,6 +657,197 @@ export class TeamRuntime {
     })
   }
 
+  /**
+   * Leader change for a running team: the epoch boundary.
+   *
+   * Every Session of the previous epoch — the old Leader's included — is
+   * cancelled, flushed, disposed, detached from the Workspace, and tombstoned in
+   * `retiredSessions`. Tasks that were assigned/running/blocked become
+   * `blocked` with their owner and attempt removed; active Goals become
+   * `paused`; queued mail is retired. One aggregate write commits the new epoch,
+   * the roster swap, the fresh Session ids, and the handoff notice. Then the new
+   * Leader is activated from its new Session and the rest warm up in the
+   * background.
+   *
+   * There is no rollback after the write: a failed activation leaves the epoch
+   * bumped and the team in `error`, and `recoverTeams` retries from the new
+   * session ids. Old Sessions are never reparented; they are history.
+   */
+  changeLeaderEpoch(
+    teamId: string,
+    successorSlotId: string,
+    options: { expectedRevision?: number } = {},
+  ): Promise<TeamAggregate> {
+    return this.exclusive(teamId, async () => {
+      // Everything below runs under the per-team lock, so a queued second click
+      // re-reads the post-transition revision instead of stacking an epoch bump.
+      const team = this.service.getTeam(teamId)
+      if (team.state !== 'active' && team.state !== 'error') {
+        throw new AgentTeamError(
+          'TEAM_NOT_ACTIVE',
+          `Cannot change the leader while team is '${team.state}'`,
+        )
+      }
+      if (options.expectedRevision !== undefined && options.expectedRevision !== team.revision) {
+        throw new AgentTeamError(
+          'TEAM_REVISION_CONFLICT',
+          `team revision conflict: expected ${options.expectedRevision}, current ${team.revision}`,
+          { expected: options.expectedRevision, actual: team.revision },
+        )
+      }
+      const successor = team.members[successorSlotId]
+      if (successor === undefined) {
+        throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown member '${successorSlotId}'`)
+      }
+      if (successorSlotId === team.leaderSlotId) {
+        throw new AgentTeamError('INVALID_REQUEST', 'The selected member is already the team leader')
+      }
+      const previousLeaderSlotId = team.leaderSlotId
+      const members = Object.values(team.members)
+      const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(team.workspaceId))
+      if (workspace === undefined || await workspace.status() !== 'ok' || workspace.path !== team.workspacePath) {
+        throw new AgentTeamError(
+          'WORKSPACE_UNAVAILABLE',
+          `Workspace '${team.workspaceId}' is unavailable or changed`,
+        )
+      }
+      for (const member of members) {
+        const sessionId = SessionId(member.sessionId)
+        if (this.owned.get(member.sessionId) === undefined && this.ctx.agents.get(sessionId) !== undefined) {
+          throw new AgentTeamError(
+            'AGENT_HANDLE_OWNERSHIP_CONFLICT',
+            `Session '${member.sessionId}' is live without this plugin's AgentHandle`,
+          )
+        }
+      }
+
+      // Handles are disposed before the epoch write. Every aggregate write lands
+      // in the same serialized chain as this one, so a member write already in
+      // flight commits before the bump and is folded into the task retirement;
+      // after the bump no old AgentHandle exists to author another one.
+      const ordered = [...members].sort((left, right) =>
+        Number(right.id === previousLeaderSlotId) - Number(left.id === previousLeaderSlotId)
+        || left.id.localeCompare(right.id))
+      for (const member of ordered) {
+        this.owned.get(member.sessionId)?.handle.agent.cancel({ kind: 'user' }, { keepInbox: false })
+      }
+      await Promise.all(ordered.map(member =>
+        this.owned.get(member.sessionId)?.handle.agent.whenIdle() ?? Promise.resolve()))
+      for (const member of ordered) {
+        const owned = this.owned.get(member.sessionId)
+        if (owned === undefined) continue
+        try {
+          await this.ctx.sessions.flush(owned.handle.agent.session)
+        } catch (error) {
+          this.ctx.logger.warn(`dsh-team-mode: epoch flush failed for ${member.sessionId}`, error)
+        }
+        this.owned.delete(member.sessionId)
+        this.interactions.forget(member.sessionId)
+        await owned.handle.dispose()
+      }
+      for (const member of members) {
+        try {
+          await workspace.detachSession(SessionId(member.sessionId))
+        } catch (error) {
+          this.ctx.logger.warn(`dsh-team-mode: epoch workspace detach failed for ${member.sessionId}`, error)
+        }
+      }
+
+      await this.service.retireQueuedMessages(teamId)
+      const changedAt = new Date().toISOString()
+      const epoch = epochOf(team) + 1
+      const blockedTaskCount = Object.values(team.tasks)
+        .filter(task => OPEN_TASK_STATUSES.includes(task.status)).length
+      const pausedGoalCount = Object.values(team.goals ?? {})
+        .filter(goal => goal.status === 'active').length
+      // Build the notice against the successor so its recipient kind is already
+      // `leader`; it carries counts and names, never session ids.
+      const notice = systemTeamMessage({
+        team: { ...team, leaderSlotId: successorSlotId },
+        recipientSlotId: successorSlotId,
+        content: [
+          `Team epoch ${epoch}: you are the Leader. Every previous member Session was archived.`,
+          `${blockedTaskCount} task(s) are blocked and ${pausedGoalCount} Goal(s) paused;`,
+          'inspect with team_mode_task_list / team_mode_goal_list, resume a Goal with team_mode_goal_update,',
+          'then re-dispatch with team_mode_task_update.',
+        ].join(' '),
+      })
+      await this.service.updateRuntimeTeam(
+        teamId,
+        current => ({
+          ...current,
+          epoch,
+          leaderSlotId: successorSlotId,
+          state: 'starting',
+          members: mapMembers(current, member => {
+            const { lastError: _lastError, ...rest } = member
+            return {
+              ...rest,
+              role: member.id === successorSlotId ? 'leader' as const : 'member' as const,
+              sessionId: `session-${randomUUID()}`,
+              desiredState: 'online',
+              lastRuntimeState: 'starting',
+            }
+          }),
+          memberOrder: [
+            successorSlotId,
+            ...(current.memberOrder ?? Object.keys(current.members)).filter(id => id !== successorSlotId),
+          ],
+          retiredSessions: {
+            ...current.retiredSessions,
+            ...Object.fromEntries(Object.values(current.members).map(member => [
+              member.sessionId,
+              {
+                formerSlotId: member.id,
+                sessionId: member.sessionId,
+                displayName: member.displayName,
+                removedAt: changedAt,
+              },
+            ])),
+          },
+          tasks: retireOpenTasks(current.tasks, changedAt),
+          ...(current.goals === undefined ? {} : { goals: pauseActiveGoals(current.goals, changedAt) }),
+          leases: {},
+          outbox: { [notice.id]: notice },
+          warmup: { phase: 'starting', startedAt: changedAt, failedSlotIds: [] },
+        }),
+        'team.epoch_changed',
+        `Team ${team.name}: Leader changed to ${successor.displayName}, epoch ${epoch} `
+          + `(${blockedTaskCount} tasks blocked, ${pausedGoalCount} goals paused)`,
+      )
+
+      try {
+        const fresh = this.service.getTeam(teamId)
+        const nextLeader = fresh.members[successorSlotId]
+        if (nextLeader === undefined) {
+          throw new AgentTeamError('MEMBER_NOT_FOUND', `Member '${successorSlotId}' disappeared during the epoch change`)
+        }
+        await this.ensureMemberOnline(fresh, nextLeader, false)
+        await this.service.updateRuntimeTeam(
+          teamId,
+          current => ({
+            ...current,
+            state: 'active',
+            warmup: current.warmup === undefined
+              ? current.warmup
+              : { ...current.warmup, phase: 'leader-ready', leaderReadyAt: new Date().toISOString() },
+          }),
+          'team.epoch_leader_ready',
+          `Leader ${nextLeader.displayName} is ready for epoch ${epoch}`,
+        )
+        // Teammates keep warming up in the background, exactly like startTeam.
+        void this.warmupRemaining(teamId).catch(error => {
+          this.ctx.logger.warn('dsh-team-mode: epoch background warmup failed', error)
+        })
+        await this.messages.recover(this.service.getTeam(teamId))
+        return this.service.getTeam(teamId)
+      } catch (error) {
+        await this.markTeamError(teamId, error)
+        throw error
+      }
+    })
+  }
+
   dissolveTeam(teamId: string): Promise<void> {
     return this.exclusive(teamId, async () => {
       let team = this.service.getTeam(teamId)
@@ -1088,8 +1291,14 @@ export class TeamRuntime {
       )
     }
 
+    const epochAtStart = epochOf(this.service.getTeam(team.id))
     try {
-      this.activating.set(member.sessionId, { teamId: team.id, slotId: member.id })
+      this.activating.set(member.sessionId, {
+        teamId: team.id,
+        slotId: member.id,
+        sessionId: member.sessionId,
+        epoch: epochAtStart,
+      })
       const modelSelection: ModelSelectionRef = {
         current: {
           provider: member.assistantSnapshot.provider,
@@ -1142,26 +1351,29 @@ export class TeamRuntime {
           },
         })
         registerTeamTools(agentCtx, {
-          assertIdentity: agent => { this.assertToolIdentity(agent, team.id, member.id) },
+          assertIdentity: agent => {
+            this.assertToolIdentity(agent, team.id, member.id, member.sessionId)
+          },
           members: () => this.commands.members(team.id),
           readMessages: (limit, filter) => this.commands.readMessages(team.id, member.id, limit, filter),
-          sendMessage: input => this.commands.sendMessage(team.id, member.id, input),
+          sendMessage: input => this.commands.sendMessage(team.id, member.id, input, epochAtStart),
           interruptAgent: (slotId, message) => this.commands.interruptAgent(
             team.id,
             member.id,
             slotId,
             message,
           ),
-          createTask: input => this.commands.createTask(team.id, member.id, input),
-          updateTask: input => this.commands.updateTask(team.id, member.id, input),
-          claimTask: input => this.commands.claimTask(team.id, member.id, input),
+          createTask: input => this.commands.createTask(team.id, member.id, input, epochAtStart),
+          updateTask: input => this.commands.updateTask(team.id, member.id, input, epochAtStart),
+          claimTask: input => this.commands.claimTask(team.id, member.id, input, epochAtStart),
           inbox: input => this.commands.inbox(team.id, member.id, input),
           listTasks: limit => this.commands.listTasks(team.id, limit),
-          createGoal: input => this.commands.createGoal(team.id, member.id, input),
+          createGoal: input => this.commands.createGoal(team.id, member.id, input, epochAtStart),
+          updateGoal: input => this.commands.updateGoal(team.id, member.id, input, epochAtStart),
           listGoals: () => this.commands.listGoals(team.id),
-          proposeMemory: input => this.commands.proposeMemory(team.id, member.id, input),
+          proposeMemory: input => this.commands.proposeMemory(team.id, member.id, input, epochAtStart),
           listMemory: () => this.commands.listMemory(team.id),
-          decideMemory: input => this.commands.decideMemory(team.id, member.id, input),
+          decideMemory: input => this.commands.decideMemory(team.id, member.id, input, epochAtStart),
           listAssistants: () => this.service.listAssistants().items.map(assistant => (
             this.assistantView(assistant, false)
           )),
@@ -1314,9 +1526,34 @@ export class TeamRuntime {
         await handle.dispose()
         throw error
       }
+      // Layer 2 of the epoch fence: warmup runs outside `exclusive`, so an
+      // activation can still be in flight while a Leader change commits. Re-read
+      // the aggregate right before registering the handle; a superseded Session
+      // is disposed instead of being resurrected as a member of the new epoch.
+      const current = this.service.getTeam(team.id)
+      if (
+        current.members[member.id]?.sessionId !== member.sessionId
+        || epochOf(current) !== epochAtStart
+      ) {
+        try {
+          await this.ctx.sessions.flush(handle.agent.session)
+        } catch (error) {
+          this.ctx.logger.warn(`dsh-team-mode: stale activation flush failed for ${member.sessionId}`, error)
+        }
+        try {
+          await workspace.detachSession(sessionId)
+        } catch (error) {
+          this.ctx.logger.warn(`dsh-team-mode: stale activation detach failed for ${member.sessionId}`, error)
+        }
+        await handle.dispose()
+        this.interactions.forget(member.sessionId)
+        throw epochStaleError(team.id, epochOf(current), epochAtStart)
+      }
       this.owned.set(member.sessionId, {
         teamId: team.id,
         slotId: member.id,
+        sessionId: member.sessionId,
+        epoch: epochAtStart,
         handle,
         modelSelection,
       })
@@ -1357,13 +1594,28 @@ export class TeamRuntime {
     }
   }
 
-  private assertToolIdentity(agent: Agent | undefined, teamId: string, slotId: string): void {
+  private assertToolIdentity(
+    agent: Agent | undefined,
+    teamId: string,
+    slotId: string,
+    sessionId: string,
+  ): void {
     if (agent === undefined) throw new AgentTeamError('INVALID_REQUEST', 'Team tool requires an Agent caller')
-    const owned = this.owned.get(String(agent.id))
-    const identity = owned ?? this.activating.get(String(agent.id))
-    if (identity === undefined || identity.teamId !== teamId || identity.slotId !== slotId) {
+    const callerSessionId = String(agent.id)
+    const identity = this.owned.get(callerSessionId) ?? this.activating.get(callerSessionId)
+    if (
+      identity === undefined
+      || identity.teamId !== teamId
+      || identity.slotId !== slotId
+      || identity.sessionId !== sessionId
+    ) {
       throw new AgentTeamError('INVALID_REQUEST', 'Team tool caller identity does not match its scoped member')
     }
+    // Layer 1 of the epoch fence: every `team_*` tool starts with this check, so
+    // a Session that survived its disposal still cannot write into the new epoch.
+    const current = this.service.getTeam(teamId)
+    const epoch = epochOf(current)
+    if (identity.epoch !== epoch) throw epochStaleError(teamId, epoch, identity.epoch)
   }
 
   private requireOwned(sessionId: string): OwnedAgent {
@@ -1518,6 +1770,32 @@ function mapMembers(
   map: (member: TeamMemberSlot) => TeamMemberSlot,
 ): TeamAggregate['members'] {
   return Object.fromEntries(Object.entries(team.members).map(([id, member]) => [id, map(member)]))
+}
+
+/** Task statuses whose owner may still hold a live, old-epoch attempt. */
+const OPEN_TASK_STATUSES: ReadonlyArray<TeamTask['status']> = ['assigned', 'running', 'blocked']
+
+/**
+ * Retire the work of a previous epoch: the status becomes `blocked` and both
+ * the owner and the attempt token are dropped, so the task leaves every member
+ * inbox and is not claimable. Re-dispatching is one Leader
+ * `team_mode_task_update`, which mints a fresh attempt. Dependency ids and the
+ * terminal rows are history and stay untouched.
+ */
+function retireOpenTasks(tasks: Record<string, TeamTask>, now: string): Record<string, TeamTask> {
+  return Object.fromEntries(Object.entries(tasks).map(([id, task]) => {
+    if (!OPEN_TASK_STATUSES.includes(task.status)) return [id, task]
+    const { ownerSlotId: _owner, attemptId: _attempt, ...rest } = task
+    return [id, { ...rest, status: 'blocked' as const, revision: task.revision + 1, updatedAt: now }]
+  }))
+}
+
+/** A Goal active under the previous Leader pauses until the new Leader resumes it. */
+function pauseActiveGoals(goals: Record<string, TeamGoal>, now: string): Record<string, TeamGoal> {
+  return Object.fromEntries(Object.entries(goals).map(([id, goal]) => [
+    id,
+    goal.status === 'active' ? { ...goal, status: 'paused' as const, updatedAt: now } : goal,
+  ]))
 }
 
 function withReasoningEffort(

@@ -22,6 +22,7 @@ import type {
   TeamWorkbenchView,
 } from '../../transport/contracts.js'
 import type { MemoryEntry, TeamTask } from '../../domain/types.js'
+import { epochOf } from '../../domain/types.js'
 import { callAgentTeam, subscribeAgentTeamConversation } from '../api.js'
 import { AssistantPanel } from '../assistants/AssistantPanel.js'
 import css from '../AgentTeam.module.css'
@@ -825,6 +826,7 @@ export function TeamCard({
   onCloned,
   compact = false,
   headerActions,
+  onOpenSession,
 }: {
   team: TeamView
   catalog: CatalogView | undefined
@@ -834,6 +836,12 @@ export function TeamCard({
   onCloned: (teamId: string) => Promise<void>
   compact?: boolean
   headerActions?: ReactNode
+  /**
+   * Follow the new Leader after a change. Optional: a host that cannot navigate
+   * keeps the reload-only behaviour; the Leader Session is always reachable from
+   * the sidebar.
+   */
+  onOpenSession?: (sessionId: string) => void
 }): JSX.Element {
   const t = useTeamText()
   const [busy, setBusy] = useState(false)
@@ -846,6 +854,7 @@ export function TeamCard({
   const [teamRenameBusy, setTeamRenameBusy] = useState(false)
   const [teamRenameError, setTeamRenameError] = useState<string>()
   const [memberToRemove, setMemberToRemove] = useState<{ slotId: string; displayName: string }>()
+  const [leaderTarget, setLeaderTarget] = useState<{ slotId: string; displayName: string }>()
   const [contextTarget, setContextTarget] = useState<{ slotId: string; displayName: string }>()
   const [renaming, setRenaming] = useState<{ slotId: string; draft: string }>()
   const [renameBusy, setRenameBusy] = useState(false)
@@ -1031,16 +1040,21 @@ export function TeamCard({
     }
   }
 
-  async function changeLeader(successorSlotId: string): Promise<void> {
-    if (successorSlotId === team.leaderSlotId) return
+  async function changeLeader(): Promise<void> {
+    if (leaderTarget === undefined || leaderTarget.slotId === team.leaderSlotId) return
     setBusy(true)
     try {
-      await callAgentTeam('team.changeLeader', {
+      const view = await callAgentTeam('team.changeLeader', {
         teamId: team.id,
-        successorSlotId,
+        successorSlotId: leaderTarget.slotId,
       }, team.revision)
+      setLeaderTarget(undefined)
       setError(undefined)
       await onChanged()
+      // The old Session is history now; the human should land in the new
+      // Leader's Session instead of a tab whose team views disappeared.
+      const sessionId = view.members[view.leaderSlotId]?.sessionId
+      if (sessionId !== undefined) onOpenSession?.(sessionId)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -1057,6 +1071,9 @@ export function TeamCard({
           <span className={css.teamCardWorkspace}>{team.workspacePath}</span>
         </div>
         <div className={css.teamCardHeaderTrailing}>
+          {epochOf(team) > 1 && (
+            <span className={css.badge}>{t('epoch.tag', { epoch: epochOf(team) })}</span>
+          )}
           {executing && <span className={`${css.badge} ${css.badgeSuccess ?? ''}`}>任务执行中</span>}
           <Button
             variant="ghost"
@@ -1192,7 +1209,10 @@ export function TeamCard({
                     type="button"
                     className={`${css.memberRole} ${css.memberRoleAction}`}
                     disabled={busy || renameBusy}
-                    onClick={() => { void changeLeader(member.id) }}
+                    onClick={() => {
+                      setError(undefined)
+                      setLeaderTarget({ slotId: member.id, displayName: member.displayName })
+                    }}
                   >
                     {t('member.setLeader')}
                   </button>}
@@ -1432,6 +1452,49 @@ export function TeamCard({
         </div>
       </AnimatedModal>
       <AnimatedModal
+        open={leaderTarget !== undefined}
+        onClose={() => {
+          if (busy) return
+          setLeaderTarget(undefined)
+          setError(undefined)
+        }}
+        title={t('leaderChange.title')}
+        closeLabel="关闭"
+        description={t('leaderChange.description')}
+        className={css.teamResetDialog ?? ''}
+        footer={(
+          <>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => {
+                setLeaderTarget(undefined)
+                setError(undefined)
+              }}
+            >
+              {t('common.cancel')}
+            </Button>
+            <button
+              type="button"
+              className={`${css.dangerButton} ${css.confirmDangerButton}`}
+              disabled={busy}
+              onClick={() => { void changeLeader() }}
+            >
+              {busy ? t('leaderChange.busy') : t('leaderChange.confirm')}
+            </button>
+          </>
+        )}
+      >
+        <div className={css.teamResetConfirm}>
+          <div className={css.teamResetIcon} aria-hidden="true">⇄</div>
+          <div>
+            <strong>{t('leaderChange.confirmTitle', { name: leaderTarget?.displayName ?? '' })}</strong>
+            <p>{t('leaderChange.body')}</p>
+          </div>
+          {error && <div role="alert" className={css.inlineError}>{error}</div>}
+        </div>
+      </AnimatedModal>
+      <AnimatedModal
         open={dissolveOpen}
         onClose={() => {
           if (busy) return
@@ -1603,7 +1666,9 @@ export function GoalSummary({
                 <span className={css.goalProgressFill} style={{ width: `${percent}%` }} />
               </span>
               {goal.status !== 'active' && (
-                <span className={`${css.goalStatusBadge} ${goal.status === 'cancelled' ? css.goalStatusBadgeMuted : ''}`}>
+                <span className={`${css.goalStatusBadge} ${
+                  goal.status === 'cancelled' || goal.status === 'paused' ? css.goalStatusBadgeMuted : ''
+                }`}>
                   {goalStatusLabel(goal.status)}
                 </span>
               )}
@@ -1699,7 +1764,11 @@ export function GoalTaskBoard({
                       <span className={css.goalModeBadge}>{goalModeLabel(group.goal.mode)}</span>
                     )}
                     {group.goal !== undefined && group.goal.status !== 'active' && (
-                      <span className={`${css.goalStatusBadge} ${group.goal.status === 'cancelled' ? css.goalStatusBadgeMuted : ''}`}>
+                      <span className={`${css.goalStatusBadge} ${
+                        group.goal.status === 'cancelled' || group.goal.status === 'paused'
+                          ? css.goalStatusBadgeMuted
+                          : ''
+                      }`}>
                         {goalStatusLabel(group.goal.status)}
                       </span>
                     )}

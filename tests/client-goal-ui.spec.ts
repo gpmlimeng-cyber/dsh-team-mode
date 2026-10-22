@@ -206,6 +206,8 @@ describe('Goal client helpers', () => {
     expect(goalModeLabel('orchestrated')).toBe('编排')
     expect(goalModeLabel('unknown')).toBe('unknown')
     expect(goalStatusLabel('completed')).toBe('已完成')
+    // The epoch transition pauses active Goals; the badge has to name the state.
+    expect(goalStatusLabel('paused')).toBe('已暂停')
     expect(goalStatusLabel('unknown')).toBe('unknown')
   })
 })
@@ -242,6 +244,8 @@ describe('live registered team view', () => {
       leaderSlotId: 'slot-leader',
       state: 'active',
       directMemberChat: true,
+      // A changed Leader means a new epoch; the card shows it without session ids.
+      epoch: 2,
       members: { 'slot-leader': leader },
       retiredSessions: {},
       tasks: {
@@ -278,5 +282,9 @@ describe('live registered team view', () => {
     expect(markup).toContain('未归入目标 · 1')
     expect(markup).toContain('等待依赖')
     expect(markup).toContain('阻塞 1 项后续任务')
+    // Node has no zh locale, so the i18n fallback renders the English tag; the
+    // point is that the epoch is visible and the Session id never is.
+    expect(markup).toContain('Epoch 2')
+    expect(markup).not.toContain('session-live')
   })
 })

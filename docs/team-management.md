@@ -72,12 +72,18 @@ Leader 不能直接移出。应先把 Leader 角色转交给其他成员。
 
 ## 更换 Leader
 
-点击普通成员卡片上的 **设为 Leader**：
+更换 Leader 不再是单纯交换角色：它是一道**团队纪元（epoch）**边界。点击普通成员卡片上的 **设为 Leader** 会先出现确认弹窗；确认后：
 
-- 原 Leader 变为普通成员。
-- 新 Leader 接收 Leader 角色和团队协调规则。
-- 两位成员都保留原来的 Session 和上下文。
+- 原 Leader 与所有成员的 Session 都会停止、落盘、释放并从 Workspace 解绑；它们被归档为历史（聊天记录保留），但不再属于团队，也不会被重新挂到新 Leader 名下（没有 Session 重挂）。
+- 每位成员（包括新 Leader）都会换用全新的 Session；只有新 Leader 会立即启动，其他成员在后台预热。
+- 进行中（`assigned` / `running` / `blocked`）的任务变为 `blocked`，同时清除负责人和 `attempt_id`：旧尝试失效，旧成员无法继续写入；需要由新 Leader 重新派发（一次 `team_mode_task_update` 会生成新的 `attempt_id`）。
+- 进行中的 Goal 变为 `paused`，由新 Leader 用 `team_mode_goal_update {status:"active"}` 恢复；已完成/已取消的 Goal 不变。
+- 排队中的团队消息被标记为失败；新 Leader 会收到一条交接通知（包含纪元和被阻塞任务/暂停 Goal 的数量，不含 Session ID）。
+- 团队 `epoch` 加 1；界面在团队卡片上显示 `纪元 N`（只有 N > 1 时显示）。确认成功后界面会自动切到新 Leader 的会话。
+- 草稿团队没有启动过任何 Session，因此只递增纪元、交换角色，不归档、不换 Session。
 - 团队始终只有一个 Leader。
+
+旧纪元的 Session 仍是只读历史：任何残留的团队工具调用都会以 `EPOCH_STALE` 被拒绝，而不是写入新纪元。如果新 Leader 启动失败，团队进入 `error` 状态，但纪元、Session 轮换与任务暂停不会回滚；重启或重试会从 `error` 继续恢复。
 
 ## 重命名团队
 

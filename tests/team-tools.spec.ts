@@ -41,6 +41,17 @@ function harness(): {
       updated_at: '2026-01-01T00:00:00.000Z',
     })),
     listGoals: vi.fn(() => []),
+    updateGoal: vi.fn(async () => ({
+      goal_id: 'g1',
+      title: 'Goal',
+      objective: 'Objective',
+      acceptance: '',
+      mode: 'single' as const,
+      status: 'active' as const,
+      task_ids: [],
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    })),
     proposeMemory: vi.fn(async () => ({
       revision: 1,
       entry: memoryView('mem-1', 'proposed'),
@@ -98,6 +109,7 @@ describe('Team Mode tool surface', () => {
       'team_interrupt_agent',
       'team_mode_goal_create',
       'team_mode_goal_list',
+      'team_mode_goal_update',
       'team_mode_task_create',
       'team_mode_task_update',
       'team_mode_task_claim',
@@ -117,7 +129,7 @@ describe('Team Mode tool surface', () => {
     expect(tools.has('team_get_task_board')).toBe(true)
     expect(tools.has('team_create_task')).toBe(true)
     expect(tools.has('team_update_task')).toBe(true)
-    expect(tools.size).toBe(23)
+    expect(tools.size).toBe(24)
   })
 
   it('publishes the required parameter contracts for the dangerous tools', () => {
@@ -133,6 +145,11 @@ describe('Team Mode tool surface', () => {
     expect(tools.get('team_mode_goal_create')?.description).toContain('Leader only')
     expect(tools.get('team_mode_goal_create')?.parameters.required).toEqual(['title', 'objective'])
     expect(tools.get('team_mode_goal_create')?.parameters.properties?.mode).toBeDefined()
+    expect(tools.get('team_mode_goal_update')?.description).toContain('Leader only')
+    expect(tools.get('team_mode_goal_update')?.parameters.required).toEqual(['goal_id', 'status'])
+    expect(tools.get('team_mode_goal_update')?.parameters.properties?.status).toMatchObject({
+      enum: ['active', 'paused', 'completed', 'cancelled'],
+    })
     expect(tools.get('team_memory_propose')?.parameters.required)
       .toEqual(expect.arrayContaining(['expected_revision', 'title', 'body']))
     expect(tools.get('team_memory_accept')?.parameters.required)
@@ -250,6 +267,15 @@ describe('Team Mode tool surface', () => {
 
     await tools.get('team_mode_goal_list')!.execute({}, exec)
     expect(handlers.listGoals).toHaveBeenCalled()
+
+    // A paused Goal (the epoch transition pauses active Goals) is resumed
+    // through the same tool; the handler receives the raw status.
+    const resumed = await tools.get('team_mode_goal_update')!.execute(
+      { goal_id: 'g1', status: 'active' },
+      exec,
+    )
+    expect(handlers.updateGoal).toHaveBeenCalledWith({ goal_id: 'g1', status: 'active' })
+    expect(resumed).toMatchObject({ goal: { goal_id: 'g1' } })
 
     await tools.get('team_mode_task_create')!.execute(
       { subject: 'Implement', owner: 'a', goal_id: 'g1' },

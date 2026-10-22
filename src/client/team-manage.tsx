@@ -51,6 +51,9 @@ export function TeamManageView({
         pickWorkspace={pickWorkspace}
         onChanged={load}
         onCloned={async () => { await load() }}
+        {...(uiWorkspace === undefined
+          ? {}
+          : { onOpenSession: (sessionId: string) => { uiWorkspace.openSession(sessionId) } })}
         compact
       />
     </div>

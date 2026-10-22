@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
 import type { MemoryEntry, TeamAggregate, TeamMemberSlot } from '../src/domain/types.js'
+import { epochOf } from '../src/domain/types.js'
 import { teamAggregateSchema } from '../src/domain/schemas.js'
 import { TeamRuntime } from '../src/runtime/team-runtime.js'
 import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
@@ -60,16 +61,117 @@ describe('team runtime support', () => {
     expect(leaderPrompt).toContain('Ordinary chat must never create a Goal')
     expect(leaderPrompt).toContain('team_mode_goal_create')
     expect(leaderPrompt).toContain('team_mode_goal_list')
+    expect(leaderPrompt).toContain('team_mode_goal_update')
+    expect(leaderPrompt).toContain('new team epoch')
     expect(leaderPrompt).toContain('goal_id')
     expect(leaderPrompt).toContain('follow an explicit user override')
 
     // Teammates get the tool list but not the Leader-only steward rules.
     const coderPrompt = memberPrompt(team, coder)
     expect(coderPrompt).toContain('team_mode_goal_list')
+    expect(coderPrompt).toContain('team_mode_goal_update')
     expect(coderPrompt).not.toContain('Ordinary chat must never create a Goal')
 
     expect(rosterPrompt(team)).toContain('Current goal count: 0')
     expect(rosterPrompt(team)).toContain('team_mode_goal_list')
+  })
+
+  it('keeps legacy teams on epoch 1 and parses the optional epoch field', () => {
+    const base = {
+      schemaVersion: 1 as const,
+      id: 'team-schema',
+      name: 'Schema Team',
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/schema-team',
+      leaderSlotId: 'leader-slot',
+      state: 'active' as const,
+      directMemberChat: true,
+      members: {},
+      retiredSessions: {},
+      tasks: {},
+      leases: {},
+      outbox: {},
+      revision: 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+
+    // Legacy record: no field, no schema bump, and the reader defaults to 1.
+    const legacy = teamAggregateSchema.parse(base)
+    expect(legacy.epoch).toBeUndefined()
+    expect(epochOf(legacy)).toBe(1)
+
+    const nextEpoch = teamAggregateSchema.parse({ ...base, epoch: 2 })
+    expect(nextEpoch.schemaVersion).toBe(1)
+    expect(epochOf(nextEpoch)).toBe(2)
+
+    expect(teamAggregateSchema.safeParse({ ...base, epoch: 0 }).success).toBe(false)
+    expect(teamAggregateSchema.safeParse({ ...base, epoch: 1.5 }).success).toBe(false)
+  })
+
+  it('rejects a team tool call whose Session belongs to an old epoch', () => {
+    const now = '2026-01-01T00:00:00.000Z'
+    const leader = member('leader-slot', 'Lead', 'leader')
+    let team = {
+      schemaVersion: 2,
+      id: 'team-epoch',
+      name: 'Epoch Team',
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/epoch-team',
+      leaderSlotId: leader.id,
+      state: 'active',
+      directMemberChat: true,
+      epoch: 2,
+      members: { [leader.id]: { ...leader, sessionId: 'session-current' } },
+      retiredSessions: {},
+      tasks: {},
+      leases: {},
+      outbox: {},
+      revision: 3,
+      createdAt: now,
+      updatedAt: now,
+    } as TeamAggregate
+    const ctx = new Context()
+    const service = {
+      getTeam: (id: string) => {
+        if (id !== team.id) throw new AgentTeamError('TEAM_NOT_FOUND', `Unknown team '${id}'`)
+        return team
+      },
+    } as unknown as AgentTeamService
+    const runtime = new TeamRuntime(ctx, {} as Config, service)
+    const internals = runtime as unknown as {
+      owned: Map<string, unknown>
+      assertToolIdentity: (
+        agent: { id: string } | undefined,
+        teamId: string,
+        slotId: string,
+        sessionId: string,
+      ) => void
+    }
+    const stale = {
+      teamId: team.id,
+      slotId: leader.id,
+      sessionId: 'session-retired',
+      epoch: 1,
+    }
+    internals.owned.set('session-retired', stale)
+
+    expect(() => internals.assertToolIdentity({ id: 'session-retired' }, team.id, leader.id, 'session-retired'))
+      .toThrowError(expect.objectContaining({ code: 'EPOCH_STALE' }))
+
+    // Same Session under the current epoch is still authorized.
+    internals.owned.set('session-retired', { ...stale, epoch: 2 })
+    expect(() => internals.assertToolIdentity({ id: 'session-retired' }, team.id, leader.id, 'session-retired'))
+      .not.toThrow()
+
+    // A tool closure registered for another Session of the same slot is not it.
+    expect(() => internals.assertToolIdentity({ id: 'session-retired' }, team.id, leader.id, 'session-other'))
+      .toThrowError(expect.objectContaining({ code: 'INVALID_REQUEST' }))
+
+    // The epoch is read live from the aggregate, so a later bump fences too.
+    team = { ...team, epoch: 3 }
+    expect(() => internals.assertToolIdentity({ id: 'session-retired' }, team.id, leader.id, 'session-retired'))
+      .toThrowError(expect.objectContaining({ code: 'EPOCH_STALE' }))
   })
 
   it('loads teams with and without optional memory without a schema bump', () => {

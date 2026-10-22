@@ -3,7 +3,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { isModelInvocable, isSkillName, isUserInvocable } from '@deepseek-ai/dsh-skill'
 import type { Config } from '../config.js'
-import { AgentTeamError } from '../domain/errors.js'
+import { AgentTeamError, epochStaleError } from '../domain/errors.js'
 import { isMcpServerName, mcpServerFromToolName } from '../domain/mcp.js'
 import {
   createAssistantInputSchema,
@@ -22,6 +22,7 @@ import {
   writeAssistantMemoryEntryInputSchema,
 } from '../domain/schemas.js'
 import {
+  epochOf,
   snapshotAssistant,
   type AddTeamMemberInput,
   type AssistantInstance,
@@ -1160,7 +1161,7 @@ export class AgentTeamService extends Service {
     return { items, total: items.length }
   }
 
-  async createGoal(teamId: string, raw: CreateTeamGoalInput): Promise<TeamGoal> {
+  async createGoal(teamId: string, raw: CreateTeamGoalInput, epoch?: number): Promise<TeamGoal> {
     const input = createTeamGoalInputSchema.parse(raw)
     const team = requireTeam(this.store, teamId)
     assertTeamMutable(team)
@@ -1181,11 +1182,17 @@ export class AgentTeamService extends Service {
       current => ({ ...current, goals: { ...current.goals, [goal.id]: goal } }),
       'team.goal_created',
       `Goal ${goal.title} created`,
+      epoch === undefined ? {} : { expectedEpoch: epoch },
     )
     return goal
   }
 
-  async updateGoal(teamId: string, goalId: string, raw: UpdateTeamGoalInput): Promise<TeamGoal> {
+  async updateGoal(
+    teamId: string,
+    goalId: string,
+    raw: UpdateTeamGoalInput,
+    epoch?: number,
+  ): Promise<TeamGoal> {
     const input = updateTeamGoalInputSchema.parse(raw)
     const team = requireTeam(this.store, teamId)
     assertTeamMutable(team)
@@ -1208,6 +1215,7 @@ export class AgentTeamService extends Service {
       },
       'team.goal_updated',
       `Goal ${goalId} updated`,
+      epoch === undefined ? {} : { expectedEpoch: epoch },
     )
     return requireGoal(next, goalId)
   }
@@ -1543,6 +1551,16 @@ export class AgentTeamService extends Service {
     return team
   }
 
+  /**
+   * Change the Leader. This is the only writer of `epoch`: a Leader change is a
+   * new leadership generation, so every Session activated under the previous
+   * epoch is archived instead of being silently reparented.
+   *
+   * A draft team has never activated a Session, so the swap is one aggregate
+   * write. A running team goes through the runtime transition, which disposes
+   * the old handles and re-reads the revision inside its exclusive lock (a
+   * double-click cannot stack two epoch bumps).
+   */
   async changeLeader(
     teamId: string,
     successorSlotId: string,
@@ -1551,28 +1569,40 @@ export class AgentTeamService extends Service {
     const current = requireTeam(this.store, teamId)
     assertTeamMutable(current)
     assertRevision('team', current.revision, options.expectedRevision)
-    if (current.members[successorSlotId] === undefined) {
+    const successor = current.members[successorSlotId]
+    if (successor === undefined) {
       throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown member '${successorSlotId}'`)
     }
     if (current.leaderSlotId === successorSlotId) {
       throw new AgentTeamError('INVALID_REQUEST', 'The selected member is already the team leader')
     }
-    const next = await this.store.updateTeam(teamId, team => ({
-      ...team,
-      members: Object.fromEntries(Object.entries(team.members).map(([slotId, member]) => [
-        slotId,
-        { ...member, role: slotId === successorSlotId ? 'leader' : 'member' },
-      ])),
-      leaderSlotId: successorSlotId,
-      memberOrder: [
-        successorSlotId,
-        ...(team.memberOrder ?? Object.keys(team.members)).filter(id => id !== successorSlotId),
-      ],
-      revision: team.revision + 1,
-      updatedAt: new Date().toISOString(),
-    }))
-    await this.activity('team.leader_changed', teamId, next.revision, 'Team leader changed')
-    this.publish('team', teamId, next.revision, 'team.leader_changed')
+    if (current.state !== 'draft') {
+      return this.requireRuntime().changeLeaderEpoch(teamId, successorSlotId, options)
+    }
+    const epoch = epochOf(current) + 1
+    const next = await this.updateRuntimeTeam(
+      teamId,
+      team => {
+        // Re-check inside the serialized write: a queued second click would
+        // otherwise bump a draft's epoch twice.
+        assertRevision('team', team.revision, options.expectedRevision)
+        return {
+          ...team,
+          epoch,
+          members: Object.fromEntries(Object.entries(team.members).map(([slotId, member]) => [
+            slotId,
+            { ...member, role: slotId === successorSlotId ? 'leader' : 'member' },
+          ])),
+          leaderSlotId: successorSlotId,
+          memberOrder: [
+            successorSlotId,
+            ...(team.memberOrder ?? Object.keys(team.members)).filter(id => id !== successorSlotId),
+          ],
+        }
+      },
+      'team.leader_changed',
+      `Team leader changed to ${successor.displayName} (epoch ${epoch})`,
+    )
     return next
   }
 
@@ -2082,13 +2112,21 @@ export class AgentTeamService extends Service {
     return { items, total: items.length }
   }
 
+  /**
+   * One atomic aggregate write plus its activity/publish. `expectedEpoch` is
+   * the last fence for a Session that was already waiting inside a tool handler
+   * when a Leader change committed: the closure runs in the store's serialized
+   * write chain, so a stale epoch is detected before anything is written.
+   */
   async updateRuntimeTeam(
     teamId: string,
     update: (team: TeamAggregate) => TeamAggregate,
     kind: string,
     summary: string,
+    options: { expectedEpoch?: number } = {},
   ): Promise<TeamAggregate> {
     const next = await this.store.updateTeam(teamId, current => {
+      requireEpoch(current, options.expectedEpoch)
       const candidate = update(current)
       return {
         ...candidate,
@@ -2101,9 +2139,19 @@ export class AgentTeamService extends Service {
     return next
   }
 
-  async putRuntimeMessage(message: TeamMessage): Promise<void> {
-    await this.store.putMessage(message)
+  /**
+   * Write one durable message. Messages live outside the aggregate, so the
+   * epoch is checked here instead of inside `updateRuntimeTeam`; without it a
+   * handler that started before a Leader change could still deliver mail into
+   * the new epoch.
+   */
+  async putRuntimeMessage(
+    message: TeamMessage,
+    options: { expectedEpoch?: number } = {},
+  ): Promise<void> {
     const team = requireTeam(this.store, message.teamId)
+    requireEpoch(team, options.expectedEpoch)
+    await this.store.putMessage(message)
     this.publish('team', team.id, team.revision, 'team.message')
   }
 
@@ -2604,6 +2652,14 @@ function assertRevision(entity: string, actual: number, expected?: number): void
       { expected, actual },
     )
   }
+}
+
+/** Reject a write authored under a previous leadership epoch. */
+function requireEpoch(team: TeamAggregate, expected?: number): void {
+  if (expected === undefined) return
+  const epoch = epochOf(team)
+  if (epoch === expected) return
+  throw epochStaleError(team.id, epoch, expected)
 }
 
 function assertTeamMutable(team: TeamAggregate): void {

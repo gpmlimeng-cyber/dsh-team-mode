@@ -168,10 +168,17 @@ export interface TeamGoalView {
   objective: string
   acceptance: string
   mode: 'direct' | 'single' | 'orchestrated'
-  status: 'active' | 'completed' | 'cancelled'
+  status: TeamGoal['status']
   task_ids: string[]
   created_at: string
   updated_at: string
+}
+
+/** Only the status is writable through the tool: resume/pause/close. */
+export interface UpdateGoalInput {
+  goalId?: string
+  goal_id?: string
+  status?: string
 }
 
 export interface TeamMemoryView {
@@ -347,6 +354,7 @@ export class TeamCommandHandler {
     teamId: string,
     creatorSlotId: string,
     input: CreateTaskInput,
+    epoch?: number,
   ): Promise<{ taskId: string; status: string; deliveryState?: 'queued' | 'delivered'; attemptId?: string }> {
     const team = this.service.getTeam(teamId)
     this.assertLeader(team, creatorSlotId, 'create tasks')
@@ -413,6 +421,7 @@ export class TeamCommandHandler {
       }),
       'team.task_created',
       `Task ${title} created`,
+      this.epochOption(epoch),
     )
     if (assignment === undefined) return { taskId, status, ...(attemptId === undefined ? {} : { attemptId }) }
     const delivered = await this.port.deliverMessage(teamId, assignment.id)
@@ -428,6 +437,7 @@ export class TeamCommandHandler {
     teamId: string,
     callerSlotId: string,
     input: UpdateTaskInput,
+    epoch?: number,
   ): Promise<{
     taskId: string
     status: string
@@ -591,6 +601,7 @@ export class TeamCommandHandler {
       },
       'team.task_updated',
       `Task ${task.title} entered ${nextStatus}`,
+      this.epochOption(epoch),
     )
     let delivered = true
     for (const notification of notifications) {
@@ -616,6 +627,7 @@ export class TeamCommandHandler {
     teamId: string,
     callerSlotId: string,
     input: ClaimTaskInput,
+    epoch?: number,
   ): Promise<ClaimTaskResult> {
     const team = this.service.getTeam(teamId)
     this.requireMember(team, callerSlotId)
@@ -703,6 +715,7 @@ export class TeamCommandHandler {
       },
       'team.task_claimed',
       `Task ${snapshot.title} claimed by ${team.members[callerSlotId]?.displayName ?? callerSlotId}`,
+      this.epochOption(epoch),
     )
     // The closure either threw or wrote exactly these values.
     return { taskId, status: 'assigned', owner: callerSlotId, attemptId }
@@ -756,6 +769,7 @@ export class TeamCommandHandler {
     teamId: string,
     creatorSlotId: string,
     input: CreateGoalInput,
+    epoch?: number,
   ): Promise<TeamGoalView> {
     const team = this.service.getTeam(teamId)
     this.assertLeader(team, creatorSlotId, 'create goals')
@@ -764,7 +778,31 @@ export class TeamCommandHandler {
       objective: requireShortText(input.objective ?? '', 'Goal objective', 2_000),
       ...(input.acceptance === undefined ? {} : { acceptance: input.acceptance }),
       ...(input.mode === undefined ? {} : { mode: input.mode }),
-    })
+    }, epoch)
+    return this.goalView(this.service.getTeam(teamId), goal)
+  }
+
+  /**
+   * Leader-only Goal status write. Resuming a Goal paused by an epoch change is
+   * the only way back to `active`, so the tool ships with `paused` itself.
+   */
+  async updateGoal(
+    teamId: string,
+    callerSlotId: string,
+    input: UpdateGoalInput,
+    epoch?: number,
+  ): Promise<TeamGoalView> {
+    const team = this.service.getTeam(teamId)
+    this.assertLeader(team, callerSlotId, 'update goals')
+    const goalId = (input.goal_id ?? input.goalId ?? '').trim()
+    if (goalId === '') throw new AgentTeamError('INVALID_REQUEST', 'Goal id is required')
+    const status = input.status?.trim()
+    if (status === undefined || status === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Goal status is required')
+    }
+    const goal = await this.service.updateGoal(teamId, goalId, {
+      status: normalizeGoalStatus(status),
+    }, epoch)
     return this.goalView(this.service.getTeam(teamId), goal)
   }
 
@@ -827,6 +865,7 @@ export class TeamCommandHandler {
     teamId: string,
     proposerSlotId: string,
     input: ProposeMemoryInput,
+    epoch?: number,
   ): Promise<TeamMemoryWriteResult> {
     const team = this.service.getTeam(teamId)
     this.requireMember(team, proposerSlotId)
@@ -885,6 +924,7 @@ export class TeamCommandHandler {
       },
       'team.memory_proposed',
       `Team memory entry '${title}' submitted`,
+      this.epochOption(epoch),
     )
     return {
       revision: next.memory?.revision ?? 0,
@@ -902,6 +942,7 @@ export class TeamCommandHandler {
     teamId: string,
     callerSlotId: string,
     input: DecideMemoryInput,
+    epoch?: number,
   ): Promise<TeamMemoryWriteResult> {
     const team = this.service.getTeam(teamId)
     this.assertLeader(team, callerSlotId, 'accept or reject team memory proposals')
@@ -963,6 +1004,7 @@ export class TeamCommandHandler {
       },
       decision === 'accept' ? 'team.memory_accepted' : 'team.memory_rejected',
       `Team memory entry ${entryId} ${decision === 'accept' ? 'accepted' : 'rejected'}`,
+      this.epochOption(epoch),
     )
     return {
       revision: next.memory?.revision ?? 0,
@@ -1114,6 +1156,7 @@ export class TeamCommandHandler {
     teamId: string,
     senderSlotId: string,
     input: SendMessageInput,
+    epoch?: number,
   ): Promise<SendMessageResult> {
     const team = this.service.getTeam(teamId)
     this.requireMember(team, senderSlotId)
@@ -1155,7 +1198,7 @@ export class TeamCommandHandler {
     const attachments = normalizeFiles(input.files)
     const links = this.normalizeMessageLinks(team, input)
     if (to.trim() === '*') {
-      return this.sendBroadcast(team, senderSlotId, content, type, summary, attachments, links)
+      return this.sendBroadcast(team, senderSlotId, content, type, summary, attachments, links, epoch)
     }
     const recipientSlotId = this.resolveMemberSlotId(team, to)
     if (recipientSlotId === senderSlotId) {
@@ -1171,6 +1214,7 @@ export class TeamCommandHandler {
     return this.sendMemberMessage(teamId, senderSlotId, recipientSlotId, content, type, {
       ...(summary === undefined || summary.length === 0 ? {} : { summary }),
       ...(attachments.length === 0 ? {} : { attachments }),
+      ...(epoch === undefined ? {} : { expectedEpoch: epoch }),
       links,
     })
   }
@@ -1208,7 +1252,9 @@ export class TeamCommandHandler {
     summary: string | undefined,
     attachments: TeamMessage['attachments'],
     links: MessageLinks = {},
+    epoch?: number,
   ): Promise<SendMessageResult> {
+    const options = this.epochOption(epoch)
     const id = `dsh-team-mode:${randomUUID()}`
     const record = createTeamMessage({
       id,
@@ -1222,7 +1268,7 @@ export class TeamCommandHandler {
       ...links,
       idempotencyKey: id,
     })
-    await this.service.putRuntimeMessage(record)
+    await this.service.putRuntimeMessage(record, options)
     const recipients = Object.values(team.members)
       .filter(member => member.id !== senderSlotId && member.desiredState === 'online')
     const deliveredTo: string[] = []
@@ -1236,7 +1282,7 @@ export class TeamCommandHandler {
       }
     }
     const deliveryState = queuedFor.length === 0 && deliveredTo.length > 0 ? 'delivered' : 'queued'
-    await this.service.putRuntimeMessage({ ...record, deliveryState })
+    await this.service.putRuntimeMessage({ ...record, deliveryState }, options)
     return {
       messageId: id,
       deliveryState,
@@ -1255,8 +1301,11 @@ export class TeamCommandHandler {
       summary?: string
       attachments?: TeamMessage['attachments']
       links?: MessageLinks
+      /** Epoch of the caller session; a stale one must not deliver into the new epoch. */
+      expectedEpoch?: number
     } = {},
   ): Promise<SendMessageResult> {
+    const epochOptions = this.epochOption(options.expectedEpoch)
     const team = this.service.getTeam(teamId)
     const sender = team.members[senderSlotId]
     const recipient = team.members[recipientSlotId]
@@ -1296,15 +1345,15 @@ export class TeamCommandHandler {
       ...options.links,
       idempotencyKey: String(relay.id),
     })
-    await this.service.putRuntimeMessage(record)
+    await this.service.putRuntimeMessage(record, epochOptions)
     try {
       this.port.followup(recipient.sessionId, relay)
-      await this.service.putRuntimeMessage({ ...record, deliveryState: 'delivered' })
+      await this.service.putRuntimeMessage({ ...record, deliveryState: 'delivered' }, epochOptions)
       return { messageId: record.id, deliveryState: 'delivered', deliveredTo: [recipientSlotId] }
     } catch {
       // The recipient inbox was unavailable. Keep the durable record queued so
       // the next recovery pass or mailbox read can deliver it.
-      await this.service.putRuntimeMessage({ ...record, deliveryState: 'queued' })
+      await this.service.putRuntimeMessage({ ...record, deliveryState: 'queued' }, epochOptions)
       return {
         messageId: record.id,
         deliveryState: 'queued',
@@ -1460,6 +1509,11 @@ export class TeamCommandHandler {
     }
   }
 
+  /** The epoch fence options for one member write; absent means unfenced. */
+  private epochOption(epoch: number | undefined): { expectedEpoch?: number } {
+    return epoch === undefined ? {} : { expectedEpoch: epoch }
+  }
+
   private requireMember(team: TeamAggregate, slotId: string): TeamMemberSlot {
     const member = team.members[slotId]
     if (member === undefined) throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown member '${slotId}'`)
@@ -1538,6 +1592,17 @@ function normalizeDecision(value: unknown): 'accept' | 'reject' {
   throw new AgentTeamError(
     'INVALID_REQUEST',
     `Unknown memory decision '${String(value)}'; use accept or reject`,
+  )
+}
+
+/** The Goal statuses a Leader may set; `paused` is how an epoch reset is undone. */
+function normalizeGoalStatus(value: string): TeamGoal['status'] {
+  if (value === 'active' || value === 'paused' || value === 'completed' || value === 'cancelled') {
+    return value
+  }
+  throw new AgentTeamError(
+    'INVALID_REQUEST',
+    `Unknown Goal status '${value}'; use active, paused, completed, or cancelled`,
   )
 }
 

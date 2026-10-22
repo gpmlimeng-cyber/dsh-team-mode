@@ -11,9 +11,11 @@ import type {
   CreateTeamDraftInput,
   MemoryEntry,
   TeamAggregate,
+  TeamGoal,
   TeamMessage,
   UpdateAssistantInput,
   UpdateAssistantInstanceInput,
+  UpdateTeamGoalInput,
   WriteAssistantMemoryEntryInput,
 } from '../domain/types.js'
 
@@ -71,6 +73,7 @@ export const AGENT_TEAM_METHODS = [
   'team.rename',
   'team.removeMember',
   'team.changeLeader',
+  'team.updateGoal',
   'team.reset',
   'team.message.list',
   'team.message.send',
@@ -455,6 +458,10 @@ export interface AgentTeamRequestMap {
   'team.rename': { payload: { teamId: string; name: string }; result: TeamView }
   'team.removeMember': { payload: { teamId: string; slotId: string }; result: TeamView }
   'team.changeLeader': { payload: { teamId: string; successorSlotId: string }; result: TeamView }
+  'team.updateGoal': {
+    payload: { teamId: string; goalId: string; value: UpdateTeamGoalInput }
+    result: TeamGoal
+  }
   'team.reset': { payload: { teamId: string; confirmation: string }; result: TeamView }
   'team.message.list': { payload: { id: string }; result: PageView<TeamMessage> }
   'team.message.send': {

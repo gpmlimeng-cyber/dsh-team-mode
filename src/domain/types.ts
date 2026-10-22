@@ -72,6 +72,16 @@ export type CreateTeamGoalInput = z.infer<typeof createTeamGoalInputSchema>
 export type UpdateTeamGoalInput = z.infer<typeof updateTeamGoalInputSchema>
 export type FileScopeLease = z.infer<typeof fileScopeLeaseSchema>
 export type TeamAggregate = z.infer<typeof teamAggregateSchema>
+
+/**
+ * Leadership generation of one team. An absent field means the first epoch: a
+ * team that never changed Leader behaves exactly as before the field existed.
+ * This is the single reader for the optional persisted field; never write
+ * `?? 1` inline.
+ */
+export function epochOf(team: Pick<TeamAggregate, 'epoch'>): number {
+  return team.epoch ?? 1
+}
 export type TeamMemory = z.infer<typeof teamMemorySchema>
 export type TeamMessage = z.infer<typeof teamMessageSchema>
 export type TeamActivity = z.infer<typeof teamActivitySchema>

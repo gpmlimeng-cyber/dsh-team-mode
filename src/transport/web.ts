@@ -426,6 +426,14 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       const payload = z.object({ teamId: z.string().min(1), successorSlotId: z.string().min(1) }).strict().parse(request.payload)
       return service.changeLeader(payload.teamId, payload.successorSlotId, options)
     }
+    case 'team.updateGoal': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        goalId: z.string().trim().min(1).max(200),
+        value: z.unknown(),
+      }).strict().parse(request.payload)
+      return service.updateGoal(payload.teamId, payload.goalId, payload.value as never)
+    }
     case 'team.reset': {
       const payload = z.object({ teamId: z.string().min(1), confirmation: z.string() }).strict().parse(request.payload)
       return service.resetTeam(payload.teamId, payload.confirmation, options)

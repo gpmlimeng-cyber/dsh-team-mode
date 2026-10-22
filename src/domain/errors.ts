@@ -14,6 +14,7 @@ export type AgentTeamErrorCode =
   | 'TEAM_INVALID_LEADER'
   | 'TEAM_NAME_INVALID'
   | 'TEAM_REVISION_CONFLICT'
+  | 'EPOCH_STALE'
   | 'TEAM_NOT_ACTIVE'
   | 'TEAM_DELETING'
   | 'MEMBER_NOT_FOUND'
@@ -50,4 +51,19 @@ export class AgentTeamError extends Error {
 
 export function isAgentTeamError(error: unknown): error is AgentTeamError {
   return error instanceof AgentTeamError
+}
+
+/**
+ * One message for every stale-epoch rejection. A Session belongs to the epoch
+ * it was activated under; after a Leader change it keeps its transcript but no
+ * write authority, so the wording has to tell the model what to do instead of
+ * inviting a retry.
+ */
+export function epochStaleError(teamId: string, epoch: number, expectedEpoch: number): AgentTeamError {
+  return new AgentTeamError(
+    'EPOCH_STALE',
+    `Team epoch changed to ${epoch}; this Session belongs to epoch ${expectedEpoch} and is read-only. `
+      + 'Wait for the Leader to re-dispatch or ask the user to reopen the team.',
+    { teamId, epoch, expectedEpoch },
+  )
 }

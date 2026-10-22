@@ -21,7 +21,11 @@ export async function callAgentTeam<M extends AgentTeamMethod>(
 ): Promise<AgentTeamResult<M>> {
   const [payload, expectedRevision] = args
   const controller = new AbortController()
-  const timeoutMs = method === 'team.reset' || method === 'team.dissolve' ? 60_000 : 10_000
+  // A Leader change archives every Session and activates the successor: it can
+  // take as long as a reset, so it gets the same budget.
+  const timeoutMs = method === 'team.reset' || method === 'team.dissolve' || method === 'team.changeLeader'
+    ? 60_000
+    : 10_000
   const timeout = setTimeout(() => { controller.abort() }, timeoutMs)
   try {
     const response = await fetch(AGENT_TEAM_API_PATH, {

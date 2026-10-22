@@ -1,6 +1,6 @@
 # 工具清单
 
-## 模型工具（23 个）
+## 模型工具（24 个）
 
 | 工具 | 作用 |
 |---|---|
@@ -10,6 +10,7 @@
 | `team_interrupt_agent` | 打断正在运行的成员 |
 | `team_mode_goal_create` | Leader 专用：为一个需要交付物的目标创建 Goal（mode=`direct` / `single` / `orchestrated`） |
 | `team_mode_goal_list` | 按 Goal 汇总任务板：每个 Goal 及其 `task_ids` |
+| `team_mode_goal_update` | Leader 专用：修改 Goal 状态（`active` 恢复被纪元暂停的 Goal，`paused` 暂停，`completed` / `cancelled` 结束） |
 | `team_mode_task_create` | 创建任务，指定 owner / blocked_by / 文件范围 / `goal_id` |
 | `team_mode_task_update` | 更新任务状态、owner、依赖、结果（成员需带当前 `attempt_id`） |
 | `team_mode_task_claim` | 成员认领一个就绪且无 owner 的任务：原子占用并生成新的 `attempt_id` |
@@ -35,7 +36,9 @@
   - `single`（单任务）：一个目标、一个 owner、一个可验收交付物 → 1 个 Goal + 1 个 Task。
   - `orchestrated`（编排）：2+ 并行流、2+ 成员、依赖、评审/验证、长任务 → 1 个 Goal + 依赖任务图。
 - 多目标规则：共享交付物或真实依赖 → 同一 Goal；独立目标 → 分开 Goal。单个 Goal 建议 3–7 个任务，超过 10 个拆子目标。
-- Leader 用 `team_mode_goal_create` 建 Goal、用 `team_mode_goal_list` 查看现有 Goal 及其任务；普通聊天不建 Goal。
+- Leader 用 `team_mode_goal_create` 建 Goal、用 `team_mode_goal_list` 查看现有 Goal 及其任务、用 `team_mode_goal_update` 恢复或关闭 Goal；普通聊天不建 Goal。
+- Goal 状态新增 `paused`：更换 Leader 会开启新团队纪元并把 `active` Goal 置为 `paused`，新 Leader 用 `team_mode_goal_update {status:"active"}` 恢复；`completed` / `cancelled` 保持历史不变。
+- `team.updateGoal` 提供 Leader 权限的 Goal 状态写入（`{teamId, goalId, value}` → `TeamGoal`），与工具走同一服务方法。
 - `team_mode_task_create` 的 `goal_id` 可选，必须指向**同一团队**的 Goal，否则以 `INVALID_REQUEST` 拒绝；缺省时任务不归属任何 Goal，旧任务/旧调用保持有效。
 - Goal 与 `goal_id` 都是可选字段，`schemaVersion` 不变；`team.reset` 会同时清空任务与 Goal，避免遗留孤立 Goal。
 - 本轮不包含 Goal UI、自动调度与质量门禁。
@@ -92,7 +95,8 @@
 | `team.list` / `team.get` | 团队列表 / 详情 |
 | `team.createDraft` / `team.start` / `team.clone` | 创建草稿 / 启动 / 克隆团队 |
 | `team.addMember` / `team.renameMember` / `team.removeMember` | 成员增删改 |
-| `team.changeLeader` | 切换 Leader |
+| `team.changeLeader` | 切换 Leader：开启新团队纪元，归档旧成员 Session、阻塞进行中任务、暂停 active Goal |
+| `team.updateGoal` | 修改 Goal 状态（Leader 权限；`active` 恢复被纪元暂停的 Goal） |
 | `team.member.contextReset` | 清空单成员上下文（新 Session） |
 | `team.member.reconnect` | 重启成员 Agent，保留上下文 |
 | `team.members.reorder` | 成员顺序（Leader 固定首位） |

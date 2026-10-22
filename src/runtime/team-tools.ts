@@ -59,6 +59,8 @@ export interface TeamToolHandlers {
   inbox: (input: InboxInput) => TeamInboxResult
   listTasks: (limit?: number) => TeamTaskView[]
   createGoal: (input: CreateGoalInput) => Promise<TeamGoalView>
+  /** Leader-only Goal status write; `active` resumes a paused Goal. */
+  updateGoal: (input: { goal_id: string; status: string }) => Promise<TeamGoalView>
   listGoals: () => TeamGoalView[]
   proposeMemory: (input: ProposeMemoryInput) => Promise<TeamMemoryWriteResult>
   listMemory: () => TeamMemoryList
@@ -223,6 +225,26 @@ export function registerTeamTools(
         ...(args.acceptance === undefined ? {} : { acceptance: args.acceptance }),
         ...(args.mode === undefined ? {} : { mode: args.mode as NonNullable<CreateGoalInput['mode']> }),
       })
+      return { goal } as never
+    },
+  }))
+
+  register(defineTool({
+    name: 'team_mode_goal_update',
+    description: 'Leader only. Set a Goal status. A Leader change (new team epoch) pauses every active Goal; pass status=active to resume the ones you still need, paused to suspend one, completed or cancelled to close it. The Goal keeps the task ids grouped under it.',
+    parameters: {
+      goal_id: { type: 'string', required: true, description: 'Goal id from team_mode_goal_list.' },
+      status: {
+        type: 'string',
+        required: true,
+        enum: ['active', 'paused', 'completed', 'cancelled'],
+        description: 'New Goal status; active resumes a paused Goal.',
+      },
+    },
+    output: textOutput,
+    execute: async (args, exec) => {
+      handlers.assertIdentity(exec.agent)
+      const goal = await handlers.updateGoal({ goal_id: args.goal_id, status: args.status })
       return { goal } as never
     },
   }))

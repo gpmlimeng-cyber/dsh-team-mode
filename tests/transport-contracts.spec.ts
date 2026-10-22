@@ -5,7 +5,9 @@ import type {
   AssistantSession,
   CreateAssistantInstanceInput,
   MemoryEntry,
+  TeamGoal,
   UpdateAssistantInstanceInput,
+  UpdateTeamGoalInput,
   WriteAssistantMemoryEntryInput,
 } from '../src/domain/types.js'
 import type {
@@ -117,5 +119,15 @@ describe('Agent Team transport contracts', () => {
     }>()
     expectTypeOf<AgentTeamResult<'team.memory.decide'>>().toEqualTypeOf<TeamMemoryWriteView>()
     expectTypeOf<TeamMemoryWriteView['entry']>().toEqualTypeOf<MemoryEntry>()
+  })
+
+  it('maps the Leader Goal status write used to resume a paused Goal', () => {
+    expect(AGENT_TEAM_METHODS).toContain('team.updateGoal')
+    expectTypeOf<AgentTeamPayload<'team.updateGoal'>>().toEqualTypeOf<{
+      teamId: string
+      goalId: string
+      value: UpdateTeamGoalInput
+    }>()
+    expectTypeOf<AgentTeamResult<'team.updateGoal'>>().toEqualTypeOf<TeamGoal>()
   })
 })

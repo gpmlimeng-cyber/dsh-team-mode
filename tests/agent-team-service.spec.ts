@@ -17,6 +17,7 @@ import type {
   Operation,
   TeamActivity,
   TeamAggregate,
+  TeamGoal,
   TeamMessage,
   TeamTask,
 } from '../src/domain/types.js'
@@ -837,11 +838,26 @@ describe('AgentTeamService', () => {
       assistantId: assistant.id,
     }, { expectedRevision: draft.revision })
     const second = Object.values(added.members).find(member => member.id !== draft.leaderSlotId)!
+    const sessionsBefore = Object.fromEntries(
+      Object.entries(added.members).map(([slotId, member]) => [slotId, member.sessionId]),
+    )
     const promoted = await service.changeLeader(added.id, second.id, { expectedRevision: added.revision })
+    // A draft never activated a Session, so the epoch bumps without archiving
+    // anything and without rotating the pre-allocated session ids.
+    expect(promoted.epoch).toBe(2)
+    expect(promoted.revision).toBe(added.revision + 1)
+    expect(promoted.leaderSlotId).toBe(second.id)
+    expect(promoted.members[second.id]?.role).toBe('leader')
+    expect(promoted.members[draft.leaderSlotId]?.role).toBe('member')
+    expect(promoted.retiredSessions).toEqual({})
+    for (const member of Object.values(promoted.members)) {
+      expect(member.sessionId).toBe(sessionsBefore[member.id])
+    }
     const original = promoted.members[draft.leaderSlotId]!
     const removed = await service.removeMember(promoted.id, original.id, { expectedRevision: promoted.revision })
 
     expect(Object.values(removed.members).map(member => member.displayName)).toEqual(['Codex Lead'])
+    expect(removed.epoch).toBe(2)
     expect(service.getAssistant(assistant.id).revision).toBe(1)
   })
 
@@ -1428,6 +1444,266 @@ describe('AgentTeamService', () => {
     expect(ensureMembersOnline).toHaveBeenCalledOnce()
   })
 
+  it('archives every old Session and opens a new epoch on an active Leader change', async () => {
+    const { ctx, service, store, workspace } = createHarness()
+    ctx.provide('sessionPersistence', { list: async () => [] } as never)
+    const assistant = await service.createAssistant(assistantInput())
+    const draft = await service.createTeamDraft({
+      name: 'Epoch Team',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader' },
+        { assistantId: assistant.id, role: 'member' },
+      ],
+    })
+    const leader = draft.members[draft.leaderSlotId]!
+    const successor = Object.values(draft.members).find(member => member.id !== leader.id)!
+    const now = '2026-01-01T00:00:00.000Z'
+    const task = (id: string, overrides: Partial<TeamTask> = {}): TeamTask => ({
+      id,
+      title: id,
+      description: '',
+      status: 'pending',
+      dependencyIds: [],
+      fileScopes: [],
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+      ...overrides,
+    })
+    const goal = (id: string, status: TeamGoal['status']): TeamGoal => ({
+      id,
+      teamId: draft.id,
+      title: id,
+      objective: id,
+      acceptance: '',
+      mode: 'single',
+      status,
+      createdAt: now,
+      updatedAt: now,
+    })
+    const active = await store.updateTeam(draft.id, team => ({
+      ...team,
+      state: 'active',
+      tasks: {
+        assigned: task('assigned', {
+          status: 'assigned',
+          ownerSlotId: leader.id,
+          attemptId: 'attempt-1',
+          dependencyIds: ['pending'],
+          goalId: 'goal-active',
+        }),
+        running: task('running', { status: 'running', ownerSlotId: successor.id, attemptId: 'attempt-2' }),
+        blocked: task('blocked', { status: 'blocked', ownerSlotId: leader.id, attemptId: 'attempt-3' }),
+        pending: task('pending'),
+        completed: task('completed', { status: 'completed' }),
+        failed: task('failed', { status: 'failed' }),
+        cancelled: task('cancelled', { status: 'cancelled' }),
+      },
+      goals: {
+        'goal-active': goal('goal-active', 'active'),
+        'goal-completed': goal('goal-completed', 'completed'),
+      },
+    }))
+    await service.putRuntimeMessage({
+      schemaVersion: 1,
+      id: 'queued-mail',
+      teamId: active.id,
+      sender: { kind: 'user', id: 'local-user' },
+      recipient: { kind: 'leader', slotId: leader.id },
+      type: 'instruction',
+      content: 'Old-epoch instruction',
+      attachments: [],
+      readBy: [],
+      deliveryState: 'queued',
+      idempotencyKey: 'queued-mail',
+      createdAt: now,
+    })
+    const runtime = new TeamRuntime(ctx, config, service)
+    service.attachRuntime(runtime)
+    const internals = runtimeInternals(runtime)
+    const leaderAgent = fakeAgent()
+    const memberAgent = fakeAgent()
+    const leaderHandle = { agent: leaderAgent, dispose: vi.fn(async () => {}) }
+    const memberHandle = { agent: memberAgent, dispose: vi.fn(async () => {}) }
+    internals.owned.set(leader.sessionId, {
+      teamId: active.id,
+      slotId: leader.id,
+      sessionId: leader.sessionId,
+      epoch: 1,
+      handle: leaderHandle,
+      modelSelection: { current: undefined, assembled: undefined },
+    })
+    internals.owned.set(successor.sessionId, {
+      teamId: active.id,
+      slotId: successor.id,
+      sessionId: successor.sessionId,
+      epoch: 1,
+      handle: memberHandle,
+      modelSelection: { current: undefined, assembled: undefined },
+    })
+    const ensureMemberOnline = vi.fn(async (
+      _team: TeamAggregate,
+      _member: TeamAggregate['members'][string],
+      _persisted: boolean,
+    ) => {})
+    internals.ensureMemberOnline = ensureMemberOnline
+    internals.warmupRemaining = vi.fn(async () => {})
+    internals.messages.recover = vi.fn(async () => {})
+    const detachSession = vi.spyOn(workspace, 'detachSession')
+
+    const changed = await service.changeLeader(active.id, successor.id, {
+      expectedRevision: active.revision,
+    })
+
+    // Archive: the old Leader and every member are cancelled, flushed, disposed,
+    // and detached before the epoch write; nothing is reparented.
+    expect(leaderAgent.cancel).toHaveBeenCalledWith({ kind: 'user' }, { keepInbox: false })
+    expect(memberAgent.cancel).toHaveBeenCalledWith({ kind: 'user' }, { keepInbox: false })
+    expect(leaderAgent.whenIdle).toHaveBeenCalledOnce()
+    expect(memberAgent.whenIdle).toHaveBeenCalledOnce()
+    expect(leaderHandle.dispose).toHaveBeenCalledOnce()
+    expect(memberHandle.dispose).toHaveBeenCalledOnce()
+    expect(internals.owned.size).toBe(0)
+    expect(detachSession).toHaveBeenCalledTimes(2)
+
+    const stored = service.getTeam(active.id)
+    expect(stored.epoch).toBe(2)
+    expect(stored.leaderSlotId).toBe(successor.id)
+    expect(stored.state).toBe('active')
+    expect(stored.members[successor.id]?.role).toBe('leader')
+    expect(stored.members[leader.id]?.role).toBe('member')
+    expect(stored.memberOrder?.[0]).toBe(successor.id)
+    expect(stored.members[leader.id]?.sessionId).not.toBe(leader.sessionId)
+    expect(stored.members[successor.id]?.sessionId).not.toBe(successor.sessionId)
+    expect(ensureMemberOnline).toHaveBeenCalledOnce()
+    expect(ensureMemberOnline.mock.calls[0]?.[1]).toMatchObject({ id: successor.id })
+
+    // Every old Session is a tombstone, and no tombstone is a current member.
+    expect(stored.retiredSessions[leader.sessionId]).toMatchObject({
+      formerSlotId: leader.id,
+      displayName: leader.displayName,
+    })
+    expect(stored.retiredSessions[successor.sessionId]).toMatchObject({ formerSlotId: successor.id })
+    for (const member of Object.values(stored.members)) {
+      expect(stored.retiredSessions[member.sessionId]).toBeUndefined()
+    }
+
+    // Open work is paused explicitly: blocked, unowned, unfenced.
+    expect(stored.tasks.assigned).toMatchObject({ status: 'blocked', revision: 2 })
+    expect(stored.tasks.assigned).not.toHaveProperty('ownerSlotId')
+    expect(stored.tasks.assigned).not.toHaveProperty('attemptId')
+    expect(stored.tasks.assigned?.dependencyIds).toEqual(['pending'])
+    expect(stored.tasks.running).toMatchObject({ status: 'blocked', revision: 2 })
+    expect(stored.tasks.blocked).toMatchObject({ status: 'blocked', revision: 2 })
+    expect(stored.tasks.pending).toMatchObject({ status: 'pending', revision: 1 })
+    expect(stored.tasks.completed).toMatchObject({ status: 'completed' })
+    expect(stored.tasks.failed).toMatchObject({ status: 'failed' })
+    expect(stored.tasks.cancelled).toMatchObject({ status: 'cancelled' })
+    expect(Object.keys(stored.tasks)).toHaveLength(7)
+
+    // Active Goals pause; closed ones stay history and keep their task groups.
+    expect(stored.goals?.['goal-active']?.status).toBe('paused')
+    expect(stored.goals?.['goal-completed']?.status).toBe('completed')
+    expect(stored.tasks.assigned?.goalId).toBe('goal-active')
+
+    // Queued mail is retired; the outbox carries exactly the handoff notice.
+    expect(service.listMessages(active.id).items.find(message => message.id === 'queued-mail')?.deliveryState)
+      .toBe('failed')
+    const notices = Object.values(stored.outbox)
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toMatchObject({
+      sender: { kind: 'system', id: 'dsh-team-mode' },
+      recipient: { kind: 'leader', slotId: successor.id },
+      type: 'system',
+    })
+    expect(notices[0]?.content).toContain('epoch 2')
+    expect(notices[0]?.content).toContain('3 task(s) are blocked')
+    expect(notices[0]?.content).toContain('1 Goal(s) paused')
+    expect(notices[0]?.content).not.toContain('session-')
+    expect(stored.revision).toBe(changed.revision)
+    expect(store.listActivities(active.id).some(activity => activity.kind === 'team.epoch_changed')).toBe(true)
+  })
+
+  it('keeps the epoch bump and rotated Sessions when the new Leader cannot start', async () => {
+    const { ctx, service, store } = createHarness()
+    ctx.provide('sessionPersistence', { list: async () => [] } as never)
+    const assistant = await service.createAssistant(assistantInput())
+    const draft = await service.createTeamDraft({
+      name: 'Failed Epoch Team',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader' },
+        { assistantId: assistant.id, role: 'member' },
+      ],
+    })
+    const leader = draft.members[draft.leaderSlotId]!
+    const successor = Object.values(draft.members).find(member => member.id !== leader.id)!
+    const active = await store.updateTeam(draft.id, team => ({ ...team, state: 'active' }))
+    const runtime = new TeamRuntime(ctx, config, service)
+    service.attachRuntime(runtime)
+    const internals = runtimeInternals(runtime)
+    const oldSessions = Object.values(active.members).map(member => member.sessionId)
+    internals.owned.set(leader.sessionId, {
+      teamId: active.id,
+      slotId: leader.id,
+      sessionId: leader.sessionId,
+      epoch: 1,
+      handle: { agent: fakeAgent(), dispose: vi.fn(async () => {}) },
+      modelSelection: { current: undefined, assembled: undefined },
+    })
+    internals.ensureMemberOnline = vi.fn(async () => { throw new Error('activation failed') })
+
+    await expect(service.changeLeader(active.id, successor.id, { expectedRevision: active.revision }))
+      .rejects.toThrow('activation failed')
+
+    const stored = service.getTeam(active.id)
+    // Committed values survive: no rollback after the epoch write.
+    expect(stored.epoch).toBe(2)
+    expect(stored.state).toBe('error')
+    expect(stored.leaderSlotId).toBe(successor.id)
+    expect(oldSessions.every(sessionId => stored.retiredSessions[sessionId] !== undefined)).toBe(true)
+    expect(Object.values(stored.members).every(member => !oldSessions.includes(member.sessionId))).toBe(true)
+    expect(internals.owned.size).toBe(0)
+  })
+
+  it('rejects a write authored under a previous epoch inside the serialized update', async () => {
+    const { service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const draft = await service.createTeamDraft({
+      name: 'Fenced Team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    await seedTask(store, draft.id, 'task-fenced')
+    await store.updateTeam(draft.id, team => ({ ...team, epoch: 2 }))
+    const before = JSON.parse(JSON.stringify(store.getTeam(draft.id)))
+
+    await expect(service.updateRuntimeTeam(
+      draft.id,
+      current => ({
+        ...current,
+        tasks: {
+          ...current.tasks,
+          'task-fenced': { ...current.tasks['task-fenced']!, status: 'completed' },
+        },
+      }),
+      'team.task_updated',
+      'stale epoch write',
+      { expectedEpoch: 1 },
+    )).rejects.toMatchObject({ code: 'EPOCH_STALE', details: { teamId: draft.id, epoch: 2, expectedEpoch: 1 } })
+    expect(store.getTeam(draft.id)).toEqual(before)
+
+    const accepted = await service.updateRuntimeTeam(
+      draft.id,
+      current => current,
+      'team.current_epoch_write',
+      'current epoch write',
+      { expectedEpoch: 2 },
+    )
+    expect(accepted.revision).toBe(before.revision + 1)
+  })
+
   it('writes structured assistant memory entries with a document revision fence', async () => {
     const { service, store } = createHarness()
     const instance = await service.createAssistantInstance({
@@ -1989,6 +2265,13 @@ function createHarness(workspacePath = '/tmp/dsh-team-mode-workspace'): {
   ctx: Context
   service: AgentTeamService
   store: MemoryStore
+  workspace: {
+    id: string
+    path: string
+    status: () => Promise<'ok'>
+    attachSession: () => Promise<void>
+    detachSession: () => Promise<void>
+  }
   permissionSet: ReturnType<typeof vi.fn>
 } {
   const ctx = new Context()
@@ -2069,7 +2352,7 @@ function createHarness(workspacePath = '/tmp/dsh-team-mode-workspace'): {
     list: () => [workspace],
   } as never)
   const store = new MemoryStore()
-  return { ctx, service: new AgentTeamService(ctx, config, store), store, permissionSet }
+  return { ctx, service: new AgentTeamService(ctx, config, store), store, workspace, permissionSet }
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
@@ -2202,6 +2485,7 @@ interface RuntimeInternals {
   ensureMembersOnline: (team: TeamAggregate) => Promise<void>
   ensureMemberOnline: (team: TeamAggregate, member: TeamAggregate['members'][string], persisted: boolean) => Promise<void>
   ensureWorkspaceReady: (team: TeamAggregate) => Promise<void>
+  warmupRemaining: (teamId: string) => Promise<void>
   materializedSessions: () => Promise<Set<string>>
   clearMemberContext(teamId: string, slotId: string): Promise<{ sessionId: string; status: string }>
   reconnectMember(teamId: string, slotId: string): Promise<TeamAggregate>

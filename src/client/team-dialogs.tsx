@@ -93,6 +93,7 @@ export function TeamModeDialogs({
               pickWorkspace={pickWorkspace}
               onChanged={load}
               onCloned={async teamId => { await load(); await openTeam(teamId) }}
+              onOpenSession={sessionId => { closeTeamDialog(); openSession(sessionId) }}
               compact
             />
           : <div className={css.teamManageActivity}>

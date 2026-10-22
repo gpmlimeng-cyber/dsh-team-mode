@@ -79,6 +79,7 @@ export const GOAL_MODE_LABELS: Readonly<Record<string, string>> = {
 
 export const GOAL_STATUS_LABELS: Readonly<Record<string, string>> = {
   active: '进行中',
+  paused: '已暂停',
   completed: '已完成',
   cancelled: '已取消',
 }
@@ -189,8 +190,9 @@ export interface TaskDependencyView {
 
 const GOAL_STATUS_RANK: Readonly<Record<TeamGoal['status'], number>> = {
   active: 0,
-  completed: 1,
-  cancelled: 2,
+  paused: 1,
+  completed: 2,
+  cancelled: 3,
 }
 
 /** A legacy team has no `goals` record at all and must render unchanged. */
