@@ -1,0 +1,62 @@
+# 执行模型策略
+
+> 2026-10-23 · 预算受限时的 AgentTeams 模型路由
+
+## 默认策略
+
+```text
+Captain（当前会话）：保持当前模型
+执行成员（auditor / implementer / verifier）：
+  provider: xiaomi-token-plan-cn
+  model:    mimo-v2.6-flash
+
+Reviewer：
+  provider: deepseek-account
+  model:    deepseek-flash
+  目的：保留独立评审质量
+```
+
+如果 mimo flash 路由不可用：
+
+```text
+回退 deepseek-account / deepseek-flash
+并在团队报告中说明回退原因
+```
+
+## 为什么
+
+- 执行类任务量大、上下文长，优先低成本模型
+- Reviewer 保持独立质量和判断
+- Captain 负责规划与协调，不额外切换
+- 不让预算限制降低最终验收标准
+
+## 配置位置
+
+DSH profile 已配置：
+
+```yaml
+llm-pi-ai:
+  providers:
+    xiaomi-token-plan-cn:
+      models:
+        - id: mimo-v2.6-flash
+          name: MiMo-V2.6-Flash
+```
+
+AgentTeams 创建成员时使用：
+
+```text
+provider: xiaomi-token-plan-cn
+model: mimo-v2.6-flash
+```
+
+## 适用时间
+
+从下一个团队开始生效。  
+已经在运行的团队不中途换模型，避免截断 in-flight 任务。
+
+## 例外
+
+- 高风险架构/安全评审可临时使用更强模型，但需说明原因
+- 模型不可用或限流时按回退策略处理
+- 实际外部部署仍需用户确认
