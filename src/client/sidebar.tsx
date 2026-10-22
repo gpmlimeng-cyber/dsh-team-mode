@@ -485,76 +485,65 @@ export function SidebarPortal({
   }, [])
 
 
-  // The native Workspace header is not collapsible. Add the same disclosure
-  // affordance the 群聊/单聊 sections use: click the header (not its search or
-  // settings controls) to hide the workspace list area as one block.
+  // The native Workspace header is not collapsible. Reuse the exact 群聊
+  // disclosure control — same button, title and chevron classes — so hover,
+  // size and keyboard behavior stay identical.
   useEffect(() => {
     const STORAGE_KEY = 'dsh-team-mode:workspace-collapsed'
     let collapsed = false
     try { collapsed = window.localStorage.getItem(STORAGE_KEY) === 'true' } catch { /* storage may be unavailable */ }
-    let section: HTMLElement | undefined
+    let label: HTMLElement | undefined
+    let toggle: HTMLButtonElement | undefined
+    let chevron: SVGElement | null = null
     let listArea: HTMLElement | undefined
-    let chevron: HTMLElement | undefined
     let originalDisplay = ''
     let scheduled = false
 
     const apply = (): void => {
-      if (section === undefined) return
-      section.dataset.dshWorkspaceCollapsed = collapsed ? 'true' : 'false'
-      section.setAttribute('aria-expanded', String(!collapsed))
-      section.title = collapsed ? '展开工作区' : '收起工作区'
+      if (toggle === undefined) return
+      toggle.setAttribute('aria-expanded', String(!collapsed))
+      toggle.title = collapsed ? '展开工作区' : '收起工作区'
+      chevron?.classList.toggle(css.sidebarTeamChevronOpen ?? '', !collapsed)
       if (listArea !== undefined) listArea.style.display = collapsed ? 'none' : originalDisplay
-      chevron?.setAttribute('aria-hidden', 'true')
     }
 
-    const toggle = (event: MouseEvent): void => {
-      const target = event.target
-      if (target instanceof Element && target.closest('button, input, textarea, select, [role="button"]') !== null) return
+    const onToggle = (): void => {
       collapsed = !collapsed
       try { window.localStorage.setItem(STORAGE_KEY, String(collapsed)) } catch { /* ignore */ }
       apply()
     }
 
     const ensure = (): void => {
-      const label = Array.from(document.querySelectorAll<HTMLElement>('span'))
+      const nextLabel = Array.from(document.querySelectorAll<HTMLElement>('span'))
         .find(element => (element.textContent ?? '').trim() === '工作区'
+          && element.closest('button') === null
           && element.closest('[class*="_sectionHeader"]') !== null)
-      const nextSection = label?.closest<HTMLElement>('[class*="_sectionHeader"]')
-      if (nextSection === null || nextSection === undefined) return
-      const nextRoot = nextSection.parentElement
-      const nextList = nextRoot?.querySelector<HTMLElement>('[class*="_listArea"]')
+      if (nextLabel === undefined) return
+      label = nextLabel
+      const section = label.closest<HTMLElement>('[class*="_sectionHeader"]')
+      const nextList = section?.parentElement?.querySelector<HTMLElement>('[class*="_listArea"]')
       if (nextList === null || nextList === undefined) return
-      if (section !== nextSection) {
-        if (section !== undefined) {
-          section.removeEventListener('click', toggle)
-          section.classList.remove(css.workspaceHeaderClickable ?? '')
-          section.removeAttribute('data-dsh-workspace-collapsed')
-          section.removeAttribute('aria-expanded')
-        }
-        section = nextSection
-        section.classList.add(css.workspaceHeaderClickable ?? '')
-        section.addEventListener('click', toggle)
-        chevron = document.createElement('span')
-        chevron.className = css.workspaceChevron ?? ''
-        chevron.dataset.dshWorkspaceChevron = 'true'
-        chevron.setAttribute('aria-hidden', 'true')
-        chevron.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" stroke-width="1" aria-hidden="true"><path d="M6 12L9.29289 8.70711C9.68342 8.31658 9.68342 7.68342 9.29289 7.29289L6 4" stroke="currentColor"></path></svg>'
-        if (label !== undefined) label.append(chevron)
-      }
-      if (section === nextSection && label !== undefined && (chevron === undefined || !chevron.isConnected)) {
-        const replacement = document.createElement('span')
-        replacement.className = css.workspaceChevron ?? ''
-        replacement.dataset.dshWorkspaceChevron = 'true'
-        replacement.setAttribute('aria-hidden', 'true')
-        replacement.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" stroke-width="1" aria-hidden="true"><path d="M6 12L9.29289 8.70711C9.68342 8.31658 9.68342 7.68342 9.29289 7.29289L6 4" stroke="currentColor"></path></svg>'
-        label.append(replacement)
-        chevron = replacement
-      }
       if (listArea !== nextList) {
         if (listArea !== undefined) listArea.style.display = originalDisplay
         listArea = nextList
         originalDisplay = listArea.style.display
       }
+      if (toggle === undefined || !toggle.isConnected) {
+        const nextToggle = document.createElement('button')
+        nextToggle.type = 'button'
+        nextToggle.dataset.dshWorkspaceToggle = 'true'
+        nextToggle.className = css.sidebarTeamToggle ?? ''
+        nextToggle.style.flex = '1 1 auto'
+        nextToggle.style.minWidth = 'max-content'
+        nextToggle.style.maxWidth = 'none'
+        nextToggle.innerHTML = `<span class="${css.sidebarTeamTitle ?? ''}" style="position: relative; flex: none; overflow: visible;">工作区<svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" stroke-width="1" aria-hidden="true" class="${css.sidebarTeamChevron ?? ''}"><path d="M6 12L9.29289 8.70711C9.68342 8.31658 9.68342 7.68342 9.29289 7.29289L6 4" stroke="currentColor"></path></svg></span>`
+        nextToggle.addEventListener('click', onToggle)
+        label.before(nextToggle)
+        toggle = nextToggle
+      }
+      chevron = toggle.querySelector('svg')
+      label.style.display = 'none'
+      if (listArea.id !== '') toggle.setAttribute('aria-controls', listArea.id)
       apply()
     }
 
@@ -569,11 +558,9 @@ export function SidebarPortal({
     observer.observe(document.body, { childList: true, subtree: true })
     return () => {
       observer.disconnect()
-      section?.removeEventListener('click', toggle)
-      section?.classList.remove(css.workspaceHeaderClickable ?? '')
-      section?.removeAttribute('data-dsh-workspace-collapsed')
-      section?.removeAttribute('aria-expanded')
-      chevron?.remove()
+      toggle?.removeEventListener('click', onToggle)
+      toggle?.remove()
+      if (label !== undefined) label.style.display = ''
       if (listArea !== undefined) listArea.style.display = originalDisplay
     }
   }, [])
