@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  avatarPickerUploadError,
   avatarPickerValueError,
   randomAvatarCandidates,
   type AvatarCandidate,
@@ -25,7 +24,7 @@ export function AvatarGrid({
   disabled?: boolean
   onChange: (value: string) => void
 }): JSX.Element {
-  const [candidates, setCandidates] = useState<AvatarCandidate[]>(() => randomAvatarCandidates())
+  const [candidates, setCandidates] = useState<AvatarCandidate[]>(() => randomAvatarCandidates(23))
   const [selectedId, setSelectedId] = useState<string>()
   const [picking, setPicking] = useState(false)
   const [error, setError] = useState<string>()
@@ -45,22 +44,6 @@ export function AvatarGrid({
     }
     setError(undefined)
     onChange(next)
-  }
-
-  function readAvatar(file: File): void {
-    const fileError = avatarPickerUploadError(file)
-    if (fileError !== undefined) {
-      setError(fileError)
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result !== 'string') return
-      setSelectedId(undefined)
-      applyValue(reader.result)
-    }
-    reader.onerror = () => { setError('读取头像失败，请重试') }
-    reader.readAsDataURL(file)
   }
 
   async function chooseCandidate(candidate: AvatarCandidate): Promise<void> {
@@ -90,53 +73,12 @@ export function AvatarGrid({
     setPicking(false)
     setSelectedId(undefined)
     setError(undefined)
-    setCandidates(randomAvatarCandidates())
+    setCandidates(randomAvatarCandidates(23))
   }
 
-  function clear(): void {
-    requestRef.current += 1
-    setPicking(false)
-    setSelectedId(undefined)
-    setError(undefined)
-    onChange('')
-  }
 
   return (
     <div className={css.avatarGrid}>
-      <div className={css.avatarGridToolbar}>
-        <label className={css.avatarUpload}>
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className={css.avatarFileInput}
-            disabled={disabled || picking}
-            onChange={event => {
-              const file = event.target.files?.[0]
-              event.target.value = ''
-              if (file !== undefined) readAvatar(file)
-            }}
-          />
-          本地上传
-        </label>
-        <button
-          type="button"
-          className={css.avatarGenerate}
-          disabled={disabled || picking}
-          onClick={randomize}
-        >
-          {picking ? '生成中…' : '随机生成'}
-        </button>
-        {value !== '' && (
-          <button
-            type="button"
-            className={css.assistantRemoveAvatar}
-            disabled={disabled}
-            onClick={clear}
-          >
-            移除
-          </button>
-        )}
-      </div>
       {error !== undefined && <span className={css.avatarPickerError} role="alert">{error}</span>}
       <div className={css.avatarGridSheet}>
         <div className={css.avatarStyleGrid} role="group" aria-label="随机生成的 DiceBear 头像">
@@ -154,6 +96,16 @@ export function AvatarGrid({
               <img src={candidate.url} alt="" loading="lazy" />
             </button>
           ))}
+          <button
+            type="button"
+            className={`${css.avatarStyleThumb} ${css.avatarRandomThumb}`}
+            disabled={disabled || picking}
+            aria-label="随机生成头像"
+            title="随机生成头像"
+            onClick={randomize}
+          >
+            <span aria-hidden="true">{picking ? '生成中' : '随机'}</span>
+          </button>
         </div>
       </div>
     </div>

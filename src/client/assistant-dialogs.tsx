@@ -9,6 +9,7 @@ import {
 import { callAgentTeam } from './api.js'
 import { assistantModelKey, assistantModelOptionLabel } from './assistant-form.js'
 import { AvatarGrid } from './avatar-grid.js'
+import { avatarPickerUploadError, avatarPickerValueError } from './avatar-picker.js'
 import { MemberAvatar } from './member-avatar.js'
 import {
   defaultReasoningLabel,
@@ -202,6 +203,27 @@ export function AssistantCreateDialog({
         : ` · ${reasoningLabelFor(group.provider.id, modelEntry.id)}`}`,
     })),
   ])
+  function uploadAvatar(file: File): void {
+    const fileError = avatarPickerUploadError(file)
+    if (fileError !== undefined) {
+      setError(fileError)
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') return
+      const valueError = avatarPickerValueError(reader.result)
+      if (valueError !== undefined) {
+        setError(valueError)
+        return
+      }
+      setAvatar(reader.result)
+      setError(undefined)
+    }
+    reader.onerror = () => { setError('读取头像失败，请重试') }
+    reader.readAsDataURL(file)
+  }
+
   const close = (): void => {
     if (saving) return
     onClose()
@@ -313,13 +335,25 @@ export function AssistantCreateDialog({
           : (
             <>
               <div className={css.assistantCreateHero}>
-                <span className={css.assistantCreateAvatarFrame}>
+                <label className={css.assistantCreateAvatarFrame} aria-label="上传本地头像">
                   <MemberAvatar
                     name={name.trim() || '助手'}
                     avatar={avatar !== '' ? avatar : undefined}
                     size={96}
                   />
-                </span>
+                  <span className={css.assistantCreateAvatarUpload} aria-hidden="true">本地上传</span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className={css.avatarFileInput}
+                    disabled={busy}
+                    onChange={event => {
+                      const file = event.target.files?.[0]
+                      event.target.value = ''
+                      if (file !== undefined) uploadAvatar(file)
+                    }}
+                  />
+                </label>
                 <span
                   className={`${css.assistantCreateAvatarName}${name.trim() === ''
                     ? ` ${css.assistantCreateAvatarPlaceholder}`

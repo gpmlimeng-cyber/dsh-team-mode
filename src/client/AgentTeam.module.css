@@ -3834,7 +3834,27 @@ textarea.input {
 
 .assistantCreateAvatarFrame {
   display: inline-grid;
+  position: relative;
   place-items: center;
+  cursor: pointer;
+}
+
+.assistantCreateAvatarUpload {
+  display: grid;
+  position: absolute;
+  inset: 0;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 82%, transparent);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  opacity: 0;
+  transition: opacity 120ms var(--ds-ease-in-out);
+}
+
+.assistantCreateAvatarFrame:hover .assistantCreateAvatarUpload,
+.assistantCreateAvatarFrame:focus-within .assistantCreateAvatarUpload {
+  opacity: 1;
 }
 
 .modelTrigger {
@@ -6713,6 +6733,15 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.avatarRandomThumb {
+  border-style: dashed;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 1.2;
+  text-align: center;
 }
 
 .avatarStyleThumb:hover:not(:disabled) {
