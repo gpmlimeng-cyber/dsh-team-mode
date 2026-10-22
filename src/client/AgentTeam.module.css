@@ -7268,27 +7268,35 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   cursor: pointer;
 }
 
+.workspaceHeaderClickable [class*="_sectionLabel"] {
+  position: relative;
+}
+
 .workspaceChevron {
   display: inline-flex;
+  position: absolute;
+  inset-inline-start: calc(100% + 2px);
+  top: 50%;
   align-items: center;
   justify-content: center;
   width: 12px;
   height: 12px;
-  flex: none;
-  margin-right: 2px;
+  pointer-events: none;
   color: var(--dsw-alias-label-tertiary);
-  transition: transform 120ms var(--ds-ease-in-out);
+  opacity: 0;
+  transform: translateY(-50%) rotate(0deg);
+  transition: opacity 120ms var(--ds-ease-in-out), transform 120ms var(--ds-ease-in-out);
 }
 
-.workspaceChevron::before {
-  content: '';
-  width: 5px;
-  height: 5px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-  transform: rotate(45deg) translate(-1px, -1px);
+.workspaceHeaderClickable:hover .workspaceChevron,
+.workspaceHeaderClickable:focus-within .workspaceChevron {
+  opacity: 1;
 }
 
 [data-dsh-workspace-collapsed='true'] .workspaceChevron {
-  transform: rotate(-90deg);
+  transform: translateY(-50%) rotate(0deg);
+}
+
+[data-dsh-workspace-collapsed='false'] .workspaceChevron {
+  transform: translateY(-50%) rotate(90deg);
 }

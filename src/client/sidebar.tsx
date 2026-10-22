@@ -537,8 +537,18 @@ export function SidebarPortal({
         chevron = document.createElement('span')
         chevron.className = css.workspaceChevron ?? ''
         chevron.dataset.dshWorkspaceChevron = 'true'
-        const title = label
-        if (title !== undefined) title.before(chevron)
+        chevron.setAttribute('aria-hidden', 'true')
+        chevron.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" stroke-width="1" aria-hidden="true"><path d="M6 12L9.29289 8.70711C9.68342 8.31658 9.68342 7.68342 9.29289 7.29289L6 4" stroke="currentColor"></path></svg>'
+        if (label !== undefined) label.append(chevron)
+      }
+      if (section === nextSection && label !== undefined && (chevron === undefined || !chevron.isConnected)) {
+        const replacement = document.createElement('span')
+        replacement.className = css.workspaceChevron ?? ''
+        replacement.dataset.dshWorkspaceChevron = 'true'
+        replacement.setAttribute('aria-hidden', 'true')
+        replacement.innerHTML = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" stroke-width="1" aria-hidden="true"><path d="M6 12L9.29289 8.70711C9.68342 8.31658 9.68342 7.68342 9.29289 7.29289L6 4" stroke="currentColor"></path></svg>'
+        label.append(replacement)
+        chevron = replacement
       }
       if (listArea !== nextList) {
         if (listArea !== undefined) listArea.style.display = originalDisplay
