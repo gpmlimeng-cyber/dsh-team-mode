@@ -9,6 +9,7 @@ import {
   avatarPickerValueError,
   dicebearAvatarUrl,
   pickRandomAvatarCandidate,
+  randomAvatarCandidates,
 } from '../src/client/avatar-picker.js'
 
 describe('assistantAvatarCandidates', () => {
@@ -50,6 +51,30 @@ describe('assistantAvatarCandidates', () => {
     expect(assistantAvatarCandidates(0)).toEqual([])
     expect(assistantAvatarCandidates(-4)).toEqual([])
     expect(assistantAvatarCandidates(Number.NaN)).toHaveLength(AVATAR_CANDIDATE_COUNT)
+  })
+})
+
+describe('randomAvatarCandidates', () => {
+  it('builds 24 candidates from the preset styles on every call', () => {
+    let roll = 0
+    const random = () => {
+      roll = (roll + 0.137) % 1
+      return roll
+    }
+    const first = randomAvatarCandidates(AVATAR_CANDIDATE_COUNT, random)
+    const second = randomAvatarCandidates(AVATAR_CANDIDATE_COUNT, random)
+    expect(first).toHaveLength(24)
+    expect(second).toHaveLength(24)
+    expect(new Set(first.map(candidate => candidate.style))).toEqual(new Set(AVATAR_DICEBEAR_STYLES))
+    expect(new Set(first.map(candidate => candidate.url)).size).toBe(24)
+    expect(new Set(second.map(candidate => candidate.url)).size).toBe(24)
+    expect(first.map(candidate => candidate.seed)).not.toEqual(second.map(candidate => candidate.seed))
+  })
+
+  it('keeps the injected random source deterministic', () => {
+    const first = randomAvatarCandidates(6, () => 0.42)
+    const second = randomAvatarCandidates(6, () => 0.42)
+    expect(first).toEqual(second)
   })
 })
 

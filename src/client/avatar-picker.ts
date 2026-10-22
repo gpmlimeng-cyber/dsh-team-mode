@@ -61,6 +61,31 @@ export function assistantAvatarCandidates(count = AVATAR_CANDIDATE_COUNT): Avata
 /** The exact flat list rendered by the embedded AvatarGrid and the editor picker. */
 export const AVATAR_CANDIDATES: readonly AvatarCandidate[] = assistantAvatarCandidates()
 
+/**
+ * Build a fresh batch from the preset styles. The seeds are random, so each
+ * call produces new DiceBear API URLs instead of reusing one fixed sheet.
+ * `random` is injectable for deterministic tests.
+ */
+export function randomAvatarCandidates(
+  count = AVATAR_CANDIDATE_COUNT,
+  random: () => number = Math.random,
+): AvatarCandidate[] {
+  const total = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : AVATAR_CANDIDATE_COUNT
+  return Array.from({ length: total }, (_, index) => {
+    const style = AVATAR_DICEBEAR_STYLES[index % AVATAR_DICEBEAR_STYLES.length]!
+    const roll = random()
+    const token = Number.isFinite(roll) ? Math.floor(Math.abs(roll) * 0x7fffffff).toString(36) : index.toString(36)
+    const seed = `${AVATAR_SEED_PREFIX}-${token}-${index}`
+    return {
+      id: `${style}-${seed}`,
+      style,
+      seed,
+      url: dicebearAvatarUrl(style, seed),
+      label: `随机头像 ${index + 1}`,
+    }
+  })
+}
+
 /** Pick one candidate with an injectable random source for deterministic tests. */
 export function pickRandomAvatarCandidate(
   candidates: readonly AvatarCandidate[] = AVATAR_CANDIDATES,

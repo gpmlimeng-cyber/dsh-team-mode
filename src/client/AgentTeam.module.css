@@ -6631,8 +6631,8 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   gap: 8px;
 }
 
-/* Embedded create-form grid: six wider columns so 24 faces form a compact,
-   scrollable block instead of a full-height page. */
+/* Embedded create-form grid: six wider columns; exactly 24 faces (6×4)
+   are visible with no inner scroll. */
 .avatarGrid {
   display: flex;
   flex-direction: column;
@@ -6658,10 +6658,8 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   margin-left: 2px;
 }
 
-.avatarGridScroll {
-  max-height: 152px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
+.avatarGridSheet {
+  overflow: visible;
   padding: 2px;
   margin: -2px;
 }

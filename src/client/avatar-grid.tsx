@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  AVATAR_CANDIDATES,
   avatarPickerUploadError,
   avatarPickerValueError,
-  pickRandomAvatarCandidate,
+  randomAvatarCandidates,
   type AvatarCandidate,
 } from './avatar-picker.js'
 import css from './AgentTeam.module.css'
@@ -26,6 +25,7 @@ export function AvatarGrid({
   disabled?: boolean
   onChange: (value: string) => void
 }): JSX.Element {
+  const [candidates, setCandidates] = useState<AvatarCandidate[]>(() => randomAvatarCandidates())
   const [selectedId, setSelectedId] = useState<string>()
   const [picking, setPicking] = useState(false)
   const [error, setError] = useState<string>()
@@ -86,8 +86,11 @@ export function AvatarGrid({
   }
 
   function randomize(): void {
-    const candidate = pickRandomAvatarCandidate(AVATAR_CANDIDATES)
-    if (candidate !== undefined) void chooseCandidate(candidate)
+    requestRef.current += 1
+    setPicking(false)
+    setSelectedId(undefined)
+    setError(undefined)
+    setCandidates(randomAvatarCandidates())
   }
 
   function clear(): void {
@@ -121,7 +124,7 @@ export function AvatarGrid({
           disabled={disabled || picking}
           onClick={randomize}
         >
-          {picking ? '生成中…' : '随机一个'}
+          {picking ? '生成中…' : '随机生成'}
         </button>
         {value !== '' && (
           <button
@@ -135,9 +138,9 @@ export function AvatarGrid({
         )}
       </div>
       {error !== undefined && <span className={css.avatarPickerError} role="alert">{error}</span>}
-      <div className={css.avatarGridScroll}>
-        <div className={css.avatarStyleGrid} role="group" aria-label="内置 DiceBear 头像">
-          {AVATAR_CANDIDATES.map(candidate => (
+      <div className={css.avatarGridSheet}>
+        <div className={css.avatarStyleGrid} role="group" aria-label="随机生成的 DiceBear 头像">
+          {candidates.map(candidate => (
             <button
               key={candidate.id}
               type="button"

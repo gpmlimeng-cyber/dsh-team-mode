@@ -1,13 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import {
-  Button,
-  IconChevronDownOutlineRegular,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
 import { assistantModelKey, assistantModelOptionLabel } from './assistant-form.js'
 import { AvatarGrid } from './avatar-grid.js'
-import { PERMISSION_LABELS } from './labels.js'
 import { MemberAvatar } from './member-avatar.js'
 import {
   defaultReasoningLabel,
@@ -156,9 +152,6 @@ export function AssistantCreateDialog({
     provider: providerEntry,
     models: catalog?.models[providerEntry.id] ?? [],
   })).filter(group => group.models.length > 0)
-  const workspaces = catalog?.workspaces.filter(item => item.status === 'ok') ?? []
-  const permissionOptions = catalog?.permissionPresets ?? []
-  const agentPresets = (catalog?.agentPresets ?? []).filter(preset => preset.broken === undefined)
   const reasoningEfforts = modelCapabilities.value?.reasoning?.efforts ?? []
   const modelSelection = JSON.stringify([provider, model])
   const modelSelectionInCatalog = modelGroups.some(group => (
@@ -417,99 +410,6 @@ export function AssistantCreateDialog({
                 </div>
               )}
 
-              <details className={css.assistantAdvanced}>
-                <summary className={css.assistantAdvancedSummary}>
-                  <span className={css.assistantAdvancedHeading}>
-                    <strong>高级设置</strong>
-                    <span>Workspace、权限、Agent Preset 与人设</span>
-                  </span>
-                  <IconChevronDownOutlineRegular
-                    size={14}
-                    className={css.assistantAdvancedChevron}
-                  />
-                </summary>
-                <div className={css.assistantAdvancedBody}>
-                  <Field label="Workspace">
-                    <select
-                      className={css.input}
-                      value={workspaceId}
-                      disabled={busy || workspaces.length === 0}
-                      onChange={event => {
-                        setWorkspaceId(event.target.value)
-                        setError(undefined)
-                      }}
-                    >
-                      {workspaces.length === 0
-                        ? <option value="">暂无可用 Workspace</option>
-                        : workspaces.map(item => (
-                          <option key={item.id} value={item.id}>{item.title} — {item.path}</option>
-                        ))}
-                    </select>
-                    <span className={css.hint}>助手及其后台任务只在这个 Workspace 内工作；创建后保持只读。</span>
-                  </Field>
-
-                  <Field label="权限预设">
-                    <select
-                      className={css.input}
-                      value={permissionPresetId}
-                      disabled={busy || permissionOptions.length === 0}
-                      onChange={event => {
-                        setPermissionPresetId(event.target.value)
-                        setError(undefined)
-                      }}
-                    >
-                      {permissionOptions.length === 0 && (
-                        <option value="">暂无可用权限预设</option>
-                      )}
-                      {permissionOptions.map(option => (
-                        <option key={option.value} value={option.value}>
-                          {PERMISSION_LABELS[option.value] ?? option.name}
-                        </option>
-                      ))}
-                    </select>
-                    <span className={css.hint}>权限只影响之后创建或恢复的会话。</span>
-                  </Field>
-
-                  <Field label="Agent Preset">
-                    <select
-                      className={css.input}
-                      value={agentPresetId}
-                      disabled={busy || agentPresets.length === 0}
-                      onChange={event => {
-                        setAgentPresetId(event.target.value)
-                        setError(undefined)
-                      }}
-                    >
-                      {agentPresets.length === 0 && (
-                        <option value="">暂无可用 Agent Preset</option>
-                      )}
-                      {agentPresets.map(preset => (
-                        <option key={preset.id} value={preset.id}>
-                          {preset.name === preset.id ? preset.id : `${preset.name}（${preset.id}）`}
-                        </option>
-                      ))}
-                    </select>
-                    <span className={css.hint}>决定工具、Skills 与 MCP 的可用范围；优先选用 standard。</span>
-                  </Field>
-
-                  <Field label="人设与规则（可选）">
-                    <textarea
-                      className={css.input}
-                      value={instructions}
-                      disabled={busy}
-                      rows={4}
-                      placeholder="例如：先读代码再修改；完成后运行测试并汇报结果。"
-                      onChange={event => {
-                        setInstructions(event.target.value)
-                        setError(undefined)
-                      }}
-                    />
-                    <span className={css.hint}>
-                      会写入该助手的实例快照，作为主会话与后台任务共享的长期人设。
-                    </span>
-                  </Field>
-                </div>
-              </details>
             </>
           )}
       </form>
