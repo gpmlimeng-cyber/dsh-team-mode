@@ -15,6 +15,7 @@ import {
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
+import { selectAssistant, useAgentTeamUi } from './store.js'
 import { AssistantCreateDialog } from './assistant-dialogs.js'
 import {
   setAssistantDisplayMode,
@@ -77,6 +78,7 @@ export function AssistantSidebarSection({
 }: {
   openSession: (sessionId: string) => void
 }): JSX.Element {
+  const { selectedAssistantId } = useAgentTeamUi()
   const [instances, setInstances] = useState<AssistantInstanceView[]>([])
   const [tasks, setTasks] = useState<AssistantSession[]>([])
   const mode = useAssistantDisplayMode()
@@ -157,6 +159,7 @@ export function AssistantSidebarSection({
 
   async function openAssistant(instance: AssistantInstance): Promise<void> {
     if (openingId !== undefined) return
+    selectAssistant(instance.id)
     setOpeningId(instance.id)
     setError(undefined)
     try {
@@ -347,6 +350,7 @@ export function AssistantSidebarSection({
             : visible.map(instance => {
                 const name = assistantInstanceName(instance)
                 const opening = openingId === instance.id
+                const active = selectedAssistantId === instance.id
                 const menuOpen = menuOpenId === instance.id
                 const activity = assistantRowActivity(tasks, instance)
                 const statusText = assistantRowStatusText(activity)
@@ -383,7 +387,7 @@ export function AssistantSidebarSection({
                 return (
                   <div key={instance.id} className={css.sidebarTeamGroup}>
                     <div
-                      className={`${css.sidebarTeamRowWrap} ${css.sidebarAssistantRowWrap} ${menuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
+                      className={`${css.sidebarTeamRowWrap} ${css.sidebarAssistantRowWrap} ${active ? css.sidebarTeamRowWrapActive : ''} ${menuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
                       data-dsh-assistant-row
                     >
                       {hasThreads && (
@@ -413,6 +417,7 @@ export function AssistantSidebarSection({
                         onClick={() => { void openAssistant(instance) }}
                         disabled={opening}
                         aria-busy={opening}
+                        aria-current={active ? 'page' : undefined}
                         title={`${name} · ${secondLine} · ${instance.assistantSnapshot.model}`}
                       >
                         <span className={css.sidebarAssistantAvatar}>

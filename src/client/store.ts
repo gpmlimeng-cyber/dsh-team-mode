@@ -8,6 +8,7 @@ export interface AgentTeamUiState {
   visible: boolean
   createTeamRequest: number
   selectedTeamId?: string | undefined
+  selectedAssistantId?: string | undefined
   dialog?: TeamDialog | undefined
 }
 
@@ -34,7 +35,11 @@ export function closeAgentTeam(): void {
 }
 
 export function selectTeam(teamId: string): void {
-  update({ ...state, selectedTeamId: teamId })
+  update({ ...state, selectedTeamId: teamId, selectedAssistantId: undefined })
+}
+
+export function selectAssistant(assistantId: string): void {
+  update({ ...state, selectedTeamId: undefined, selectedAssistantId: assistantId })
 }
 
 export function openCreateTeamDialog(): void {
@@ -66,6 +71,7 @@ function update(next: AgentTeamUiState): void {
     state.visible === next.visible
     && state.createTeamRequest === next.createTeamRequest
     && state.selectedTeamId === next.selectedTeamId
+    && state.selectedAssistantId === next.selectedAssistantId
     && state.dialog === next.dialog
   ) return
   state = next
