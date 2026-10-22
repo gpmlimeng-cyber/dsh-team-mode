@@ -3555,6 +3555,7 @@ textarea.input {
 /* DS Bot-style two-line row: denser than a native session row, but it keeps
    the team section's 8px inline padding and hover-action geometry. */
 .sidebarAssistantRowWrap {
+  position: relative;
   height: auto;
   min-height: 44px;
   padding: 4px 8px;
@@ -4345,6 +4346,21 @@ textarea.input {
 
   .sidebarAssistantMoreButton {
     display: inline-flex;
+  }
+
+  /* Put the single overflow trigger on the second line instead of carving a
+     full-height action column out of the title row. */
+  .sidebarAssistantActions {
+    position: absolute;
+    right: 8px;
+    bottom: 4px;
+    z-index: 1;
+    gap: 0;
+    margin: 0;
+  }
+
+  .sidebarAssistantStatus {
+    padding-right: 22px;
   }
 }
 
