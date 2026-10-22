@@ -6,13 +6,14 @@
 
 ```text
 独立 Team 实体
-├─ Leader 与成员平级，各自拥有原生 Session
+├─ Team Session（Leader Session）作为团队父会话
+├─ 成员是按团队创建的持久 membership Session
+├─ 单聊助手保留独立的 DM 主会话
 ├─ 成员 Session 默认隐藏在原生侧栏
-├─ 群聊团队 + 单聊助手共用 Agent 生命周期
 └─ 不替换 Harness 原生聊天、输入框与审批
 ```
 
-AgentTeams 值得借鉴的是 **任务所有权/调度协议**；不是把团队退化为当前会话里的临时子 Agent。
+AgentTeams 值得借鉴的是 **任务所有权/调度协议**；不是照搬“当前会话即队长”，也不是把成员做成临时 subagent。
 
 ## 已有能力
 
@@ -22,6 +23,35 @@ AgentTeams 值得借鉴的是 **任务所有权/调度协议**；不是把团队
 - 单聊助手主会话 + 隐藏 worker 任务
 - 未读、审批关注、任务线程、会话日志导出
 - 移动端侧栏与行操作
+
+## 会话层级决策（2026-10-22 采纳）
+
+采用“固定身份，不固定 Session”的双树模型：
+
+```text
+团队树
+Team Session (Leader)
+├─ 成员 A membership Session
+│  └─ 团队任务子会话
+└─ 成员 B membership Session
+   └─ 团队任务子会话
+
+单聊树
+Assistant DM Main Session
+├─ 单聊任务子会话
+└─ 单聊任务子会话
+```
+
+规则：
+
+- `assistantId`、`membershipId` 稳定；`sessionId` 按上下文创建
+- 同一助手可同时在多个团队，每个团队一个成员会话
+- 成员会话不跨团队复用，避免上下文、权限和并发互相污染
+- 单聊任务挂在 DM 主会话下；团队任务挂在成员会话语义下
+- Leader 换人时显式创建新 Team Session，不静默换父级
+- 成员退出团队时归档 membership Session，不影响 DM 主会话或其他团队
+
+明确拒绝“一个成员固定一个 Session 跨多个团队”：DSH 是单父级，固定会话会导致团队上下文混用、任务串行和归属不清。
 
 ## 后续优先级
 
@@ -57,7 +87,8 @@ AgentTeams 值得借鉴的是 **任务所有权/调度协议**；不是把团队
 ## 明确不做
 
 - 不把“当前会话 = Captain”作为团队模型
-- 不把成员改成 Leader 的临时子 Agent
+- 不把成员做成临时 subagent；成员是持久 membership Session
+- 不让一个成员 Session 跨多个团队复用
 - 不迁移到 `.agent-teams` 文件存储
 - 不默认开启自动调度
 - 不用自定义聊天 UI 替换原生会话页
