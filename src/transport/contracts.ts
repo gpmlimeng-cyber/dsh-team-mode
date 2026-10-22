@@ -1,6 +1,7 @@
 import type {
   AddTeamMemberInput,
   AssistantInstance,
+  AssistantPreview,
   AssistantSession,
   AssistantTemplate,
   CloneTeamInput,
@@ -12,6 +13,8 @@ import type {
   UpdateAssistantInput,
   UpdateAssistantInstanceInput,
 } from '../domain/types.js'
+
+export type AssistantInstanceView = AssistantInstance & { preview?: AssistantPreview }
 
 export const AGENT_TEAM_API_PATH = '/dsh-team-mode/api'
 export const AGENT_TEAM_EVENTS_PATH = '/dsh-team-mode/events'
@@ -329,7 +332,7 @@ export interface AgentTeamRequestMap {
   'assistant.update': { payload: { id: string; value: UpdateAssistantInput }; result: AssistantView }
   'assistant.clone': { payload: { id: string; name?: string }; result: AssistantView }
   'assistant.delete': { payload: { id: string }; result: null }
-  'assistant.instance.list': { payload: undefined; result: PageView<AssistantInstance> }
+  'assistant.instance.list': { payload: undefined; result: PageView<AssistantInstanceView> }
   'assistant.instance.create': { payload: CreateAssistantInstanceInput; result: AssistantInstance }
   'assistant.instance.update': {
     payload: { id: string; value: UpdateAssistantInstanceInput }

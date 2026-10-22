@@ -91,6 +91,7 @@ function harness(overrides: {
     }))),
     listTeams: vi.fn(() => ({ items: [], total: 0 })),
     listAssistantInstances: vi.fn(() => ({ items: [], total: 0 })),
+    listAssistantInstanceViews: vi.fn(async () => ({ items: [], total: 0 })),
     createAssistantInstance: vi.fn(async (input: object) => ({ id: 'instance-1', ...input })),
     updateAssistantInstance: vi.fn(async (id: string, value: object) => ({ id, ...value })),
     archiveAssistantInstance: vi.fn(async (id: string) => ({ id, status: 'archived' })),

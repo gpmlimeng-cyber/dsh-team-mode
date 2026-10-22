@@ -19,6 +19,7 @@ import type {
   AssistantMemory,
   AssistantSession,
   AssistantSnapshot,
+  AssistantPreview,
 } from '../domain/types.js'
 import type { AgentTeamService } from '../service/dsh-team-mode-service.js'
 import {
@@ -27,6 +28,7 @@ import {
   type AssistantTaskSummaryMessage,
 } from './assistant-tools.js'
 import { projectConversation } from './conversation-projector.js'
+import type { ConversationNode } from '../transport/contracts.js'
 import { readStoredSessionEvents } from './session-log.js'
 
 export interface AssistantEnsureResult {
@@ -294,6 +296,30 @@ export class AssistantRuntime {
    * reload drops the handle while the Session may still exist, so the task is
    * resumed lazily instead of being reported as inactive.
    */
+  /**
+   * Latest visible message in the instance's main Session, used by the
+   * Sidebar's one-line preview. Reads a live Session or its durable log; an
+   * unreadable or empty Session simply has no preview.
+   */
+  async latestPreview(assistantId: string): Promise<AssistantPreview | undefined> {
+    const instance = this.service.getAssistantInstance(assistantId)
+    const sessionId = instance.mainSessionId
+    if (sessionId === undefined) return undefined
+    const live = this.ctx.agents.get(SessionId(sessionId))
+    const events = live !== undefined
+      ? live.session.snapshotEvents()
+      : await readStoredSessionEvents(this.ctx, sessionId)
+    const nodes = projectConversation(events, 80).nodes
+    const isVisible = (entry: ConversationNode): entry is Extract<ConversationNode, { kind: 'user' | 'assistant' }> => (
+      (entry.kind === 'user' || entry.kind === 'assistant') && entry.text.trim() !== ''
+    )
+    const visible = [...nodes].reverse().filter(isVisible)
+    const node = visible.find(entry => entry.kind === 'assistant') ?? visible.find(entry => entry.kind === 'user')
+    if (node === undefined) return undefined
+    const text = node.text.replace(/\s+/g, ' ').trim().slice(0, 160)
+    return text === '' ? undefined : { role: node.kind, text, time: node.time }
+  }
+
   private async ensureWorker(task: AssistantSession): Promise<OwnedWorker> {
     const existing = this.workers.get(task.id)
     if (existing !== undefined) return existing

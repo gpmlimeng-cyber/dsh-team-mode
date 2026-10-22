@@ -3624,6 +3624,7 @@ textarea.input {
 .sidebarAssistantTop .sidebarTeamName {
   flex: 0 1 auto;
   font-size: 13px;
+  font-weight: 500;
   line-height: 18px;
 }
 
@@ -3639,8 +3640,9 @@ textarea.input {
   display: block;
   min-width: 0;
   overflow: hidden;
-  color: var(--dsw-alias-label-quaternary);
+  color: var(--dsw-alias-label-secondary);
   font-size: 11px;
+  font-weight: 300;
   line-height: 15px;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3655,11 +3657,24 @@ textarea.input {
 }
 
 .sidebarAssistantStatusQueued {
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-secondary);
 }
 
 .sidebarAssistantStatusIdle {
-  color: var(--dsw-alias-label-quaternary);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sidebarAssistantPreview {
+  color: var(--dsw-alias-label-secondary);
+  font-weight: 300;
+}
+
+.sidebarAssistantTop .sidebarTeamTime {
+  padding-left: 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
 }
 
 .sidebarAssistantMore {

@@ -40,6 +40,7 @@ import {
 import { MemberAvatar } from './member-avatar.js'
 import css from './AgentTeam.module.css'
 import type { AssistantInstance, AssistantSession } from '../domain/types.js'
+import type { AssistantInstanceView } from '../transport/contracts.js'
 
 const ASSISTANT_EXPANDED_KEY = 'dsh-team-mode:assistant-expanded'
 
@@ -76,7 +77,7 @@ export function AssistantSidebarSection({
 }: {
   openSession: (sessionId: string) => void
 }): JSX.Element {
-  const [instances, setInstances] = useState<AssistantInstance[]>([])
+  const [instances, setInstances] = useState<AssistantInstanceView[]>([])
   const [tasks, setTasks] = useState<AssistantSession[]>([])
   const mode = useAssistantDisplayMode()
   const [expanded, setExpanded] = useState(readAssistantExpanded)
@@ -350,6 +351,12 @@ export function AssistantSidebarSection({
                 const activity = assistantRowActivity(tasks, instance)
                 const statusText = assistantRowStatusText(activity)
                 const statusTitle = assistantRowStatusTitle(activity)
+                const previewText = instance.preview?.text.trim() ?? ''
+                const hasPreview = previewText !== ''
+                const secondLine = hasPreview ? previewText : statusText
+                const secondLineTitle = hasPreview
+                  ? `${instance.preview?.role === 'user' ? '你' : '助手'}：${previewText}`
+                  : statusTitle
                 const dotClass = activity.status === 'needs_input'
                   ? css.sidebarAssistantDotWaiting
                   : activity.status === 'running'
@@ -406,7 +413,7 @@ export function AssistantSidebarSection({
                         onClick={() => { void openAssistant(instance) }}
                         disabled={opening}
                         aria-busy={opening}
-                        title={`${name} · ${statusText} · ${instance.assistantSnapshot.model}`}
+                        title={`${name} · ${secondLine} · ${instance.assistantSnapshot.model}`}
                       >
                         <span className={css.sidebarAssistantAvatar}>
                           <MemberAvatar
@@ -439,14 +446,19 @@ export function AssistantSidebarSection({
                               </span>
                             )}
                             <span className={css.sidebarTeamTime}>
-                              {opening ? '打开中' : relativeAssistantTime(instance.updatedAt)}
+                              {opening
+                                ? '打开中'
+                                : relativeAssistantTime(instance.preview === undefined
+                                  ? instance.updatedAt
+                                  : new Date(instance.preview.time).toISOString())}
                             </span>
                           </span>
                           <span
-                            className={`${css.sidebarAssistantStatus} ${statusClass}`}
+                            className={`${css.sidebarAssistantStatus} ${hasPreview ? css.sidebarAssistantPreview : statusClass}`}
+                            title={secondLineTitle}
                             data-dsh-assistant-status-text={activity.status}
                           >
-                            {statusText}
+                            {secondLine}
                           </span>
                         </span>
                       </button>

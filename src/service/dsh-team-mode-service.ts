@@ -23,6 +23,7 @@ import {
   type AssistantInstance,
   type AssistantMemory,
   type AssistantMemoryMode,
+  type AssistantPreview,
   type AssistantSession,
   type AssistantSnapshot,
   type AssistantTemplate,
@@ -460,6 +461,24 @@ export class AgentTeamService extends Service {
   getAssistantInstance(id: string): AssistantInstance {
     return requireAssistantInstance(this.store, id)
   }
+  /**
+   * Sidebar view: the persisted instances plus a bounded latest-message
+   * preview. A preview failure is presentation-only and never hides the row.
+   */
+  async listAssistantInstanceViews(): Promise<Page<AssistantInstance & { preview?: AssistantPreview }>> {
+    const page = this.listAssistantInstances()
+    if (this.assistantRuntime === undefined) return page
+    const items = await Promise.all(page.items.map(async instance => {
+      try {
+        const preview = await this.assistantRuntime?.latestPreview(instance.id)
+        return preview === undefined ? instance : { ...instance, preview }
+      } catch {
+        return instance
+      }
+    }))
+    return { items, total: page.total }
+  }
+
 
   /**
    * Persist a snapshot for a workspace; no Session is created here. A payload

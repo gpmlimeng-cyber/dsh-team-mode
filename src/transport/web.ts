@@ -234,7 +234,7 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       return service.cloneAssistant(payload.id, payload.name)
     }
     case 'assistant.delete': await service.deleteAssistant(idPayload.parse(request.payload).id); return null
-    case 'assistant.instance.list': return service.listAssistantInstances()
+    case 'assistant.instance.list': return service.listAssistantInstanceViews()
     case 'assistant.instance.create': return service.createAssistantInstance(request.payload as never)
     case 'assistant.instance.update': {
       const payload = z.object({

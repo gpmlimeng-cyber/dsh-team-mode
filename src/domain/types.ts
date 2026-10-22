@@ -35,6 +35,12 @@ export type UpdateAssistantInstanceInput = z.infer<typeof updateAssistantInstanc
 export type AssistantMemory = z.infer<typeof assistantMemorySchema>
 export type AssistantMemoryMode = z.infer<typeof assistantMemoryModeSchema>
 export type AssistantSession = z.infer<typeof assistantSessionSchema>
+/** Last visible message in an assistant's main Session, for sidebar preview. */
+export interface AssistantPreview {
+  readonly role: 'user' | 'assistant'
+  readonly text: string
+  readonly time: number
+}
 export type CreateAssistantSessionInput = z.infer<typeof createAssistantSessionInputSchema>
 export type UpdateAssistantSessionInput = z.infer<typeof updateAssistantSessionInputSchema>
 export type CreateAssistantInput = z.infer<typeof createAssistantInputSchema>

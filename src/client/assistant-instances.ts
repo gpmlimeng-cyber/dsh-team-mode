@@ -179,10 +179,10 @@ export function assistantThreadTasks(
  * Archived instances are never listed. Pinned rows lead, then the most recent
  * activity; the id tie-break keeps the order stable across SSE refreshes.
  */
-export function visibleAssistantInstances(
-  instances: readonly AssistantInstance[],
+export function visibleAssistantInstances<T extends AssistantInstance>(
+  instances: readonly T[],
   query = '',
-): AssistantInstance[] {
+): T[] {
   const normalized = query.trim().toLocaleLowerCase()
   return instances
     .filter(instance => instance.status !== 'archived')

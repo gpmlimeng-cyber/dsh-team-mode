@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 import type { AssistantInstance, AssistantSession, CreateAssistantInstanceInput, UpdateAssistantInstanceInput } from '../src/domain/types.js'
+import type { AssistantInstanceView } from '../src/transport/contracts.js'
 import {
   AGENT_TEAM_METHODS,
   type AgentTeamPayload,
@@ -28,7 +29,7 @@ describe('Agent Team transport contracts', () => {
 
   it('associates Assistant instance methods with their payload and result types', () => {
     expectTypeOf<AgentTeamPayload<'assistant.instance.list'>>().toEqualTypeOf<undefined>()
-    expectTypeOf<AgentTeamResult<'assistant.instance.list'>>().toEqualTypeOf<PageView<AssistantInstance>>()
+    expectTypeOf<AgentTeamResult<'assistant.instance.list'>>().toEqualTypeOf<PageView<AssistantInstanceView>>()
     expectTypeOf<AgentTeamPayload<'assistant.instance.create'>>()
       .toEqualTypeOf<CreateAssistantInstanceInput>()
     expectTypeOf<AgentTeamResult<'assistant.instance.create'>>().toEqualTypeOf<AssistantInstance>()
