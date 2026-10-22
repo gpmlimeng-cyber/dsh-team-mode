@@ -378,6 +378,9 @@ export function SidebarPortal({
 
   useEffect(() => {
     let current: HTMLElement | undefined
+    let scrollRoot: HTMLElement | undefined
+    let nativeList: HTMLElement | undefined
+    let nativeListStyle: { flex: string; height: string; maxHeight: string; overflow: string } | undefined
     let scheduled = false
     let observer: MutationObserver | undefined
     let resize: ResizeObserver | undefined
@@ -416,6 +419,35 @@ export function SidebarPortal({
         current = element
         setHost(element)
       }
+      // The shipped WorkspaceBrowser scrolls only its own session list. This
+      // host sits above that list, so collapse the inner scroll and let the
+      // whole middle region scroll as one, keeping the brand header and the
+      // account footer fixed.
+      const root = element.parentElement
+      if (root !== null && root !== scrollRoot) {
+        scrollRoot?.removeAttribute('data-dsh-team-scroll')
+        scrollRoot = root
+        root.setAttribute('data-dsh-team-scroll', 'sidebar')
+      }
+      if (root !== null && nativeList === undefined) {
+        const candidate = Array.from(root.children).find(child => (
+          child !== element
+          && (getComputedStyle(child).overflowY === 'auto' || getComputedStyle(child).overflowY === 'scroll')
+        )) as HTMLElement | undefined
+        if (candidate !== undefined) {
+          nativeList = candidate
+          nativeListStyle = {
+            flex: candidate.style.flex,
+            height: candidate.style.height,
+            maxHeight: candidate.style.maxHeight,
+            overflow: candidate.style.overflow,
+          }
+          candidate.style.flex = '0 0 auto'
+          candidate.style.height = 'auto'
+          candidate.style.maxHeight = 'none'
+          candidate.style.overflow = 'visible'
+        }
+      }
       if (resize === undefined || observedContainer !== container) {
         resize?.disconnect()
         resize = new ResizeObserver(() => { schedule() })
@@ -441,7 +473,98 @@ export function SidebarPortal({
       observer?.disconnect()
       resize?.disconnect()
       window.removeEventListener('resize', schedule)
+      scrollRoot?.removeAttribute('data-dsh-team-scroll')
+      if (nativeList !== undefined && nativeListStyle !== undefined) {
+        nativeList.style.flex = nativeListStyle.flex
+        nativeList.style.height = nativeListStyle.height
+        nativeList.style.maxHeight = nativeListStyle.maxHeight
+        nativeList.style.overflow = nativeListStyle.overflow
+      }
       current?.remove()
+    }
+  }, [])
+
+
+  // The native Workspace header is not collapsible. Add the same disclosure
+  // affordance the 群聊/单聊 sections use: click the header (not its search or
+  // settings controls) to hide the workspace list area as one block.
+  useEffect(() => {
+    const STORAGE_KEY = 'dsh-team-mode:workspace-collapsed'
+    let collapsed = false
+    try { collapsed = window.localStorage.getItem(STORAGE_KEY) === 'true' } catch { /* storage may be unavailable */ }
+    let section: HTMLElement | undefined
+    let listArea: HTMLElement | undefined
+    let chevron: HTMLElement | undefined
+    let originalDisplay = ''
+    let scheduled = false
+
+    const apply = (): void => {
+      if (section === undefined) return
+      section.dataset.dshWorkspaceCollapsed = collapsed ? 'true' : 'false'
+      section.setAttribute('aria-expanded', String(!collapsed))
+      section.title = collapsed ? '展开工作区' : '收起工作区'
+      if (listArea !== undefined) listArea.style.display = collapsed ? 'none' : originalDisplay
+      chevron?.setAttribute('aria-hidden', 'true')
+    }
+
+    const toggle = (event: MouseEvent): void => {
+      const target = event.target
+      if (target instanceof Element && target.closest('button, input, textarea, select, [role="button"]') !== null) return
+      collapsed = !collapsed
+      try { window.localStorage.setItem(STORAGE_KEY, String(collapsed)) } catch { /* ignore */ }
+      apply()
+    }
+
+    const ensure = (): void => {
+      const label = Array.from(document.querySelectorAll<HTMLElement>('span'))
+        .find(element => (element.textContent ?? '').trim() === '工作区'
+          && element.closest('[class*="_sectionHeader"]') !== null)
+      const nextSection = label?.closest<HTMLElement>('[class*="_sectionHeader"]')
+      if (nextSection === null || nextSection === undefined) return
+      const nextRoot = nextSection.parentElement
+      const nextList = nextRoot?.querySelector<HTMLElement>('[class*="_listArea"]')
+      if (nextList === null || nextList === undefined) return
+      if (section !== nextSection) {
+        if (section !== undefined) {
+          section.removeEventListener('click', toggle)
+          section.classList.remove(css.workspaceHeaderClickable ?? '')
+          section.removeAttribute('data-dsh-workspace-collapsed')
+          section.removeAttribute('aria-expanded')
+        }
+        section = nextSection
+        section.classList.add(css.workspaceHeaderClickable ?? '')
+        section.addEventListener('click', toggle)
+        chevron = document.createElement('span')
+        chevron.className = css.workspaceChevron ?? ''
+        chevron.dataset.dshWorkspaceChevron = 'true'
+        const title = label
+        if (title !== undefined) title.before(chevron)
+      }
+      if (listArea !== nextList) {
+        if (listArea !== undefined) listArea.style.display = originalDisplay
+        listArea = nextList
+        originalDisplay = listArea.style.display
+      }
+      apply()
+    }
+
+    const schedule = (): void => {
+      if (scheduled) return
+      scheduled = true
+      window.requestAnimationFrame(() => { scheduled = false; ensure() })
+    }
+
+    ensure()
+    const observer = new MutationObserver(schedule)
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => {
+      observer.disconnect()
+      section?.removeEventListener('click', toggle)
+      section?.classList.remove(css.workspaceHeaderClickable ?? '')
+      section?.removeAttribute('data-dsh-workspace-collapsed')
+      section?.removeAttribute('aria-expanded')
+      chevron?.remove()
+      if (listArea !== undefined) listArea.style.display = originalDisplay
     }
   }, [])
 

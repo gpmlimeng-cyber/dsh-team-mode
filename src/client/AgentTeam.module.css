@@ -3211,9 +3211,8 @@ textarea.input {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: min(38vh, 300px);
-  overflow-y: auto;
-  overscroll-behavior: contain;
+  max-height: none;
+  overflow: visible;
 }
 
 .sidebarTeamGroup {
@@ -7247,4 +7246,49 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 .sidebarTeamManage:disabled:hover {
   background: transparent;
   color: var(--dsw-alias-label-tertiary);
+}
+
+
+/* The middle sidebar region scrolls as one; brand and account rows stay put. */
+[data-dsh-team-scroll='sidebar'] {
+  overflow-y: auto;
+  min-height: 0;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--dsw-alias-scrollbar-hover-l2) transparent;
+  scrollbar-width: thin;
+}
+
+[data-dsh-team-scroll='sidebar'] > * {
+  flex-shrink: 0;
+}
+
+
+/* Native workspace header disclosure, matching 群聊/单聊. */
+.workspaceHeaderClickable {
+  cursor: pointer;
+}
+
+.workspaceChevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  flex: none;
+  margin-right: 2px;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 120ms var(--ds-ease-in-out);
+}
+
+.workspaceChevron::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg) translate(-1px, -1px);
+}
+
+[data-dsh-workspace-collapsed='true'] .workspaceChevron {
+  transform: rotate(-90deg);
 }
