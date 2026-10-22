@@ -412,7 +412,7 @@ export function AssistantSidebarSection({
                           <MemberAvatar
                             name={name}
                             avatar={assistantAvatarSource(instance)}
-                            size={26}
+                            size={34}
                             className={css.sidebarAssistantAvatarShape ?? ''}
                           />
                           {activity.status !== 'none' && (
