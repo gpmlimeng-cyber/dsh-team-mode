@@ -59,8 +59,13 @@ interface OwnedWorker {
   assistantId: string
   sessionId: string
   handle: AgentHandle
-  /** False when the Session is live but another lifecycle owns its handle. */
-  owned: boolean
+}
+
+/** One in-flight worker recovery, tagged with the generation it started under. */
+interface PendingWorkerStart {
+  assistantId: string
+  generation: number
+  promise: Promise<OwnedWorker>
 }
 
 const TERMINAL_TASK_STATUSES: ReadonlySet<AssistantSession['status']> = new Set([
@@ -103,7 +108,14 @@ export class AssistantRuntime {
   private readonly starting = new Map<string, Promise<AssistantEnsureResult>>()
   private readonly workers = new Map<string, OwnedWorker>()
   private readonly workerBySession = new Map<string, string>()
-  private readonly startingWorkers = new Map<string, Promise<OwnedWorker>>()
+  private readonly startingWorkers = new Map<string, PendingWorkerStart>()
+  /**
+   * Per-task recovery fence, in-memory only. A release bumps it so a recovery
+   * already awaiting `agents.resume` cannot reattach the released task. Entries
+   * are deliberately kept as tombstones and stay bounded by the task rows this
+   * runtime has touched.
+   */
+  private readonly workerGenerations = new Map<string, number>()
   private readonly assistantLocks = new Map<string, Promise<void>>()
   private readonly interactionSessions = new Set<string>()
   private readonly interactions: TeamInteractionBridge
@@ -186,9 +198,6 @@ export class AssistantRuntime {
     this.workers.clear()
     this.workerBySession.clear()
     for (const worker of workers) {
-      // A passive worker is live in another lifecycle; this runtime never
-      // owns that AgentHandle, so it must not cancel or dispose it.
-      if (!worker.owned) continue
       try {
         worker.handle.agent.cancel({ kind: 'user' }, { keepInbox: false })
         await worker.handle.dispose()
@@ -221,7 +230,15 @@ export class AssistantRuntime {
     const brief = requireText(input.brief, 'Task brief')
     const main = await this.ensureInstance(assistantId)
     return this.withAssistantLock(assistantId, async () => {
+      // Re-read under the lock: archive may have won it while ensureInstance
+      // ran, and a worker must never start for an archived assistant.
       const instance = this.service.getAssistantInstance(assistantId)
+      if (instance.status === 'archived') {
+        throw new AgentTeamError(
+          'ASSISTANT_INSTANCE_ARCHIVED',
+          `Assistant instance '${assistantId}' is archived`,
+        )
+      }
       const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(instance.workspaceId))
       if (workspace === undefined || await workspace.status() !== 'ok') {
         throw new AgentTeamError(
@@ -265,7 +282,6 @@ export class AssistantRuntime {
           assistantId: instance.id,
           sessionId,
           handle,
-          owned: true,
         })
         const running = await this.service.updateAssistantSession(task.id, { status: 'running' })
         handle.agent.followup(workerMessage(brief))
@@ -357,41 +373,65 @@ export class AssistantRuntime {
   }
 
   private async ensureWorker(task: AssistantSession): Promise<OwnedWorker> {
+    // Archive can complete between reading the task and driving its worker.
+    // Re-read first so an already-mapped handle is never driven for an archived
+    // assistant; the fast path below must not bypass this gate.
+    const instance = this.service.getAssistantInstance(task.assistantId)
+    if (instance.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${task.assistantId}' is archived`,
+      )
+    }
     const existing = this.workers.get(task.id)
     if (existing !== undefined) return existing
+    const generation = this.workerGeneration(task.id)
     const pending = this.startingWorkers.get(task.id)
-    if (pending !== undefined) return pending
-    const starting = this.recoverWorker(task)
-    this.startingWorkers.set(task.id, starting)
+    if (
+      pending !== undefined
+      && pending.assistantId === task.assistantId
+      && pending.generation === generation
+    ) {
+      return pending.promise
+    }
+    // A pending entry from an older generation was fenced by a release. Joining
+    // it would return a worker that release already tried to stop; a stale
+    // recovery meanwhile disposes its own handle instead of mapping it.
+    const promise = this.recoverWorker(task, generation)
+    const entry: PendingWorkerStart = { assistantId: task.assistantId, generation, promise }
+    this.startingWorkers.set(task.id, entry)
     try {
-      return await starting
+      return await promise
     } finally {
-      if (this.startingWorkers.get(task.id) === starting) {
+      if (this.startingWorkers.get(task.id) === entry) {
         this.startingWorkers.delete(task.id)
       }
     }
   }
 
-  private async recoverWorker(task: AssistantSession): Promise<OwnedWorker> {
+  private async recoverWorker(
+    task: AssistantSession,
+    generation: number,
+  ): Promise<OwnedWorker> {
     if (this.closing) throw new AgentTeamError('INVALID_REQUEST', 'Assistant runtime is closing')
-    const live = this.ctx.agents.get(SessionId(task.sessionId))
-    if (live !== undefined) {
-      // Another lifecycle created this worker and still owns its handle. Use
-      // the bare Agent for follow-ups, but never claim teardown ownership.
-      this.ctx.logger.warn(
-        `dsh-team-mode: task '${task.id}' is already live without an owned worker handle; attaching passively`,
+    const instance = this.service.getAssistantInstance(task.assistantId)
+    if (instance.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${task.assistantId}' is archived`,
       )
-      const worker: OwnedWorker = {
-        assistantId: task.assistantId,
-        sessionId: task.sessionId,
-        handle: { agent: live, dispose: async () => {} },
-        owned: false,
-      }
-      this.mapWorker(task.id, worker)
-      return worker
+    }
+    if (this.ctx.agents.get(SessionId(task.sessionId)) !== undefined) {
+      // Another lifecycle owns this worker Session. This runtime never drives
+      // or disposes an Agent it does not own, and adopting one passively would
+      // run the task through a handle it cannot tear down, so fail explicitly.
+      throw new AgentTeamError(
+        'AGENT_HANDLE_OWNERSHIP_CONFLICT',
+        `Task '${task.title}' worker Session '${task.sessionId}' is live under another lifecycle; retry after that lifecycle releases the Session, or restart the DSH host if native ownership persists`,
+        { taskId: task.id, sessionId: task.sessionId },
+      )
     }
 
-    const instance = this.service.getAssistantInstance(task.assistantId)
     const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(instance.workspaceId))
     if (workspace === undefined || await workspace.status() !== 'ok') {
       throw new AgentTeamError(
@@ -417,9 +457,22 @@ export class AssistantRuntime {
       )
     }
 
+    // Release and archive can both win while `agents.resume` is in flight. The
+    // handle belongs to this recovery, so dispose it rather than attach a
+    // released worker or one on an archived assistant.
+    const afterResume = this.recoveryInvalidation(task, generation)
+    if (afterResume !== undefined) {
+      await this.disposeQuietly(handle, `stale resumed worker Session '${task.sessionId}'`)
+      throw afterResume
+    }
+
     try {
       await workspace.attachSession(SessionId(task.sessionId))
       await this.ctx.sessions.flush(handle.agent.session)
+      // Re-check after attach/flush and immediately before mapping: either may
+      // have raced a release or archive that landed during the resume.
+      const beforeMap = this.recoveryInvalidation(task, generation)
+      if (beforeMap !== undefined) throw beforeMap
     } catch (error) {
       await this.disposeQuietly(handle, `resumed worker Session '${task.sessionId}' failed to attach`)
       throw this.workerStartupError(instance, task.title, error)
@@ -429,10 +482,42 @@ export class AssistantRuntime {
       assistantId: task.assistantId,
       sessionId: task.sessionId,
       handle,
-      owned: true,
     }
     this.mapWorker(task.id, worker)
     return worker
+  }
+
+  /**
+   * Why a recovery that already awaited must not map its handle, or undefined
+   * when it may still attach. Generation is checked first because a release is
+   * the more specific outcome; an archived assistant is then still rejected.
+   */
+  private recoveryInvalidation(
+    task: AssistantSession,
+    generation: number,
+  ): AgentTeamError | undefined {
+    if (this.workerGeneration(task.id) !== generation) {
+      return new AgentTeamError(
+        'ASSISTANT_TASK_NOT_ACTIVE',
+        `Task '${task.title}' was released while it was being recovered; retry the task`,
+        { taskId: task.id, reason: 'released' },
+      )
+    }
+    if (this.service.getAssistantInstance(task.assistantId).status === 'archived') {
+      return new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${task.assistantId}' is archived`,
+      )
+    }
+    return undefined
+  }
+
+  private workerGeneration(taskId: string): number {
+    return this.workerGenerations.get(taskId) ?? 0
+  }
+
+  private bumpWorkerGeneration(taskId: string): void {
+    this.workerGenerations.set(taskId, this.workerGeneration(taskId) + 1)
   }
 
   /** Newest-first tasks for one assistant, bounded for the tool result. */
@@ -529,28 +614,37 @@ export class AssistantRuntime {
   }
 
   /**
-   * Stop every active worker of one Assistant before its instance is archived.
-   * Tasks are marked cancelled so a later idle transition cannot resurrect them;
-   * only workers this runtime owns are interrupted, and the main Session is
+   * Stop every worker of one Assistant and mark the instance archived before
+   * the assistant lock is released. Active tasks are marked cancelled so a
+   * later idle transition cannot resurrect them; a worker mapped for an
+   * already terminal task keeps that status but is still flushed and disposed.
+   * Only workers this runtime owns are interrupted, and the main Session is
    * never touched by this method.
    */
-  async stopForArchive(rawAssistantId: string): Promise<void> {
+  async stopForArchive(rawAssistantId: string): Promise<AssistantInstance> {
     const assistantId = requireText(rawAssistantId, 'Assistant instance id')
-    await this.withAssistantLock(assistantId, async () => {
+    return this.withAssistantLock(assistantId, async () => {
+      // Fence every recovery this runtime still has in flight for this
+      // assistant: each re-checks its generation after resume and disposes its
+      // own handle instead of reattaching an archived assistant.
+      for (const [taskId, pending] of this.startingWorkers) {
+        if (pending.assistantId === assistantId) this.bumpWorkerGeneration(taskId)
+      }
       const tasks = this.service.listAssistantSessions(assistantId).items
       for (const task of tasks) {
         if (!ACTIVE_TASK_STATUSES.has(task.status)) continue
         try {
           await this.service.updateAssistantSession(task.id, { status: 'cancelled' })
         } catch (error) {
+          // The worker is still stopped below: archive must not leave one live
+          // even when the status write fails.
           this.ctx.logger.warn(
             `dsh-team-mode: failed to cancel task '${task.id}' while archiving assistant '${assistantId}'`,
             error,
           )
-          continue
         }
         const worker = this.workers.get(task.id)
-        if (worker !== undefined && worker.owned) {
+        if (worker !== undefined) {
           try {
             worker.handle.agent.cancel({ kind: 'user' })
             await worker.handle.agent.whenIdle()
@@ -563,16 +657,37 @@ export class AssistantRuntime {
         }
         await this.releaseWorker(task.id, 'archived')
       }
+      // Workers can also be mapped for tasks that are already terminal, for
+      // example when openTask resumes a completed task without changing its
+      // status. Release every remaining worker of this assistant so archive
+      // never leaves a live worker behind.
+      for (const [taskId, worker] of [...this.workers]) {
+        if (worker.assistantId !== assistantId) continue
+        await this.releaseWorker(taskId, 'archived')
+      }
+      // Persist while the lock is still held: a createTask queued behind this
+      // barrier re-reads the row, sees 'archived', and rejects before it can
+      // create a worker, so no worker starts or survives after archive wins.
+      return this.service.persistAssistantArchived(assistantId)
     })
   }
 
   /**
-   * Release a terminal worker: flush its Session log, drop every runtime map
-   * entry, and dispose the handle only when this runtime created it. A passive
-   * worker belongs to another lifecycle, so it is detached but never disposed.
+   * Release a terminal worker: fence any recovery still in flight, flush its
+   * Session log, drop every runtime map entry, and dispose the handle. Only
+   * handles created by this runtime are ever mapped, so no foreign Agent can
+   * reach this path.
    */
   private async releaseWorker(taskId: string, reason: string): Promise<void> {
-    this.startingWorkers.delete(taskId)
+    // Bump first: a recovery already awaiting `agents.resume` must observe the
+    // fence before its handle can be attached, and a fresh recovery for the
+    // same task then starts under the new generation.
+    const releasedGeneration = this.workerGeneration(taskId)
+    this.bumpWorkerGeneration(taskId)
+    const pending = this.startingWorkers.get(taskId)
+    if (pending !== undefined && pending.generation === releasedGeneration) {
+      this.startingWorkers.delete(taskId)
+    }
     const worker = this.workers.get(taskId)
     if (worker === undefined) return
     this.workers.delete(taskId)
@@ -587,7 +702,6 @@ export class AssistantRuntime {
         error,
       )
     }
-    if (!worker.owned) return
     await this.disposeQuietly(
       worker.handle,
       `failed to dispose worker Session for task '${taskId}' (${reason})`,

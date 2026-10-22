@@ -1,4 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
+import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
+import { SessionId } from '@deepseek-ai/dsh-session'
 import { describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -18,6 +20,7 @@ import type {
   TeamMessage,
   TeamTask,
 } from '../src/domain/types.js'
+import { AssistantRuntime } from '../src/runtime/assistant-runtime.js'
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import type { AgentTeamStore } from '../src/storage/store.js'
 import { isRateLimitMessage, TeamRuntime } from '../src/runtime/team-runtime.js'
@@ -1922,6 +1925,64 @@ describe('AgentTeamService', () => {
     expect(Object.values(clone.members).every(member => member.assistantInstanceId === undefined))
       .toBe(true)
   })
+
+  it('serializes archive with worker creation so no worker starts after archive wins', async () => {
+    const h = createArchiveHarness()
+    await h.store.putAssistantInstance(seedInstance())
+    // Bind the main Session up front: the race under test is worker creation,
+    // not main-Session startup.
+    await h.runtime.ensureInstance('instance-1')
+    expect(h.created).toHaveLength(1)
+
+    const archivedWrite = deferred()
+    h.store.beforeInstanceWrite = async (_current, next) => {
+      if (next.status === 'archived') await archivedWrite.promise
+    }
+
+    const archiving = h.service.archiveAssistantInstance('instance-1')
+    await tick() // archive holds the assistant lock; its archived write is pending
+    const creating = h.runtime.createTask('instance-1', { title: 'Race', brief: 'Work.' })
+    await tick()
+    await tick()
+
+    // The queued create cannot create a worker while archive owns the lock.
+    expect(h.created).toHaveLength(1)
+
+    archivedWrite.resolve()
+    const archived = await archiving
+    expect(archived.status).toBe('archived')
+    await expect(creating).rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+    // The archived status won, and no worker row or handle survived.
+    expect(h.store.getAssistantInstance('instance-1')?.status).toBe('archived')
+    expect(h.store.listAssistantSessions()).toHaveLength(0)
+    expect(h.created).toHaveLength(1)
+  })
+
+  it('does not let a queued main-Session bind resurrect an archived instance', async () => {
+    const h = createArchiveHarness()
+    await h.store.putAssistantInstance(seedInstance())
+
+    const archivedWrite = deferred()
+    h.store.beforeInstanceWrite = async (_current, next) => {
+      if (next.status === 'archived') await archivedWrite.promise
+    }
+
+    const archiving = h.service.archiveAssistantInstance('instance-1')
+    await tick() // archived write is queued and gated; the bind queues behind it
+    const ensuring = h.runtime.ensureInstance('instance-1')
+    await tick()
+    await tick()
+
+    archivedWrite.resolve()
+    await archiving
+    await expect(ensuring).rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+    // The stale bind threw instead of rewriting status back to 'active', and
+    // the losing main-Session handle was disposed rather than leaked.
+    const stored = h.store.getAssistantInstance('instance-1')
+    expect(stored?.status).toBe('archived')
+    expect(stored?.mainSessionId).toBeUndefined()
+    expect(h.created[0]?.dispose).toHaveBeenCalledTimes(1)
+  })
 })
 
 function createHarness(workspacePath = '/tmp/dsh-team-mode-workspace'): {
@@ -2011,6 +2072,118 @@ function createHarness(workspacePath = '/tmp/dsh-team-mode-workspace'): {
   return { ctx, service: new AgentTeamService(ctx, config, store), store, permissionSet }
 }
 
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => {}
+  const promise = new Promise<void>(res => { resolve = res })
+  return { promise, resolve }
+}
+
+function tick(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+function seedInstance(): AssistantInstance {
+  return {
+    schemaVersion: 1,
+    id: 'instance-1',
+    assistantSnapshot: {
+      assistantId: 'template-1',
+      revision: 1,
+      name: 'Researcher',
+      instructions: 'Cite sources.',
+      provider: 'openai',
+      model: 'gpt-5',
+      agentPresetId: 'default',
+      permissionPresetId: 'workspace-write',
+      skillAllowlist: [],
+      mcpServers: [],
+      prompts: [],
+    },
+    workspaceId: 'workspace-1',
+    workspacePath: '/tmp/dsh-team-mode-workspace',
+    status: 'idle',
+    pinned: false,
+    revision: 1,
+    createdAt: '2026-10-23T00:00:00.000Z',
+    updatedAt: '2026-10-23T00:00:00.000Z',
+  }
+}
+
+interface ArchiveAgentRecord {
+  agent: Agent
+  handle: AgentHandle
+  followup: ReturnType<typeof vi.fn>
+  cancel: ReturnType<typeof vi.fn>
+  whenIdle: ReturnType<typeof vi.fn>
+  dispose: ReturnType<typeof vi.fn>
+}
+
+/**
+ * Real service and real Assistant runtime over the shared MemoryStore, used by
+ * the archive barrier regressions. Agent handles are fakes: no Agent setup
+ * runs, so only lifecycle calls (create/resume, follow-up, cancel, dispose)
+ * are observed.
+ */
+function createArchiveHarness(): {
+  service: AgentTeamService
+  store: MemoryStore
+  runtime: AssistantRuntime
+  created: ArchiveAgentRecord[]
+} {
+  const { service, store } = createHarness()
+  const created: ArchiveAgentRecord[] = []
+  const live = new Map<string, Agent>()
+
+  const makeHandle = (sessionId: string): AgentHandle => {
+    const session = {
+      id: SessionId(sessionId),
+      snapshotEvents: () => [],
+    }
+    const followup = vi.fn()
+    const cancel = vi.fn()
+    const whenIdle = vi.fn(async () => {})
+    const dispose = vi.fn(async () => {})
+    const agent = {
+      id: SessionId(sessionId),
+      session,
+      status: 'idle',
+      followup,
+      cancel,
+      whenIdle,
+    } as unknown as Agent
+    const handle: AgentHandle = { agent, dispose }
+    created.push({ agent, handle, followup, cancel, whenIdle, dispose })
+    return handle
+  }
+
+  const workspace = {
+    id: 'workspace-1',
+    path: '/tmp/dsh-team-mode-workspace',
+    title: 'Workspace',
+    status: async () => 'ok' as const,
+    attachSession: async () => {},
+  }
+  const runtimeCtx = {
+    logger: { warn: () => {}, info: () => {}, error: () => {}, debug: () => {} },
+    on: () => () => {},
+    agents: {
+      get: (id: SessionId) => live.get(String(id)),
+      create: async (options: { sessionId: SessionId }) => makeHandle(String(options.sessionId)),
+      resume: async (options: { resumeSessionId: SessionId }) => makeHandle(String(options.resumeSessionId)),
+    },
+    sessions: { flush: async () => {} },
+    workspaceRegistry: {
+      get: () => workspace,
+      list: () => [workspace],
+    },
+    agentPresets: { mount: async () => {} },
+    permissionPresets: { set: () => {} },
+  }
+  const runtime = new AssistantRuntime(runtimeCtx as never, config, service)
+  service.attachAssistantRuntime(runtime)
+  return { service, store, runtime, created }
+}
+
 interface FakeAgent {
   followup: ReturnType<typeof vi.fn>
   cancel: ReturnType<typeof vi.fn>
@@ -2088,6 +2261,12 @@ class MemoryStore implements AgentTeamStore {
   private messages = new Map<string, TeamMessage>()
   private activities = new Map<string, TeamActivity>()
   private operations = new Map<string, Operation>()
+  /** Hook that models a slow durable write of one instance row. */
+  beforeInstanceWrite: (
+    (current: AssistantInstance, next: AssistantInstance) => Promise<void>
+  ) | undefined
+  /** FIFO instance writes, like the domain store's single write chain. */
+  private instanceWrites: Promise<unknown> = Promise.resolve()
 
   getAssistant(id: string) { return this.assistants.get(id) }
   listAssistants() { return [...this.assistants.values()] }
@@ -2101,7 +2280,18 @@ class MemoryStore implements AgentTeamStore {
   listAssistantInstances() { return [...this.assistantInstances.values()] }
   async putAssistantInstance(value: AssistantInstance) { this.assistantInstances.set(value.id, value) }
   updateAssistantInstance(id: string, update: (current: AssistantInstance) => AssistantInstance) {
-    return updateMap(this.assistantInstances, id, update)
+    // Serialize instance writes so an archive and a queued bind observe each
+    // other exactly as they do through the domain store's write chain.
+    const write = this.instanceWrites.then(async () => {
+      const current = this.assistantInstances.get(id)
+      if (current === undefined) throw new AgentTeamError('INVALID_REQUEST', `Unknown record '${id}'`)
+      const next = update(current)
+      await this.beforeInstanceWrite?.(current, next)
+      this.assistantInstances.set(id, next)
+      return next
+    })
+    this.instanceWrites = write.then(() => undefined, () => undefined)
+    return write
   }
   async deleteAssistantInstance(id: string) { return this.assistantInstances.delete(id) }
 

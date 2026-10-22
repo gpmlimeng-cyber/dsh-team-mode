@@ -215,6 +215,21 @@ function createHarness(
     }
     return current
   })
+  const persistAssistantArchived = vi.fn(async (id: string) => {
+    if (id !== current.id) {
+      throw new AgentTeamError('ASSISTANT_INSTANCE_NOT_FOUND', `Unknown assistant instance '${id}'`)
+    }
+    if (current.status !== 'archived') {
+      current = {
+        ...current,
+        status: 'archived',
+        archivedAt: NOW,
+        revision: current.revision + 1,
+        updatedAt: NOW,
+      }
+    }
+    return current
+  })
 
   const tasks = new Map<string, AssistantSession>()
   let nextTaskNumber = 1
@@ -346,6 +361,7 @@ function createHarness(
   const service = {
     getAssistantInstance,
     bindAssistantMainSession,
+    persistAssistantArchived,
     createAssistantSession,
     getAssistantSession,
     listAssistantSessions,
@@ -364,6 +380,7 @@ function createHarness(
     service,
     getAssistantInstance,
     bindAssistantMainSession,
+    persistAssistantArchived,
     createAssistantSession,
     getAssistantSession,
     listAssistantSessions,
@@ -387,6 +404,9 @@ function createHarness(
     tasks,
     memories,
     current: () => current,
+    setInstanceStatus(status: AssistantInstance['status']) {
+      current = { ...current, status }
+    },
     setLive(sessionId: string, agent?: Agent) {
       live.set(sessionId, agent ?? { id: SessionId(sessionId) } as unknown as Agent)
     },
@@ -407,6 +427,12 @@ function toolsRegistered(record: AgentRecord | undefined): string[] {
 
 async function settle(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, 0))
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve: () => void = () => {}
+  const promise = new Promise<void>(res => { resolve = res })
+  return { promise, resolve }
 }
 
 beforeEach(() => {
@@ -1201,7 +1227,7 @@ describe('AssistantRuntime', () => {
     expect(prompt?.text()).toContain('Research pricing')
   })
 
-  it('uses a live unowned worker without resuming or disposing it', async () => {
+  it('refuses a live worker owned by another lifecycle without adopting or disposing it', async () => {
     const h = createHarness()
     const task = await h.runtime.createTask('instance-1', {
       title: 'Research pricing',
@@ -1212,19 +1238,233 @@ describe('AssistantRuntime', () => {
     h.setLive(task.sessionId, worker!.agent)
     const recovered = h.createRuntime()
 
-    await recovered.sendTask('instance-1', task.id, 'Keep going.')
+    const error = await recovered.sendTask('instance-1', task.id, 'Keep going.').catch(value => value)
 
+    expect(error).toBeInstanceOf(AgentTeamError)
+    expect(error).toMatchObject({
+      code: 'AGENT_HANDLE_OWNERSHIP_CONFLICT',
+      details: { taskId: task.id, sessionId: task.sessionId },
+    })
+    // The foreign worker is neither driven nor resumed by this runtime.
     expect(h.resumeMock).not.toHaveBeenCalled()
-    expect(worker?.followup).toHaveBeenCalledTimes(2)
-    expect(textOf(worker?.followup.mock.calls[1]?.[0])).toBe('Keep going.')
-    expect(vi.mocked(h.ctx.logger.warn)).toHaveBeenCalledWith(
-      expect.stringContaining('already live'),
-    )
+    expect(worker?.followup).toHaveBeenCalledTimes(1)
 
     await recovered.dispose()
 
     expect(worker?.dispose).not.toHaveBeenCalled()
     expect(worker?.cancel).not.toHaveBeenCalled()
+  })
+
+  it('rejects send and open for an archived assistant without resuming a worker', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'Start.',
+    })
+    const recovered = h.createRuntime()
+    h.setInstanceStatus('archived')
+
+    await expect(recovered.sendTask('instance-1', task.id, 'Continue.')).rejects
+      .toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+    await expect(recovered.openTask(task.id)).rejects
+      .toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+    expect(h.resumeMock).not.toHaveBeenCalled()
+  })
+
+  it('stops a worker resumed for a completed task before archiving', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'Start.',
+    })
+    const worker = h.handles[1]
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('completed')
+
+    // Opening a completed task resumes and maps its worker without changing
+    // the task status, so the archive stop loop skips this task.
+    await h.runtime.openTask(task.id)
+    const resumed = h.handles[2]
+    expect(resumed).toBeDefined()
+
+    await h.runtime.stopForArchive('instance-1')
+
+    // Archive releases every mapped worker, including this terminal task's.
+    expect(resumed?.dispose).toHaveBeenCalledTimes(1)
+    expect(h.getAssistantSession(task.id).status).not.toBe('running')
+
+    // A later send can no longer drive the stopped worker or the archived
+    // assistant.
+    await expect(h.runtime.sendTask('instance-1', task.id, 'Keep going.')).rejects
+      .toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+    expect(resumed?.followup).not.toHaveBeenCalled()
+  })
+
+  it('rejects send when an archived assistant still has a mapped worker handle', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'Start.',
+    })
+    const worker = h.handles[1]
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+    await h.runtime.openTask(task.id)
+    const resumed = h.handles[2]
+    expect(resumed).toBeDefined()
+
+    // Another lifecycle archived the assistant after this runtime mapped the
+    // worker; the mapped fast path must never bypass the archived gate.
+    h.setInstanceStatus('archived')
+
+    await expect(h.runtime.sendTask('instance-1', task.id, 'Keep going.')).rejects
+      .toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+    expect(resumed?.followup).not.toHaveBeenCalled()
+  })
+
+  it('shares one recovery between two rapid sends', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'Start.',
+    })
+    const gate = deferred()
+    const original = h.resumeMock.getMockImplementation()
+    expect(original).toBeDefined()
+    h.resumeMock.mockImplementationOnce(async (options: ResumeAgentOptions) => {
+      await gate.promise
+      return original!(options)
+    })
+    const recovered = h.createRuntime()
+
+    const first = recovered.sendTask('instance-1', task.id, 'one')
+    const second = recovered.sendTask('instance-1', task.id, 'two')
+    await settle()
+    gate.resolve()
+    const [left, right] = await Promise.all([first, second])
+
+    expect(left.status).toBe('running')
+    expect(right.status).toBe('running')
+    // Both sends share the single in-flight recovery instead of creating a
+    // second handle for the same worker Session.
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+    const resumed = h.handles[2]
+    expect(resumed?.followup).toHaveBeenCalledTimes(2)
+    expect(resumed?.dispose).not.toHaveBeenCalled()
+  })
+
+  it('fences a recovery in flight when the task is cancelled', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'Start.',
+    })
+    const gate = deferred()
+    const original = h.resumeMock.getMockImplementation()
+    expect(original).toBeDefined()
+    h.resumeMock.mockImplementationOnce(async (options: ResumeAgentOptions) => {
+      await gate.promise
+      return original!(options)
+    })
+    const recovered = h.createRuntime()
+
+    const sending = recovered.sendTask('instance-1', task.id, 'Continue.')
+    await settle() // recoverWorker is awaiting agents.resume
+    const cancelled = await recovered.cancelTask('instance-1', task.id)
+    expect(cancelled.status).toBe('cancelled')
+
+    gate.resolve()
+    await expect(sending).rejects.toMatchObject({
+      code: 'ASSISTANT_TASK_NOT_ACTIVE',
+      details: { taskId: task.id, reason: 'released' },
+    })
+    // The stale recovery disposes the handle it created and never reattaches
+    // or sends to the released task.
+    const resumed = h.handles[2]
+    expect(resumed?.dispose).toHaveBeenCalledTimes(1)
+    expect(resumed?.followup).not.toHaveBeenCalled()
+    expect(h.getAssistantSession(task.id).status).toBe('cancelled')
+  })
+
+  it('disposes the stale recovery when a second send races a release', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'Start.',
+    })
+    const gate = deferred()
+    const original = h.resumeMock.getMockImplementation()
+    expect(original).toBeDefined()
+    h.resumeMock.mockImplementation(async (options: ResumeAgentOptions) => {
+      await gate.promise
+      return original!(options)
+    })
+    const recovered = h.createRuntime()
+
+    const stale = recovered.sendTask('instance-1', task.id, 'one')
+    await settle()
+    const cancelled = await recovered.cancelTask('instance-1', task.id)
+    expect(cancelled.status).toBe('cancelled')
+    const fresh = recovered.sendTask('instance-1', task.id, 'two')
+    await settle()
+
+    gate.resolve()
+    await expect(stale).rejects.toMatchObject({
+      code: 'ASSISTANT_TASK_NOT_ACTIVE',
+      details: { taskId: task.id, reason: 'released' },
+    })
+    await expect(fresh).resolves.toMatchObject({ status: 'running' })
+
+    // Exactly one live worker survives: the pre-release recovery disposed its
+    // own handle, and the post-release recovery owns the mapped worker.
+    expect(h.handles[2]?.dispose).toHaveBeenCalledTimes(1)
+    expect(h.handles[2]?.followup).not.toHaveBeenCalled()
+    expect(h.handles[3]?.dispose).not.toHaveBeenCalled()
+    expect(h.handles[3]?.followup).toHaveBeenCalledTimes(1)
+    expect(h.getAssistantSession(task.id).status).toBe('running')
+  })
+
+  it('fences a completed-task recovery when archive starts during the resume', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'Start.',
+    })
+    const worker = h.handles[1]
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('completed')
+
+    const gate = deferred()
+    const original = h.resumeMock.getMockImplementation()
+    expect(original).toBeDefined()
+    h.resumeMock.mockImplementationOnce(async (options: ResumeAgentOptions) => {
+      await gate.promise
+      return original!(options)
+    })
+
+    const opening = h.runtime.openTask(task.id)
+    await settle() // recoverWorker is awaiting agents.resume
+    const archiving = h.runtime.stopForArchive('instance-1')
+    await settle() // archive fenced the in-flight recovery
+    gate.resolve()
+
+    await expect(opening).rejects.toMatchObject({
+      code: 'ASSISTANT_TASK_NOT_ACTIVE',
+      details: { taskId: task.id, reason: 'released' },
+    })
+    // The resumed handle belongs to this recovery, so archive disposes it
+    // exactly once and never sends to it.
+    const resumed = h.handles[2]
+    expect(resumed?.dispose).toHaveBeenCalledTimes(1)
+    expect(resumed?.followup).not.toHaveBeenCalled()
+    await expect(archiving).resolves.toMatchObject({ status: 'archived' })
+
+    // Once the archived row is durable, further work is rejected as archived.
+    await expect(h.runtime.sendTask('instance-1', task.id, 'Continue.')).rejects
+      .toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+    expect(resumed?.followup).not.toHaveBeenCalled()
   })
 
   it('reports ASSISTANT_TASK_NOT_ACTIVE when worker recovery fails', async () => {

@@ -657,7 +657,8 @@ export class AgentTeamService extends Service {
    * Hide an instance from listings without deleting it or its main Session.
    * Idempotent: archiving an archived instance returns the stored record.
    * When the Assistant runtime is attached, active workers are cancelled and
-   * disposed before the instance is marked archived.
+   * the archived row is persisted while the assistant lock is still held, so
+   * no concurrent worker creation can slip in after the stop pass.
    */
   async archiveAssistantInstance(id: string): Promise<AssistantInstance> {
     const current = requireAssistantInstance(this.store, id)
@@ -665,6 +666,20 @@ export class AgentTeamService extends Service {
     if (this.assistantRuntime !== undefined) {
       await this.assistantRuntime.stopForArchive(id)
     }
+    // Idempotent re-read: when the runtime already persisted inside its lock
+    // this returns the stored row without a second write or publish.
+    return this.persistAssistantArchived(id)
+  }
+
+  /**
+   * Runtime-only hook: persist the archived status under the assistant lock
+   * held by {@link AssistantRuntime.stopForArchive}. The stored row is
+   * re-read first so a second archive stays a no-op and a queued writer
+   * cannot raise the revision of an already archived instance.
+   */
+  async persistAssistantArchived(id: string): Promise<AssistantInstance> {
+    const current = requireAssistantInstance(this.store, id)
+    if (current.status === 'archived') return current
     const now = new Date().toISOString()
     const next = await this.store.updateAssistantInstance(id, value => ({
       ...value,
@@ -679,7 +694,8 @@ export class AgentTeamService extends Service {
 
   /**
    * Runtime-only hook: record the lazily created main Session. Re-binding the
-   * same Session is a no-op so ensure/open can call it on every click.
+   * same Session is a no-op so ensure/open can call it on every click. A bind
+   * that was queued behind an archive write never resurrects the archived row.
    */
   async bindAssistantMainSession(id: string, sessionId: string): Promise<AssistantInstance> {
     const mainSessionId = sessionId.trim()
@@ -694,13 +710,24 @@ export class AgentTeamService extends Service {
       )
     }
     if (current.mainSessionId === mainSessionId && current.status === 'active') return current
-    const next = await this.store.updateAssistantInstance(id, value => ({
-      ...value,
-      mainSessionId,
-      status: 'active',
-      revision: value.revision + 1,
-      updatedAt: new Date().toISOString(),
-    }))
+    const next = await this.store.updateAssistantInstance(id, value => {
+      // This update runs after every earlier queued instance write. Re-check
+      // the stored row so an archive that committed while this bind waited
+      // wins instead of being overwritten back to 'active'.
+      if (value.status === 'archived') {
+        throw new AgentTeamError(
+          'ASSISTANT_INSTANCE_ARCHIVED',
+          `Assistant instance '${id}' is archived`,
+        )
+      }
+      return {
+        ...value,
+        mainSessionId,
+        status: 'active',
+        revision: value.revision + 1,
+        updatedAt: new Date().toISOString(),
+      }
+    })
     this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.bound')
     return next
   }
