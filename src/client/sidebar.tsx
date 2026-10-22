@@ -585,6 +585,18 @@ export function SidebarPortal({
     let wrapper: HTMLDivElement | undefined
     let root: HTMLElement | undefined
     let scheduled = false
+    let scrollTimer: number | undefined
+    let scrollBound: HTMLDivElement | undefined
+
+    const showScrollbar = (): void => {
+      if (wrapper === undefined) return
+      wrapper.classList.add(css.sidebarScrolling ?? '')
+      if (scrollTimer !== undefined) window.clearTimeout(scrollTimer)
+      scrollTimer = window.setTimeout(() => {
+        wrapper?.classList.remove(css.sidebarScrolling ?? '')
+        scrollTimer = undefined
+      }, 700)
+    }
 
     const ensure = (): void => {
       const topStrip = document.querySelector<HTMLElement>('[class*="_topStrip"]')
@@ -602,6 +614,15 @@ export function SidebarPortal({
         wrapper.dataset.dshSidebarScroll = 'true'
       }
       if (wrapper.parentElement !== nextRoot) nextRoot.insertBefore(wrapper, newSession)
+      if (scrollBound !== wrapper) {
+        scrollBound?.removeEventListener('scroll', showScrollbar)
+        scrollBound?.removeEventListener('wheel', showScrollbar)
+        scrollBound?.removeEventListener('pointermove', showScrollbar)
+        wrapper.addEventListener('scroll', showScrollbar, { passive: true })
+        wrapper.addEventListener('wheel', showScrollbar, { passive: true })
+        wrapper.addEventListener('pointermove', showScrollbar, { passive: true })
+        scrollBound = wrapper
+      }
       for (const child of [newSession, nav, region]) {
         if (child.parentElement !== wrapper) wrapper.append(child)
       }
@@ -618,6 +639,11 @@ export function SidebarPortal({
     observer.observe(document.body, { childList: true, subtree: true })
     return () => {
       observer.disconnect()
+      if (scrollTimer !== undefined) window.clearTimeout(scrollTimer)
+      scrollBound?.removeEventListener('scroll', showScrollbar)
+      scrollBound?.removeEventListener('wheel', showScrollbar)
+      scrollBound?.removeEventListener('pointermove', showScrollbar)
+      wrapper?.classList.remove(css.sidebarScrolling ?? '')
       if (wrapper !== undefined && wrapper.isConnected) {
         const foot = root?.querySelector<HTMLElement>(':scope > [class*="_footArea"]')
         for (const child of Array.from(wrapper.children)) {

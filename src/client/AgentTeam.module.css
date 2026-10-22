@@ -7255,14 +7255,19 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
+  margin-right: -7px;
+  padding-right: 7px;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: contain;
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
 
+/* Match the shipped scrollbar: 5px, fully rounded, light neutral thumb. */
 .sidebarScrollArea::-webkit-scrollbar {
-  width: 3px;
-  height: 3px;
+  width: 5px;
+  height: 5px;
 }
 
 .sidebarScrollArea::-webkit-scrollbar-track {
@@ -7271,11 +7276,17 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 .sidebarScrollArea::-webkit-scrollbar-thumb {
   border-radius: 999px;
-  background: color-mix(in srgb, var(--dsw-alias-label-tertiary) 32%, transparent);
+  background: transparent;
+  transition: background 160ms var(--ds-ease-in-out);
 }
 
-.sidebarScrollArea::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--dsw-alias-label-tertiary) 52%, transparent);
+.sidebarScrollArea.sidebarScrolling::-webkit-scrollbar-thumb,
+.sidebarScrollArea:focus-within::-webkit-scrollbar-thumb {
+  background: var(--dsh-scrollbar-thumb);
+}
+
+.sidebarScrollArea.sidebarScrolling::-webkit-scrollbar-thumb:hover {
+  background: var(--dsh-scrollbar-thumb-hover);
 }
 
 .sidebarScrollArea > [class*='_newSession'],
@@ -7293,4 +7304,20 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   flex: 0 0 auto;
   min-height: 0;
   overflow: visible;
+}
+
+/* Native list height can be re-applied by a React render; keep it expanded
+   with CSS so the outer viewport does not change height while scrolling. */
+.sidebarScrollArea [class*='_listArea'] {
+  flex: 0 0 auto !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+.sidebarScrollArea [class*='_list'] {
+  flex: 0 0 auto !important;
+  height: auto !important;
+  max-height: none !important;
+  overflow: visible !important;
 }
