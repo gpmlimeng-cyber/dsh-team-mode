@@ -64,6 +64,24 @@ Assistant DM Main Session
 | 冷恢复状态机 | 区分进程内中断、插件重载、Host 冷启动；遗留任务生成新 attempt | 待开始 |
 | 归档并发竞态 | 归档状态与停止 worker 在同一实例锁内完成 | 待开始 |
 
+### P1：群聊编排模式
+
+按目标复杂度选择运行模式，避免把普通聊天任务化：
+
+| 模式 | 触发 | 行为 |
+|---|---|---|
+| 对话 | 1 个问题、无需交付/验证 | 直接回答，不建 Goal |
+| 单任务 | 1 个目标、1 个 owner、一个可验收交付物 | 1 个 Goal + 1 个 Task |
+| 编排 | 2+ 并行流、2+ 成员、依赖、验证/评审、长任务 | 1 个 Goal + DAG |
+
+多目标规则：
+
+- 共享交付物或真实依赖 → 同一 Goal
+- 独立目标 → 分开 Goal，共享调度器
+- 单 Goal 建议 3–7 个任务；超过 10 个拆子目标
+
+计划：[group-chat-orchestration-modes](./superpowers/plans/2026-10-22-group-chat-orchestration-modes.md)
+
 ### P1：任务协议
 
 | 项目 | 目标 | 借鉴点 |
