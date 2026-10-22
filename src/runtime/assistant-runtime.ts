@@ -21,6 +21,7 @@ import type {
   AssistantSnapshot,
   AssistantPreview,
 } from '../domain/types.js'
+import type { InteractionResponseInput, PendingInteractionView } from '../transport/contracts.js'
 import type { AgentTeamService } from '../service/dsh-team-mode-service.js'
 import {
   registerAssistantMemoryTools,
@@ -28,6 +29,7 @@ import {
   type AssistantTaskSummaryMessage,
 } from './assistant-tools.js'
 import { projectConversation } from './conversation-projector.js'
+import { TeamInteractionBridge } from './team-interaction-bridge.js'
 import type { ConversationNode } from '../transport/contracts.js'
 import { readStoredSessionEvents } from './session-log.js'
 
@@ -99,6 +101,8 @@ export class AssistantRuntime {
   private readonly workerBySession = new Map<string, string>()
   private readonly startingWorkers = new Map<string, Promise<OwnedWorker>>()
   private readonly assistantLocks = new Map<string, Promise<void>>()
+  private readonly interactionSessions = new Set<string>()
+  private readonly interactions: TeamInteractionBridge
   private readonly disposeStatusListener: () => void
   private readonly disposeSessionListener: () => void
   private closing = false
@@ -108,6 +112,14 @@ export class AssistantRuntime {
     private readonly config: Config,
     private readonly service: AgentTeamService,
   ) {
+    this.interactions = new TeamInteractionBridge(ctx, {
+      acceptsSession: sessionId => this.interactionSessions.has(sessionId),
+      onChange: sessionId => {
+        const taskId = this.workerBySession.get(sessionId)
+          ?? this.service.listAssistantSessions().items.find(task => task.sessionId === sessionId)?.id
+        if (taskId !== undefined) this.service.notifyAssistantTaskChanged(taskId)
+      },
+    })
     this.disposeStatusListener = ctx.on('agent/status', ({ agent, status }) => {
       const taskId = this.workerBySession.get(String(agent.id))
       if (taskId === undefined || this.closing) return
@@ -160,6 +172,8 @@ export class AssistantRuntime {
     this.closing = true
     this.disposeStatusListener()
     this.disposeSessionListener()
+    await this.interactions.dispose()
+    this.interactionSessions.clear()
     const pending = [...this.starting.values(), ...this.startingWorkers.values()]
     this.starting.clear()
     this.startingWorkers.clear()
@@ -318,6 +332,24 @@ export class AssistantRuntime {
     if (node === undefined) return undefined
     const text = node.text.replace(/\s+/g, ' ').trim().slice(0, 160)
     return text === '' ? undefined : { role: node.kind, text, time: node.time }
+  }
+
+  /** Pending human interactions raised by one hidden worker task. */
+  async taskInteractions(taskId: string): Promise<PendingInteractionView[]> {
+    const task = this.service.getAssistantSession(taskId)
+    if (!this.interactionSessions.has(task.sessionId)) return []
+    return this.interactions.list(task.sessionId)
+  }
+
+  /** Resolve one pending approval/question from the Assistant sidebar. */
+  async respondTaskInteraction(
+    taskId: string,
+    interactionId: string,
+    response: InteractionResponseInput,
+  ): Promise<void> {
+    const task = this.service.getAssistantSession(taskId)
+    await this.interactions.respond(task.sessionId, interactionId, response)
+    await this.markTaskRunning(taskId)
   }
 
   private async ensureWorker(task: AssistantSession): Promise<OwnedWorker> {
@@ -541,6 +573,8 @@ export class AssistantRuntime {
     if (worker === undefined) return
     this.workers.delete(taskId)
     this.workerBySession.delete(worker.sessionId)
+    this.interactionSessions.delete(worker.sessionId)
+    this.interactions.forget(worker.sessionId)
     try {
       await this.ctx.sessions.flush(worker.handle.agent.session)
     } catch (error) {
@@ -679,6 +713,11 @@ export class AssistantRuntime {
     const snapshot = this.service.getAssistantInstance(assistantId).assistantSnapshot
     const modelSelection = modelSelectionFor(snapshot)
     return async (agentCtx: Context, agent: Agent): Promise<void> => {
+      const sessionId = String(agent.session.id)
+      if (typeof agentCtx.on === 'function') {
+        this.interactionSessions.add(sessionId)
+        this.interactions.attachAgent(agentCtx, sessionId)
+      }
       await this.ctx.agentPresets.mount(agentCtx, snapshot.agentPresetId)
       installModelSelection(agentCtx, modelSelection)
       agentCtx.systemPrompt.section({

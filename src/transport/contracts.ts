@@ -41,6 +41,8 @@ export const AGENT_TEAM_METHODS = [
   'assistant.instance.archive',
   'assistant.instance.ensure',
   'assistant.task.list',
+  'assistant.task.interactions',
+  'assistant.task.interaction.respond',
   'assistant.task.open',
   'assistant.builder.list',
   'assistant.builder.draft.get',
@@ -350,6 +352,14 @@ export interface AgentTeamRequestMap {
   'assistant.task.open': {
     payload: { taskId: string }
     result: { task: AssistantSession; sessionId: string }
+  }
+  'assistant.task.interactions': {
+    payload: { taskId: string }
+    result: PendingInteractionView[]
+  }
+  'assistant.task.interaction.respond': {
+    payload: { taskId: string; interactionId: string; response: InteractionResponseInput }
+    result: null
   }
   'assistant.builder.list': { payload: undefined; result: AssistantBuilderConversationListView }
   'assistant.builder.draft.get': { payload: undefined; result: AssistantBuilderDraftView }

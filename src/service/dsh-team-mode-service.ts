@@ -53,6 +53,7 @@ import type {
   AssistantBuilderDraftView,
   InteractionResponseInput,
   MemberConversationView,
+  PendingInteractionView,
   TeamWorkbenchView,
   WorkspaceEntryView,
   WorkspaceGitStatusView,
@@ -790,6 +791,28 @@ export class AgentTeamService extends Service {
   }
 
   /** Newest-first worker Sessions, optionally scoped to one assistant instance. */
+  async listAssistantTaskInteractions(taskId: string): Promise<PendingInteractionView[]> {
+    if (this.assistantRuntime === undefined) return []
+    return this.assistantRuntime.taskInteractions(taskId)
+  }
+
+  async respondAssistantTaskInteraction(
+    taskId: string,
+    interactionId: string,
+    response: InteractionResponseInput,
+  ): Promise<void> {
+    if (this.assistantRuntime === undefined) {
+      throw new AgentTeamError('INVALID_REQUEST', 'Assistant runtime is not attached')
+    }
+    await this.assistantRuntime.respondTaskInteraction(taskId, interactionId, response)
+  }
+
+  /** Wake sidebar clients when a worker raises or settles an interaction. */
+  notifyAssistantTaskChanged(taskId: string): void {
+    if (this.store.getAssistantSession(taskId) === undefined) return
+    this.publish('assistant-session', taskId, 0, 'assistant.task.interaction')
+  }
+
   listAssistantSessions(assistantId?: string): Page<AssistantSession> {
     const items = this.store.listAssistantSessions()
       .filter(session => assistantId === undefined || session.assistantId === assistantId)

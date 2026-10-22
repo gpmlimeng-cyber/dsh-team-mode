@@ -47,7 +47,7 @@ import {
 import { MemberAvatar } from './member-avatar.js'
 import css from './AgentTeam.module.css'
 import type { AssistantInstance, AssistantSession } from '../domain/types.js'
-import type { AssistantInstanceView } from '../transport/contracts.js'
+import type { AssistantInstanceView, PendingInteractionView } from '../transport/contracts.js'
 
 const ASSISTANT_EXPANDED_KEY = 'dsh-team-mode:assistant-expanded'
 
@@ -99,6 +99,9 @@ export function AssistantSidebarSection({
   const [instances, setInstances] = useState<AssistantInstanceView[]>([])
   const [readState, setReadState] = useState(assistantReadState)
   const [notice, setNotice] = useState<{ assistantId: string; taskId: string; name: string; title: string }>()
+  const [interactionsByTask, setInteractionsByTask] = useState<Record<string, PendingInteractionView[]>>({})
+  const [interactionBusy, setInteractionBusy] = useState<string>()
+  const [interactionError, setInteractionError] = useState<string>()
   const knownWaitingRef = useRef<Set<string> | undefined>(undefined)
   const [tasks, setTasks] = useState<AssistantSession[]>([])
   const mode = useAssistantDisplayMode()
@@ -156,6 +159,25 @@ export function AssistantSidebarSection({
     () => allPending.filter(item => visible.some(instance => instance.id === item.instance.id)),
     [allPending, visible],
   )
+
+  useEffect(() => {
+    let cancelled = false
+    if (attentionItems.length === 0) {
+      setInteractionsByTask({})
+      return
+    }
+    void Promise.all(attentionItems.map(async item => {
+      try {
+        const interactions = await callAgentTeam('assistant.task.interactions', { taskId: item.task.id })
+        return [item.task.id, interactions] as const
+      } catch {
+        return [item.task.id, []] as const
+      }
+    })).then(entries => {
+      if (!cancelled) setInteractionsByTask(Object.fromEntries(entries))
+    })
+    return () => { cancelled = true }
+  }, [attentionItems])
 
   const attentionSummary = useMemo(() => {
     let waiting = 0
@@ -281,6 +303,33 @@ export function AssistantSidebarSection({
     writeAssistantThreadExpanded(instance.id, next)
     setThreadOpenById(current => ({ ...current, [instance.id]: next }))
     setThreadError(current => (current?.assistantId === instance.id ? undefined : current))
+  }
+
+  async function respondInteraction(
+    taskId: string,
+    interactionId: string,
+    outcome: 'allowed-once' | 'rejected',
+  ): Promise<void> {
+    setInteractionBusy(interactionId)
+    setInteractionError(undefined)
+    try {
+      await callAgentTeam('assistant.task.interaction.respond', {
+        taskId,
+        interactionId,
+        response: { kind: 'approval', outcome },
+      })
+      setInteractionsByTask(current => {
+        const next = { ...current }
+        next[taskId] = (next[taskId] ?? []).filter(item => item.id !== interactionId)
+        if (next[taskId].length === 0) delete next[taskId]
+        return next
+      })
+      await load()
+    } catch (cause) {
+      setInteractionError(`审批处理失败：${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setInteractionBusy(undefined)
+    }
   }
 
   async function openThreadTask(
@@ -467,23 +516,59 @@ export function AssistantSidebarSection({
             <span>待你处理</span>
             <span className={css.sidebarAssistantAttentionCount}>{attentionItems.length}</span>
           </div>
-          {attentionItems.map(({ instance, task }) => (
-            <button
-              key={task.id}
-              type="button"
-              className={css.sidebarAssistantAttentionRow}
-              onClick={() => { void openThreadTask(instance, task) }}
-              title={`${task.title} · ${assistantInstanceName(instance)} · 待你处理`}
-            >
-              <span className={css.sidebarAssistantAttentionBadge} aria-hidden="true">!</span>
-              <span className={css.sidebarAssistantAttentionCopy}>
-                <span className={css.sidebarAssistantAttentionTask}>{task.title}</span>
-                <span className={css.sidebarAssistantAttentionMeta}>
-                  {assistantInstanceName(instance)} · 待你处理
-                </span>
-              </span>
-            </button>
-          ))}
+          {attentionItems.map(({ instance, task }) => {
+            const interactions = interactionsByTask[task.id] ?? []
+            const approval = interactions.find(item => item.kind === 'approval')
+            return (
+              <div key={task.id} className={css.sidebarAssistantAttentionItem}>
+                <button
+                  type="button"
+                  className={css.sidebarAssistantAttentionRow}
+                  onClick={() => { void openThreadTask(instance, task) }}
+                  title={`${task.title} · ${assistantInstanceName(instance)} · 待你处理`}
+                >
+                  <span className={css.sidebarAssistantAttentionBadge} aria-hidden="true">!</span>
+                  <span className={css.sidebarAssistantAttentionCopy}>
+                    <span className={css.sidebarAssistantAttentionTask}>{task.title}</span>
+                    <span className={css.sidebarAssistantAttentionMeta}>
+                      {assistantInstanceName(instance)} · {approval === undefined ? '待你处理' : '请求审批'}
+                    </span>
+                  </span>
+                </button>
+                {approval !== undefined && (
+                  <div className={css.sidebarAssistantApproval}>
+                    <div className={css.sidebarAssistantApprovalTool}>
+                      审批 · <span className={css.sidebarAssistantApprovalName}>{approval.toolName}</span>
+                    </div>
+                    {approval.reason !== undefined && approval.reason.trim() !== '' && (
+                      <div className={css.sidebarAssistantApprovalReason}>{approval.reason}</div>
+                    )}
+                    <div className={css.sidebarAssistantApprovalActions}>
+                      <button
+                        type="button"
+                        className={css.sidebarAssistantApprovalAllow}
+                        disabled={interactionBusy === approval.id}
+                        onClick={() => { void respondInteraction(task.id, approval.id, 'allowed-once') }}
+                      >
+                        允许一次
+                      </button>
+                      <button
+                        type="button"
+                        className={css.sidebarAssistantApprovalDeny}
+                        disabled={interactionBusy === approval.id}
+                        onClick={() => { void respondInteraction(task.id, approval.id, 'rejected') }}
+                      >
+                        拒绝
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {interactionError !== undefined && (
+            <div className={css.sidebarAssistantInteractionError} role="alert">{interactionError}</div>
+          )}
         </div>
       )}
       {expanded && (

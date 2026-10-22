@@ -7548,3 +7548,83 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
+
+.sidebarAssistantAttentionItem {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebarAssistantApproval {
+  margin: 0 4px 3px 25px;
+  padding: 5px 7px 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.sidebarAssistantApprovalTool {
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarAssistantApprovalName {
+  color: var(--dsw-alias-label-primary);
+  font-family: var(--ds-font-family-code, ui-monospace, monospace);
+}
+
+.sidebarAssistantApprovalReason {
+  overflow: hidden;
+  margin-top: 1px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarAssistantApprovalActions {
+  display: flex;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.sidebarAssistantApprovalAllow,
+.sidebarAssistantApprovalDeny {
+  padding: 2px 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-size: 10px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.sidebarAssistantApprovalAllow {
+  border-color: transparent;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-label-primary-foreground);
+}
+
+.sidebarAssistantApprovalAllow:hover:not(:disabled),
+.sidebarAssistantApprovalDeny:hover:not(:disabled) {
+  filter: brightness(0.96);
+}
+
+.sidebarAssistantApprovalAllow:disabled,
+.sidebarAssistantApprovalDeny:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sidebarAssistantInteractionError {
+  padding: 3px 4px;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 10px;
+  line-height: 14px;
+}

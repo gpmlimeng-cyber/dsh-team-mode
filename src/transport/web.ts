@@ -263,6 +263,25 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       }).strict().parse(request.payload)
       return service.openAssistantTask(payload.taskId)
     }
+    case 'assistant.task.interactions': {
+      const payload = z.object({
+        taskId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.listAssistantTaskInteractions(payload.taskId)
+    }
+    case 'assistant.task.interaction.respond': {
+      const payload = z.object({
+        taskId: z.string().trim().min(1).max(200),
+        interactionId: z.string().trim().min(1).max(200),
+        response: z.unknown(),
+      }).strict().parse(request.payload)
+      await service.respondAssistantTaskInteraction(
+        payload.taskId,
+        payload.interactionId,
+        payload.response as never,
+      )
+      return null
+    }
     case 'assistant.builder.list': return service.listAssistantBuilderConversations()
     case 'assistant.builder.draft.get': return service.getAssistantBuilderDraft()
     case 'assistant.builder.draft.configure': {
