@@ -429,19 +429,30 @@ export function SidebarPortal({
         scrollRoot = root
         root.setAttribute('data-dsh-team-scroll', 'sidebar')
       }
-      if (root !== null && nativeList === undefined) {
+      if (root !== null) {
         const candidate = Array.from(root.children).find(child => (
           child !== element
           && (getComputedStyle(child).overflowY === 'auto' || getComputedStyle(child).overflowY === 'scroll')
         )) as HTMLElement | undefined
         if (candidate !== undefined) {
-          nativeList = candidate
-          nativeListStyle = {
-            flex: candidate.style.flex,
-            height: candidate.style.height,
-            maxHeight: candidate.style.maxHeight,
-            overflow: candidate.style.overflow,
+          if (candidate !== nativeList) {
+            if (nativeList !== undefined && nativeListStyle !== undefined) {
+              nativeList.style.flex = nativeListStyle.flex
+              nativeList.style.height = nativeListStyle.height
+              nativeList.style.maxHeight = nativeListStyle.maxHeight
+              nativeList.style.overflow = nativeListStyle.overflow
+            }
+            nativeList = candidate
+            nativeListStyle = {
+              flex: candidate.style.flex,
+              height: candidate.style.height,
+              maxHeight: candidate.style.maxHeight,
+              overflow: candidate.style.overflow,
+            }
           }
+          // React can re-apply the shipped inline/class styles on rerender;
+          // keep the inner list expanded on every pass so only the outer
+          // sidebar column scrolls.
           candidate.style.flex = '0 0 auto'
           candidate.style.height = 'auto'
           candidate.style.maxHeight = 'none'
@@ -562,6 +573,59 @@ export function SidebarPortal({
       toggle?.remove()
       if (label !== undefined) label.style.display = ''
       if (listArea !== undefined) listArea.style.display = originalDisplay
+    }
+  }, [])
+
+
+  // Put 新会话, the top navigation and the workspace region inside one real
+  // scroll wrapper between the fixed brand rows and the fixed account footer.
+  // A sticky overlay would let content pass underneath; this keeps the scroll
+  // viewport strictly between the two fixed ends.
+  useEffect(() => {
+    let wrapper: HTMLDivElement | undefined
+    let root: HTMLElement | undefined
+    let scheduled = false
+
+    const ensure = (): void => {
+      const topStrip = document.querySelector<HTMLElement>('[class*="_topStrip"]')
+      const nextRoot = topStrip?.parentElement
+      if (nextRoot === null || nextRoot === undefined) return
+      root = nextRoot
+      const newSession = nextRoot.querySelector<HTMLElement>(':scope > [class*="_newSession"]')
+      const nav = nextRoot.querySelector<HTMLElement>(':scope > [class*="_panelList"]')
+      const region = nextRoot.querySelector<HTMLElement>(':scope > [class*="_regionArea"]')
+      const foot = nextRoot.querySelector<HTMLElement>(':scope > [class*="_footArea"]')
+      if (newSession === null || nav === null || region === null || foot === null) return
+      if (wrapper === undefined || !wrapper.isConnected) {
+        wrapper = document.createElement('div')
+        wrapper.className = css.sidebarScrollArea ?? ''
+        wrapper.dataset.dshSidebarScroll = 'true'
+      }
+      if (wrapper.parentElement !== nextRoot) nextRoot.insertBefore(wrapper, newSession)
+      for (const child of [newSession, nav, region]) {
+        if (child.parentElement !== wrapper) wrapper.append(child)
+      }
+    }
+
+    const schedule = (): void => {
+      if (scheduled) return
+      scheduled = true
+      window.requestAnimationFrame(() => { scheduled = false; ensure() })
+    }
+
+    ensure()
+    const observer = new MutationObserver(schedule)
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => {
+      observer.disconnect()
+      if (wrapper !== undefined && wrapper.isConnected) {
+        const foot = root?.querySelector<HTMLElement>(':scope > [class*="_footArea"]')
+        for (const child of Array.from(wrapper.children)) {
+          if (foot !== null && foot !== undefined) root?.insertBefore(child, foot)
+          else root?.append(child)
+        }
+        wrapper.remove()
+      }
     }
   }, [])
 

@@ -7249,54 +7249,32 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 }
 
 
-/* The middle sidebar region scrolls as one; brand and account rows stay put. */
-[data-dsh-team-scroll='sidebar'] {
-  overflow-y: auto;
+/* Real scroll viewport between the fixed brand rows and account footer. */
+.sidebarScrollArea {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
   min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   scrollbar-color: var(--dsw-alias-scrollbar-hover-l2) transparent;
   scrollbar-width: thin;
 }
 
-[data-dsh-team-scroll='sidebar'] > * {
-  flex-shrink: 0;
+.sidebarScrollArea > [class*='_newSession'],
+.sidebarScrollArea > [class*='_panelList'] {
+  flex: none;
 }
 
-
-/* Native workspace header disclosure, matching 群聊/单聊. */
-.workspaceHeaderClickable {
-  cursor: pointer;
+.sidebarScrollArea > [class*='_regionArea'] {
+  flex: 1 0 auto;
+  overflow: visible;
 }
 
-.workspaceHeaderClickable [class*="_sectionLabel"] {
-  position: relative;
-}
-
-.workspaceChevron {
-  display: inline-flex;
-  position: absolute;
-  inset-inline-start: calc(100% + 2px);
-  top: 50%;
-  align-items: center;
-  justify-content: center;
-  width: 12px;
-  height: 12px;
-  pointer-events: none;
-  color: var(--dsw-alias-label-tertiary);
-  opacity: 0;
-  transform: translateY(-50%) rotate(0deg);
-  transition: opacity 120ms var(--ds-ease-in-out), transform 120ms var(--ds-ease-in-out);
-}
-
-.workspaceHeaderClickable:hover .workspaceChevron,
-.workspaceHeaderClickable:focus-within .workspaceChevron {
-  opacity: 1;
-}
-
-[data-dsh-workspace-collapsed='true'] .workspaceChevron {
-  transform: translateY(-50%) rotate(0deg);
-}
-
-[data-dsh-workspace-collapsed='false'] .workspaceChevron {
-  transform: translateY(-50%) rotate(90deg);
+.sidebarScrollArea [data-dsh-team-scroll='sidebar'] {
+  height: auto;
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow: visible;
 }
