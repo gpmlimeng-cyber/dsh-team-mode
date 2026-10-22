@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
+import { teamAggregateSchema, teamTaskSchema } from '../src/domain/schemas.js'
 import type {
   AssistantInstance,
   AssistantMemory,
@@ -14,6 +15,7 @@ import type {
   TeamActivity,
   TeamAggregate,
   TeamMessage,
+  TeamTask,
 } from '../src/domain/types.js'
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import type { AgentTeamStore } from '../src/storage/store.js'
@@ -419,6 +421,112 @@ describe('AgentTeamService', () => {
     expect(store.listMessages(team.id)).toHaveLength(0)
     expect(store.listActivities(team.id)).toHaveLength(0)
     expect(service.getAssistant(assistant.id).name).toBe('Codex Lead')
+  })
+
+  it('loads teams and tasks written before Goals existed', async () => {
+    const { service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const team = await service.createTeamDraft({
+      name: 'Legacy team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    await seedTask(store, team.id, 'task-legacy')
+
+    // The store parses every record through the aggregate schema; a team that
+    // never created a Goal must reload with no `goals` record at all.
+    const persisted = store.getTeam(team.id)!
+    const reloaded = teamAggregateSchema.parse(persisted)
+    expect(persisted.goals).toBeUndefined()
+    expect(reloaded.goals).toBeUndefined()
+    expect(reloaded.schemaVersion).toBe(team.schemaVersion)
+    expect(reloaded.tasks['task-legacy']?.goalId).toBeUndefined()
+    expect(service.listGoals(team.id)).toEqual({ items: [], total: 0 })
+  })
+
+  it('creates, lists, updates and links Goals inside one team', async () => {
+    const { service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const team = await service.createTeamDraft({
+      name: 'Goal team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const linkedTask = await seedTask(store, team.id, 'task-linked')
+    const unlinkedTask = await seedTask(store, team.id, 'task-unlinked')
+
+    const goal = await service.createGoal(team.id, {
+      title: 'Ship Goal layer',
+      objective: 'Group team tasks by objective',
+      acceptance: 'npm run check passes',
+    })
+    expect(goal).toMatchObject({
+      teamId: team.id,
+      title: 'Ship Goal layer',
+      acceptance: 'npm run check passes',
+      mode: 'single',
+      status: 'active',
+    })
+    expect(service.listGoals(team.id)).toEqual({ items: [goal], total: 1 })
+
+    const updated = await service.updateGoal(team.id, goal.id, {
+      mode: 'orchestrated',
+      objective: 'Group tasks and drive their modes',
+      status: 'completed',
+    })
+    expect(updated).toMatchObject({
+      id: goal.id,
+      title: 'Ship Goal layer',
+      objective: 'Group tasks and drive their modes',
+      mode: 'orchestrated',
+      status: 'completed',
+    })
+
+    const linked = await service.linkTaskToGoal(team.id, linkedTask.id, goal.id)
+    expect(linked.goalId).toBe(goal.id)
+    expect(linked.revision).toBe(linkedTask.revision + 1)
+
+    // Persisted aggregate, not just the returned record: this is what the team
+    // page and the task tools read after a reload.
+    const persisted = teamAggregateSchema.parse(store.getTeam(team.id))
+    expect(persisted.goals?.[goal.id]).toMatchObject({ mode: 'orchestrated', status: 'completed' })
+    expect(persisted.tasks[linkedTask.id]?.goalId).toBe(goal.id)
+    expect(persisted.tasks[unlinkedTask.id]?.goalId).toBeUndefined()
+
+    const unlinked = await service.linkTaskToGoal(team.id, linkedTask.id)
+    expect(unlinked.goalId).toBeUndefined()
+    expect(store.getTeam(team.id)!.tasks[linkedTask.id]).not.toHaveProperty('goalId')
+    expect(teamTaskSchema.parse(store.getTeam(team.id)!.tasks[linkedTask.id]).goalId).toBeUndefined()
+  })
+
+  it('refuses to link a task to another team’s Goal', async () => {
+    const { service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const own = await service.createTeamDraft({
+      name: 'Own team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const foreign = await service.createTeamDraft({
+      name: 'Foreign team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const task = await seedTask(store, own.id, 'task-own')
+    const ownGoal = await service.createGoal(own.id, { title: 'Own goal', objective: 'Own objective' })
+    const foreignGoal = await service.createGoal(foreign.id, { title: 'Foreign goal', objective: 'Foreign objective' })
+
+    await expect(service.linkTaskToGoal(own.id, task.id, foreignGoal.id)).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    })
+    await expect(service.updateGoal(own.id, foreignGoal.id, { title: 'Stolen' })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    })
+    expect(store.getTeam(own.id)!.tasks[task.id]?.goalId).toBeUndefined()
+    expect(store.getTeam(foreign.id)!.goals?.[foreignGoal.id]?.title).toBe('Foreign goal')
+
+    await service.linkTaskToGoal(own.id, task.id, ownGoal.id)
+    expect(store.getTeam(own.id)!.tasks[task.id]?.goalId).toBe(ownGoal.id)
   })
 
   it('clones team configuration into fresh members and sessions without runtime records', async () => {
@@ -1438,4 +1546,22 @@ async function updateMap<T>(map: Map<string, T>, id: string, update: (current: T
   const next = update(current)
   map.set(id, next)
   return next
+}
+
+/** Seed a persisted task without going through the runtime command handler. */
+async function seedTask(store: MemoryStore, teamId: string, id: string): Promise<TeamTask> {
+  const team = store.getTeam(teamId)!
+  const task: TeamTask = {
+    id,
+    title: id,
+    description: '',
+    status: 'pending',
+    dependencyIds: [],
+    fileScopes: [],
+    revision: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+  await store.putTeam({ ...team, tasks: { ...team.tasks, [id]: task } })
+  return task
 }

@@ -3,6 +3,7 @@ import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { AgentTeamError } from '../domain/errors.js'
 import type {
   TeamAggregate,
+  TeamGoal,
   TeamMemberSlot,
   TeamMessage,
   TeamTask,
@@ -65,6 +66,8 @@ export interface TeamTaskView {
   blocked_by: string[]
   blocks: string[]
   file_scopes: string[]
+  /** Goal this task contributes to; absent for ungrouped legacy tasks. */
+  goal_id?: string
   result?: string
   error?: string
   revision: number
@@ -108,6 +111,29 @@ export interface CreateTaskInput {
   fileScopes?: string[]
   blockedBy?: string[]
   blocked_by?: string[]
+  /** Goal of the same team that this task contributes to. */
+  goalId?: string
+  goal_id?: string
+}
+
+export interface CreateGoalInput {
+  title?: string
+  objective?: string
+  acceptance?: string
+  mode?: 'direct' | 'single' | 'orchestrated'
+}
+
+/** Goal plus the tasks it groups; the shape tools and future UI read. */
+export interface TeamGoalView {
+  goal_id: string
+  title: string
+  objective: string
+  acceptance: string
+  mode: 'direct' | 'single' | 'orchestrated'
+  status: 'active' | 'completed' | 'cancelled'
+  task_ids: string[]
+  created_at: string
+  updated_at: string
 }
 
 export interface UpdateTaskInput {
@@ -202,6 +228,8 @@ export class TeamCommandHandler {
     const ownerSlotId = this.resolveOwnerSlotId(team, input.owner ?? input.ownerSlotId, true)
     const blockedBy = this.validateBlockedBy(team, undefined, input.blocked_by ?? input.blockedBy)
     const fileScopes = uniqueStrings(input.fileScopes ?? []).slice(0, 64)
+    const goalId = normalizeGoalId(input.goal_id ?? input.goalId)
+    if (goalId !== undefined) requireGoal(team, goalId)
     const taskLimit = this.service.config.maxTeamTasks ?? 256
     if (Object.keys(team.tasks).length >= taskLimit) {
       throw new AgentTeamError(
@@ -227,7 +255,7 @@ export class TeamCommandHandler {
         recipientSlotId: owner.id,
         taskId,
         type: 'instruction',
-        content: assignmentContent(title, description, fileScopes, blockedBy, taskId),
+        content: withAttemptHint(assignmentContent(title, description, fileScopes, blockedBy, taskId), attemptId),
       })
     await this.service.updateRuntimeTeam(
       teamId,
@@ -245,6 +273,7 @@ export class TeamCommandHandler {
             createdBySlotId: creatorSlotId,
             dependencyIds: blockedBy,
             fileScopes,
+            ...(goalId === undefined ? {} : { goalId }),
             revision: 1,
             createdAt: now,
             updatedAt: now,
@@ -388,7 +417,7 @@ export class TeamCommandHandler {
             recipientSlotId: ownerSlotId,
             taskId,
             type: 'instruction',
-            content: reassignmentContent(base.title, input.result, input.error),
+            content: withAttemptHint(reassignmentContent(base.title, input.result, input.error), attemptId),
           }))
         } else if (callerSlotId !== current.leaderSlotId) {
           nextNotifications.push(createTaskDispatchMessage({
@@ -409,7 +438,10 @@ export class TeamCommandHandler {
             recipientSlotId: ready.ownerSlotId,
             taskId: ready.id,
             type: 'instruction',
-            content: `Task '${ready.title}' is unblocked and ready for you (task id: ${ready.id}). Use team_mode_task_update to mark it in_progress.`,
+            content: withAttemptHint(
+              `Task '${ready.title}' is unblocked and ready for you (task id: ${ready.id}). Use team_mode_task_update to mark it in_progress.`,
+              ready.attemptId,
+            ),
           }))
           nextWoken.push(ready.ownerSlotId)
         }
@@ -464,6 +496,7 @@ export class TeamCommandHandler {
       ...(owner === undefined ? {} : { owner_name: owner.displayName }),
       ...(task.attemptId === undefined ? {} : { attempt_id: task.attemptId }),
       ...(task.createdBySlotId === undefined ? {} : { created_by: task.createdBySlotId }),
+      ...(task.goalId === undefined ? {} : { goal_id: task.goalId }),
       blocked_by: [...task.dependencyIds],
       blocks: allTasks
         .filter(other => other.dependencyIds.includes(task.id))
@@ -474,6 +507,47 @@ export class TeamCommandHandler {
       revision: task.revision,
       created_at: task.createdAt,
       updated_at: task.updatedAt,
+    }
+  }
+
+  /** Goals with the task ids they group; an empty board yields no goals. */
+  listGoals(teamId: string): TeamGoalView[] {
+    const team = this.service.getTeam(teamId)
+    return Object.values(team.goals ?? {})
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+      .map(goal => this.goalView(team, goal))
+  }
+
+  async createGoal(
+    teamId: string,
+    creatorSlotId: string,
+    input: CreateGoalInput,
+  ): Promise<TeamGoalView> {
+    const team = this.service.getTeam(teamId)
+    this.assertLeader(team, creatorSlotId, 'create goals')
+    const goal = await this.service.createGoal(teamId, {
+      title: requireShortText(input.title ?? '', 'Goal title', 200),
+      objective: requireShortText(input.objective ?? '', 'Goal objective', 2_000),
+      ...(input.acceptance === undefined ? {} : { acceptance: input.acceptance }),
+      ...(input.mode === undefined ? {} : { mode: input.mode }),
+    })
+    return this.goalView(this.service.getTeam(teamId), goal)
+  }
+
+  goalView(team: TeamAggregate, goal: TeamGoal): TeamGoalView {
+    return {
+      goal_id: goal.id,
+      title: goal.title,
+      objective: goal.objective,
+      acceptance: goal.acceptance,
+      mode: goal.mode,
+      status: goal.status,
+      task_ids: Object.values(team.tasks)
+        .filter(task => task.goalId === goal.id)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+        .map(task => task.id),
+      created_at: goal.createdAt,
+      updated_at: goal.updatedAt,
     }
   }
 
@@ -968,4 +1042,28 @@ function requireShortText(value: string, label: string, maxLength: number): stri
   if (normalized.length === 0) throw new AgentTeamError('INVALID_REQUEST', `${label} cannot be empty`)
   if (normalized.length > maxLength) throw new AgentTeamError('INVALID_REQUEST', `${label} is too long`)
   return normalized
+}
+
+/** A Goal link must name a Goal of this same team; another team's id is unknown here. */
+function requireGoal(team: TeamAggregate, goalId: string): TeamGoal {
+  const goal = team.goals?.[goalId]
+  if (goal === undefined) {
+    throw new AgentTeamError('INVALID_REQUEST', `Unknown goal '${goalId}' in team '${team.id}'`)
+  }
+  return goal
+}
+
+function normalizeGoalId(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed
+}
+
+/**
+ * Wake copy carries the task's fence token, so a member's first
+ * `team_mode_task_update` is not rejected as stale.
+ */
+function withAttemptHint(content: string, attemptId?: string): string {
+  return attemptId === undefined
+    ? content
+    : `${content}\nYour attempt_id for this task is ${attemptId}; pass it as attempt_id on team_mode_task_update.`
 }

@@ -13,9 +13,11 @@ import {
   createAssistantInstanceInputSchema,
   createAssistantSessionInputSchema,
   createTeamDraftInputSchema,
+  createTeamGoalInputSchema,
   updateAssistantInputSchema,
   updateAssistantInstanceInputSchema,
   updateAssistantSessionInputSchema,
+  updateTeamGoalInputSchema,
 } from '../domain/schemas.js'
 import {
   snapshotAssistant,
@@ -32,15 +34,19 @@ import {
   type CreateAssistantInstanceInput,
   type CreateAssistantSessionInput,
   type CreateTeamDraftInput,
+  type CreateTeamGoalInput,
   type Operation,
   type Page,
   type TeamActivity,
   type TeamAggregate,
+  type TeamGoal,
   type TeamMemberSlot,
   type TeamMessage,
+  type TeamTask,
   type UpdateAssistantInput,
   type UpdateAssistantInstanceInput,
   type UpdateAssistantSessionInput,
+  type UpdateTeamGoalInput,
 } from '../domain/types.js'
 import type { AgentTeamStore } from '../storage/store.js'
 import type { AssistantBuilderRuntime } from '../runtime/assistant-builder-runtime.js'
@@ -904,6 +910,93 @@ export class AgentTeamService extends Service {
   listTeams(): Page<TeamAggregate> {
     const items = this.store.listTeams()
     return { items, total: items.length }
+  }
+
+  /** Goals belonging to one team; a legacy team simply has none. */
+  listGoals(teamId: string): Page<TeamGoal> {
+    const team = requireTeam(this.store, teamId)
+    const items = Object.values(team.goals ?? {})
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+    return { items, total: items.length }
+  }
+
+  async createGoal(teamId: string, raw: CreateTeamGoalInput): Promise<TeamGoal> {
+    const input = createTeamGoalInputSchema.parse(raw)
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    const now = new Date().toISOString()
+    const goal: TeamGoal = {
+      id: randomUUID(),
+      teamId,
+      title: input.title,
+      objective: input.objective,
+      acceptance: input.acceptance ?? '',
+      mode: input.mode ?? 'single',
+      status: 'active',
+      createdAt: now,
+      updatedAt: now,
+    }
+    await this.updateRuntimeTeam(
+      teamId,
+      current => ({ ...current, goals: { ...current.goals, [goal.id]: goal } }),
+      'team.goal_created',
+      `Goal ${goal.title} created`,
+    )
+    return goal
+  }
+
+  async updateGoal(teamId: string, goalId: string, raw: UpdateTeamGoalInput): Promise<TeamGoal> {
+    const input = updateTeamGoalInputSchema.parse(raw)
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    requireGoal(team, goalId)
+    const now = new Date().toISOString()
+    const next = await this.updateRuntimeTeam(
+      teamId,
+      current => {
+        const existing = requireGoal(current, goalId)
+        const updated: TeamGoal = {
+          ...existing,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(input.objective === undefined ? {} : { objective: input.objective }),
+          ...(input.acceptance === undefined ? {} : { acceptance: input.acceptance }),
+          ...(input.mode === undefined ? {} : { mode: input.mode }),
+          ...(input.status === undefined ? {} : { status: input.status }),
+          updatedAt: now,
+        }
+        return { ...current, goals: { ...current.goals, [goalId]: updated } }
+      },
+      'team.goal_updated',
+      `Goal ${goalId} updated`,
+    )
+    return requireGoal(next, goalId)
+  }
+
+  /**
+   * Link one task to a Goal of its own team, or unlink it with `goalId`
+   * undefined. Both records are resolved inside the same aggregate, so another
+   * team's Goal is never reachable here and is rejected as unknown.
+   */
+  async linkTaskToGoal(teamId: string, taskId: string, goalId?: string): Promise<TeamTask> {
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    requireTask(team, taskId)
+    if (goalId !== undefined) requireGoal(team, goalId)
+    const now = new Date().toISOString()
+    const next = await this.updateRuntimeTeam(
+      teamId,
+      current => {
+        const task = requireTask(current, taskId)
+        if (goalId !== undefined) requireGoal(current, goalId)
+        const updated: TeamTask = goalId === undefined
+          ? { ...withoutGoal(task), revision: task.revision + 1, updatedAt: now }
+          : { ...task, goalId, revision: task.revision + 1, updatedAt: now }
+        return { ...current, tasks: { ...current.tasks, [taskId]: updated } }
+      },
+      goalId === undefined ? 'team.goal_unlinked' : 'team.task_goal_linked',
+      goalId === undefined ? `Task ${taskId} unlinked from its goal` : `Task ${taskId} linked to goal ${goalId}`,
+    )
+    return requireTask(next, taskId)
   }
 
   async createTeamDraft(raw: CreateTeamDraftInput): Promise<TeamAggregate> {
@@ -1825,6 +1918,28 @@ function appendMemory(current: string, addition: string): string {
 function requireTeam(store: AgentTeamStore, id: string): TeamAggregate {  const team = store.getTeam(id)
   if (team === undefined) throw new AgentTeamError('TEAM_NOT_FOUND', `Unknown team '${id}'`)
   return team
+}
+
+function requireGoal(team: TeamAggregate, goalId: string): TeamGoal {
+  const goal = team.goals?.[goalId]
+  if (goal === undefined) {
+    throw new AgentTeamError('INVALID_REQUEST', `Unknown goal '${goalId}' in team '${team.id}'`)
+  }
+  return goal
+}
+
+function requireTask(team: TeamAggregate, taskId: string): TeamTask {
+  const task = team.tasks[taskId]
+  if (task === undefined) {
+    throw new AgentTeamError('INVALID_REQUEST', `Unknown task '${taskId}' in team '${team.id}'`)
+  }
+  return task
+}
+
+/** Unlink helper: `exactOptionalPropertyTypes` forbids assigning goalId: undefined. */
+function withoutGoal(task: TeamTask): Omit<TeamTask, 'goalId'> {
+  const { goalId: _goalId, ...rest } = task
+  return rest
 }
 
 function assertRevision(entity: string, actual: number, expected?: number): void {

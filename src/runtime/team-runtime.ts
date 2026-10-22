@@ -589,6 +589,8 @@ export class TeamRuntime {
           ...current,
           state: shouldRestart ? 'starting' : 'draft',
           tasks: {},
+          // Goals group tasks; a reset clears both so no Goal outlives its board.
+          goals: {},
           leases: {},
           outbox: {},
           retiredSessions: current.state === 'draft'
@@ -1123,6 +1125,8 @@ export class TeamRuntime {
           createTask: input => this.commands.createTask(team.id, member.id, input),
           updateTask: input => this.commands.updateTask(team.id, member.id, input),
           listTasks: limit => this.commands.listTasks(team.id, limit),
+          createGoal: input => this.commands.createGoal(team.id, member.id, input),
+          listGoals: () => this.commands.listGoals(team.id),
           listAssistants: () => this.service.listAssistants().items.map(assistant => (
             this.assistantView(assistant, false)
           )),

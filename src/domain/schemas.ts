@@ -154,6 +154,28 @@ export const retiredMemberSessionSchema = z.object({
   removedAt: isoDate,
 }).strict()
 
+/** How much orchestration one Goal warrants; the Leader classifies before creating tasks. */
+export const teamGoalModeSchema = z.enum(['direct', 'single', 'orchestrated'])
+
+export const teamGoalStatusSchema = z.enum(['active', 'completed', 'cancelled'])
+
+/**
+ * One objective above the task board. Added without a schema-version bump: a
+ * team that never created a Goal carries no `goals` record and loads unchanged.
+ */
+export const teamGoalSchema = z.object({
+  id: nonEmpty,
+  teamId: nonEmpty,
+  title: nonEmpty,
+  objective: nonEmpty,
+  /** Done-when statement; empty for a `direct` goal that needs no deliverable. */
+  acceptance: z.string(),
+  mode: teamGoalModeSchema,
+  status: teamGoalStatusSchema,
+  createdAt: isoDate,
+  updatedAt: isoDate,
+}).strict()
+
 export const teamTaskSchema = z.object({
   id: nonEmpty,
   title: nonEmpty,
@@ -168,6 +190,11 @@ export const teamTaskSchema = z.object({
    */
   attemptId: nonEmpty.optional(),
   createdBySlotId: nonEmpty.optional(),
+  /**
+   * Optional Goal grouping, added without a schema-version bump. A task stored
+   * before Goals existed (or never grouped) carries none and stays valid.
+   */
+  goalId: nonEmpty.optional(),
   dependencyIds: z.array(nonEmpty),
   fileScopes: z.array(nonEmpty),
   result: z.string().optional(),
@@ -238,6 +265,8 @@ export const teamAggregateSchema = z.object({
   members: z.record(z.string(), teamMemberSlotSchema),
   retiredSessions: z.record(z.string(), retiredMemberSessionSchema),
   tasks: z.record(z.string(), teamTaskSchema),
+  /** Optional Goal layer; absent for every team that never created one. */
+  goals: z.record(z.string(), teamGoalSchema).optional(),
   leases: z.record(z.string(), fileScopeLeaseSchema),
   outbox: z.record(z.string(), teamMessageSchema),
   /** Sidebar/team-list presentation state (v2). */
@@ -417,4 +446,20 @@ export const createTeamDraftInputSchema = z.object({
 export const cloneTeamInputSchema = z.object({
   name: nonEmpty,
   workspaceId: nonEmpty,
+}).strict()
+
+/** A Goal is created for an objective, not for chatter; mode defaults to one deliverable. */
+export const createTeamGoalInputSchema = z.object({
+  title: nonEmpty,
+  objective: nonEmpty,
+  acceptance: z.string().optional(),
+  mode: teamGoalModeSchema.optional(),
+}).strict()
+
+export const updateTeamGoalInputSchema = z.object({
+  title: nonEmpty.optional(),
+  objective: nonEmpty.optional(),
+  acceptance: z.string().optional(),
+  mode: teamGoalModeSchema.optional(),
+  status: teamGoalStatusSchema.optional(),
 }).strict()

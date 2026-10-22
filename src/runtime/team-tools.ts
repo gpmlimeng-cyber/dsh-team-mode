@@ -2,10 +2,12 @@ import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type {
+  CreateGoalInput,
   CreateTaskInput,
   ReadMessagesResult,
   SendMessageInput,
   SendMessageResult,
+  TeamGoalView,
   TeamMemberView,
   TeamMessageView,
   TeamTaskView,
@@ -45,6 +47,8 @@ export interface TeamToolHandlers {
     attemptId?: string
   }>
   listTasks: (limit?: number) => TeamTaskView[]
+  createGoal: (input: CreateGoalInput) => Promise<TeamGoalView>
+  listGoals: () => TeamGoalView[]
   listAssistants: () => TeamAssistantView[]
   describeAssistant: (assistantId: string) => TeamAssistantView
   spawnAgent: (input: { name: string; assistantId: string }) => Promise<TeamMemberView>
@@ -166,13 +170,51 @@ export function registerTeamTools(
   }))
 
   register(defineTool({
+    name: 'team_mode_goal_create',
+    description: 'Leader only. Create a Goal that groups the tasks for one objective. Use it only when there is a deliverable: one Goal plus one Task for a single deliverable, one Goal plus dependent Tasks for orchestrated work. Ordinary chat needs no Goal.',
+    parameters: {
+      title: { type: 'string', required: true, description: 'Short Goal title.' },
+      objective: { type: 'string', required: true, description: 'The outcome this Goal must reach.' },
+      acceptance: { type: 'string', description: 'Done-when statement used later to judge the Goal.' },
+      mode: {
+        type: 'string',
+        enum: ['direct', 'single', 'orchestrated'],
+        description: 'direct = answer only, single = one deliverable and one task, orchestrated = multiple parallel or dependent tasks.',
+      },
+    },
+    output: textOutput,
+    execute: async (args, exec) => {
+      handlers.assertIdentity(exec.agent)
+      const goal = await handlers.createGoal({
+        title: args.title,
+        objective: args.objective,
+        ...(args.acceptance === undefined ? {} : { acceptance: args.acceptance }),
+        ...(args.mode === undefined ? {} : { mode: args.mode as NonNullable<CreateGoalInput['mode']> }),
+      })
+      return { goal } as never
+    },
+  }))
+
+  register(defineTool({
+    name: 'team_mode_goal_list',
+    description: 'List the team Goals with the task ids grouped under each one, so you can see which objective a task serves before creating more work.',
+    parameters: {},
+    output: textOutput,
+    execute: async (_args, exec) => {
+      handlers.assertIdentity(exec.agent)
+      return { goals: handlers.listGoals() } as never
+    },
+  }))
+
+  register(defineTool({
     name: 'team_mode_task_create',
-    description: 'Leader only. Create a task on the shared task board. `blocked_by` lists task ids that must finish first. Assigning an owner wakes that member automatically and returns the task attempt_id.',
+    description: 'Leader only. Create a task on the shared task board. `blocked_by` lists task ids that must finish first; `goal_id` groups it under an existing Goal of this team. Assigning an owner wakes that member automatically and returns the task attempt_id.',
     parameters: {
       subject: { type: 'string', required: true, description: 'Short task subject.' },
       description: { type: 'string', description: 'Task details.' },
       owner: { type: 'string', description: 'Owner slot id or member name.' },
       blocked_by: { type: 'array', items: { type: 'string' }, description: 'Task ids that must complete before this task can start.' },
+      goal_id: { type: 'string', description: 'Goal id from team_mode_goal_list to group this task under.' },
     },
     output: textOutput,
     execute: async (args, exec) => {
@@ -182,6 +224,7 @@ export function registerTeamTools(
         ...(args.description === undefined ? {} : { description: args.description }),
         ...(args.owner === undefined ? {} : { owner: args.owner }),
         ...(args.blocked_by === undefined ? {} : { blocked_by: args.blocked_by }),
+        ...(args.goal_id === undefined ? {} : { goal_id: args.goal_id }),
       })
       return {
         task_id: result.taskId,

@@ -12,6 +12,7 @@ import type {
   createAssistantInstanceInputSchema,
   createAssistantSessionInputSchema,
   createTeamDraftInputSchema,
+  createTeamGoalInputSchema,
   createTeamMemberInputSchema,
   fileScopeLeaseSchema,
   memberRuntimeStateSchema,
@@ -19,12 +20,16 @@ import type {
   retiredMemberSessionSchema,
   teamActivitySchema,
   teamAggregateSchema,
+  teamGoalModeSchema,
+  teamGoalSchema,
+  teamGoalStatusSchema,
   teamMemberSlotSchema,
   teamMessageSchema,
   teamTaskSchema,
   updateAssistantInputSchema,
   updateAssistantInstanceInputSchema,
   updateAssistantSessionInputSchema,
+  updateTeamGoalInputSchema,
 } from './schemas.js'
 
 export type AssistantSnapshot = z.infer<typeof assistantSnapshotSchema>
@@ -49,6 +54,11 @@ export type MemberRuntimeState = z.infer<typeof memberRuntimeStateSchema>
 export type TeamMemberSlot = z.infer<typeof teamMemberSlotSchema>
 export type RetiredMemberSession = z.infer<typeof retiredMemberSessionSchema>
 export type TeamTask = z.infer<typeof teamTaskSchema>
+export type TeamGoal = z.infer<typeof teamGoalSchema>
+export type TeamGoalMode = z.infer<typeof teamGoalModeSchema>
+export type TeamGoalStatus = z.infer<typeof teamGoalStatusSchema>
+export type CreateTeamGoalInput = z.infer<typeof createTeamGoalInputSchema>
+export type UpdateTeamGoalInput = z.infer<typeof updateTeamGoalInputSchema>
 export type FileScopeLease = z.infer<typeof fileScopeLeaseSchema>
 export type TeamAggregate = z.infer<typeof teamAggregateSchema>
 export type TeamMessage = z.infer<typeof teamMessageSchema>

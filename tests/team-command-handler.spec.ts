@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type {
   TeamAggregate,
+  TeamGoal,
   TeamMemberSlot,
   TeamMessage,
   TeamTask,
@@ -97,6 +98,29 @@ function harness() {
       const added = member(`spawn-${input.assistantId}`, input.displayName ?? 'Spawned', 'member', 'session-spawn')
       team = { ...team, members: { ...team.members, [added.id]: added } }
       return { team, member: added }
+    }),
+    createGoal: vi.fn(async (
+      _teamId: string,
+      input: {
+        title: string
+        objective: string
+        acceptance?: string
+        mode?: 'direct' | 'single' | 'orchestrated'
+      },
+    ) => {
+      const goal: TeamGoal = {
+        id: `goal-${Object.keys(team.goals ?? {}).length + 1}`,
+        teamId: team.id,
+        title: input.title,
+        objective: input.objective,
+        acceptance: input.acceptance ?? '',
+        mode: input.mode ?? 'single',
+        status: 'active',
+        createdAt: NOW,
+        updatedAt: NOW,
+      }
+      team = { ...team, goals: { ...team.goals, [goal.id]: goal } }
+      return goal
     }),
     renameMember: vi.fn(async (_teamId: string, slotId: string, newName: string) => {
       team = {
@@ -616,5 +640,147 @@ describe('TeamCommandHandler AionUi semantics', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('creates a Goal and groups a single deliverable as one Goal plus one Task', async () => {
+    const { commands, team } = harness()
+    await expect(commands.createGoal(team().id, 'a', {
+      title: 'Unauthorized',
+      objective: 'Members cannot create goals',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    const goal = await commands.createGoal(team().id, 'leader', {
+      title: 'Ship parser',
+      objective: 'Parse the input format',
+      acceptance: 'tests pass',
+    })
+    expect(goal).toMatchObject({
+      title: 'Ship parser',
+      objective: 'Parse the input format',
+      acceptance: 'tests pass',
+      mode: 'single',
+      status: 'active',
+      task_ids: [],
+    })
+
+    const task = await commands.createTask(team().id, 'leader', {
+      subject: 'Implement parser',
+      owner: 'a',
+      goal_id: goal.goal_id,
+    })
+    expect(team().tasks[task.taskId]?.goalId).toBe(goal.goal_id)
+    expect(commands.listGoals(team().id)).toEqual([
+      { ...goal, task_ids: [task.taskId] },
+    ])
+    expect(commands.listTasks(team().id)[0]?.goal_id).toBe(goal.goal_id)
+  })
+
+  it('groups orchestrated dependent tasks under one Goal', async () => {
+    const { commands, team } = harness()
+    const goal = await commands.createGoal(team().id, 'leader', {
+      title: 'Ship parser',
+      objective: 'Parse and verify the input format',
+      acceptance: 'review passes',
+      mode: 'orchestrated',
+    })
+    const implement = await commands.createTask(team().id, 'leader', {
+      subject: 'Implement parser',
+      owner: 'a',
+      goal_id: goal.goal_id,
+    })
+    const review = await commands.createTask(team().id, 'leader', {
+      subject: 'Review parser',
+      owner: 'b',
+      blocked_by: [implement.taskId],
+      goalId: goal.goal_id,
+    })
+
+    expect(goal.mode).toBe('orchestrated')
+    expect(team().tasks[review.taskId]?.dependencyIds).toEqual([implement.taskId])
+    expect(commands.listGoals(team().id)[0]?.task_ids.sort()).toEqual(
+      [implement.taskId, review.taskId].sort(),
+    )
+  })
+
+  it('rejects a task goal_id that is not a Goal of this team', async () => {
+    const { commands, team } = harness()
+    await expect(commands.createTask(team().id, 'leader', {
+      subject: 'Orphan',
+      goal_id: 'goal-from-another-team',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(Object.keys(team().tasks)).toHaveLength(0)
+  })
+
+  it('keeps ungrouped tasks valid and puts the attempt token in wake copy', async () => {
+    const { commands, team, messages } = harness()
+    expect(commands.listGoals(team().id)).toEqual([])
+
+    const created = await commands.createTask(team().id, 'leader', {
+      subject: 'Ungrouped work',
+      owner: 'a',
+    })
+    expect(team().tasks[created.taskId]).not.toHaveProperty('goalId')
+    expect(commands.listTasks(team().id)[0]).not.toHaveProperty('goal_id')
+    const dispatch = messages.find(message => message.relatedTaskId === created.taskId)
+    expect(dispatch?.content).toContain('Your attempt_id for this task is')
+    expect(dispatch?.content).toContain(created.attemptId)
+    expect(dispatch?.content).toContain('team_mode_task_update')
+
+    const reassigned = await commands.updateTask(team().id, 'leader', {
+      taskId: created.taskId,
+      status: 'assigned',
+      owner: 'b',
+    })
+    const wake = messages.find(
+      message => message.relatedTaskId === created.taskId && message.recipient.slotId === 'b',
+    )
+    expect(wake?.content).toContain('Your attempt_id for this task is')
+    expect(wake?.content).toContain(reassigned.attemptId)
+  })
+
+  it('keeps an optional Goal link on the task board across updates', async () => {
+    const { commands, team, mutate } = harness()
+    const goal: TeamGoal = {
+      id: 'goal-1',
+      teamId: team().id,
+      title: 'Ship the parser',
+      objective: 'Parse the input format',
+      acceptance: 'tests pass',
+      mode: 'single',
+      status: 'active',
+      createdAt: NOW,
+      updatedAt: NOW,
+    }
+    const linked: TeamTask = {
+      id: 'linked',
+      title: 'Linked task',
+      description: '',
+      status: 'pending',
+      goalId: goal.id,
+      dependencyIds: [],
+      fileScopes: [],
+      revision: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+    }
+    const unlinked: TeamTask = {
+      id: 'unlinked',
+      title: 'Unlinked task',
+      description: '',
+      status: 'pending',
+      dependencyIds: [],
+      fileScopes: [],
+      revision: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+    }
+    mutate({ ...team(), goals: { [goal.id]: goal }, tasks: { [linked.id]: linked, [unlinked.id]: unlinked } })
+
+    expect(commands.listTasks(team().id).map(view => view.task_id)).toEqual(['linked', 'unlinked'])
+
+    await commands.updateTask(team().id, 'leader', { taskId: linked.id, status: 'in_progress' })
+    expect(team().tasks[linked.id]?.goalId).toBe(goal.id)
+    expect(team().tasks[unlinked.id]).not.toHaveProperty('goalId')
+    expect(team().goals?.[goal.id]?.title).toBe('Ship the parser')
   })
 })

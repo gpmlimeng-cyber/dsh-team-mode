@@ -27,6 +27,18 @@ function harness(): {
     createTask: vi.fn(async () => ({ taskId: 't1', status: 'assigned', deliveryState: 'delivered' as const })),
     updateTask: vi.fn(async () => ({ taskId: 't1', status: 'running', deliveryState: 'delivered' as const })),
     listTasks: vi.fn(() => []),
+    createGoal: vi.fn(async () => ({
+      goal_id: 'g1',
+      title: 'Goal',
+      objective: 'Objective',
+      acceptance: '',
+      mode: 'single' as const,
+      status: 'active' as const,
+      task_ids: [],
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+    })),
+    listGoals: vi.fn(() => []),
     listAssistants: vi.fn(() => []),
     describeAssistant: vi.fn(() => ({
       assistant_id: 'a1',
@@ -66,13 +78,15 @@ function harness(): {
 }
 
 describe('Team Mode tool surface', () => {
-  it('registers the 13 primary AionUi tools plus the legacy aliases', () => {
+  it('registers the 15 primary AionUi tools plus the legacy aliases', () => {
     const { tools } = harness()
     const primary = [
       'team_members',
       'team_read_messages',
       'team_send_message',
       'team_interrupt_agent',
+      'team_mode_goal_create',
+      'team_mode_goal_list',
       'team_mode_task_create',
       'team_mode_task_update',
       'team_mode_task_list',
@@ -87,7 +101,7 @@ describe('Team Mode tool surface', () => {
     expect(tools.has('team_get_task_board')).toBe(true)
     expect(tools.has('team_create_task')).toBe(true)
     expect(tools.has('team_update_task')).toBe(true)
-    expect(tools.size).toBe(16)
+    expect(tools.size).toBe(18)
   })
 
   it('publishes the required parameter contracts for the dangerous tools', () => {
@@ -98,6 +112,9 @@ describe('Team Mode tool surface', () => {
     expect(tools.get('team_spawn_agent')?.parameters.required).toEqual(expect.arrayContaining(['name', 'assistant_id']))
     expect(tools.get('team_shutdown_agent')?.description).toContain('Leader only')
     expect(tools.get('team_clear_agent_context')?.description).toContain('Leader only')
+    expect(tools.get('team_mode_goal_create')?.description).toContain('Leader only')
+    expect(tools.get('team_mode_goal_create')?.parameters.required).toEqual(['title', 'objective'])
+    expect(tools.get('team_mode_goal_create')?.parameters.properties?.mode).toBeDefined()
   })
 
   it('executes team_members and team_send_message through the bound handlers', async () => {
@@ -118,6 +135,42 @@ describe('Team Mode tool surface', () => {
       files: ['src/a.ts'],
     })
     expect(result).toMatchObject({ message_id: 'm1', delivery_state: 'delivered' })
+  })
+
+  it('creates and lists Goals and groups a task under one Goal', async () => {
+    const { tools, handlers } = harness()
+    const exec = { agent: { id: 'agent-1' } }
+
+    const created = await tools.get('team_mode_goal_create')!.execute(
+      { title: 'Ship parser', objective: 'Parse input', acceptance: 'tests pass', mode: 'single' },
+      exec,
+    )
+    expect(handlers.createGoal).toHaveBeenCalledWith({
+      title: 'Ship parser',
+      objective: 'Parse input',
+      acceptance: 'tests pass',
+      mode: 'single',
+    })
+    expect(created).toMatchObject({ goal: { goal_id: 'g1', mode: 'single' } })
+
+    await tools.get('team_mode_goal_create')!.execute({ title: 'T', objective: 'O' }, exec)
+    expect(handlers.createGoal).toHaveBeenLastCalledWith({ title: 'T', objective: 'O' })
+
+    await tools.get('team_mode_goal_list')!.execute({}, exec)
+    expect(handlers.listGoals).toHaveBeenCalled()
+
+    await tools.get('team_mode_task_create')!.execute(
+      { subject: 'Implement', owner: 'a', goal_id: 'g1' },
+      exec,
+    )
+    expect(handlers.createTask).toHaveBeenLastCalledWith({
+      subject: 'Implement',
+      owner: 'a',
+      goal_id: 'g1',
+    })
+
+    await tools.get('team_mode_task_create')!.execute({ subject: 'Ungrouped' }, exec)
+    expect(handlers.createTask).toHaveBeenLastCalledWith({ subject: 'Ungrouped' })
   })
 
   it('declares the attempt token on both task update aliases', () => {

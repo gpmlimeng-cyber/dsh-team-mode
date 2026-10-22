@@ -1,6 +1,6 @@
 # 工具清单
 
-## 模型工具（13 个）
+## 模型工具（18 个）
 
 | 工具 | 作用 |
 |---|---|
@@ -8,15 +8,32 @@
 | `team_read_messages` | 读取成员邮箱消息，标记已读 |
 | `team_send_message` | 向成员/Leader 发送团队消息 |
 | `team_interrupt_agent` | 打断正在运行的成员 |
-| `team_task_create` | 创建任务，指定 owner / blocked_by / 文件范围 |
-| `team_task_update` | 更新任务状态、owner、依赖、结果（成员需带当前 `attempt_id`） |
-| `team_task_list` | 查询任务板（含 owner、依赖、`attempt_id`） |
+| `team_mode_goal_create` | Leader 专用：为一个需要交付物的目标创建 Goal（mode=`direct` / `single` / `orchestrated`） |
+| `team_mode_goal_list` | 按 Goal 汇总任务板：每个 Goal 及其 `task_ids` |
+| `team_mode_task_create` | 创建任务，指定 owner / blocked_by / 文件范围 / `goal_id` |
+| `team_mode_task_update` | 更新任务状态、owner、依赖、结果（成员需带当前 `attempt_id`） |
+| `team_mode_task_list` | 查询任务板（含 owner、依赖、`attempt_id`、`goal_id`） |
+| `team_create_task` | 兼容别名：创建任务（`title` / `ownerSlotId` / `fileScopes`） |
+| `team_update_task` | 兼容别名：更新任务（`taskId` / `attemptId`） |
+| `team_get_task_board` | 兼容别名：查询任务板 |
 | `team_list_assistants` | 列出可添加的助手模板 |
 | `team_describe_assistant` | 查看助手模板详情 |
 | `team_spawn_agent` | 创建/唤醒团队成员 Agent |
 | `team_rename_agent` | 重命名成员 |
 | `team_clear_agent_context` | 清空单个成员上下文 |
 | `team_shutdown_agent` | 优雅下线成员 |
+
+## Goal 与编排模式（P0）
+
+- 模式固定为三档，由 Leader 在动手前判断：
+  - `direct`（对话）：一个问题、无需交付/验证 → 直接回答，**不建 Goal、不建任务**。
+  - `single`（单任务）：一个目标、一个 owner、一个可验收交付物 → 1 个 Goal + 1 个 Task。
+  - `orchestrated`（编排）：2+ 并行流、2+ 成员、依赖、评审/验证、长任务 → 1 个 Goal + 依赖任务图。
+- 多目标规则：共享交付物或真实依赖 → 同一 Goal；独立目标 → 分开 Goal。单个 Goal 建议 3–7 个任务，超过 10 个拆子目标。
+- Leader 用 `team_mode_goal_create` 建 Goal、用 `team_mode_goal_list` 查看现有 Goal 及其任务；普通聊天不建 Goal。
+- `team_mode_task_create` 的 `goal_id` 可选，必须指向**同一团队**的 Goal，否则以 `INVALID_REQUEST` 拒绝；缺省时任务不归属任何 Goal，旧任务/旧调用保持有效。
+- Goal 与 `goal_id` 都是可选字段，`schemaVersion` 不变；`team.reset` 会同时清空任务与 Goal，避免遗留孤立 Goal。
+- 本轮不包含 Goal UI、自动调度与质量门禁。
 
 ## 任务 attempt / 所有权围栏
 
@@ -25,6 +42,7 @@
 - 显式重派给同一 owner 不轮换；先转给他人再转回（takeover）会轮换，旧 token 永久失效。
 - 历史数据（无 `attemptId`）不受围栏限制；普通状态更新不会补发 attempt，直到下一次 owner 变更才生成。`schemaVersion` 不变，字段可缺省。
 - 工具参数：`team_mode_task_update` 用 `attempt_id`（也接受 `attemptId`），旧别名 `team_update_task` 用 `attemptId`（也接受 `attempt_id`）。
+- 派发/转派/解锁消息会附一行 `attempt_id` 提示，成员首次更新无需再查任务板。
 
 ## 客户端 Team API
 

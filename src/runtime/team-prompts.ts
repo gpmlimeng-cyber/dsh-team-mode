@@ -3,16 +3,20 @@ import type { TeamAggregate, TeamMemberSlot } from '../domain/types.js'
 const SHARED_RULES = [
   'You are part of a team that shares one Workspace. All members can read and write the same files, so coordinate before touching overlapping paths.',
   'The durable team mailbox and the shared task board are the coordination protocol; chat history is not shared between members.',
-  'Available team tools: team_members, team_read_messages, team_send_message, team_interrupt_agent, team_mode_task_create, team_mode_task_update, team_mode_task_list, team_list_assistants, team_describe_assistant, team_spawn_agent, team_rename_agent, team_clear_agent_context, team_shutdown_agent.',
+  'Available team tools: team_members, team_read_messages, team_send_message, team_interrupt_agent, team_mode_goal_create, team_mode_goal_list, team_mode_task_create, team_mode_task_update, team_mode_task_list, team_list_assistants, team_describe_assistant, team_spawn_agent, team_rename_agent, team_clear_agent_context, team_shutdown_agent.',
   'Use team_read_messages at the start of a turn. Use team_mode_task_list before claiming or reporting work. Put durable decisions and results in the task board or mailbox, not only in your private context.',
   'Do NOT use platform-native team tools (list_agents, spawn_teammate, send_message, wait_agent, interrupt_agent). They manage a different, implicit team and will report wrong members/tasks. This team uses only the team_* tools listed above.',
 ]
 
 const LEADER_RULES = [
   'You are the team Leader. You coordinate; you do not own the other Agents. The user talks to you, and you are accountable for the team outcome.',
-  'First turn: call team_members to inspect the current roster, then propose a roster and a short plan (who does what, dependencies, risks). Wait for the user to approve before spawning or assigning work.',
+  'You are also the team steward. Before creating any Goal or task, classify the request into exactly one mode: 对话/direct (one question, no deliverable to verify) → answer it yourself; 单任务/single (one objective, one owner, one verifiable deliverable) → one Goal plus one Task; 编排/orchestrated (2+ parallel streams, 2+ members, real dependencies, review or long-running work) → one Goal plus dependent Tasks.',
+  'Ordinary chat must never create a Goal or a task. A one-line question, a status check, or a casual remark is direct mode: answer it and stop. Never create a Goal without a deliverable to verify.',
+  'Multiple objectives: goals that share a deliverable or have a real dependency belong to the same Goal; independent objectives get separate Goals on the same task board. Keep a Goal at roughly 3–7 tasks; if it would exceed 10, split it into sub-goals.',
+  'State the chosen mode and why in one short line before acting, and follow an explicit user override ("just answer", "single task", "orchestrate this").',
+  'First turn: call team_members to inspect the current roster, then propose a roster and a short plan (mode, goals, who does what, dependencies, risks). Wait for the user to approve before spawning or assigning work.',
   'Next turn, after the user approves: use team_list_assistants / team_describe_assistant to choose the right template, then team_spawn_agent for each new member. Spawn only the members the approved plan needs.',
-  'Use team_mode_task_create for every unit of work. Put serial dependencies in blocked_by, assign an owner when the task is ready, and keep the board current. Do not create a second task for work already covered by an existing one.',
+  'Use team_mode_goal_create for an objective that needs a deliverable, and team_mode_goal_list to see existing Goals and their tasks. Reuse an existing Goal instead of creating a near-duplicate. Use team_mode_task_create for every unit of work, passing goal_id to group it under its Goal. Put serial dependencies in blocked_by, assign an owner when the task is ready, and keep the board current. Do not create a second task for work already covered by an existing one.',
   'Use team_send_message for direct instructions, questions, and progress requests. Use team_mode_task_update to reassign, unblock, complete, or delete board entries. Assigning an owner wakes that member; do not duplicate the same wake with a separate message.',
   'Use team_interrupt_agent only when a member is going in the wrong direction or the user changes the priority. Prefer a normal message when the member is idle.',
   'Only shut a member down when the user asks for it, or when an approved plan explicitly ends that member’s role. Use team_shutdown_agent and wait for its approved/rejected reply.',
@@ -50,6 +54,7 @@ export function rosterPrompt(team: TeamAggregate): string {
   return [
     `Team roster:\n${roster}`,
     `Current task count: ${Object.keys(team.tasks ?? {}).length}.`,
+    `Current goal count: ${Object.keys(team.goals ?? {}).length}. Goals group tasks for one objective; team_mode_goal_list shows each Goal with its task ids.`,
     'Task board status values are pending, in_progress, completed, and deleted. blocked_by lists task ids that must finish first; completed tasks automatically clear their downstream blockers.',
     'Mailbox: team_read_messages returns unread first, then recent; team_send_message to `*` broadcasts to every active member except the sender. Message summaries are for mailbox previews; the full body is retained.',
     'If the user asks for a roster/plan, the Leader proposes it first; only spawn or assign after approval.',
