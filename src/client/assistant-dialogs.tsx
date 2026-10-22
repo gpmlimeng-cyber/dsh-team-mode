@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  Button,
+  IconChevronDownOutlineRegular,
+  Input,
+  Menu,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
 import { assistantModelKey, assistantModelOptionLabel } from './assistant-form.js'
 import { AvatarGrid } from './avatar-grid.js'
@@ -54,6 +59,7 @@ export function AssistantCreateDialog({
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string>()
+  const [modelMenuOpen, setModelMenuOpen] = useState(false)
 
   const modelCapabilities = useModelCapabilities(provider, model)
   const locked = createdId !== undefined
@@ -76,6 +82,7 @@ export function AssistantCreateDialog({
     setAgentPresetId('')
     setInstructions('')
     setReasoningLabels({})
+    setModelMenuOpen(false)
     callAgentTeam('catalog.get')
       .then(value => {
         if (!live) return
@@ -154,9 +161,6 @@ export function AssistantCreateDialog({
   })).filter(group => group.models.length > 0)
   const reasoningEfforts = modelCapabilities.value?.reasoning?.efforts ?? []
   const modelSelection = JSON.stringify([provider, model])
-  const modelSelectionInCatalog = modelGroups.some(group => (
-    group.provider.id === provider && group.models.some(modelEntry => modelEntry.id === model)
-  ))
   const canCreate = name.trim() !== ''
     && provider !== ''
     && model !== ''
@@ -186,6 +190,18 @@ export function AssistantCreateDialog({
       reasoningLabelFor(group.provider.id, modelEntry.id),
     ),
   })))
+  const selectedModelLabel = modelOptions.find(option => (
+    option.providerId === provider && option.modelId === model
+  ))?.label ?? (provider === '' ? '选择模型' : assistantModelOptionLabel(provider, model))
+  const modelMenuItems = modelGroups.flatMap(group => [
+    { type: 'label' as const, id: `provider-${group.provider.id}`, text: group.provider.name },
+    ...group.models.map(modelEntry => ({
+      id: JSON.stringify([group.provider.id, modelEntry.id]),
+      label: `${modelEntry.name}${reasoningLabelFor(group.provider.id, modelEntry.id) === undefined
+        ? ''
+        : ` · ${reasoningLabelFor(group.provider.id, modelEntry.id)}`}`,
+    })),
+  ])
   const close = (): void => {
     if (saving) return
     onClose()
@@ -301,7 +317,7 @@ export function AssistantCreateDialog({
                   <MemberAvatar
                     name={name.trim() || '助手'}
                     avatar={avatar !== '' ? avatar : undefined}
-                    size={64}
+                    size={96}
                   />
                 </span>
                 <span
@@ -342,31 +358,48 @@ export function AssistantCreateDialog({
               </Field>
 
               <Field label="模型">
-                <select
-                  className={css.input}
-                  value={modelSelection}
-                  disabled={busy || modelGroups.length === 0}
-                  onChange={event => {
-                    const [nextProvider, nextModel] = JSON.parse(event.target.value) as [string, string]
+                <Menu
+                  open={modelMenuOpen}
+                  onClose={() => { setModelMenuOpen(false) }}
+                  items={modelMenuItems}
+                  selectedId={modelSelection}
+                  align="start"
+                  side="bottom"
+                  portal
+                  onSelect={id => {
+                    const [nextProvider, nextModel] = JSON.parse(id) as [string, string]
                     setProvider(nextProvider)
                     setModel(nextModel)
+                    setModelMenuOpen(false)
                     setError(undefined)
                   }}
-                >
-                  {!modelSelectionInCatalog && (
-                    <option value={modelSelection} disabled>
-                      {provider === '' ? '暂无可用模型' : assistantModelOptionLabel(provider, model)}
-                    </option>
+                  anchor={(
+                    <span className={css.modelTrigger}>
+                      <Input
+                        readOnly
+                        value={selectedModelLabel}
+                        className={css.modelTriggerInput ?? ''}
+                        aria-label={`选择模型，当前 ${selectedModelLabel}`}
+                        aria-haspopup="menu"
+                        aria-expanded={modelMenuOpen}
+                        onClick={() => {
+                          if (busy || modelGroups.length === 0) return
+                          setModelMenuOpen(value => !value)
+                        }}
+                        onKeyDown={event => {
+                          if (event.key !== 'Enter' && event.key !== ' ') return
+                          event.preventDefault()
+                          if (busy || modelGroups.length === 0) return
+                          setModelMenuOpen(true)
+                        }}
+                      />
+                      <IconChevronDownOutlineRegular
+                        size={14}
+                        className={css.modelTriggerChevron}
+                      />
+                    </span>
                   )}
-                  {modelOptions.map(option => (
-                    <option
-                      key={`${option.providerId}/${option.modelId}`}
-                      value={JSON.stringify([option.providerId, option.modelId])}
-                    >
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
+                />
               </Field>
 
               {reasoningEfforts.length > 0 && (

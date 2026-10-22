@@ -3837,6 +3837,30 @@ textarea.input {
   place-items: center;
 }
 
+.modelTrigger {
+  display: block;
+  position: relative;
+  width: 100%;
+}
+
+.modelTrigger > span {
+  width: 100%;
+}
+
+.modelTriggerInput {
+  width: 100%;
+  padding-right: 28px;
+}
+
+.modelTriggerChevron {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  color: var(--dsw-alias-label-tertiary);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
 .assistantCreateAvatarName {
   max-width: 100%;
   overflow-wrap: anywhere;
