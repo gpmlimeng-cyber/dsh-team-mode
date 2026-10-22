@@ -4338,7 +4338,12 @@ textarea.input {
 }
 
 @media (hover: none) {
-  .sidebarAssistantSection .sidebarTeamManage {
+  /* One discoverable menu is enough on touch; pinning moves into that menu. */
+  .sidebarAssistantPin {
+    display: none !important;
+  }
+
+  .sidebarAssistantMoreButton {
     display: inline-flex;
   }
 }

@@ -784,7 +784,7 @@ export function AssistantSidebarSection({
                       <Tooltip label={instance.pinned === true ? '取消置顶' : '置顶'} delayMs={400}>
                         <button
                           type="button"
-                          className={`${css.sidebarTeamManage} ${instance.pinned === true ? css.sidebarTeamManagePinned : ''}`}
+                          className={`${css.sidebarTeamManage} ${css.sidebarAssistantPin} ${instance.pinned === true ? css.sidebarTeamManagePinned : ''}`}
                           onClick={() => { void togglePin(instance) }}
                           aria-label={instance.pinned === true ? `取消置顶 ${name}` : `置顶 ${name}`}
                         >
@@ -803,6 +803,13 @@ export function AssistantSidebarSection({
                         className={css.sidebarAssistantMore ?? ''}
                         items={[
                           { id: 'settings', label: '助手设置', icon: <IconEditOutlineRegular size={14} /> },
+                          {
+                            id: 'pin',
+                            label: instance.pinned === true ? '取消置顶' : '置顶',
+                            icon: instance.pinned === true
+                              ? <IconPinFillRegular size={14} />
+                              : <IconPinOutlineRegular size={14} />,
+                          },
                           { id: 'tasks', label: '查看任务', icon: <IconChecklistOutlineRegular size={14} /> },
                           unread
                             ? { id: 'mark-read', label: '标记已读', icon: <IconChecklistOutlineRegular size={14} /> }
@@ -812,6 +819,7 @@ export function AssistantSidebarSection({
                         onSelect={id => {
                           setMenuOpenId(undefined)
                           if (id === 'settings') openSettings(instance)
+                          else if (id === 'pin') void togglePin(instance)
                           else if (id === 'tasks') openTasks(instance)
                           else if (id === 'mark-read') setReadState(markAssistantRead(instance.id))
                           else if (id === 'mark-unread') setReadState(markAssistantUnread(instance.id))
@@ -821,7 +829,7 @@ export function AssistantSidebarSection({
                           <Tooltip label="更多操作" delayMs={400}>
                             <button
                               type="button"
-                              className={css.sidebarTeamManage}
+                              className={`${css.sidebarTeamManage} ${css.sidebarAssistantMoreButton}`}
                               aria-label={`更多操作 ${name}`}
                               aria-haspopup="menu"
                               aria-expanded={menuOpen}
