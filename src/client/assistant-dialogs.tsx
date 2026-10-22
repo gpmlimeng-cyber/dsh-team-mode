@@ -404,7 +404,8 @@ export function AssistantCreateDialog({
                 />
               </Field>
 
-              <Field label="模型">
+              <div className={css.assistantModelRow}>
+              <Field label="模型" className={css.assistantModelField ?? ''}>
                 <Menu
                   open={modelMenuOpen}
                   onClose={() => { setModelMenuOpen(false) }}
@@ -443,7 +444,7 @@ export function AssistantCreateDialog({
               </Field>
 
               {reasoningEfforts.length > 0 && (
-                <Field label="思考模式">
+                <div className={css.assistantReasoningSlot}>
                   <Menu
                     open={reasoningMenuOpen}
                     onClose={() => { setReasoningMenuOpen(false) }}
@@ -477,8 +478,9 @@ export function AssistantCreateDialog({
                       </button>
                     )}
                   />
-                </Field>
+                </div>
               )}
+              </div>
 
               {modelCapabilities.error !== undefined && (
                 <div className={css.inlineError} role="alert">

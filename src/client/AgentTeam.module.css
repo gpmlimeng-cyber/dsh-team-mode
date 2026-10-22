@@ -3857,6 +3857,23 @@ textarea.input {
   opacity: 1;
 }
 
+.assistantModelRow {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  min-width: 0;
+}
+
+.assistantModelField {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.assistantReasoningSlot {
+  flex: none;
+  padding-bottom: 0;
+}
+
 .modelTrigger {
   display: inline-flex;
   align-items: center;
