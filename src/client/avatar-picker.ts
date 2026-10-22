@@ -58,7 +58,7 @@ export function assistantAvatarCandidates(count = AVATAR_CANDIDATE_COUNT): Avata
   })
 }
 
-/** The exact flat list rendered by AvatarPickerDialog. */
+/** The exact flat list rendered by the embedded AvatarGrid and the editor picker. */
 export const AVATAR_CANDIDATES: readonly AvatarCandidate[] = assistantAvatarCandidates()
 
 /** Pick one candidate with an injectable random source for deterministic tests. */

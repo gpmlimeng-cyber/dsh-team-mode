@@ -1,15 +1,25 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  Button,
+  IconChevronDownOutlineRegular,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
-import { AvatarPickerDialog } from './avatar-picker-dialog.js'
+import { assistantModelKey, assistantModelOptionLabel } from './assistant-form.js'
+import { AvatarGrid } from './avatar-grid.js'
 import { PERMISSION_LABELS } from './labels.js'
 import { MemberAvatar } from './member-avatar.js'
-import { defaultReasoningLabel, useModelCapabilities } from './model-reasoning.js'
+import {
+  defaultReasoningLabel,
+  reasoningEffortLabel,
+  useModelCapabilities,
+} from './model-reasoning.js'
 import { AnimatedModal, Field } from './shared.js'
 import css from './AgentTeam.module.css'
 import type { CreateAssistantInstanceInput } from '../domain/types.js'
 import type { CatalogView } from '../transport/contracts.js'
+
+const CREATE_FORM_ID = 'assistant-create-form'
 
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
@@ -36,7 +46,6 @@ export function AssistantCreateDialog({
   const [catalog, setCatalog] = useState<CatalogView>()
   const [name, setName] = useState('')
   const [avatar, setAvatar] = useState('')
-  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false)
   const [provider, setProvider] = useState('')
   const [model, setModel] = useState('')
   const [reasoningEffort, setReasoningEffort] = useState('')
@@ -44,6 +53,7 @@ export function AssistantCreateDialog({
   const [permissionPresetId, setPermissionPresetId] = useState('')
   const [agentPresetId, setAgentPresetId] = useState('')
   const [instructions, setInstructions] = useState('')
+  const [reasoningLabels, setReasoningLabels] = useState<Record<string, string>>({})
   const [createdId, setCreatedId] = useState<string>()
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -59,7 +69,6 @@ export function AssistantCreateDialog({
     setLoading(true)
     setError(undefined)
     setCreatedId(undefined)
-    setAvatarPickerOpen(false)
     setCatalog(undefined)
     setName('')
     setAvatar('')
@@ -70,6 +79,7 @@ export function AssistantCreateDialog({
     setPermissionPresetId('')
     setAgentPresetId('')
     setInstructions('')
+    setReasoningLabels({})
     callAgentTeam('catalog.get')
       .then(value => {
         if (!live) return
@@ -94,6 +104,40 @@ export function AssistantCreateDialog({
       })
     return () => { live = false }
   }, [open])
+
+  useEffect(() => {
+    // The model select shows the model default reasoning level as its subtitle.
+    // Resolve those labels once per catalog so every option can read
+    // `Model — Provider · High` without opening the dialog a second time.
+    if (catalog === undefined) return
+    let live = true
+    const selections = catalog.providers.flatMap(providerEntry => (
+      (catalog.models[providerEntry.id] ?? []).map(modelEntry => ({
+        provider: providerEntry.id,
+        model: modelEntry.id,
+      }))
+    ))
+    void Promise.all(selections.map(async selection => {
+      try {
+        const capabilities = await callAgentTeam('catalog.model.get', selection)
+        const defaultEffort = capabilities.reasoning?.defaultEffort
+        const label = defaultEffort === undefined
+          ? undefined
+          : capabilities.reasoning?.efforts.find(effort => effort.id === defaultEffort)?.name
+        return [assistantModelKey(selection.provider, selection.model), label ?? ''] as const
+      } catch {
+        return [assistantModelKey(selection.provider, selection.model), ''] as const
+      }
+    })).then(entries => {
+      if (!live) return
+      const next: Record<string, string> = {}
+      for (const [key, label] of entries) {
+        if (label !== '') next[key] = label
+      }
+      setReasoningLabels(next)
+    })
+    return () => { live = false }
+  }, [catalog])
 
   useEffect(() => {
     // A newly selected model may advertise a different set of reasoning efforts
@@ -126,6 +170,32 @@ export function AssistantCreateDialog({
     && workspaceId !== ''
     && permissionPresetId !== ''
     && agentPresetId !== ''
+
+  function reasoningLabelFor(providerId: string, modelId: string): string | undefined {
+    if (providerId === provider && modelId === model) {
+      if (reasoningEffort !== '') {
+        return reasoningEffortLabel(modelCapabilities.value, reasoningEffort)
+      }
+      const defaultEffort = modelCapabilities.value?.reasoning?.defaultEffort
+      if (defaultEffort !== undefined) {
+        return reasoningEffortLabel(modelCapabilities.value, defaultEffort)
+      }
+    }
+    return reasoningLabels[assistantModelKey(providerId, modelId)]
+  }
+
+  const modelOptions = modelGroups.flatMap(group => group.models.map(modelEntry => ({
+    providerId: group.provider.id,
+    modelId: modelEntry.id,
+    label: assistantModelOptionLabel(
+      group.provider.name,
+      modelEntry.name,
+      reasoningLabelFor(group.provider.id, modelEntry.id),
+    ),
+  })))
+  const selectedModelLabel = modelOptions.find(option => (
+    option.providerId === provider && option.modelId === model
+  ))?.label
 
   const close = (): void => {
     if (saving) return
@@ -207,237 +277,242 @@ export function AssistantCreateDialog({
     <AnimatedModal
       open
       onClose={close}
-      title="新建单聊助手"
-      description="直接设置身份、模型、Workspace、权限与规则；首次打开时才创建它的主会话。"
+      title="创建助手"
       closeLabel="关闭"
       className={css.assistantCreateDialog ?? ''}
       contentClassName={css.assistantCreateDialogContent ?? ''}
+      footer={(
+        <div className={css.assistantCreateFooter}>
+          <Button variant="outline" type="button" disabled={saving} onClick={close}>取消</Button>
+          <Button
+            variant="primary"
+            type="submit"
+            form={CREATE_FORM_ID}
+            disabled={loading || saving || (!locked && !canCreate)}
+          >
+            {saving
+              ? (locked ? '打开中…' : '创建中…')
+              : (locked ? '重试打开' : '创建')}
+          </Button>
+        </div>
+      )}
     >
-      <form className={css.assistantCreateForm} onSubmit={(event) => { void submit(event) }}>
+      <form
+        id={CREATE_FORM_ID}
+        className={css.assistantCreateForm}
+        onSubmit={(event) => { void submit(event) }}
+      >
         {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
         {loading
           ? <div className={css.dialogEmpty}>正在读取模型、Agent Preset 与 Workspace…</div>
           : (
             <>
-              <div className={css.assistantFormSection}>
-                <div className={css.assistantFormSectionHeading}>
-                  <strong>身份</strong>
-                </div>
-                <div className={css.assistantIdentityGrid}>
-                  <div className={css.assistantIdentityAvatar}>
-                    <MemberAvatar
-                      name={name.trim() || '助手'}
-                      avatar={avatar !== '' ? avatar : undefined}
-                      size={48}
-                    />
-                    <button
-                      type="button"
-                      className={css.assistantAvatarButton}
-                      disabled={busy}
-                      onClick={() => { setAvatarPickerOpen(true) }}
-                    >
-                      {avatar === '' ? '选择头像' : '更换头像'}
-                    </button>
-                    {avatar !== '' && !busy && (
-                      <button type="button" className={css.assistantRemoveAvatar} onClick={() => { setAvatar('') }}>
-                        移除
-                      </button>
-                    )}
-                  </div>
-                  <Field label="显示名称">
-                    <input
-                      className={css.input}
-                      value={name}
-                      disabled={busy}
-                      autoFocus
-                      placeholder="例如：写作助手"
-                      onChange={event => {
-                        setName(event.target.value)
-                        setError(undefined)
-                      }}
-                    />
-                    <span className={css.hint}>
-                      必填。头像可选：内置 DiceBear 头像或本地上传（PNG/JPEG/WebP，≤256KB）。
-                    </span>
-                  </Field>
-                </div>
+              <div className={css.assistantCreateHero}>
+                <span className={css.assistantCreateAvatarFrame}>
+                  <MemberAvatar
+                    name={name.trim() || '助手'}
+                    avatar={avatar !== '' ? avatar : undefined}
+                    size={88}
+                  />
+                </span>
+                <span
+                  className={`${css.assistantCreateAvatarName}${name.trim() === ''
+                    ? ` ${css.assistantCreateAvatarPlaceholder}`
+                    : ''}`}
+                >
+                  {name.trim() || '新助手'}
+                </span>
               </div>
 
-              <div className={css.assistantFormSection}>
-                <div className={css.assistantFormSectionHeading}>
-                  <strong>运行配置</strong>
+              <section className={css.assistantCreateAvatarCard} aria-label="形象">
+                <div className={css.assistantCreateCardHeading}>
+                  <strong>形象</strong>
+                  <span className={css.assistantCreateCardHint}>内置 DiceBear 或本地上传</span>
                 </div>
-                <Field label="模型">
+                <AvatarGrid
+                  value={avatar}
+                  disabled={busy}
+                  onChange={next => {
+                    setAvatar(next)
+                    setError(undefined)
+                  }}
+                />
+              </section>
+
+              <Field label="名称">
+                <input
+                  className={css.input}
+                  value={name}
+                  disabled={busy}
+                  data-modal-autofocus
+                  placeholder="例如：写作助手"
+                  onChange={event => {
+                    setName(event.target.value)
+                    setError(undefined)
+                  }}
+                />
+                <span className={css.hint}>必填；预览会随着输入实时更新。</span>
+              </Field>
+
+              <Field label="模型">
+                <select
+                  className={css.input}
+                  value={modelSelection}
+                  disabled={busy || modelGroups.length === 0}
+                  onChange={event => {
+                    const [nextProvider, nextModel] = JSON.parse(event.target.value) as [string, string]
+                    setProvider(nextProvider)
+                    setModel(nextModel)
+                    setError(undefined)
+                  }}
+                >
+                  {!modelSelectionInCatalog && (
+                    <option value={modelSelection} disabled>
+                      {provider === '' ? '暂无可用模型' : assistantModelOptionLabel(provider, model)}
+                    </option>
+                  )}
+                  {modelOptions.map(option => (
+                    <option
+                      key={`${option.providerId}/${option.modelId}`}
+                      value={JSON.stringify([option.providerId, option.modelId])}
+                    >
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <span className={css.hint}>
+                  {selectedModelLabel === undefined
+                    ? '选择模型后会显示完整的模型名、Provider 与思考档位。'
+                    : `当前：${selectedModelLabel}。创建后仍可在助手设置中修改。`}
+                </span>
+              </Field>
+
+              {reasoningEfforts.length > 0 && (
+                <Field label="思考模式">
                   <select
                     className={css.input}
-                    value={modelSelection}
-                    disabled={busy || modelGroups.length === 0}
+                    value={reasoningEffort}
+                    disabled={busy || modelCapabilities.loading}
                     onChange={event => {
-                      const [nextProvider, nextModel] = JSON.parse(event.target.value) as [string, string]
-                      setProvider(nextProvider)
-                      setModel(nextModel)
+                      setReasoningEffort(event.target.value)
                       setError(undefined)
                     }}
                   >
-                    {!modelSelectionInCatalog && (
-                      <option value={modelSelection} disabled>
-                        {provider === '' ? '暂无可用模型' : `${provider} / ${model}`}
+                    <option value="">{defaultReasoningLabel(modelCapabilities.value)}</option>
+                    {reasoningEfforts.map(effort => (
+                      <option key={effort.id} value={effort.id}>
+                        {effort.name === effort.id ? effort.name : `${effort.name}（${effort.id}）`}
                       </option>
-                    )}
-                    {modelGroups.map(group => (
-                      <optgroup key={group.provider.id} label={group.provider.name}>
-                        {group.models.map(modelEntry => (
-                          <option
-                            key={`${group.provider.id}/${modelEntry.id}`}
-                            value={JSON.stringify([group.provider.id, modelEntry.id])}
-                          >
-                            {modelEntry.name === modelEntry.id
-                              ? modelEntry.id
-                              : `${modelEntry.name}（${modelEntry.id}）`}
-                          </option>
-                        ))}
-                      </optgroup>
                     ))}
                   </select>
-                  <span className={css.hint}>按 Provider 分组；创建后仍可在助手设置中修改。</span>
+                  <span className={css.hint}>
+                    由当前模型决定可用档位；选择「模型默认」会使用模型默认档位。
+                  </span>
                 </Field>
-                {reasoningEfforts.length > 0 && (
-                  <Field label="思考模式">
+              )}
+
+              {modelCapabilities.error !== undefined && (
+                <div className={css.inlineError} role="alert">
+                  读取模型能力失败：{modelCapabilities.error}
+                </div>
+              )}
+
+              <details className={css.assistantAdvanced}>
+                <summary className={css.assistantAdvancedSummary}>
+                  <span className={css.assistantAdvancedHeading}>
+                    <strong>高级设置</strong>
+                    <span>Workspace、权限、Agent Preset 与人设</span>
+                  </span>
+                  <IconChevronDownOutlineRegular
+                    size={14}
+                    className={css.assistantAdvancedChevron}
+                  />
+                </summary>
+                <div className={css.assistantAdvancedBody}>
+                  <Field label="Workspace">
                     <select
                       className={css.input}
-                      value={reasoningEffort}
-                      disabled={busy || modelCapabilities.loading}
+                      value={workspaceId}
+                      disabled={busy || workspaces.length === 0}
                       onChange={event => {
-                        setReasoningEffort(event.target.value)
+                        setWorkspaceId(event.target.value)
                         setError(undefined)
                       }}
                     >
-                      <option value="">{defaultReasoningLabel(modelCapabilities.value)}</option>
-                      {reasoningEfforts.map(effort => (
-                        <option key={effort.id} value={effort.id}>
-                          {effort.name === effort.id ? effort.name : `${effort.name}（${effort.id}）`}
+                      {workspaces.length === 0
+                        ? <option value="">暂无可用 Workspace</option>
+                        : workspaces.map(item => (
+                          <option key={item.id} value={item.id}>{item.title} — {item.path}</option>
+                        ))}
+                    </select>
+                    <span className={css.hint}>助手及其后台任务只在这个 Workspace 内工作；创建后保持只读。</span>
+                  </Field>
+
+                  <Field label="权限预设">
+                    <select
+                      className={css.input}
+                      value={permissionPresetId}
+                      disabled={busy || permissionOptions.length === 0}
+                      onChange={event => {
+                        setPermissionPresetId(event.target.value)
+                        setError(undefined)
+                      }}
+                    >
+                      {permissionOptions.length === 0 && (
+                        <option value="">暂无可用权限预设</option>
+                      )}
+                      {permissionOptions.map(option => (
+                        <option key={option.value} value={option.value}>
+                          {PERMISSION_LABELS[option.value] ?? option.name}
                         </option>
                       ))}
                     </select>
+                    <span className={css.hint}>权限只影响之后创建或恢复的会话。</span>
+                  </Field>
+
+                  <Field label="Agent Preset">
+                    <select
+                      className={css.input}
+                      value={agentPresetId}
+                      disabled={busy || agentPresets.length === 0}
+                      onChange={event => {
+                        setAgentPresetId(event.target.value)
+                        setError(undefined)
+                      }}
+                    >
+                      {agentPresets.length === 0 && (
+                        <option value="">暂无可用 Agent Preset</option>
+                      )}
+                      {agentPresets.map(preset => (
+                        <option key={preset.id} value={preset.id}>
+                          {preset.name === preset.id ? preset.id : `${preset.name}（${preset.id}）`}
+                        </option>
+                      ))}
+                    </select>
+                    <span className={css.hint}>决定工具、Skills 与 MCP 的可用范围；优先选用 standard。</span>
+                  </Field>
+
+                  <Field label="人设与规则（可选）">
+                    <textarea
+                      className={css.input}
+                      value={instructions}
+                      disabled={busy}
+                      rows={4}
+                      placeholder="例如：先读代码再修改；完成后运行测试并汇报结果。"
+                      onChange={event => {
+                        setInstructions(event.target.value)
+                        setError(undefined)
+                      }}
+                    />
                     <span className={css.hint}>
-                      由当前模型决定可用档位；选择「模型默认」会使用模型默认档位。
+                      会写入该助手的实例快照，作为主会话与后台任务共享的长期人设。
                     </span>
                   </Field>
-                )}
-                {modelCapabilities.error !== undefined && (
-                  <div className={css.inlineError} role="alert">
-                    读取模型能力失败：{modelCapabilities.error}
-                  </div>
-                )}
-                <Field label="Workspace">
-                  <select
-                    className={css.input}
-                    value={workspaceId}
-                    disabled={busy || workspaces.length === 0}
-                    onChange={event => {
-                      setWorkspaceId(event.target.value)
-                      setError(undefined)
-                    }}
-                  >
-                    {workspaces.length === 0
-                      ? <option value="">暂无可用 Workspace</option>
-                      : workspaces.map(item => (
-                        <option key={item.id} value={item.id}>{item.title} — {item.path}</option>
-                      ))}
-                  </select>
-                  <span className={css.hint}>助手及其后台任务只在这个 Workspace 内工作；创建后保持只读。</span>
-                </Field>
-                <Field label="权限预设">
-                  <select
-                    className={css.input}
-                    value={permissionPresetId}
-                    disabled={busy || permissionOptions.length === 0}
-                    onChange={event => {
-                      setPermissionPresetId(event.target.value)
-                      setError(undefined)
-                    }}
-                  >
-                    {permissionOptions.length === 0 && (
-                      <option value="">暂无可用权限预设</option>
-                    )}
-                    {permissionOptions.map(option => (
-                      <option key={option.value} value={option.value}>
-                        {PERMISSION_LABELS[option.value] ?? option.name}
-                      </option>
-                    ))}
-                  </select>
-                  <span className={css.hint}>权限只影响之后创建或恢复的会话。</span>
-                </Field>
-                <Field label="Agent Preset">
-                  <select
-                    className={css.input}
-                    value={agentPresetId}
-                    disabled={busy || agentPresets.length === 0}
-                    onChange={event => {
-                      setAgentPresetId(event.target.value)
-                      setError(undefined)
-                    }}
-                  >
-                    {agentPresets.length === 0 && (
-                      <option value="">暂无可用 Agent Preset</option>
-                    )}
-                    {agentPresets.map(preset => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.name === preset.id ? preset.id : `${preset.name}（${preset.id}）`}
-                      </option>
-                    ))}
-                  </select>
-                  <span className={css.hint}>决定工具、Skills 与 MCP 的可用范围；优先选用 standard。</span>
-                </Field>
-              </div>
-
-              <div className={css.assistantFormSection}>
-                <div className={css.assistantFormSectionHeading}>
-                  <strong>助手规则</strong>
                 </div>
-                <Field label="人设与规则（可选）">
-                  <textarea
-                    className={css.input}
-                    value={instructions}
-                    disabled={busy}
-                    rows={4}
-                    placeholder="例如：先读代码再修改；完成后运行测试并汇报结果。"
-                    onChange={event => {
-                      setInstructions(event.target.value)
-                      setError(undefined)
-                    }}
-                  />
-                  <span className={css.hint}>会写入该助手的实例快照，作为主会话与后台任务共享的长期人设。</span>
-                </Field>
-              </div>
-
-              <p className={css.assistantCreateHint}>
-                单聊助手直接创建，无需先选择助手模板；模板仍可在助手库中维护，并用于团队。
-              </p>
+              </details>
             </>
           )}
-        <div className={css.assistantCreateActions}>
-          <Button variant="outline" type="button" disabled={saving} onClick={close}>取消</Button>
-          <Button
-            variant="primary"
-            type="submit"
-            disabled={loading || saving || (!locked && !canCreate)}
-          >
-            {saving
-              ? (locked ? '打开中…' : '创建中…')
-              : (locked ? '重试打开' : '创建并打开')}
-          </Button>
-        </div>
       </form>
-      <AvatarPickerDialog
-        open={avatarPickerOpen}
-        value={avatar}
-        onClose={() => { setAvatarPickerOpen(false) }}
-        onApply={(value) => {
-          setAvatar(value)
-          setError(undefined)
-        }}
-      />
     </AnimatedModal>
   )
 }
