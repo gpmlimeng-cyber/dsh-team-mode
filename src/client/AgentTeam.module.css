@@ -7642,3 +7642,45 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   font-size: 10px;
   line-height: 14px;
 }
+
+/* Plugin Plaza lives on the account bar instead of a separate footer row. */
+.sidebarSettingsWithPlugin {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 4px;
+}
+
+.sidebarSettingsWithPlugin [class*='triggerRow'] {
+  flex: 1 1 0% !important;
+  width: auto !important;
+  max-width: calc(100% - 36px) !important;
+  min-width: 0;
+  gap: 4px !important;
+}
+
+.sidebarSettingsWithPlugin [class*='triggerRow'] > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sidebarPluginPlazaButton {
+  box-sizing: border-box;
+  display: inline-flex;
+  flex: 0 0 28px;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.sidebarPluginPlazaButton:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}

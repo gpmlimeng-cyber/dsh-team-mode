@@ -577,6 +577,171 @@ export function SidebarPortal({
   }, [])
 
 
+  // The shipped footer keeps Session log and Plugin Plaza in a block above the
+  // account row. That block is not part of the sidebar scroll region and costs
+  // scarce vertical space on phones. Session log is already available from the
+  // account menu, so collapse the native action block and expose Plugin Plaza
+  // as a single icon button on the right of the account control bar.
+  useEffect(() => {
+    let actions: HTMLElement | undefined
+    let actionsDisplay = ''
+    let area: HTMLElement | undefined
+    let button: HTMLButtonElement | undefined
+    let scheduled = false
+
+    const openPluginPlaza = (): void => {
+      const candidates = Array.from(document.querySelectorAll<HTMLButtonElement>('button'))
+      const trigger = candidates.find(candidate => (
+        candidate.className.includes('sh-plaza-trigger')
+        || (candidate.textContent ?? '').trim() === 'Plugin Plaza'
+        || (candidate.textContent ?? '').trim() === '插件广场'
+      ))
+      trigger?.click()
+    }
+
+    const ensure = (): void => {
+      const nextActions = document.querySelector<HTMLElement>('[class*="_footerActions"]')
+      if (nextActions !== actions) {
+        if (actions !== undefined) actions.style.display = actionsDisplay
+        actions = nextActions ?? undefined
+        if (actions !== undefined) {
+          actionsDisplay = actions.style.display
+          actions.style.display = 'none'
+        }
+      }
+      const nextArea = document.querySelector<HTMLElement>('[class*="_settingsArea"]')
+      if (nextArea === null) return
+      if (area !== nextArea) {
+        area?.classList.remove(css.sidebarSettingsWithPlugin ?? '')
+        area = nextArea
+        area.classList.add(css.sidebarSettingsWithPlugin ?? '')
+      }
+      if (button === undefined || !button.isConnected) {
+        button = document.createElement('button')
+        button.type = 'button'
+        button.className = css.sidebarPluginPlazaButton ?? ''
+        button.setAttribute('aria-label', '插件广场')
+        button.title = '插件广场'
+        button.dataset.dshPluginPlaza = 'true'
+        button.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><rect x="2.25" y="2.25" width="4.5" height="4.5" rx="1.1" stroke="currentColor" stroke-width="1.1"/><rect x="9.25" y="2.25" width="4.5" height="4.5" rx="1.1" stroke="currentColor" stroke-width="1.1"/><rect x="2.25" y="9.25" width="4.5" height="4.5" rx="1.1" stroke="currentColor" stroke-width="1.1"/><rect x="9.25" y="9.25" width="4.5" height="4.5" rx="1.1" stroke="currentColor" stroke-width="1.1"/></svg>'
+        button.addEventListener('click', openPluginPlaza)
+      }
+      if (button.parentElement !== area) area.append(button)
+    }
+
+    const schedule = (): void => {
+      if (scheduled) return
+      scheduled = true
+      window.requestAnimationFrame(() => { scheduled = false; ensure() })
+    }
+
+    ensure()
+    const observer = new MutationObserver(schedule)
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => {
+      observer.disconnect()
+      if (actions !== undefined) actions.style.display = actionsDisplay
+      area?.classList.remove(css.sidebarSettingsWithPlugin ?? '')
+      button?.remove()
+    }
+  }, [])
+
+
+  // Add “导出会话日志” to every native Session row's actions menu. The row menu
+  // is a React portal, so this effect only observes it and injects one DOM item;
+  // the export itself uses the same document-relative route as the shipped
+  // session-log-export package.
+  useEffect(() => {
+    let pendingSessionId: string | undefined
+    let scheduled = false
+    let errorTimer: number | undefined
+
+    const sessionOf = (target: EventTarget | null): string | undefined => {
+      if (!(target instanceof Element)) return undefined
+      const trigger = target.closest<HTMLElement>('button[aria-label^="Session actions for "]')
+      const row = trigger?.closest<HTMLElement>('[data-row-key^="session:"]')
+      const key = row?.dataset.rowKey
+      return key?.slice('session:'.length) || undefined
+    }
+
+    const rememberSession = (event: Event): void => {
+      const sessionId = sessionOf(event.target)
+      if (sessionId !== undefined) pendingSessionId = sessionId
+    }
+
+    const downloadSession = async (sessionId: string, button: HTMLButtonElement): Promise<void> => {
+      const route = `api/session.export?${new URLSearchParams({
+        sessionId,
+        includeDescendants: 'true',
+      }).toString()}`
+      try {
+        const response = await fetch(route, { method: 'HEAD' })
+        if (!response.ok) {
+          const detail = await response.text().catch(() => '')
+          throw new Error(detail === '' ? `HTTP ${response.status}` : detail)
+        }
+        const anchor = document.createElement('a')
+        anchor.href = route
+        anchor.download = `dsh-session-${sessionId.replace(/[^A-Za-z0-9_-]/g, '_')}.zip`
+        document.body.append(anchor)
+        anchor.click()
+        anchor.remove()
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }))
+      } catch (cause) {
+        button.title = cause instanceof Error ? cause.message : String(cause)
+        const label = button.querySelector<HTMLElement>('[class*="itemLabel"]')
+        if (label !== null) {
+          label.textContent = '导出失败，请重试'
+          if (errorTimer !== undefined) window.clearTimeout(errorTimer)
+          errorTimer = window.setTimeout(() => { label.textContent = '导出会话日志' }, 2400)
+        }
+      }
+    }
+
+    const ensure = (): void => {
+      if (pendingSessionId === undefined) return
+      const menu = document.querySelector<HTMLElement>('[role="menu"]')
+      if (menu === null || menu.querySelector('[data-dsh-session-export]') !== null) return
+      const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]'))
+      const labels = items.map(item => (item.textContent ?? '').trim())
+      if (!labels.includes('Delete session') && !labels.includes('Copy Session ID')) return
+      const deleteItem = items.find(item => (item.textContent ?? '').trim() === 'Delete session')
+      const reference = deleteItem ?? items[items.length - 1]
+      if (reference === undefined) return
+      const wrapper = reference.parentElement?.cloneNode(true) as HTMLElement | undefined
+      if (wrapper === undefined) return
+      const button = wrapper.querySelector<HTMLButtonElement>('button')
+      if (button === null) return
+      const iconClass = button.querySelector<HTMLElement>('[class*="itemIcon"]')?.className
+      const labelClass = button.querySelector<HTMLElement>('[class*="itemLabel"]')?.className
+      button.setAttribute('role', 'menuitem')
+      button.dataset.dshSessionExport = 'true'
+      button.innerHTML = `${iconClass === undefined ? '' : `<span class="${iconClass}">`}<svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M8 2.75V10.25" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M4.75 7.25L8 10.5L11.25 7.25" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 13.25H13" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>${iconClass === undefined ? '' : '</span>'}<span class="${labelClass ?? ''}">导出会话日志</span>`
+      button.addEventListener('click', event => {
+        event.preventDefault()
+        event.stopPropagation()
+        void downloadSession(pendingSessionId ?? '', button)
+      })
+      reference.parentElement?.before(wrapper)
+    }
+
+    const schedule = (): void => {
+      if (scheduled) return
+      scheduled = true
+      window.requestAnimationFrame(() => { scheduled = false; ensure() })
+    }
+
+    document.addEventListener('click', rememberSession, true)
+    const observer = new MutationObserver(schedule)
+    observer.observe(document.body, { childList: true, subtree: true })
+    return () => {
+      document.removeEventListener('click', rememberSession, true)
+      observer.disconnect()
+      if (errorTimer !== undefined) window.clearTimeout(errorTimer)
+    }
+  }, [])
+
+
   // Put 新会话, the top navigation and the workspace region inside one real
   // scroll wrapper between the fixed brand rows and the fixed account footer.
   // A sticky overlay would let content pass underneath; this keeps the scroll
