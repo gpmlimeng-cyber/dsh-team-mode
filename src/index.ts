@@ -17,6 +17,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { Config, type Config as AgentTeamConfig } from './config.js'
 import { AgentTeamService } from './service/dsh-team-mode-service.js'
 import { AssistantBuilderRuntime } from './runtime/assistant-builder-runtime.js'
+import { AssistantRuntime } from './runtime/assistant-runtime.js'
 import { TeamRuntime } from './runtime/team-runtime.js'
 import { dshTeamModeDomainSpec } from './storage/domain.js'
 import {
@@ -55,6 +56,7 @@ export async function apply(ctx: Context, config: AgentTeamConfig): Promise<void
     })
   let runtime: TeamRuntime | undefined
   let assistantBuilderRuntime: AssistantBuilderRuntime | undefined
+  let assistantRuntime: AssistantRuntime | undefined
   let transport: ReturnType<typeof registerWebTransport> | undefined
   let service: AgentTeamService | undefined
   try {
@@ -72,13 +74,16 @@ export async function apply(ctx: Context, config: AgentTeamConfig): Promise<void
       assistantBuilderModelPreferences,
       runtime.interactionBridge(),
     )
+    assistantRuntime = new AssistantRuntime(ctx, config, service)
     service.attachRuntime(runtime)
     service.attachAssistantBuilderRuntime(assistantBuilderRuntime)
+    service.attachAssistantRuntime(assistantRuntime)
     transport = registerWebTransport(ctx, config, service)
     ctx.effect(() => async () => {
       transport?.dispose()
       await service?.disposeWorkspaceTracking()
       await assistantBuilderRuntime?.dispose()
+      await assistantRuntime?.dispose()
       await runtime?.dispose()
       await assistantBuilderPreferencesDomain.close()
       await domain.close()
@@ -89,6 +94,7 @@ export async function apply(ctx: Context, config: AgentTeamConfig): Promise<void
     transport?.dispose()
     await service?.disposeWorkspaceTracking()
     await assistantBuilderRuntime?.dispose()
+    await assistantRuntime?.dispose()
     await runtime?.dispose()
     await assistantBuilderPreferencesDomain.close()
     await domain.close()

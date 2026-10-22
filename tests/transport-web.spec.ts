@@ -90,6 +90,18 @@ function harness(overrides: {
       bytes: data.byteLength,
     }))),
     listTeams: vi.fn(() => ({ items: [], total: 0 })),
+    listAssistantInstances: vi.fn(() => ({ items: [], total: 0 })),
+    createAssistantInstance: vi.fn(async (input: object) => ({ id: 'instance-1', ...input })),
+    updateAssistantInstance: vi.fn(async (id: string, value: object) => ({ id, ...value })),
+    archiveAssistantInstance: vi.fn(async (id: string) => ({ id, status: 'archived' })),
+    ensureAssistantInstance: vi.fn(async (id: string) => ({
+      instance: { id, status: 'active' },
+      sessionId: 'session-main',
+    })),
+    openAssistantTask: vi.fn(async (taskId: string) => ({
+      task: { id: taskId, status: 'completed' },
+      sessionId: 'session-worker',
+    })),
   } as unknown as AgentTeamService
   const transport = registerWebTransport(
     ctx,
@@ -150,6 +162,84 @@ describe('web transport authentication and upload contract', () => {
 
     expect(reply.status).toBe(200)
     expect(JSON.parse(reply.body)).toMatchObject({ ok: true, value: { items: [], total: 0 } })
+  })
+
+  it('dispatches the Assistant instance methods', async () => {
+    const { call, service } = harness()
+    const post = (method: string, payload: unknown) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ requestId: method, method, payload }),
+    }))
+
+    const listed = await post('assistant.instance.list', {})
+    expect(listed.status).toBe(200)
+    expect(JSON.parse(listed.body)).toMatchObject({ ok: true, value: { items: [], total: 0 } })
+
+    const created = await post('assistant.instance.create', {
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+    expect(created.status).toBe(200)
+    expect(JSON.parse(created.body)).toMatchObject({
+      ok: true,
+      value: { id: 'instance-1', templateId: 'template-1', workspaceId: 'workspace-1' },
+    })
+    expect(service.createAssistantInstance).toHaveBeenCalledWith({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+
+    const updated = await post('assistant.instance.update', {
+      id: 'instance-1',
+      value: { name: 'Renamed', pinned: true },
+    })
+    expect(updated.status).toBe(200)
+    expect(JSON.parse(updated.body)).toMatchObject({
+      ok: true,
+      value: { id: 'instance-1', name: 'Renamed', pinned: true },
+    })
+    expect(service.updateAssistantInstance).toHaveBeenCalledWith('instance-1', {
+      name: 'Renamed',
+      pinned: true,
+    })
+
+    const archived = await post('assistant.instance.archive', { id: 'instance-1' })
+    expect(archived.status).toBe(200)
+    expect(JSON.parse(archived.body)).toMatchObject({
+      ok: true,
+      value: { id: 'instance-1', status: 'archived' },
+    })
+    expect(service.archiveAssistantInstance).toHaveBeenCalledWith('instance-1')
+
+    const ensured = await post('assistant.instance.ensure', { id: 'instance-1' })
+    expect(ensured.status).toBe(200)
+    expect(JSON.parse(ensured.body)).toMatchObject({
+      ok: true,
+      value: { instance: { id: 'instance-1', status: 'active' }, sessionId: 'session-main' },
+    })
+    expect(service.ensureAssistantInstance).toHaveBeenCalledWith('instance-1')
+  })
+
+  it('dispatches assistant.task.open', async () => {
+    const { call, service } = harness()
+    const reply = await call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        requestId: 'r1',
+        method: 'assistant.task.open',
+        payload: { taskId: 'task-1' },
+      }),
+    }))
+
+    expect(reply.status).toBe(200)
+    expect(JSON.parse(reply.body)).toMatchObject({
+      ok: true,
+      value: {
+        task: { id: 'task-1', status: 'completed' },
+        sessionId: 'session-worker',
+      },
+    })
+    expect(service.openAssistantTask).toHaveBeenCalledWith('task-1')
   })
 
   it('returns a typed error for an unknown method', async () => {

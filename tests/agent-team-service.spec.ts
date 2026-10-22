@@ -6,6 +6,9 @@ import { join } from 'node:path'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
 import type {
+  AssistantInstance,
+  AssistantMemory,
+  AssistantSession,
   AssistantTemplate,
   Operation,
   TeamActivity,
@@ -1362,6 +1365,9 @@ function assistantInput() {
 
 class MemoryStore implements AgentTeamStore {
   private assistants = new Map<string, AssistantTemplate>()
+  private assistantInstances = new Map<string, AssistantInstance>()
+  private assistantSessions = new Map<string, AssistantSession>()
+  private assistantMemory = new Map<string, AssistantMemory>()
   private teams = new Map<string, TeamAggregate>()
   private messages = new Map<string, TeamMessage>()
   private activities = new Map<string, TeamActivity>()
@@ -1374,6 +1380,30 @@ class MemoryStore implements AgentTeamStore {
     return updateMap(this.assistants, id, update)
   }
   async deleteAssistant(id: string) { return this.assistants.delete(id) }
+
+  getAssistantInstance(id: string) { return this.assistantInstances.get(id) }
+  listAssistantInstances() { return [...this.assistantInstances.values()] }
+  async putAssistantInstance(value: AssistantInstance) { this.assistantInstances.set(value.id, value) }
+  updateAssistantInstance(id: string, update: (current: AssistantInstance) => AssistantInstance) {
+    return updateMap(this.assistantInstances, id, update)
+  }
+  async deleteAssistantInstance(id: string) { return this.assistantInstances.delete(id) }
+
+  getAssistantMemory(assistantId: string) { return this.assistantMemory.get(assistantId) }
+  async putAssistantMemory(value: AssistantMemory) { this.assistantMemory.set(value.assistantId, value) }
+  updateAssistantMemory(
+    assistantId: string,
+    update: (current: AssistantMemory) => AssistantMemory,
+  ) {
+    return updateMap(this.assistantMemory, assistantId, update)
+  }
+
+  getAssistantSession(id: string) { return this.assistantSessions.get(id) }
+  listAssistantSessions() { return [...this.assistantSessions.values()] }
+  async putAssistantSession(value: AssistantSession) { this.assistantSessions.set(value.id, value) }
+  updateAssistantSession(id: string, update: (current: AssistantSession) => AssistantSession) {
+    return updateMap(this.assistantSessions, id, update)
+  }
 
   getTeam(id: string) { return this.teams.get(id) }
   listTeams() { return [...this.teams.values()] }

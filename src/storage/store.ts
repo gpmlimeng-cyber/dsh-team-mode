@@ -1,5 +1,8 @@
 import type { Domain, KvTable } from '@deepseek-ai/dsh-storage-domain'
 import type {
+  AssistantInstance,
+  AssistantMemory,
+  AssistantSession,
   AssistantTemplate,
   Operation,
   TeamActivity,
@@ -14,6 +17,30 @@ export interface AgentTeamStore {
   putAssistant(value: AssistantTemplate): Promise<void>
   updateAssistant(id: string, update: (current: AssistantTemplate) => AssistantTemplate): Promise<AssistantTemplate>
   deleteAssistant(id: string): Promise<boolean>
+
+  getAssistantInstance(id: string): AssistantInstance | undefined
+  listAssistantInstances(): AssistantInstance[]
+  putAssistantInstance(value: AssistantInstance): Promise<void>
+  updateAssistantInstance(
+    id: string,
+    update: (current: AssistantInstance) => AssistantInstance,
+  ): Promise<AssistantInstance>
+  deleteAssistantInstance(id: string): Promise<boolean>
+
+  getAssistantMemory(assistantId: string): AssistantMemory | undefined
+  putAssistantMemory(value: AssistantMemory): Promise<void>
+  updateAssistantMemory(
+    assistantId: string,
+    update: (current: AssistantMemory) => AssistantMemory,
+  ): Promise<AssistantMemory>
+
+  getAssistantSession(id: string): AssistantSession | undefined
+  listAssistantSessions(): AssistantSession[]
+  putAssistantSession(value: AssistantSession): Promise<void>
+  updateAssistantSession(
+    id: string,
+    update: (current: AssistantSession) => AssistantSession,
+  ): Promise<AssistantSession>
 
   getTeam(id: string): TeamAggregate | undefined
   listTeams(): TeamAggregate[]
@@ -38,6 +65,9 @@ export interface AgentTeamStore {
 
 export class DomainAgentTeamStore implements AgentTeamStore {
   private readonly assistants: KvTable<string, AssistantTemplate>
+  private readonly assistantInstances: KvTable<string, AssistantInstance>
+  private readonly assistantSessions: KvTable<string, AssistantSession>
+  private readonly assistantMemory: KvTable<string, AssistantMemory>
   private readonly teams: KvTable<string, TeamAggregate>
   private readonly messages: KvTable<string, TeamMessage>
   private readonly activities: KvTable<string, TeamActivity>
@@ -45,6 +75,9 @@ export class DomainAgentTeamStore implements AgentTeamStore {
 
   constructor(readonly domain: Domain<typeof dshTeamModeDomainSpec>) {
     this.assistants = domain.table('assistants')
+    this.assistantInstances = domain.table('assistant_instances')
+    this.assistantSessions = domain.table('assistant_sessions')
+    this.assistantMemory = domain.table('assistant_memory')
     this.teams = domain.table('teams')
     this.messages = domain.table('messages')
     this.activities = domain.table('activities')
@@ -73,6 +106,65 @@ export class DomainAgentTeamStore implements AgentTeamStore {
 
   deleteAssistant(id: string): Promise<boolean> {
     return this.assistants.delete(id)
+  }
+
+  getAssistantInstance(id: string): AssistantInstance | undefined {
+    return this.assistantInstances.get(id)
+  }
+
+  listAssistantInstances(): AssistantInstance[] {
+    return values(this.assistantInstances)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+  }
+
+  putAssistantInstance(value: AssistantInstance): Promise<void> {
+    return this.assistantInstances.put(value.id, value)
+  }
+
+  updateAssistantInstance(
+    id: string,
+    update: (current: AssistantInstance) => AssistantInstance,
+  ): Promise<AssistantInstance> {
+    return this.assistantInstances.update(id, update)
+  }
+
+  deleteAssistantInstance(id: string): Promise<boolean> {
+    return this.assistantInstances.delete(id)
+  }
+
+  getAssistantMemory(assistantId: string): AssistantMemory | undefined {
+    return this.assistantMemory.get(assistantId)
+  }
+
+  putAssistantMemory(value: AssistantMemory): Promise<void> {
+    return this.assistantMemory.put(value.assistantId, value)
+  }
+
+  updateAssistantMemory(
+    assistantId: string,
+    update: (current: AssistantMemory) => AssistantMemory,
+  ): Promise<AssistantMemory> {
+    return this.assistantMemory.update(assistantId, update)
+  }
+
+  getAssistantSession(id: string): AssistantSession | undefined {
+    return this.assistantSessions.get(id)
+  }
+
+  listAssistantSessions(): AssistantSession[] {
+    return values(this.assistantSessions)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
+  }
+
+  putAssistantSession(value: AssistantSession): Promise<void> {
+    return this.assistantSessions.put(value.id, value)
+  }
+
+  updateAssistantSession(
+    id: string,
+    update: (current: AssistantSession) => AssistantSession,
+  ): Promise<AssistantSession> {
+    return this.assistantSessions.update(id, update)
   }
 
   getTeam(id: string): TeamAggregate | undefined {

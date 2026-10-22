@@ -51,6 +51,77 @@ export const assistantTemplateSchema = z.object({
   updatedAt: isoDate,
 }).strict()
 
+/**
+ * One persisted Assistant: a snapshot bound to a workspace, with the lazily
+ * created main Session recorded on first open. Creation never makes a Session;
+ * `mainSessionId` stays absent until the runtime binds it. `templateId` is
+ * present only when the instance was derived from an assistant template; a
+ * directly configured instance has none.
+ */
+export const assistantInstanceSchema = z.object({
+  schemaVersion: z.literal(1),
+  id: nonEmpty,
+  templateId: nonEmpty.optional(),
+  assistantSnapshot: assistantSnapshotSchema,
+  workspaceId: nonEmpty,
+  workspacePath: nonEmpty,
+  mainSessionId: nonEmpty.optional(),
+  status: z.enum(['idle', 'starting', 'active', 'error', 'archived']),
+  pinned: z.boolean().default(false),
+  revision: z.int().positive(),
+  createdAt: isoDate,
+  updatedAt: isoDate,
+  archivedAt: isoDate.optional(),
+}).strict()
+
+export const assistantTaskStatusSchema = z.enum([
+  'queued',
+  'running',
+  'needs_input',
+  'completed',
+  'failed',
+  'cancelled',
+])
+
+/**
+ * One hidden worker Session owned by an Assistant instance. Phase 1 only
+ * creates `task` rows: the main conversation is tracked on the instance itself,
+ * and no assignment/consult lifecycle exists yet.
+ */
+export const assistantSessionSchema = z.object({
+  schemaVersion: z.literal(1),
+  id: nonEmpty,
+  assistantId: nonEmpty,
+  sessionId: nonEmpty,
+  role: z.literal('task'),
+  title: nonEmpty,
+  brief: z.string(),
+  /** The assistant instance's main Session that requested this task. */
+  parentSessionId: nonEmpty,
+  status: assistantTaskStatusSchema,
+  /** Compact result written by `assistant_task_summary`. */
+  resultSummary: z.string().optional(),
+  error: z.string().optional(),
+  createdAt: isoDate,
+  updatedAt: isoDate,
+  archivedAt: isoDate.optional(),
+}).strict()
+
+/**
+ * Durable memory for one Assistant instance, keyed by `assistantId`. The
+ * content is deliberately a single bounded string in Phase 2; topic files and
+ * daily logs remain future work.
+ */
+export const assistantMemorySchema = z.object({
+  schemaVersion: z.literal(1),
+  assistantId: nonEmpty,
+  content: z.string(),
+  revision: z.int().positive(),
+  updatedAt: isoDate,
+}).strict()
+
+export const assistantMemoryModeSchema = z.enum(['replace', 'append'])
+
 export const memberRuntimeStateSchema = z.enum([
   'offline',
   'starting',
@@ -242,6 +313,81 @@ export const createAssistantInputSchema = assistantTemplateSchema.pick({
 
 export const updateAssistantInputSchema = createAssistantInputSchema.partial().extend({
   sortOrder: z.int().nonnegative().optional(),
+}).strict()
+
+/**
+ * Fields shared by both creation shapes. A template-backed instance may name
+ * any of them to override the template snapshot; a direct instance must supply
+ * the identity and engine fields.
+ */
+const assistantInstanceOverrides = {
+  workspaceId: nonEmpty,
+  name: nonEmpty.optional(),
+  avatar: z.string().max(400_000).optional(),
+  provider: nonEmpty.optional(),
+  model: nonEmpty.optional(),
+  /** Empty clears the inherited effort; an absent field keeps it. */
+  reasoningEffort: z.string().trim().optional(),
+  agentPresetId: nonEmpty.optional(),
+  permissionPresetId: nonEmpty.optional(),
+  instructions: z.string().optional(),
+  pinned: z.boolean().optional(),
+} as const
+
+/**
+ * Create an Assistant instance from a template (with optional snapshot
+ * overrides) or directly from a complete configuration. The direct shape is
+ * what the DS Bot-style create dialog sends: no template row is needed, but
+ * name, provider, model, agent preset, and permission preset are required.
+ */
+export const createAssistantInstanceInputSchema = z.union([
+  z.object({
+    ...assistantInstanceOverrides,
+    templateId: nonEmpty,
+  }).strict(),
+  z.object({
+    ...assistantInstanceOverrides,
+    templateId: z.undefined().optional(),
+    name: nonEmpty,
+    provider: nonEmpty,
+    model: nonEmpty,
+    agentPresetId: nonEmpty,
+    permissionPresetId: nonEmpty,
+  }).strict(),
+])
+
+/**
+ * Patch an instance snapshot; an empty object leaves every field unchanged.
+ * `provider` and `model` travel together: changing either one must name both so
+ * the service can validate the pair. An empty `reasoningEffort` clears the
+ * recorded effort and falls back to the model default.
+ */
+export const updateAssistantInstanceInputSchema = z.object({
+  name: nonEmpty.optional(),
+  avatar: z.string().max(400_000).optional(),
+  pinned: z.boolean().optional(),
+  provider: nonEmpty.optional(),
+  model: nonEmpty.optional(),
+  reasoningEffort: z.string().trim().optional(),
+  permissionPresetId: nonEmpty.optional(),
+}).strict()
+
+/** Runtime-owned record of one hidden worker Session; the service assigns ids and timestamps. */
+export const createAssistantSessionInputSchema = z.object({
+  assistantId: nonEmpty,
+  sessionId: nonEmpty,
+  title: nonEmpty,
+  brief: z.string(),
+  parentSessionId: nonEmpty,
+}).strict()
+
+/** Status/result updates; an empty patch leaves the record unchanged. */
+export const updateAssistantSessionInputSchema = z.object({
+  title: nonEmpty.optional(),
+  status: assistantTaskStatusSchema.optional(),
+  resultSummary: z.string().optional(),
+  error: z.string().optional(),
+  archivedAt: isoDate.optional(),
 }).strict()
 
 export const createTeamMemberInputSchema = z.object({

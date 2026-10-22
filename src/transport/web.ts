@@ -234,6 +234,35 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       return service.cloneAssistant(payload.id, payload.name)
     }
     case 'assistant.delete': await service.deleteAssistant(idPayload.parse(request.payload).id); return null
+    case 'assistant.instance.list': return service.listAssistantInstances()
+    case 'assistant.instance.create': return service.createAssistantInstance(request.payload as never)
+    case 'assistant.instance.update': {
+      const payload = z.object({
+        id: z.string().trim().min(1).max(200),
+        value: z.unknown(),
+      }).strict().parse(request.payload)
+      return service.updateAssistantInstance(payload.id, payload.value as never)
+    }
+    case 'assistant.instance.archive': {
+      const payload = z.object({ id: z.string().trim().min(1).max(200) }).strict().parse(request.payload)
+      return service.archiveAssistantInstance(payload.id)
+    }
+    case 'assistant.instance.ensure':
+      return service.ensureAssistantInstance(idPayload.parse(request.payload).id)
+    case 'assistant.task.list': {
+      const payload = request.payload === undefined || request.payload === null
+        ? undefined
+        : z.object({
+          assistantId: z.string().trim().min(1).max(200).optional(),
+        }).strict().parse(request.payload)
+      return service.listAssistantSessions(payload?.assistantId)
+    }
+    case 'assistant.task.open': {
+      const payload = z.object({
+        taskId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.openAssistantTask(payload.taskId)
+    }
     case 'assistant.builder.list': return service.listAssistantBuilderConversations()
     case 'assistant.builder.draft.get': return service.getAssistantBuilderDraft()
     case 'assistant.builder.draft.configure': {

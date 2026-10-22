@@ -1,12 +1,16 @@
 import type {
   AddTeamMemberInput,
+  AssistantInstance,
+  AssistantSession,
   AssistantTemplate,
   CloneTeamInput,
   CreateAssistantInput,
+  CreateAssistantInstanceInput,
   CreateTeamDraftInput,
   TeamAggregate,
   TeamMessage,
   UpdateAssistantInput,
+  UpdateAssistantInstanceInput,
 } from '../domain/types.js'
 
 export const AGENT_TEAM_API_PATH = '/dsh-team-mode/api'
@@ -28,6 +32,13 @@ export const AGENT_TEAM_METHODS = [
   'assistant.update',
   'assistant.clone',
   'assistant.delete',
+  'assistant.instance.list',
+  'assistant.instance.create',
+  'assistant.instance.update',
+  'assistant.instance.archive',
+  'assistant.instance.ensure',
+  'assistant.task.list',
+  'assistant.task.open',
   'assistant.builder.list',
   'assistant.builder.draft.get',
   'assistant.builder.draft.configure',
@@ -318,6 +329,25 @@ export interface AgentTeamRequestMap {
   'assistant.update': { payload: { id: string; value: UpdateAssistantInput }; result: AssistantView }
   'assistant.clone': { payload: { id: string; name?: string }; result: AssistantView }
   'assistant.delete': { payload: { id: string }; result: null }
+  'assistant.instance.list': { payload: undefined; result: PageView<AssistantInstance> }
+  'assistant.instance.create': { payload: CreateAssistantInstanceInput; result: AssistantInstance }
+  'assistant.instance.update': {
+    payload: { id: string; value: UpdateAssistantInstanceInput }
+    result: AssistantInstance
+  }
+  'assistant.instance.archive': { payload: { id: string }; result: AssistantInstance }
+  'assistant.instance.ensure': {
+    payload: { id: string }
+    result: { instance: AssistantInstance; sessionId: string }
+  }
+  'assistant.task.list': {
+    payload: { assistantId?: string } | undefined
+    result: PageView<AssistantSession>
+  }
+  'assistant.task.open': {
+    payload: { taskId: string }
+    result: { task: AssistantSession; sessionId: string }
+  }
   'assistant.builder.list': { payload: undefined; result: AssistantBuilderConversationListView }
   'assistant.builder.draft.get': { payload: undefined; result: AssistantBuilderDraftView }
   'assistant.builder.draft.configure': {
