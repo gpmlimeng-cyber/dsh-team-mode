@@ -1,9 +1,10 @@
-import type { TeamAggregate, TeamMemberSlot } from '../domain/types.js'
+import type { MemoryEntry, TeamAggregate, TeamMemberSlot } from '../domain/types.js'
 
 const SHARED_RULES = [
   'You are part of a team that shares one Workspace. All members can read and write the same files, so coordinate before touching overlapping paths.',
   'The durable team mailbox and the shared task board are the coordination protocol; chat history is not shared between members.',
-  'Available team tools: team_members, team_read_messages, team_send_message, team_interrupt_agent, team_mode_goal_create, team_mode_goal_list, team_mode_task_create, team_mode_task_update, team_mode_task_list, team_list_assistants, team_describe_assistant, team_spawn_agent, team_rename_agent, team_clear_agent_context, team_shutdown_agent.',
+  'Available team tools: team_members, team_read_messages, team_send_message, team_interrupt_agent, team_mode_goal_create, team_mode_goal_list, team_mode_task_create, team_mode_task_update, team_mode_task_list, team_memory_propose, team_memory_list, team_memory_accept, team_list_assistants, team_describe_assistant, team_spawn_agent, team_rename_agent, team_clear_agent_context, team_shutdown_agent.',
+  'Team memory holds durable team decisions and project facts, not task status or chat transcripts. Team memory_list shows proposals and active entries; members propose with team_memory_propose and the Leader decides with team_memory_accept. Only active entries are loaded into prompts.',
   'Use team_read_messages at the start of a turn. Use team_mode_task_list before claiming or reporting work. Put durable decisions and results in the task board or mailbox, not only in your private context.',
   'Do NOT use platform-native team tools (list_agents, spawn_teammate, send_message, wait_agent, interrupt_agent). They manage a different, implicit team and will report wrong members/tasks. This team uses only the team_* tools listed above.',
 ]
@@ -43,6 +44,46 @@ export function memberPrompt(team: TeamAggregate, member: TeamMemberSlot): strin
       ? undefined
       : `Your role instructions:\n${member.assistantSnapshot.instructions}`,
   ].filter((line): line is string => line !== undefined).join('\n\n')
+}
+
+/** Team memory is core context: active entries only, bounded, injected every turn. */
+const TEAM_MEMORY_PROMPT_LIMIT = 2_000
+const TEAM_MEMORY_ENTRY_TITLE_LIMIT = 80
+const TEAM_MEMORY_ENTRY_BODY_LIMIT = 200
+
+/**
+ * The active team memory block, or an empty string when nothing is active.
+ * Only `active`, `team-safe`, team-scoped entries load: a proposal is not an
+ * agreement, a replaced decision must not compete with its replacement, and a
+ * private entry (hand-written or migrated) must never reach a team prompt.
+ */
+export function teamMemoryPrompt(team: TeamAggregate): string {
+  const active = (team.memory?.entries ?? []).filter(entry =>
+    entry.status === 'active'
+    && entry.scope === 'team'
+    && entry.visibility === 'team-safe')
+  if (active.length === 0) return ''
+  const header = [
+    'Team memory — decisions and facts this team has agreed on.',
+    'Read-only in this prompt: propose with team_memory_propose, inspect with team_memory_list; only the Leader accepts.',
+  ].join(' ')
+  const entries = active.map(entry => `- ${memoryEntryLine(entry)}`).join('\n')
+  return `${header}\n${boundedText(entries, TEAM_MEMORY_PROMPT_LIMIT)}`
+}
+
+function memoryEntryLine(entry: MemoryEntry): string {
+  const label = entry.key === undefined ? entry.title : `${entry.key}: ${entry.title}`
+  return `${truncate(label, TEAM_MEMORY_ENTRY_TITLE_LIMIT)}: ${boundedText(entry.body, TEAM_MEMORY_ENTRY_BODY_LIMIT)}`
+}
+
+function truncate(value: string, limit: number): string {
+  return value.length <= limit ? value : `${value.slice(0, limit)}…`
+}
+
+/** Like {@link truncate}, but the returned string never exceeds `limit`. */
+function boundedText(value: string, limit: number): string {
+  if (value.length <= limit) return value
+  return `${value.slice(0, Math.max(limit - 1, 0))}…`
 }
 
 export function rosterPrompt(team: TeamAggregate): string {

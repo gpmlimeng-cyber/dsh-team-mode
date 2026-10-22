@@ -6,6 +6,7 @@ import type {
   TeamMessage,
   TeamTask,
 } from '../src/domain/types.js'
+import { AgentTeamError } from '../src/domain/errors.js'
 import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import {
   TeamCommandHandler,
@@ -69,12 +70,37 @@ function makeTeam(): TeamAggregate {
   }
 }
 
+/** A second team with its own leader and members, for isolation tests. */
+function makeOtherTeam(): TeamAggregate {
+  const leader = member('leader-2', 'Other Lead', 'leader', 'session-leader-2')
+  const peer = member('a2', 'Other Member', 'member', 'session-a2')
+  return {
+    ...makeTeam(),
+    id: 'team-2',
+    name: 'Other Team',
+    leaderSlotId: leader.id,
+    members: { [leader.id]: leader, [peer.id]: peer },
+  }
+}
+
 function harness() {
   let team = makeTeam()
+  let other = makeOtherTeam()
   const messages: TeamMessage[] = []
+  const aggregates = (): Map<string, TeamAggregate> => new Map([
+    [team.id, team],
+    [other.id, other],
+  ])
+  const requireAggregate = (teamId: string): TeamAggregate => {
+    const found = aggregates().get(teamId)
+    if (found === undefined) {
+      throw new AgentTeamError('TEAM_NOT_FOUND', `Unknown team '${teamId}'`)
+    }
+    return found
+  }
   const service = {
     config: { maxTeamTasks: 256, maxTeamMessageBytes: 64 * 1024 },
-    getTeam: vi.fn(() => team),
+    getTeam: vi.fn((teamId: string) => requireAggregate(teamId)),
     listMessages: vi.fn(() => ({
       items: messages.filter(message => message.teamId === team.id),
       total: messages.filter(message => message.teamId === team.id).length,
@@ -85,11 +111,13 @@ function harness() {
       else messages[index] = message
     }),
     updateRuntimeTeam: vi.fn(async (
-      _teamId: string,
+      teamId: string,
       update: (current: TeamAggregate) => TeamAggregate,
     ) => {
-      team = update(team)
-      return team
+      const next = update(requireAggregate(teamId))
+      if (next.id === other.id) other = next
+      else team = next
+      return next
     }),
     addMemberWithSlot: vi.fn(async (
       _teamId: string,
@@ -159,7 +187,11 @@ function harness() {
     commands,
     service,
     team: () => team,
-    mutate: (next: TeamAggregate) => { team = next },
+    otherTeam: () => other,
+    mutate: (next: TeamAggregate) => {
+      if (next.id === other.id) other = next
+      else team = next
+    },
     messages,
     followup,
     removeMember,
@@ -782,5 +814,266 @@ describe('TeamCommandHandler AionUi semantics', () => {
     expect(team().tasks[linked.id]?.goalId).toBe(goal.id)
     expect(team().tasks[unlinked.id]).not.toHaveProperty('goalId')
     expect(team().goals?.[goal.id]?.title).toBe('Ship the parser')
+  })
+
+  it('lets a member propose team memory and only the Leader decide it', async () => {
+    const { commands, team } = harness()
+
+    const proposal = await commands.proposeMemory(team().id, 'a', {
+      title: 'Use tabs',
+      body: 'Agreed in the design review.',
+      expected_revision: 0,
+    })
+    expect(proposal.revision).toBe(1)
+    expect(proposal.entry).toMatchObject({
+      status: 'proposed',
+      visibility: 'team-safe',
+      source: 'member',
+      author_slot: 'a',
+      revision: 1,
+    })
+    expect(team().memory?.entries).toHaveLength(1)
+
+    // A member cannot decide any proposal, including its own.
+    await expect(commands.decideMemory(team().id, 'a', {
+      entry_id: proposal.entry.entry_id,
+      expected_revision: 1,
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    const accepted = await commands.decideMemory(team().id, 'leader', {
+      entry_id: proposal.entry.entry_id,
+      expected_revision: 1,
+    })
+    expect(accepted.revision).toBe(2)
+    expect(accepted.entry).toMatchObject({ status: 'active', revision: 2 })
+
+    // A decided proposal is decided exactly once.
+    await expect(commands.decideMemory(team().id, 'leader', {
+      entry_id: proposal.entry.entry_id,
+      expected_revision: 2,
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    const listed = commands.listMemory(team().id)
+    expect(listed.revision).toBe(2)
+    expect(listed.entries.map(entry => entry.status)).toEqual(['active'])
+  })
+
+  it('rejects a stale or missing team memory revision instead of overwriting', async () => {
+    const { commands, team } = harness()
+    await commands.proposeMemory(team().id, 'leader', {
+      title: 'Commit style',
+      body: 'Conventional commits.',
+      expected_revision: 0,
+    })
+
+    await expect(commands.proposeMemory(team().id, 'a', {
+      title: 'Stale proposal',
+      body: 'Should not land.',
+      expected_revision: 0,
+    })).rejects.toMatchObject({ code: 'MEMORY_REVISION_CONFLICT' })
+    expect(team().memory?.entries).toHaveLength(1)
+
+    await expect(commands.proposeMemory(team().id, 'missing-slot', {
+      title: 'Unknown member',
+      body: 'Should not land.',
+      expected_revision: 1,
+    })).rejects.toMatchObject({ code: 'MEMBER_NOT_FOUND' })
+  })
+
+  it('refuses a Leader decision on its own proposal', async () => {
+    const { commands, team, mutate } = harness()
+    // Seeded directly: a Leader proposal normally becomes active on write, so
+    // this is the only reachable shape where the author could decide its own.
+    const entry = {
+      id: 'own-proposal',
+      scope: 'team' as const,
+      visibility: 'team-safe' as const,
+      status: 'proposed' as const,
+      source: 'leader' as const,
+      authorSlotId: 'leader',
+      title: 'Own idea',
+      body: 'Waiting for someone else.',
+      revision: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+    }
+    mutate({ ...team(), memory: { revision: 1, entries: [entry], updatedAt: NOW } })
+
+    await expect(commands.decideMemory(team().id, 'leader', {
+      entry_id: entry.id,
+      expected_revision: 1,
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: expect.stringContaining('cannot decide its own'),
+    })
+  })
+
+  it('writes Leader memory directly and supersedes an earlier keyed entry', async () => {
+    const { commands, team } = harness()
+    const first = await commands.proposeMemory(team().id, 'leader', {
+      title: 'Lint',
+      body: 'Use eslint.',
+      key: 'lint',
+      expected_revision: 0,
+    })
+    expect(first.entry).toMatchObject({ status: 'active', source: 'leader', revision: 1 })
+
+    const second = await commands.proposeMemory(team().id, 'leader', {
+      title: 'Lint',
+      body: 'Use biome.',
+      key: 'lint',
+      expected_revision: 1,
+    })
+    const entries = new Map(
+      commands.listMemory(team().id).entries.map(entry => [entry.entry_id, entry]),
+    )
+    expect(entries.get(first.entry.entry_id)).toMatchObject({ status: 'superseded', revision: 2 })
+    expect(entries.get(second.entry.entry_id)).toMatchObject({ status: 'active', revision: 1 })
+  })
+
+  it('supersedes an active keyed entry when a member proposal is accepted, and rejects archive proposals', async () => {
+    const { commands, team } = harness()
+    const active = await commands.proposeMemory(team().id, 'leader', {
+      title: 'Lint',
+      body: 'Use eslint.',
+      key: 'lint',
+      expected_revision: 0,
+    })
+    const proposal = await commands.proposeMemory(team().id, 'a', {
+      title: 'Lint',
+      body: 'Use biome.',
+      key: 'lint',
+      expected_revision: 1,
+    })
+    const accepted = await commands.decideMemory(team().id, 'leader', {
+      entry_id: proposal.entry.entry_id,
+      expected_revision: 2,
+    })
+    expect(accepted.entry).toMatchObject({ status: 'active', revision: 2 })
+
+    const entries = new Map(
+      commands.listMemory(team().id).entries.map(entry => [entry.entry_id, entry.status]),
+    )
+    expect(entries.get(active.entry.entry_id)).toBe('superseded')
+    expect(entries.get(proposal.entry.entry_id)).toBe('active')
+
+    const pending = await commands.proposeMemory(team().id, 'b', {
+      title: 'Release cadence',
+      body: 'Every Friday.',
+      expected_revision: 3,
+    })
+    const rejected = await commands.decideMemory(team().id, 'leader', {
+      entry_id: pending.entry.entry_id,
+      expected_revision: 4,
+      decision: 'reject',
+    })
+    expect(rejected.entry).toMatchObject({ status: 'archived', revision: 2 })
+    expect(new Set(commands.listMemory(team().id).entries.map(entry => entry.status)))
+      .toEqual(new Set(['superseded', 'active', 'archived']))
+  })
+
+  it('keeps team memory isolated between two real aggregates', async () => {
+    const { commands, team, otherTeam } = harness()
+    const aEntry = await commands.proposeMemory(team().id, 'leader', {
+      title: 'A fact',
+      body: 'Only for team A.',
+      expected_revision: 0,
+    })
+    expect(commands.listMemory(team().id).entries.map(entry => entry.title)).toEqual(['A fact'])
+    expect(commands.listMemory(otherTeam().id)).toEqual({ revision: 0, entries: [] })
+
+    // A member of team B cannot write into team A.
+    await expect(commands.proposeMemory(team().id, 'a2', {
+      title: 'B into A',
+      body: 'Should not land.',
+      expected_revision: 1,
+    })).rejects.toMatchObject({ code: 'MEMBER_NOT_FOUND' })
+    // A member of team A cannot write into team B.
+    await expect(commands.proposeMemory(otherTeam().id, 'a', {
+      title: 'A into B',
+      body: 'Should not land.',
+      expected_revision: 0,
+    })).rejects.toMatchObject({ code: 'MEMBER_NOT_FOUND' })
+    // Team B's leader cannot observe or decide team A's entry: it is unknown
+    // inside aggregate B, so the decision fails without touching A.
+    await expect(commands.decideMemory(otherTeam().id, 'leader-2', {
+      entry_id: aEntry.entry.entry_id,
+      expected_revision: 0,
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(commands.listMemory(otherTeam().id).entries).toEqual([])
+    expect(team().memory?.entries).toHaveLength(1)
+
+    // Each aggregate keeps only its own entries.
+    await commands.proposeMemory(otherTeam().id, 'leader-2', {
+      title: 'B fact',
+      body: 'Only for team B.',
+      expected_revision: 0,
+    })
+    expect(commands.listMemory(team().id).entries.map(entry => entry.title)).toEqual(['A fact'])
+    expect(commands.listMemory(otherTeam().id).entries.map(entry => entry.title)).toEqual(['B fact'])
+  })
+
+  it('rejects an unknown memory decision instead of defaulting to accept', async () => {
+    const { commands, team } = harness()
+    const proposal = await commands.proposeMemory(team().id, 'a', {
+      title: 'Proposed',
+      body: 'Waits for the Leader.',
+      expected_revision: 0,
+    })
+
+    await expect(commands.decideMemory(team().id, 'leader', {
+      entry_id: proposal.entry.entry_id,
+      expected_revision: 1,
+      decision: 'maybe' as never,
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: expect.stringContaining('accept or reject'),
+    })
+    expect(team().memory?.revision).toBe(1)
+    expect(team().memory?.entries[0]?.status).toBe('proposed')
+  })
+
+  it('counts only live team memory entries against the caps', async () => {
+    const { commands, team, mutate } = harness()
+    // 100 archived entries would fill both caps if history counted: the write
+    // succeeds, which pins the "history is excluded" behavior.
+    const history = Array.from({ length: 100 }, (_, index) => ({
+      id: `mem-${index}`,
+      scope: 'team' as const,
+      visibility: 'team-safe' as const,
+      status: (index % 2 === 0 ? 'archived' : 'superseded') as 'archived' | 'superseded',
+      source: 'member' as const,
+      authorSlotId: 'a',
+      title: `Entry ${index}`,
+      body: 'x'.repeat(200),
+      revision: 1,
+      createdAt: NOW,
+      updatedAt: NOW,
+    }))
+    mutate({ ...team(), memory: { revision: 3, entries: history, updatedAt: NOW } })
+
+    const created = await commands.proposeMemory(team().id, 'a', {
+      title: 'Fresh',
+      body: 'Counts.',
+      expected_revision: 3,
+    })
+    expect(created.revision).toBe(4)
+    expect(created.entry.status).toBe('proposed')
+
+    // 100 live entries are a hard cap: P0 has no delete for active entries.
+    const live = Array.from({ length: 100 }, (_, index) => ({
+      ...history[index]!,
+      id: `live-${index}`,
+      status: 'active' as const,
+    }))
+    mutate({ ...team(), memory: { revision: 5, entries: live, updatedAt: NOW } })
+    await expect(commands.proposeMemory(team().id, 'a', {
+      title: 'Over',
+      body: 'Cap.',
+      expected_revision: 5,
+    })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: expect.stringContaining('100 live entries'),
+    })
   })
 })

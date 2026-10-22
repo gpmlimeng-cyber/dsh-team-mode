@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
-import { teamAggregateSchema, teamTaskSchema } from '../src/domain/schemas.js'
+import { assistantMemorySchema, teamAggregateSchema, teamTaskSchema } from '../src/domain/schemas.js'
 import type {
   AssistantInstance,
   AssistantMemory,
@@ -1315,6 +1315,240 @@ describe('AgentTeamService', () => {
     expect(oldSessionIds.every(id => reset.retiredSessions[id] !== undefined)).toBe(true)
     expect(runtimeInternals(runtime).owned.size).toBe(0)
     expect(ensureMembersOnline).toHaveBeenCalledOnce()
+  })
+
+  it('writes structured assistant memory entries with a document revision fence', async () => {
+    const { service, store } = createHarness()
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Memory assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    const legacy: AssistantMemory = {
+      schemaVersion: 1,
+      assistantId: instance.id,
+      content: 'Legacy note.',
+      revision: 3,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    }
+    // A row written before structured memory existed has no `entries` field and
+    // must keep parsing unchanged.
+    await store.putAssistantMemory(assistantMemorySchema.parse(legacy))
+    expect(service.getAssistantMemoryEntries(instance.id)).toEqual([])
+
+    const created = await service.writeAssistantMemoryEntry(
+      instance.id,
+      { title: 'Tone', body: 'Be terse.' },
+      { expectedRevision: 3 },
+    )
+    expect(created.entry).toMatchObject({
+      scope: 'assistant',
+      visibility: 'private',
+      status: 'active',
+      source: 'assistant',
+      title: 'Tone',
+      body: 'Be terse.',
+      revision: 1,
+    })
+    expect(created.entry.id).not.toBe('')
+    expect(created.memory).toMatchObject({ content: 'Legacy note.', revision: 4 })
+
+    const revised = await service.writeAssistantMemoryEntry(
+      instance.id,
+      { id: created.entry.id, title: 'Tone', body: 'Be terse.', visibility: 'team-safe' },
+      { expectedRevision: 4 },
+    )
+    expect(revised.entry).toMatchObject({
+      id: created.entry.id,
+      visibility: 'team-safe',
+      revision: 2,
+    })
+    expect(revised.memory).toMatchObject({ content: 'Legacy note.', revision: 5 })
+
+    await expect(service.writeAssistantMemoryEntry(
+      instance.id,
+      { title: 'Stale', body: 'Should not land.' },
+      { expectedRevision: 4 },
+    )).rejects.toMatchObject({ code: 'MEMORY_REVISION_CONFLICT' })
+    expect(service.getAssistantMemoryEntries(instance.id)).toHaveLength(1)
+    expect(service.getAssistantMemoryEntries(instance.id)[0]).toMatchObject({
+      body: 'Be terse.',
+      revision: 2,
+    })
+
+    // The legacy content path keeps structured entries untouched.
+    const legacyWritten = await service.writeAssistantMemory(instance.id, 'Replaced note.', 'replace', {
+      expectedRevision: 5,
+    })
+    expect(legacyWritten.content).toBe('Replaced note.')
+    expect(service.getAssistantMemoryEntries(instance.id)).toHaveLength(1)
+  })
+
+  it('serializes concurrent first memory writes so exactly one is stored', async () => {
+    const { service, store } = createHarness()
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Race assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    // The durable store commits on its write chain, after the call returns. The
+    // in-memory fake would otherwise land both puts synchronously and hide the
+    // very window this regression test exists for.
+    const commit = store.putAssistantMemory.bind(store)
+    store.putAssistantMemory = async value => {
+      await Promise.resolve()
+      await commit(value)
+    }
+
+    const results = await Promise.allSettled([
+      service.writeAssistantMemoryEntry(
+        instance.id,
+        { title: 'First', body: 'First writer.' },
+        { expectedRevision: 0 },
+      ),
+      service.writeAssistantMemoryEntry(
+        instance.id,
+        { title: 'Second', body: 'Second writer.' },
+        { expectedRevision: 0 },
+      ),
+    ])
+
+    const fulfilled = results.filter(result => result.status === 'fulfilled')
+    const rejected = results.filter(result => result.status === 'rejected')
+    expect(fulfilled).toHaveLength(1)
+    expect(rejected).toHaveLength(1)
+    expect((rejected[0] as PromiseRejectedResult).reason).toMatchObject({
+      code: 'MEMORY_REVISION_CONFLICT',
+    })
+    const memory = service.getAssistantMemory(instance.id)
+    expect(memory?.revision).toBe(1)
+    expect(memory?.entries).toHaveLength(1)
+  })
+
+  it('rejects an unknown assistant memory entry id instead of creating it', async () => {
+    const { service } = createHarness()
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Unknown id assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    const created = await service.writeAssistantMemoryEntry(
+      instance.id,
+      { title: 'Real', body: 'Exists.' },
+      { expectedRevision: 0 },
+    )
+
+    await expect(service.writeAssistantMemoryEntry(
+      instance.id,
+      { id: 'missing-entry', title: 'Ghost', body: 'Should not exist.' },
+      { expectedRevision: created.memory.revision },
+    )).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    const memory = service.getAssistantMemory(instance.id)
+    expect(memory?.revision).toBe(1)
+    expect(memory?.entries?.map(entry => entry.id)).toEqual([created.entry.id])
+  })
+
+  it('rejects entry writes on an archived instance without touching memory', async () => {
+    const { service } = createHarness()
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Archived assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    const created = await service.writeAssistantMemoryEntry(
+      instance.id,
+      { title: 'Keep', body: 'Frozen.' },
+      { expectedRevision: 0 },
+    )
+    const before = JSON.parse(JSON.stringify(service.getAssistantMemory(instance.id)))
+    await service.archiveAssistantInstance(instance.id)
+
+    await expect(service.writeAssistantMemoryEntry(
+      instance.id,
+      { title: 'New', body: 'Rejected.' },
+      { expectedRevision: created.memory.revision },
+    )).rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+    await expect(service.writeAssistantMemoryEntry(
+      instance.id,
+      { id: created.entry.id, title: 'Revise', body: 'Rejected.' },
+      { expectedRevision: created.memory.revision },
+    )).rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+
+    expect(service.getAssistantMemory(instance.id)).toEqual(before)
+  })
+
+  it('frees assistant memory budget when entries are archived', async () => {
+    const { service, store } = createHarness()
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Budget assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    const stamp = '2026-01-01T00:00:00.000Z'
+    const entry = (index: number, status: 'active' | 'archived', bodyLength: number) => ({
+      id: `mem-${index}`,
+      scope: 'assistant' as const,
+      visibility: 'private' as const,
+      status,
+      source: 'assistant' as const,
+      title: `Entry ${index}`,
+      body: 'x'.repeat(bodyLength),
+      revision: 1,
+      createdAt: stamp,
+      updatedAt: stamp,
+    })
+
+    // 100 archived entries fill neither cap (their bodies alone exceed 16k): a
+    // new write still succeeds, proving history is excluded from both limits.
+    await store.putAssistantMemory({
+      schemaVersion: 1,
+      assistantId: instance.id,
+      content: '',
+      entries: Array.from({ length: 100 }, (_, index) => entry(index, 'archived', 300)),
+      revision: 7,
+      updatedAt: stamp,
+    })
+    const created = await service.writeAssistantMemoryEntry(
+      instance.id,
+      { title: 'Fresh', body: 'Counts.' },
+      { expectedRevision: 7 },
+    )
+    expect(created.memory.entries).toHaveLength(101)
+    expect(created.memory.entries?.filter(value => value.status !== 'archived')).toHaveLength(1)
+
+    // 100 live entries are the hard cap; the advice to archive is actionable.
+    await store.putAssistantMemory({
+      schemaVersion: 1,
+      assistantId: instance.id,
+      content: '',
+      entries: Array.from({ length: 100 }, (_, index) => entry(index, 'active', 10)),
+      revision: 8,
+      updatedAt: stamp,
+    })
+    await expect(service.writeAssistantMemoryEntry(
+      instance.id,
+      { title: 'Over', body: 'Cap.' },
+      { expectedRevision: 8 },
+    )).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+      message: expect.stringContaining('archive unused entries first'),
+    })
   })
 })
 

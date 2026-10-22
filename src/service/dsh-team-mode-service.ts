@@ -18,6 +18,7 @@ import {
   updateAssistantInstanceInputSchema,
   updateAssistantSessionInputSchema,
   updateTeamGoalInputSchema,
+  writeAssistantMemoryEntryInputSchema,
 } from '../domain/schemas.js'
 import {
   snapshotAssistant,
@@ -35,6 +36,7 @@ import {
   type CreateAssistantSessionInput,
   type CreateTeamDraftInput,
   type CreateTeamGoalInput,
+  type MemoryEntry,
   type Operation,
   type Page,
   type TeamActivity,
@@ -47,6 +49,7 @@ import {
   type UpdateAssistantInstanceInput,
   type UpdateAssistantSessionInput,
   type UpdateTeamGoalInput,
+  type WriteAssistantMemoryEntryInput,
 } from '../domain/types.js'
 import type { AgentTeamStore } from '../storage/store.js'
 import type { AssistantBuilderRuntime } from '../runtime/assistant-builder-runtime.js'
@@ -83,6 +86,12 @@ export interface MutationOptions {
  * is worse than an explicit retry with a shorter note.
  */
 export const ASSISTANT_MEMORY_MAX_CHARS = 16_000
+
+/**
+ * Structured memory is unbounded by design only up to this many entries; past it
+ * a runaway writer would keep growing the record with no reader able to show it.
+ */
+export const ASSISTANT_MEMORY_MAX_ENTRIES = 100
 
 export interface WriteAssistantMemoryOptions {
   /** Expected memory revision; 0 means "no memory written yet". */
@@ -154,6 +163,13 @@ export class AgentTeamService extends Service {
   private assistantBuilderRuntime?: AssistantBuilderRuntime
   private assistantRuntime?: AssistantRuntime
   private readonly workspace: WorkspaceService
+  /**
+   * Per-assistant memory write chain. The store offers no conditional create,
+   * so the create path is a plain put; serializing here makes every
+   * check-then-write window (legacy note and structured entries alike)
+   * unreachable from this service.
+   */
+  private readonly memoryWrites = new Map<string, Promise<void>>()
 
   constructor(
     ctx: Context,
@@ -702,6 +718,21 @@ export class AgentTeamService extends Service {
     options: WriteAssistantMemoryOptions = {},
   ): Promise<AssistantMemory> {
     const instance = requireAssistantInstance(this.store, assistantId)
+    return this.withMemoryWriteLock(
+      instance.id,
+      () => this.writeAssistantMemoryLocked(instance.id, content, mode, options),
+    )
+  }
+
+  private async writeAssistantMemoryLocked(
+    assistantId: string,
+    content: string,
+    mode: AssistantMemoryMode,
+    options: WriteAssistantMemoryOptions,
+  ): Promise<AssistantMemory> {
+    // Re-read inside the serialized slot: the instance may have been archived
+    // while this write waited for an earlier one.
+    const instance = requireAssistantInstance(this.store, assistantId)
     if (instance.status === 'archived') {
       throw new AgentTeamError(
         'ASSISTANT_INSTANCE_ARCHIVED',
@@ -751,6 +782,147 @@ export class AgentTeamService extends Service {
       revision: value.revision + 1,
       updatedAt: now,
     }))
+  }
+
+  /**
+   * Read one Assistant instance's structured memory entries. A row written
+   * before structured memory existed has none, so this returns an empty array
+   * rather than inventing an entry from the legacy `content` note.
+   */
+  getAssistantMemoryEntries(assistantId: string): MemoryEntry[] {
+    return [...(this.getAssistantMemory(assistantId)?.entries ?? [])]
+  }
+
+  /**
+   * Create or update one structured entry. `options.expectedRevision` fences the
+   * whole memory document (not the entry): 0 means "no memory row yet". Writes
+   * are serialized per instance, and the fence is re-checked inside the store's
+   * atomic read-modify-write, so a concurrent writer (including a concurrent
+   * first write) is rejected with {@link MEMORY_REVISION_CONFLICT} instead of
+   * being overwritten. A provided `id` must name an existing entry; an unknown
+   * id is rejected rather than silently created. New entries default to
+   * `private` visibility and `active` status, and are written with the
+   * `assistant` source. Each successful write bumps the document revision and,
+   * for an existing entry, its own revision. Archived entries do not count
+   * toward the entry or character budgets.
+   */
+  async writeAssistantMemoryEntry(
+    assistantId: string,
+    raw: WriteAssistantMemoryEntryInput,
+    options: WriteAssistantMemoryOptions = {},
+  ): Promise<{ memory: AssistantMemory; entry: MemoryEntry }> {
+    const instance = requireAssistantInstance(this.store, assistantId)
+    return this.withMemoryWriteLock(
+      instance.id,
+      () => this.writeAssistantMemoryEntryLocked(instance.id, raw, options),
+    )
+  }
+
+  private async writeAssistantMemoryEntryLocked(
+    assistantId: string,
+    raw: WriteAssistantMemoryEntryInput,
+    options: WriteAssistantMemoryOptions,
+  ): Promise<{ memory: AssistantMemory; entry: MemoryEntry }> {
+    // Re-read inside the serialized slot: archiving and sibling writes land
+    // while this one waits.
+    const instance = requireAssistantInstance(this.store, assistantId)
+    if (instance.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${instance.id}' is archived`,
+      )
+    }
+    const input = writeAssistantMemoryEntryInputSchema.parse(raw)
+    const current = this.store.getAssistantMemory(instance.id)
+    requireMemoryRevision(options.expectedRevision, current?.revision ?? 0)
+    const now = new Date().toISOString()
+    if (current === undefined) {
+      if (input.id !== undefined) {
+        throw new AgentTeamError(
+          'INVALID_REQUEST',
+          `Unknown assistant memory entry '${input.id}'`,
+          { entryId: input.id },
+        )
+      }
+      const entry = newMemoryEntry(input, now)
+      const memory: AssistantMemory = {
+        schemaVersion: 1,
+        assistantId: instance.id,
+        content: '',
+        entries: [entry],
+        revision: 1,
+        updatedAt: now,
+      }
+      await this.store.putAssistantMemory(memory)
+      return { memory, entry }
+    }
+    const written: { entry?: MemoryEntry } = {}
+    const memory = await this.store.updateAssistantMemory(instance.id, value => {
+      requireMemoryRevision(options.expectedRevision, value.revision)
+      const entries = value.entries ?? []
+      const existing = input.id === undefined
+        ? undefined
+        : entries.find(entry => entry.id === input.id)
+      if (input.id !== undefined && existing === undefined) {
+        throw new AgentTeamError(
+          'INVALID_REQUEST',
+          `Unknown assistant memory entry '${input.id}'`,
+          { entryId: input.id },
+        )
+      }
+      // Archived entries are history: they stay stored but no longer occupy
+      // budget, so the "archive unused entries first" advice is actionable.
+      if (
+        existing === undefined
+        && entries.filter(value => value.status !== 'archived').length >= ASSISTANT_MEMORY_MAX_ENTRIES
+      ) {
+        throw new AgentTeamError(
+          'INVALID_REQUEST',
+          `Assistant memory already holds ${ASSISTANT_MEMORY_MAX_ENTRIES} entries; archive unused entries first`,
+          { limit: ASSISTANT_MEMORY_MAX_ENTRIES },
+        )
+      }
+      const entry = existing === undefined
+        ? newMemoryEntry(input, now)
+        : reviseMemoryEntry(existing, input, now)
+      const nextEntries = existing === undefined
+        ? [...entries, entry]
+        : entries.map(value => value.id === entry.id ? entry : value)
+      const totalChars = nextEntries
+        .filter(value => value.status !== 'archived')
+        .reduce((sum, value) => sum + value.title.length + value.body.length, 0)
+      if (totalChars > ASSISTANT_MEMORY_MAX_CHARS) {
+        throw new AgentTeamError(
+          'INVALID_REQUEST',
+          `Assistant memory entries exceed ${ASSISTANT_MEMORY_MAX_CHARS} characters; archive unused entries first`,
+          { length: totalChars, limit: ASSISTANT_MEMORY_MAX_CHARS },
+        )
+      }
+      written.entry = entry
+      return { ...value, entries: nextEntries, revision: value.revision + 1, updatedAt: now }
+    })
+    if (written.entry === undefined) {
+      throw new AgentTeamError('INVALID_REQUEST', 'Assistant memory entry write produced no entry')
+    }
+    return { memory, entry: written.entry }
+  }
+
+  /** Run one memory write at a time per assistant instance. */
+  private async withMemoryWriteLock<T>(assistantId: string, work: () => Promise<T>): Promise<T> {
+    const previous = this.memoryWrites.get(assistantId) ?? Promise.resolve()
+    let release: () => void = () => {}
+    const current = new Promise<void>(resolve => { release = resolve })
+    const tail = previous.then(() => current)
+    this.memoryWrites.set(assistantId, tail)
+    await previous
+    try {
+      return await work()
+    } finally {
+      release()
+      if (this.memoryWrites.get(assistantId) === tail) {
+        this.memoryWrites.delete(assistantId)
+      }
+    }
   }
 
   /** Materialize the instance's main Session through the attached runtime. */
@@ -1909,6 +2081,48 @@ function applyAssistantSnapshotOverrides(
  * Append with exactly one separating newline. An empty existing document is
  * treated as no separator, so the first append does not start with a blank line.
  */
+function requireMemoryRevision(expected: number | undefined, actual: number): void {
+  if (expected === undefined || expected === actual) return
+  throw new AgentTeamError(
+    'MEMORY_REVISION_CONFLICT',
+    `Memory revision conflict: expected ${expected}, current ${actual}`,
+    { expected, actual },
+  )
+}
+
+function newMemoryEntry(input: WriteAssistantMemoryEntryInput, now: string): MemoryEntry {
+  return {
+    id: input.id ?? `mem-${randomUUID()}`,
+    scope: 'assistant',
+    visibility: input.visibility ?? 'private',
+    status: input.status ?? 'active',
+    source: 'assistant',
+    ...(input.key === undefined ? {} : { key: input.key }),
+    title: input.title,
+    body: input.body,
+    revision: 1,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+function reviseMemoryEntry(
+  existing: MemoryEntry,
+  input: WriteAssistantMemoryEntryInput,
+  now: string,
+): MemoryEntry {
+  return {
+    ...existing,
+    title: input.title,
+    body: input.body,
+    visibility: input.visibility ?? existing.visibility,
+    status: input.status ?? existing.status,
+    ...(input.key === undefined ? {} : { key: input.key }),
+    revision: existing.revision + 1,
+    updatedAt: now,
+  }
+}
+
 function appendMemory(current: string, addition: string): string {
   if (current === '') return addition
   if (addition === '') return current

@@ -2,8 +2,10 @@ import { randomUUID } from 'node:crypto'
 import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { AgentTeamError } from '../domain/errors.js'
 import type {
+  MemoryEntry,
   TeamAggregate,
   TeamGoal,
+  TeamMemory,
   TeamMemberSlot,
   TeamMessage,
   TeamTask,
@@ -136,6 +138,47 @@ export interface TeamGoalView {
   updated_at: string
 }
 
+export interface TeamMemoryView {
+  entry_id: string
+  title: string
+  body: string
+  status: MemoryEntry['status']
+  visibility: MemoryEntry['visibility']
+  source: MemoryEntry['source']
+  key?: string
+  author_slot?: string
+  revision: number
+  created_at: string
+  updated_at: string
+}
+
+export interface TeamMemoryList {
+  /** Current memory-container revision; pass as expected_revision on the next write. */
+  revision: number
+  entries: TeamMemoryView[]
+}
+
+export interface TeamMemoryWriteResult {
+  revision: number
+  entry: TeamMemoryView
+}
+
+export interface ProposeMemoryInput {
+  title?: string
+  body?: string
+  key?: string
+  expectedRevision?: number
+  expected_revision?: number
+}
+
+export interface DecideMemoryInput {
+  entryId?: string
+  entry_id?: string
+  decision?: 'accept' | 'reject'
+  expectedRevision?: number
+  expected_revision?: number
+}
+
 export interface UpdateTaskInput {
   taskId?: string
   task_id?: string
@@ -170,6 +213,10 @@ export interface ShutdownRequest {
   requesterSlotId: string
   requestedAt: string
 }
+
+/** Team core stays small: the same budget bounds storage and prompt injection. */
+const TEAM_MEMORY_MAX_CHARS = 8_000
+const TEAM_MEMORY_MAX_ENTRIES = 100
 
 const TASK_STATUS_ALIASES: Readonly<Record<string, InternalTaskStatus>> = {
   pending: 'pending',
@@ -548,6 +595,191 @@ export class TeamCommandHandler {
         .map(task => task.id),
       created_at: goal.createdAt,
       updated_at: goal.updatedAt,
+    }
+  }
+
+  /**
+   * Team memory is scoped to one aggregate: every read takes a teamId, so
+   * another team's entries are unreachable and DM Sessions never read it.
+   */
+  listMemory(teamId: string): TeamMemoryList {
+    const team = this.service.getTeam(teamId)
+    return {
+      revision: team.memory?.revision ?? 0,
+      entries: [...(team.memory?.entries ?? [])]
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+        .map(entry => this.memoryView(entry)),
+    }
+  }
+
+  memoryView(entry: MemoryEntry): TeamMemoryView {
+    return {
+      entry_id: entry.id,
+      title: entry.title,
+      body: entry.body,
+      status: entry.status,
+      visibility: entry.visibility,
+      source: entry.source,
+      ...(entry.key === undefined ? {} : { key: entry.key }),
+      ...(entry.authorSlotId === undefined ? {} : { author_slot: entry.authorSlotId }),
+      revision: entry.revision,
+      created_at: entry.createdAt,
+      updated_at: entry.updatedAt,
+    }
+  }
+
+  /**
+   * A member files a proposal for the Leader to decide; the Leader writes an
+   * entry directly, because the Leader already owns team memory. Team entries
+   * are always `team-safe`: they exist only inside this aggregate, so a
+   * narrower visibility could not be honoured. `expected_revision` fences the
+   * memory container (not the aggregate revision), re-checked inside the
+   * serialized team write.
+   */
+  async proposeMemory(
+    teamId: string,
+    proposerSlotId: string,
+    input: ProposeMemoryInput,
+  ): Promise<TeamMemoryWriteResult> {
+    const team = this.service.getTeam(teamId)
+    this.requireMember(team, proposerSlotId)
+    const title = requireShortText(input.title ?? '', 'Memory title', 200)
+    const body = requireShortText(input.body ?? '', 'Memory body', 4_000)
+    const key = normalizeKey(input.key)
+    const expected = normalizeRevision(input.expected_revision ?? input.expectedRevision)
+    const now = new Date().toISOString()
+    const entryId = randomUUID()
+    const next = await this.service.updateRuntimeTeam(
+      teamId,
+      current => {
+        this.requireMember(current, proposerSlotId)
+        requireMemoryRevision(expected, current.memory?.revision ?? 0)
+        // Leadership is dynamic: decide the proposal shape against the value
+        // being written, not the snapshot read before this serialized update.
+        const isLeader = current.leaderSlotId === proposerSlotId
+        const entries = current.memory?.entries ?? []
+        // Archived and superseded entries are history: stored for audit but not
+        // counted, so rejecting a proposal or superseding a key never
+        // permanently consumes the budget.
+        if (liveMemoryEntries(entries).length >= TEAM_MEMORY_MAX_ENTRIES) {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            `Team memory already holds ${TEAM_MEMORY_MAX_ENTRIES} live entries (active or proposed)`,
+            { limit: TEAM_MEMORY_MAX_ENTRIES },
+          )
+        }
+        const entry: MemoryEntry = {
+          id: entryId,
+          scope: 'team',
+          visibility: 'team-safe',
+          status: isLeader ? 'active' : 'proposed',
+          source: isLeader ? 'leader' : 'member',
+          authorSlotId: proposerSlotId,
+          ...(key === undefined ? {} : { key }),
+          title,
+          body,
+          revision: 1,
+          createdAt: now,
+          updatedAt: now,
+        }
+        // A Leader write is authoritative for its key: the accepted entry it
+        // replaces becomes superseded instead of both staying active.
+        const merged = isLeader && key !== undefined
+          ? entries.map(value => value.status === 'active' && value.key === key
+            ? { ...value, status: 'superseded' as const, revision: value.revision + 1, updatedAt: now }
+            : value)
+          : entries
+        const nextEntries = [...merged, entry]
+        assertTeamMemoryBudget(nextEntries)
+        return {
+          ...current,
+          memory: { revision: (current.memory?.revision ?? 0) + 1, entries: nextEntries, updatedAt: now },
+        }
+      },
+      'team.memory_proposed',
+      `Team memory entry '${title}' submitted`,
+    )
+    return {
+      revision: next.memory?.revision ?? 0,
+      entry: this.memoryView(requireMemoryEntry(next, entryId)),
+    }
+  }
+
+  /**
+   * Leader-only decision on a member proposal. Accepting activates the entry
+   * and supersedes any currently active entry that shares its key; rejecting
+   * archives it. A proposal is decided exactly once, and its author cannot
+   * decide it even if that author is the Leader.
+   */
+  async decideMemory(
+    teamId: string,
+    callerSlotId: string,
+    input: DecideMemoryInput,
+  ): Promise<TeamMemoryWriteResult> {
+    const team = this.service.getTeam(teamId)
+    this.assertLeader(team, callerSlotId, 'accept or reject team memory proposals')
+    const entryId = (input.entry_id ?? input.entryId ?? '').trim()
+    if (entryId === '') throw new AgentTeamError('INVALID_REQUEST', 'Memory entry id is required')
+    const decision = normalizeDecision(input.decision)
+    const expected = normalizeRevision(input.expected_revision ?? input.expectedRevision)
+    const now = new Date().toISOString()
+    const next = await this.service.updateRuntimeTeam(
+      teamId,
+      current => {
+        // The Leader may change between the snapshot and this serialized write.
+        if (current.leaderSlotId !== callerSlotId) {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            'Only the team leader may accept or reject team memory proposals',
+          )
+        }
+        requireMemoryRevision(expected, current.memory?.revision ?? 0)
+        const entries = [...(current.memory?.entries ?? [])]
+        const index = entries.findIndex(entry => entry.id === entryId)
+        if (index === -1) {
+          throw new AgentTeamError('INVALID_REQUEST', `Unknown team memory entry '${entryId}'`)
+        }
+        const entry = entries[index]!
+        if (entry.authorSlotId === callerSlotId) {
+          throw new AgentTeamError('INVALID_REQUEST', 'A member cannot decide its own memory proposal')
+        }
+        if (entry.status !== 'proposed') {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            `Team memory entry '${entryId}' is ${entry.status}, not proposed`,
+            { entryId, status: entry.status },
+          )
+        }
+        const decided: MemoryEntry = {
+          ...entry,
+          status: decision === 'reject' ? 'archived' : 'active',
+          revision: entry.revision + 1,
+          updatedAt: now,
+        }
+        entries[index] = decided
+        if (decision === 'accept' && decided.key !== undefined) {
+          for (let position = 0; position < entries.length; position += 1) {
+            const other = entries[position]!
+            if (other.id === decided.id || other.status !== 'active' || other.key !== decided.key) continue
+            entries[position] = {
+              ...other,
+              status: 'superseded',
+              revision: other.revision + 1,
+              updatedAt: now,
+            }
+          }
+        }
+        return {
+          ...current,
+          memory: { revision: (current.memory?.revision ?? 0) + 1, entries, updatedAt: now },
+        }
+      },
+      decision === 'accept' ? 'team.memory_accepted' : 'team.memory_rejected',
+      `Team memory entry ${entryId} ${decision === 'accept' ? 'accepted' : 'rejected'}`,
+    )
+    return {
+      revision: next.memory?.revision ?? 0,
+      entry: this.memoryView(requireMemoryEntry(next, entryId)),
     }
   }
 
@@ -983,6 +1215,64 @@ export class TeamCommandHandler {
     return blockedBy
   }
 }
+
+/** A memory fence is a whole non-negative number; anything else means "unfenced". */
+function normalizeRevision(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value)) return undefined
+  return Math.max(Math.floor(value), 0)
+}
+
+function requireMemoryRevision(expected: number | undefined, actual: number): void {
+  if (expected === undefined || expected === actual) return
+  throw new AgentTeamError(
+    'MEMORY_REVISION_CONFLICT',
+    `Team memory revision conflict: expected ${expected}, current ${actual}`,
+    { expected, actual },
+  )
+}
+
+function normalizeKey(value: string | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed
+}
+
+function requireMemoryEntry(team: TeamAggregate, entryId: string): MemoryEntry {
+  const entry = team.memory?.entries.find(value => value.id === entryId)
+  if (entry === undefined) {
+    throw new AgentTeamError('INVALID_REQUEST', `Unknown team memory entry '${entryId}'`)
+  }
+  return entry
+}
+
+/** Entries that still participate in the caps and the prompt decision. */
+function liveMemoryEntries(entries: readonly MemoryEntry[]): MemoryEntry[] {
+  return entries.filter(entry => entry.status === 'active' || entry.status === 'proposed')
+}
+
+function assertTeamMemoryBudget(entries: readonly MemoryEntry[]): void {
+  const totalChars = liveMemoryEntries(entries).reduce(
+    (sum, entry) => sum + entry.title.length + entry.body.length,
+    0,
+  )
+  if (totalChars > TEAM_MEMORY_MAX_CHARS) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Team memory exceeds ${TEAM_MEMORY_MAX_CHARS} characters across live entries`,
+      { length: totalChars, limit: TEAM_MEMORY_MAX_CHARS },
+    )
+  }
+}
+
+/** Undefined keeps the documented default; anything else must be explicit. */
+function normalizeDecision(value: unknown): 'accept' | 'reject' {
+  if (value === undefined) return 'accept'
+  if (value === 'accept' || value === 'reject') return value
+  throw new AgentTeamError(
+    'INVALID_REQUEST',
+    `Unknown memory decision '${String(value)}'; use accept or reject`,
+  )
+}
+
 
 function shutdownKey(teamId: string, slotId: string): string {
   return `${teamId}:${slotId}`

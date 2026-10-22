@@ -39,6 +39,15 @@ function harness(): {
       updated_at: '2026-01-01T00:00:00.000Z',
     })),
     listGoals: vi.fn(() => []),
+    proposeMemory: vi.fn(async () => ({
+      revision: 1,
+      entry: memoryView('mem-1', 'proposed'),
+    })),
+    listMemory: vi.fn(() => ({ revision: 0, entries: [] })),
+    decideMemory: vi.fn(async () => ({
+      revision: 2,
+      entry: memoryView('mem-1', 'active'),
+    })),
     listAssistants: vi.fn(() => []),
     describeAssistant: vi.fn(() => ({
       assistant_id: 'a1',
@@ -78,7 +87,7 @@ function harness(): {
 }
 
 describe('Team Mode tool surface', () => {
-  it('registers the 15 primary AionUi tools plus the legacy aliases', () => {
+  it('registers the 15 primary AionUi tools, team memory tools, and the legacy aliases', () => {
     const { tools } = harness()
     const primary = [
       'team_members',
@@ -96,12 +105,15 @@ describe('Team Mode tool surface', () => {
       'team_rename_agent',
       'team_clear_agent_context',
       'team_shutdown_agent',
+      'team_memory_propose',
+      'team_memory_list',
+      'team_memory_accept',
     ]
     for (const name of primary) expect(tools.has(name), name).toBe(true)
     expect(tools.has('team_get_task_board')).toBe(true)
     expect(tools.has('team_create_task')).toBe(true)
     expect(tools.has('team_update_task')).toBe(true)
-    expect(tools.size).toBe(18)
+    expect(tools.size).toBe(21)
   })
 
   it('publishes the required parameter contracts for the dangerous tools', () => {
@@ -115,6 +127,52 @@ describe('Team Mode tool surface', () => {
     expect(tools.get('team_mode_goal_create')?.description).toContain('Leader only')
     expect(tools.get('team_mode_goal_create')?.parameters.required).toEqual(['title', 'objective'])
     expect(tools.get('team_mode_goal_create')?.parameters.properties?.mode).toBeDefined()
+    expect(tools.get('team_memory_propose')?.parameters.required)
+      .toEqual(expect.arrayContaining(['expected_revision', 'title', 'body']))
+    expect(tools.get('team_memory_accept')?.parameters.required)
+      .toEqual(expect.arrayContaining(['entry_id', 'expected_revision']))
+    expect(tools.get('team_memory_accept')?.description).toContain('Leader only')
+    expect(tools.get('team_memory_list')?.description).toContain('only active entries')
+  })
+
+  it('executes the team memory tools through the bound handlers', async () => {
+    const { tools, handlers } = harness()
+    const exec = { agent: { id: 'session-1' } }
+    const propose = tools.get('team_memory_propose')!
+    const list = tools.get('team_memory_list')!
+    const decide = tools.get('team_memory_accept')!
+
+    const proposed = await propose.execute(
+      { expected_revision: 0, title: 'Use tabs', body: 'Agreed in review.', key: 'style' },
+      exec,
+    )
+    expect(handlers.proposeMemory).toHaveBeenCalledWith({
+      title: 'Use tabs',
+      body: 'Agreed in review.',
+      key: 'style',
+      expected_revision: 0,
+    })
+    expect(proposed).toMatchObject({
+      memory_revision: 1,
+      entry: { entry_id: 'mem-1', status: 'proposed' },
+    })
+
+    const listed = await list.execute({}, exec)
+    expect(listed).toMatchObject({ memory_revision: 0, entries: [] })
+
+    const accepted = await decide.execute(
+      { entry_id: 'mem-1', expected_revision: 1, decision: 'reject' },
+      exec,
+    )
+    expect(handlers.decideMemory).toHaveBeenCalledWith({
+      entry_id: 'mem-1',
+      expected_revision: 1,
+      decision: 'reject',
+    })
+    expect(accepted).toMatchObject({
+      memory_revision: 2,
+      entry: { entry_id: 'mem-1', status: 'active' },
+    })
   })
 
   it('executes team_members and team_send_message through the bound handlers', async () => {
@@ -261,3 +319,17 @@ describe('Team Mode tool surface', () => {
     expect(result).toMatchObject({ task_id: 't1', status: 'in_progress' })
   })
 })
+
+function memoryView(entryId: string, status: 'active' | 'proposed' | 'superseded' | 'archived') {
+  return {
+    entry_id: entryId,
+    title: 'Memory',
+    body: 'Body',
+    status,
+    visibility: 'team-safe' as const,
+    source: 'member' as const,
+    revision: 1,
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:00.000Z',
+  }
+}

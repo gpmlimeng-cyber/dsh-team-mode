@@ -89,12 +89,16 @@ worker Session 不会出现在原生侧栏，也不会收到 `assistant_task_*` 
 
 ## 持久记忆
 
-每个单聊助手有一份持久记忆，由它的所有会话共享：
+每个单聊助手有一份持久记忆，由它的所有会话共享，分为两层：
 
-- `assistant_memory_read`：读取当前记忆和版本号。
-- `assistant_memory_write`：替换或追加记忆。写入超过 16,000 字符会被拒绝，而不是截断。
-- 主会话和 worker 都会在系统提示中获得记忆内容；worker 只读，不能修改记忆。
-- 存储上限是 16,000 字符，但每次只把前 4,000 字符注入提示，避免上下文无限膨胀。
+- 旧版短文本 `content`：`assistant_memory_read` 读取，`assistant_memory_write` 替换或追加；写入超过 16,000 字符会被拒绝，而不是截断。
+- 结构化条目 `entries`：`assistant_memory_entry_write` 新建或修改单条记忆，`assistant_memory_read` 一并返回全部条目。条目带有 `visibility`（默认 `private`）、`status`（`active` / `archived`）、`source`、可选 `key`、`title`、`body`，以及条目自身的 `revision`。
+- 主会话和 worker 都会在系统提示中获得旧版文本；结构化条目只注入主会话，且只注入 `active` 条目（最多 20 条、每条正文截断到 200 字符）。worker 只读，不能修改记忆。
+- 旧版文本存储上限是 16,000 字符，但每次只把前 4,000 字符注入提示；结构化条目的 title+body 合计同样限制在 16,000 字符、最多 100 条，超出会拒绝写入。上限只统计未归档条目：把旧条目标记为 `archived` 即释放额度，归档内容仍保留在存储里但不再计入上限，也不再进入提示。
+
+写入使用文档级版本栅栏：`assistant_memory_entry_write` 的 `expected_revision` 必须是 `assistant_memory_read` 返回的当前记忆版本（尚无记忆时为 `0`），过期版本返回 `MEMORY_REVISION_CONFLICT`，不会覆盖他人刚写入的内容。同一助手的记忆写入按顺序串行执行，因此并发首次写入（`expected_revision=0`）也只有一个成功，另一个得到冲突错误，不会丢失条目。修改已有条目时该条目自身的 `revision` 加一；`entry_id` 必须是已存在的条目，未知 id 会被拒绝而不是当作新建。
+
+`visibility: team-safe` 目前只存储，不参与任何团队注入：团队成员会话还无法解析到它所属的助手实例（成员 → 助手实例的身份关联是后续 P1 工作）。因此在 P0 中 `private` 与 `team-safe` 的实际可见范围相同，都只属于该助手自己的会话。
 
 插件没有提供可视化记忆编辑器；记忆由助手通过上述工具维护。
 

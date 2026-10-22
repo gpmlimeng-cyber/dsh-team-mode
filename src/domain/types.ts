@@ -3,6 +3,7 @@ import type {
   assistantInstanceSchema,
   assistantMemoryModeSchema,
   assistantMemorySchema,
+  memoryEntrySchema,
   assistantSessionSchema,
   assistantSnapshotSchema,
   addTeamMemberInputSchema,
@@ -15,6 +16,9 @@ import type {
   createTeamGoalInputSchema,
   createTeamMemberInputSchema,
   fileScopeLeaseSchema,
+  memoryEntrySourceSchema,
+  memoryEntryStatusSchema,
+  memoryVisibilitySchema,
   memberRuntimeStateSchema,
   operationSchema,
   retiredMemberSessionSchema,
@@ -24,12 +28,14 @@ import type {
   teamGoalSchema,
   teamGoalStatusSchema,
   teamMemberSlotSchema,
+  teamMemorySchema,
   teamMessageSchema,
   teamTaskSchema,
   updateAssistantInputSchema,
   updateAssistantInstanceInputSchema,
   updateAssistantSessionInputSchema,
   updateTeamGoalInputSchema,
+  writeAssistantMemoryEntryInputSchema,
 } from './schemas.js'
 
 export type AssistantSnapshot = z.infer<typeof assistantSnapshotSchema>
@@ -39,6 +45,11 @@ export type CreateAssistantInstanceInput = z.infer<typeof createAssistantInstanc
 export type UpdateAssistantInstanceInput = z.infer<typeof updateAssistantInstanceInputSchema>
 export type AssistantMemory = z.infer<typeof assistantMemorySchema>
 export type AssistantMemoryMode = z.infer<typeof assistantMemoryModeSchema>
+export type MemoryEntry = z.infer<typeof memoryEntrySchema>
+export type MemoryVisibility = z.infer<typeof memoryVisibilitySchema>
+export type MemoryEntryStatus = z.infer<typeof memoryEntryStatusSchema>
+export type MemoryEntrySource = z.infer<typeof memoryEntrySourceSchema>
+export type WriteAssistantMemoryEntryInput = z.infer<typeof writeAssistantMemoryEntryInputSchema>
 export type AssistantSession = z.infer<typeof assistantSessionSchema>
 /** Last visible message in an assistant's main Session, for sidebar preview. */
 export interface AssistantPreview {
@@ -61,6 +72,7 @@ export type CreateTeamGoalInput = z.infer<typeof createTeamGoalInputSchema>
 export type UpdateTeamGoalInput = z.infer<typeof updateTeamGoalInputSchema>
 export type FileScopeLease = z.infer<typeof fileScopeLeaseSchema>
 export type TeamAggregate = z.infer<typeof teamAggregateSchema>
+export type TeamMemory = z.infer<typeof teamMemorySchema>
 export type TeamMessage = z.infer<typeof teamMessageSchema>
 export type TeamActivity = z.infer<typeof teamActivitySchema>
 export type Operation = z.infer<typeof operationSchema>

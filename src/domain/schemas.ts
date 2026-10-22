@@ -107,17 +107,78 @@ export const assistantSessionSchema = z.object({
   archivedAt: isoDate.optional(),
 }).strict()
 
+/** Who may read one entry; `private` never leaves its own scope. */
+export const memoryVisibilitySchema = z.enum(['private', 'team-safe'])
+
+/** Lifecycle of one entry; only `active` entries enter a prompt. */
+export const memoryEntryStatusSchema = z.enum(['active', 'proposed', 'superseded', 'archived'])
+
+/** Who wrote one entry. `auto` is reserved for future capture. */
+export const memoryEntrySourceSchema = z.enum(['user', 'leader', 'member', 'assistant', 'auto'])
+
 /**
- * Durable memory for one Assistant instance, keyed by `assistantId`. The
- * content is deliberately a single bounded string in Phase 2; topic files and
- * daily logs remain future work.
+ * One structured memory entry. The owning record supplies the scope id, so an
+ * entry carries only its kind. Added without a schema-version bump: legacy rows
+ * have no `entries` array and keep parsing.
+ */
+export const memoryEntrySchema = z.object({
+  id: nonEmpty,
+  scope: z.enum(['assistant', 'team']),
+  visibility: memoryVisibilitySchema.default('private'),
+  status: memoryEntryStatusSchema.default('active'),
+  source: memoryEntrySourceSchema,
+  /** Member slot that proposed or wrote the entry; absent for assistant-only writes. */
+  authorSlotId: nonEmpty.optional(),
+  /** Stable team-facing key; assistant entries usually leave it unset. */
+  key: nonEmpty.optional(),
+  title: nonEmpty,
+  body: z.string(),
+  revision: z.int().positive(),
+  createdAt: isoDate,
+  updatedAt: isoDate,
+}).strict()
+
+/**
+ * Durable memory for one Assistant instance, keyed by `assistantId`. `content`
+ * is the legacy shared note; `entries` adds structured, visibility-aware rows.
+ * Both are optional-by-history: a row written before structured memory existed
+ * carries no `entries` and loads unchanged.
  */
 export const assistantMemorySchema = z.object({
   schemaVersion: z.literal(1),
   assistantId: nonEmpty,
   content: z.string(),
+  entries: z.array(memoryEntrySchema).optional(),
   revision: z.int().positive(),
   updatedAt: isoDate,
+}).strict()
+
+/**
+ * Team-scoped structured memory. Stored inside the team aggregate without a
+ * schema-version bump: a team that never wrote memory carries no `memory` field
+ * and loads unchanged. `revision` fences memory writes only; the aggregate
+ * revision keeps tracking board, roster, and Goal changes.
+ */
+export const teamMemorySchema = z.object({
+  revision: z.int().positive(),
+  entries: z.array(memoryEntrySchema).default([]),
+  updatedAt: isoDate,
+}).strict()
+
+/** Statuses an Assistant main Session may set directly; `proposed` is team-only. */
+export const assistantMemoryEntryStatusSchema = z.enum(['active', 'archived'])
+
+/**
+ * One structured-memory write. `id` must name an existing entry (revision bump);
+ * an absent id creates a new entry. Visibility defaults to `private`.
+ */
+export const writeAssistantMemoryEntryInputSchema = z.object({
+  id: nonEmpty.optional(),
+  visibility: memoryVisibilitySchema.optional(),
+  status: assistantMemoryEntryStatusSchema.optional(),
+  key: nonEmpty.optional(),
+  title: nonEmpty,
+  body: z.string(),
 }).strict()
 
 export const assistantMemoryModeSchema = z.enum(['replace', 'append'])
@@ -267,6 +328,8 @@ export const teamAggregateSchema = z.object({
   tasks: z.record(z.string(), teamTaskSchema),
   /** Optional Goal layer; absent for every team that never created one. */
   goals: z.record(z.string(), teamGoalSchema).optional(),
+  /** Optional team memory; absent for every team that never wrote any. */
+  memory: teamMemorySchema.optional(),
   leases: z.record(z.string(), fileScopeLeaseSchema),
   outbox: z.record(z.string(), teamMessageSchema),
   /** Sidebar/team-list presentation state (v2). */

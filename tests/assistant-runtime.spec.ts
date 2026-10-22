@@ -17,7 +17,9 @@ import type {
   AssistantMemory,
   AssistantSession,
   CreateAssistantSessionInput,
+  MemoryEntry,
   UpdateAssistantSessionInput,
+  WriteAssistantMemoryEntryInput,
 } from '../src/domain/types.js'
 import { AssistantRuntime } from '../src/runtime/assistant-runtime.js'
 import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
@@ -42,6 +44,7 @@ const TASK_TOOL_NAMES = [
 const MEMORY_TOOL_NAMES = [
   'assistant_memory_read',
   'assistant_memory_write',
+  'assistant_memory_entry_write',
 ]
 
 const config: Config = {
@@ -284,6 +287,62 @@ function createHarness(
     return next
   })
 
+  const writeAssistantMemoryEntry = vi.fn(async (
+    assistantId: string,
+    input: WriteAssistantMemoryEntryInput,
+    options: { expectedRevision?: number } = {},
+  ) => {
+    const current = memories.get(assistantId)
+    const currentRevision = current?.revision ?? 0
+    if (options.expectedRevision !== undefined && options.expectedRevision !== currentRevision) {
+      throw new AgentTeamError(
+        'MEMORY_REVISION_CONFLICT',
+        `Memory revision conflict: expected ${options.expectedRevision}, current ${currentRevision}`,
+      )
+    }
+    const entries = [...(current?.entries ?? [])]
+    const existing = input.id === undefined
+      ? undefined
+      : entries.find(entry => entry.id === input.id)
+    const entry: MemoryEntry = existing === undefined
+      ? {
+        id: input.id ?? `mem-${entries.length + 1}`,
+        scope: 'assistant',
+        visibility: input.visibility ?? 'private',
+        status: input.status ?? 'active',
+        source: 'assistant',
+        ...(input.key === undefined ? {} : { key: input.key }),
+        title: input.title,
+        body: input.body,
+        revision: 1,
+        createdAt: NOW,
+        updatedAt: NOW,
+      }
+      : {
+        ...existing,
+        title: input.title,
+        body: input.body,
+        visibility: input.visibility ?? existing.visibility,
+        status: input.status ?? existing.status,
+        ...(input.key === undefined ? {} : { key: input.key }),
+        revision: existing.revision + 1,
+        updatedAt: NOW,
+      }
+    const nextEntries = existing === undefined
+      ? [...entries, entry]
+      : entries.map(value => value.id === entry.id ? entry : value)
+    const memory: AssistantMemory = {
+      schemaVersion: 1,
+      assistantId,
+      content: current?.content ?? '',
+      entries: nextEntries,
+      revision: currentRevision + 1,
+      updatedAt: NOW,
+    }
+    memories.set(assistantId, memory)
+    return { memory, entry }
+  })
+
   const service = {
     getAssistantInstance,
     bindAssistantMainSession,
@@ -293,6 +352,7 @@ function createHarness(
     updateAssistantSession,
     getAssistantMemory,
     writeAssistantMemory,
+    writeAssistantMemoryEntry,
   } as unknown as AgentTeamService
 
   return {
@@ -310,6 +370,7 @@ function createHarness(
     updateAssistantSession,
     getAssistantMemory,
     writeAssistantMemory,
+    writeAssistantMemoryEntry,
     createMock,
     resumeMock,
     getMock,
@@ -556,6 +617,116 @@ describe('AssistantRuntime', () => {
         revision: 1,
       },
     })
+  })
+
+  it('injects active structured entries into the main prompt only', async () => {
+    const h = createHarness()
+    h.memories.set('instance-1', {
+      schemaVersion: 1,
+      assistantId: 'instance-1',
+      content: 'Prefers tables.',
+      entries: [
+        {
+          id: 'mem-1',
+          scope: 'assistant',
+          visibility: 'private',
+          status: 'active',
+          source: 'assistant',
+          title: 'Tone',
+          body: 'Be terse.',
+          revision: 1,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          id: 'mem-2',
+          scope: 'assistant',
+          visibility: 'team-safe',
+          status: 'archived',
+          source: 'assistant',
+          title: 'Retired fact',
+          body: 'SHOULD-NOT-APPEAR',
+          revision: 2,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      revision: 3,
+      updatedAt: NOW,
+    })
+
+    await h.runtime.createTask('instance-1', { title: 'Use entries', brief: 'Start.' })
+
+    const sections = h.handles[0]?.section.mock.calls.map(
+      call => call[0] as { name: string; text: () => string },
+    ) ?? []
+    const mainMemory = sections.find(section => section.name.includes('assistant-memory'))
+    expect(mainMemory?.text()).toContain('Prefers tables.')
+    expect(mainMemory?.text()).toContain('[private] Tone: Be terse.')
+    expect(mainMemory?.text()).toContain('assistant_memory_entry_write')
+    expect(mainMemory?.text()).not.toContain('SHOULD-NOT-APPEAR')
+
+    const workerSections = h.handles[1]?.section.mock.calls.map(
+      call => call[0] as { name: string; text: () => string },
+    ) ?? []
+    const workerMemory = workerSections.find(
+      section => section.name.includes('assistant-worker-memory'),
+    )
+    expect(workerMemory?.text()).toContain('this worker cannot change it')
+    expect(workerMemory?.text()).not.toContain('Tone: Be terse.')
+    expect(workerMemory?.text()).not.toContain('SHOULD-NOT-APPEAR')
+  })
+
+  it('writes structured entries with a document revision fence', async () => {
+    const h = createHarness()
+    await h.runtime.ensureInstance('instance-1')
+    const main = h.handles[0]
+    const mainAgent = { id: SessionId(h.current().mainSessionId!) } as unknown as Agent
+    const findTool = (name: string) => main?.toolsRegister.mock.calls.find(
+      call => (call[0] as { name: string }).name === name,
+    )?.[0] as unknown as {
+      execute: (args: Record<string, unknown>, exec: { agent: Agent }) => Promise<Record<string, unknown>>
+    }
+
+    const write = findTool('assistant_memory_entry_write')
+    const read = findTool('assistant_memory_read')
+    expect(write).toBeDefined()
+
+    const created = await write.execute(
+      { expected_revision: 0, title: 'Tone', body: 'Be terse.' },
+      { agent: mainAgent },
+    )
+    expect(h.writeAssistantMemoryEntry).toHaveBeenCalledWith(
+      'instance-1',
+      { title: 'Tone', body: 'Be terse.' },
+      { expectedRevision: 0 },
+    )
+    expect(created).toMatchObject({
+      assistant_id: 'instance-1',
+      memory_revision: 1,
+      entry: {
+        visibility: 'private',
+        status: 'active',
+        source: 'assistant',
+        revision: 1,
+        title: 'Tone',
+        body: 'Be terse.',
+      },
+    })
+
+    const readResult = await read.execute({}, { agent: mainAgent })
+    expect(readResult).toMatchObject({
+      memory: {
+        revision: 1,
+        entries: [{ entry_id: 'mem-1', title: 'Tone' }],
+      },
+    })
+
+    await expect(write.execute(
+      { expected_revision: 0, title: 'Stale', body: 'Should not land.' },
+      { agent: mainAgent },
+    )).rejects.toMatchObject({ code: 'MEMORY_REVISION_CONFLICT' })
+    expect(h.getAssistantMemory('instance-1')?.entries).toHaveLength(1)
   })
 
   it('sends follow-ups, tracks running/idle, and completes the task', async () => {

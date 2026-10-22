@@ -20,6 +20,7 @@ import type {
   AssistantSession,
   AssistantSnapshot,
   AssistantPreview,
+  MemoryEntry,
 } from '../domain/types.js'
 import type { InteractionResponseInput, PendingInteractionView } from '../transport/contracts.js'
 import type { AgentTeamService } from '../service/dsh-team-mode-service.js'
@@ -86,6 +87,9 @@ const SUMMARY_MESSAGE_LIMIT = 1_200
 const SUMMARY_TEXT_LIMIT = 4_000
 const ERROR_TEXT_LIMIT = 2_000
 const MEMORY_PROMPT_LIMIT = 4_000
+const MEMORY_ENTRY_PROMPT_LIMIT = 20
+const MEMORY_ENTRY_TITLE_LIMIT = 80
+const MEMORY_ENTRY_BODY_LIMIT = 200
 
 /**
  * Owns every Agent Session one Assistant instance needs: the visible main
@@ -878,6 +882,8 @@ export class AssistantRuntime {
         assertIdentity: agent => { this.assertMainToolIdentity(id, agent) },
         readMemory: () => this.service.getAssistantMemory(id),
         writeMemory: input => this.service.writeAssistantMemory(id, input.content, input.mode),
+        writeEntry: (input, expectedRevision) =>
+          this.service.writeAssistantMemoryEntry(id, input, { expectedRevision }),
       })
     }
     const agentOptions = agentOptionsFor(snapshot)
@@ -962,15 +968,36 @@ function assistantPrompt(snapshot: AssistantSnapshot): string {
 /**
  * Durable memory is injected before identity so every turn starts from the same
  * shared note. The stored document may hold 16k characters, but only a 4k
- * excerpt enters the prompt to keep the context bounded.
+ * excerpt enters the prompt to keep the context bounded. Structured entries are
+ * main-only in P0: a worker is the same assistant but cannot mutate them, and
+ * team-member injection would need the membership identity link that does not
+ * exist yet.
  */
 function memoryPrompt(memory: AssistantMemory | undefined, role: 'main' | 'worker'): string {
   const intro = role === 'main'
-    ? 'Durable assistant memory: a short persistent note shared by every Session of this assistant. Use assistant_memory_read and assistant_memory_write to inspect or update it. Keep it to lasting preferences and facts, not transcripts.'
+    ? 'Durable assistant memory: a persistent note plus structured entries shared by every Session of this assistant. Use assistant_memory_read to inspect it, assistant_memory_write for the legacy note, and assistant_memory_entry_write for structured entries. Keep it to lasting preferences and facts, not transcripts.'
     : 'Durable assistant memory: a short persistent note shared by every Session of this assistant and maintained by its main Session. Treat it as background context; this worker cannot change it.'
   const content = memory?.content.trim() ?? ''
-  if (content === '') return `${intro}\nNo memory has been saved yet.`
-  return `${intro}\n${boundedText(content, MEMORY_PROMPT_LIMIT)}`
+  const lines = [intro]
+  lines.push(content === '' ? 'No memory has been saved yet.' : boundedText(content, MEMORY_PROMPT_LIMIT))
+  if (role === 'main') {
+    const entries = (memory?.entries ?? []).filter(entry => entry.status === 'active')
+    if (entries.length > 0) {
+      lines.push('Structured memory entries (use assistant_memory_entry_write with the entry_id to revise one):')
+      for (const entry of entries.slice(-MEMORY_ENTRY_PROMPT_LIMIT)) {
+        lines.push(`- ${entryLine(entry)}`)
+      }
+      if (entries.length > MEMORY_ENTRY_PROMPT_LIMIT) {
+        lines.push(`(${entries.length - MEMORY_ENTRY_PROMPT_LIMIT} older active entries are stored but omitted from this prompt; use assistant_memory_read.)`)
+      }
+    }
+  }
+  return lines.join('\n')
+}
+
+function entryLine(entry: MemoryEntry): string {
+  const label = entry.key === undefined ? entry.title : `${entry.key}: ${entry.title}`
+  return `[${entry.visibility}] ${truncate(label, MEMORY_ENTRY_TITLE_LIMIT)}: ${boundedText(entry.body, MEMORY_ENTRY_BODY_LIMIT)}`
 }
 
 /**

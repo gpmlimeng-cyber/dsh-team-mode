@@ -38,7 +38,7 @@ import {
   createTeamMessage as teamMessage,
   requireMessageContent as requireContent,
 } from './team-messages.js'
-import { memberPrompt, rosterPrompt } from './team-prompts.js'
+import { memberPrompt, rosterPrompt, teamMemoryPrompt } from './team-prompts.js'
 import { registerTeamTools, type TeamAssistantView } from './team-tools.js'
 
 interface OwnedAgent {
@@ -591,6 +591,11 @@ export class TeamRuntime {
           tasks: {},
           // Goals group tasks; a reset clears both so no Goal outlives its board.
           goals: {},
+          // Team memory is durable team knowledge, not task-board state: a
+          // context reset preserves it (same team id and roster, same entries)
+          // and sets no new visibility. Dissolving the team deletes the whole
+          // aggregate, and its memory with it.
+          memory: current.memory,
           leases: {},
           outbox: {},
           retiredSessions: current.state === 'draft'
@@ -1109,7 +1114,15 @@ export class TeamRuntime {
         agentCtx.systemPrompt.section({
           name: rosterSection,
           order: 11,
-          text: () => rosterPrompt(this.service.getTeam(team.id)),
+          // Roster and team memory are one live section: both are read from the
+          // aggregate on every turn, so an accepted entry reaches the next turn
+          // without restarting the member Session.
+          text: () => {
+            const latest = this.service.getTeam(team.id)
+            return [rosterPrompt(latest), teamMemoryPrompt(latest)]
+              .filter(line => line !== '')
+              .join('\n\n')
+          },
         })
         registerTeamTools(agentCtx, {
           assertIdentity: agent => { this.assertToolIdentity(agent, team.id, member.id) },
@@ -1127,6 +1140,9 @@ export class TeamRuntime {
           listTasks: limit => this.commands.listTasks(team.id, limit),
           createGoal: input => this.commands.createGoal(team.id, member.id, input),
           listGoals: () => this.commands.listGoals(team.id),
+          proposeMemory: input => this.commands.proposeMemory(team.id, member.id, input),
+          listMemory: () => this.commands.listMemory(team.id),
+          decideMemory: input => this.commands.decideMemory(team.id, member.id, input),
           listAssistants: () => this.service.listAssistants().items.map(assistant => (
             this.assistantView(assistant, false)
           )),

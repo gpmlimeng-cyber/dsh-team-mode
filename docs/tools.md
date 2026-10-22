@@ -1,6 +1,6 @@
 # 工具清单
 
-## 模型工具（18 个）
+## 模型工具（21 个）
 
 | 工具 | 作用 |
 |---|---|
@@ -13,6 +13,9 @@
 | `team_mode_task_create` | 创建任务，指定 owner / blocked_by / 文件范围 / `goal_id` |
 | `team_mode_task_update` | 更新任务状态、owner、依赖、结果（成员需带当前 `attempt_id`） |
 | `team_mode_task_list` | 查询任务板（含 owner、依赖、`attempt_id`、`goal_id`） |
+| `team_memory_propose` | 提议/写入团队记忆：成员提议待 Leader 决定，Leader 写入立即生效 |
+| `team_memory_list` | 列出团队记忆（状态、可见性、key、作者、版本）；只有 `active` 会进入提示 |
+| `team_memory_accept` | Leader 专用：接受或拒绝一条记忆提议（`decision=accept` / `decision=reject`） |
 | `team_create_task` | 兼容别名：创建任务（`title` / `ownerSlotId` / `fileScopes`） |
 | `team_update_task` | 兼容别名：更新任务（`taskId` / `attemptId`） |
 | `team_get_task_board` | 兼容别名：查询任务板 |
@@ -34,6 +37,16 @@
 - `team_mode_task_create` 的 `goal_id` 可选，必须指向**同一团队**的 Goal，否则以 `INVALID_REQUEST` 拒绝；缺省时任务不归属任何 Goal，旧任务/旧调用保持有效。
 - Goal 与 `goal_id` 都是可选字段，`schemaVersion` 不变；`team.reset` 会同时清空任务与 Goal，避免遗留孤立 Goal。
 - 本轮不包含 Goal UI、自动调度与质量门禁。
+
+## 团队记忆（P0）
+
+- 存储：`TeamAggregate.memory`（`{ revision, entries, updatedAt }`）为可选字段，`schemaVersion` 不变；从未写过记忆的团队保持无该字段、原样加载。条目结构与助手记忆共用 `MemoryEntry`：`id`、`scope='team'`、`visibility='team-safe'`、`status`（`active` / `proposed` / `superseded` / `archived`）、`source`（`leader` / `member`）、`authorSlotId`、可选 `key`、`title`、`body`、条目 `revision` 与时间戳。
+- 权限：成员用 `team_memory_propose` 提交 `proposed` 提议；Leader 自己的写入直接 `active`。只有 Leader 能调用 `team_memory_accept`（`accept` 激活、`reject` 归档），成员无法决定任何提议，也无法决定自己写的提议。接受时若存在同 `key` 的 `active` 条目，旧条目转为 `superseded`，避免两条相反决定同时生效。
+- 版本栅栏：写入的 `expected_revision` 是**记忆容器**的 `revision`（`team_memory_list` 返回，尚无记忆时为 `0`），不是团队聚合的 `revision`；任务板变化不会让记忆写入失效。过期版本返回 `MEMORY_REVISION_CONFLICT`，在团队串行写入中复查，不会覆盖并发写入。
+- 注入：只有 `active`、`visibility=team-safe`、`scope=team` 的条目进入团队成员提示（与 roster 同一动态区段，每轮重读，接受后下一轮即可见），`proposed` / `superseded` / `archived` 以及任何 `private` 条目不加载；注入预算 2,000 字符。
+- 上限：只统计 `active` / `proposed` 的活条目——title+body 合计 8,000 字符、最多 100 条；`archived` 与 `superseded` 属于历史，仍保留在存储里但不计入上限、不进入提示，因此拒绝提议或按 key 取代不会永久占用额度。活条目没有删除/归档操作，达到 100 条后只能先接受或拒绝未决提议、或用同 key 条目取代现有决定。
+- 隔离：记忆按团队聚合存储，DM 会话和单聊助手从不读取团队记忆；其他团队也无法引用本团队条目。`team.reset` **保留**团队记忆（团队、成员、条目与可见性都不变）；解散团队时整个聚合被删除，记忆随之消失。
+- 助手侧 `team-safe` 记忆在本轮仍不注入团队：团队成员还无法解析到所属助手实例（成员 → 助手实例身份关联属于 P1），因此不会伪造该链接。本轮不含记忆 UI、自动捕获和上下文压缩。
 
 ## 任务 attempt / 所有权围栏
 

@@ -4,10 +4,14 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type {
   CreateGoalInput,
   CreateTaskInput,
+  DecideMemoryInput,
+  ProposeMemoryInput,
   ReadMessagesResult,
   SendMessageInput,
   SendMessageResult,
   TeamGoalView,
+  TeamMemoryList,
+  TeamMemoryWriteResult,
   TeamMemberView,
   TeamMessageView,
   TeamTaskView,
@@ -49,6 +53,9 @@ export interface TeamToolHandlers {
   listTasks: (limit?: number) => TeamTaskView[]
   createGoal: (input: CreateGoalInput) => Promise<TeamGoalView>
   listGoals: () => TeamGoalView[]
+  proposeMemory: (input: ProposeMemoryInput) => Promise<TeamMemoryWriteResult>
+  listMemory: () => TeamMemoryList
+  decideMemory: (input: DecideMemoryInput) => Promise<TeamMemoryWriteResult>
   listAssistants: () => TeamAssistantView[]
   describeAssistant: (assistantId: string) => TeamAssistantView
   spawnAgent: (input: { name: string; assistantId: string }) => Promise<TeamMemberView>
@@ -203,6 +210,66 @@ export function registerTeamTools(
     execute: async (_args, exec) => {
       handlers.assertIdentity(exec.agent)
       return { goals: handlers.listGoals() } as never
+    },
+  }))
+
+  register(defineTool({
+    name: 'team_memory_propose',
+    description: 'Propose a durable team memory entry: an agreed decision, convention, or project fact shared by this team. Members create a proposal that waits for the Leader; the Leader’s own entry becomes active immediately. expected_revision is the team memory revision from team_memory_list (0 when the team has no memory yet), so a concurrent write is rejected instead of overwritten. A key makes later accepted entries replace earlier ones with the same key.',
+    parameters: {
+      expected_revision: { type: 'number', required: true, description: 'Team memory revision this write is based on; 0 when the team has no memory yet.' },
+      title: { type: 'string', required: true, description: 'Short heading for the memory entry.' },
+      body: { type: 'string', required: true, description: 'The decision or fact to remember. Keep it durable; do not paste chat transcripts.' },
+      key: { type: 'string', description: 'Optional stable key, so a newer accepted entry supersedes the older one with the same key.' },
+    },
+    output: textOutput,
+    execute: async (args, exec) => {
+      handlers.assertIdentity(exec.agent)
+      const result = await handlers.proposeMemory({
+        title: args.title,
+        body: args.body,
+        ...(typeof args.key === 'string' && args.key.trim() !== '' ? { key: args.key } : {}),
+        expected_revision: args.expected_revision,
+      })
+      return { memory_revision: result.revision, entry: result.entry } as never
+    },
+  }))
+
+  register(defineTool({
+    name: 'team_memory_list',
+    description: 'List this team’s memory entries with status, visibility, key, author slot, and revisions. Proposed entries wait for the Leader; only active entries are loaded into team prompts. Other teams and DM Sessions never see this memory.',
+    parameters: {},
+    output: textOutput,
+    execute: async (_args, exec) => {
+      handlers.assertIdentity(exec.agent)
+      const memory = handlers.listMemory()
+      return { memory_revision: memory.revision, entries: memory.entries } as never
+    },
+  }))
+
+  register(defineTool({
+    name: 'team_memory_accept',
+    description: 'Leader only. Accept or reject a proposed team memory entry. Accepting activates it and supersedes any active entry with the same key; rejecting archives it. Pass decision=reject to reject (default accept). expected_revision is the current team memory revision. A member cannot accept its own proposal.',
+    parameters: {
+      entry_id: { type: 'string', required: true, description: 'Proposed entry id from team_memory_list.' },
+      expected_revision: { type: 'number', required: true, description: 'Current team memory revision from team_memory_list.' },
+      decision: {
+        type: 'string',
+        enum: ['accept', 'reject'],
+        description: 'accept activates the entry (default); reject archives it.',
+      },
+    },
+    output: textOutput,
+    execute: async (args, exec) => {
+      handlers.assertIdentity(exec.agent)
+      const result = await handlers.decideMemory({
+        entry_id: args.entry_id,
+        expected_revision: args.expected_revision,
+        ...(args.decision === 'reject' || args.decision === 'accept'
+          ? { decision: args.decision }
+          : {}),
+      })
+      return { memory_revision: result.revision, entry: result.entry } as never
     },
   }))
 

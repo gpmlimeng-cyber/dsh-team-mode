@@ -1,7 +1,7 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import type { AssistantMemory, AssistantSession } from '../domain/types.js'
+import type { AssistantMemory, AssistantSession, MemoryEntry, WriteAssistantMemoryEntryInput } from '../domain/types.js'
 
 export interface AssistantTaskSummaryMessage {
   kind: 'user' | 'assistant'
@@ -38,6 +38,10 @@ export interface AssistantMemoryToolHandlers {
     content: string
     mode: 'replace' | 'append'
   }) => Promise<AssistantMemory>
+  writeEntry: (
+    input: WriteAssistantMemoryEntryInput,
+    expectedRevision: number,
+  ) => Promise<{ memory: AssistantMemory; entry: MemoryEntry }>
 }
 
 type ToolResult = Record<string, unknown>
@@ -210,7 +214,7 @@ export function registerAssistantMemoryTools(
 
   register(defineTool({
     name: 'assistant_memory_read',
-    description: 'Read this assistant’s durable memory: one bounded note shared by its main and worker Sessions. Returns null when no memory has been written yet.',
+    description: 'Read this assistant’s durable memory: one bounded legacy note plus structured entries, shared by its main and worker Sessions. Returns null when no memory has been written yet. Entries carry visibility (private by default), status, key, and revisions.',
     parameters: {},
     output: textOutput,
     execute: async (_args, exec) => {
@@ -224,6 +228,7 @@ export function registerAssistantMemoryTools(
             content: memory.content,
             revision: memory.revision,
             updated_at: memory.updatedAt,
+            entries: (memory.entries ?? []).map(entryView),
           },
       } as never
     },
@@ -231,7 +236,7 @@ export function registerAssistantMemoryTools(
 
   register(defineTool({
     name: 'assistant_memory_write',
-    description: 'Replace or append this assistant’s durable memory, a bounded note shared with every worker Session. Use it for lasting user preferences and facts, not transcripts. Content over 16000 characters is rejected, not truncated.',
+    description: 'Replace or append this assistant’s durable legacy note, a bounded string shared with every worker Session. Use it for lasting user preferences and facts, not transcripts. Content over 16000 characters is rejected, not truncated. Structured entries use assistant_memory_entry_write instead.',
     parameters: {
       content: { type: 'string', required: true, description: 'Memory text (combined stored content must stay within 16000 characters).' },
       mode: {
@@ -254,4 +259,69 @@ export function registerAssistantMemoryTools(
       } as never
     },
   }))
+
+  register(defineTool({
+    name: 'assistant_memory_entry_write',
+    description: 'Create or update one structured memory entry. Omit entry_id to create a new entry (default visibility private, status active); pass an existing entry_id to revise that entry, which bumps its own revision (an unknown entry_id is rejected, never silently created). expected_revision is the memory revision returned by assistant_memory_read (0 when nothing is stored yet), so a concurrent write is rejected instead of overwritten. Combined title and body size across all entries must stay within 16000 characters.',
+    parameters: {
+      expected_revision: { type: 'number', required: true, description: 'Memory document revision this write is based on; 0 when no memory is stored yet.' },
+      entry_id: { type: 'string', description: 'Existing entry id to revise; omit to create a new entry. An unknown id is rejected.' },
+      title: { type: 'string', required: true, description: 'Short human-readable heading for the entry.' },
+      body: { type: 'string', required: true, description: 'Entry text stored verbatim. Keep it to durable facts and preferences, not transcripts.' },
+      visibility: {
+        type: 'string',
+        enum: ['private', 'team-safe'],
+        description: 'private (default) never leaves this assistant; team-safe marks content suitable for team sharing. Team injection is not implemented yet, so both currently stay with this assistant.',
+      },
+      status: {
+        type: 'string',
+        enum: ['active', 'archived'],
+        description: 'active (default) injects the entry into this main Session prompt; archived keeps it stored but out of the prompt.',
+      },
+      key: { type: 'string', description: 'Optional stable key for later lookup; omit unless the entry has a durable name.' },
+    },
+    output: textOutput,
+    execute: async (args, exec) => {
+      handlers.assertIdentity(exec.agent)
+      const input: WriteAssistantMemoryEntryInput = {
+        ...(typeof args.entry_id === 'string' && args.entry_id.trim() !== ''
+          ? { id: args.entry_id }
+          : {}),
+        title: args.title,
+        body: args.body,
+        ...(args.visibility === 'team-safe' || args.visibility === 'private'
+          ? { visibility: args.visibility }
+          : {}),
+        ...(args.status === 'archived' || args.status === 'active'
+          ? { status: args.status }
+          : {}),
+        ...(typeof args.key === 'string' && args.key.trim() !== '' ? { key: args.key } : {}),
+      }
+      const { memory, entry } = await handlers.writeEntry(
+        input,
+        Math.max(Math.floor(args.expected_revision), 0),
+      )
+      return {
+        assistant_id: memory.assistantId,
+        memory_revision: memory.revision,
+        entry: entryView(entry),
+      } as never
+    },
+  }))
+}
+
+function entryView(entry: MemoryEntry): ToolResult {
+  return {
+    entry_id: entry.id,
+    scope: entry.scope,
+    visibility: entry.visibility,
+    status: entry.status,
+    source: entry.source,
+    ...(entry.key === undefined ? {} : { key: entry.key }),
+    title: entry.title,
+    body: entry.body,
+    revision: entry.revision,
+    created_at: entry.createdAt,
+    updated_at: entry.updatedAt,
+  }
 }
