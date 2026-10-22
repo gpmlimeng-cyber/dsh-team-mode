@@ -819,15 +819,19 @@ export class AssistantRuntime {
         return { instance, sessionId: boundSessionId }
       }
       if (this.ctx.agents.get(SessionId(boundSessionId)) !== undefined) {
-        // A previous plugin lifecycle can leave the main Agent live without
-        // this instance's handle (for example a dev plugin reload). Phase 0
-        // only needs navigation, so open the existing native Session instead
-        // of blocking the Assistant row; no new Agent is created and this
-        // runtime does not claim teardown ownership for it.
-        this.ctx.logger.warn(
-          `dsh-team-mode: assistant '${instance.id}' is already live without an owned handle; opening it passively`,
+        // Another lifecycle owns this live Agent: a still-draining previous
+        // plugin, or the native session controller resuming the persisted
+        // Session. `ctx.agents.get()` hands back a bare Agent whose setup has
+        // already run, so the assistant tools, memory note, and model selection
+        // cannot be reattached, and this runtime must never dispose an Agent it
+        // does not own. Opening it anyway would yield a tool-less assistant, so
+        // fail explicitly: the open is retryable once that owner releases the
+        // Session.
+        throw new AgentTeamError(
+          'AGENT_HANDLE_OWNERSHIP_CONFLICT',
+          `Assistant '${instance.id}' main Session '${boundSessionId}' is live under another lifecycle; retry after a reloading plugin releases it, or restart the DSH host if native ownership persists`,
+          { instanceId: instance.id, sessionId: boundSessionId },
         )
-        return { instance, sessionId: boundSessionId }
       }
     }
 

@@ -329,6 +329,9 @@ function createHarness(
     setLive(sessionId: string, agent?: Agent) {
       live.set(sessionId, agent ?? { id: SessionId(sessionId) } as unknown as Agent)
     },
+    clearLive(sessionId: string) {
+      live.delete(sessionId)
+    },
   }
 }
 
@@ -886,16 +889,61 @@ describe('AssistantRuntime', () => {
     expect(h.attachSession).not.toHaveBeenCalled()
   })
 
-  it('passively opens a live but unowned main Session', async () => {
+  it('refuses a live main Session owned by another lifecycle', async () => {
     const h = createHarness({ mainSessionId: 'session-bound', status: 'active' })
-    h.setLive('session-bound')
+    const cancel = vi.fn()
+    const dispose = vi.fn(async () => {})
+    const foreign = {
+      id: SessionId('session-bound'),
+      cancel,
+      dispose,
+    } as unknown as Agent
+    h.setLive('session-bound', foreign)
 
-    await expect(h.runtime.ensureInstance('instance-1')).resolves.toMatchObject({
-      sessionId: 'session-bound',
+    const error = await h.runtime.ensureInstance('instance-1').catch(value => value)
+
+    expect(error).toBeInstanceOf(AgentTeamError)
+    expect(error).toMatchObject({
+      code: 'AGENT_HANDLE_OWNERSHIP_CONFLICT',
+      details: { instanceId: 'instance-1', sessionId: 'session-bound' },
     })
     expect(h.resumeMock).not.toHaveBeenCalled()
     expect(h.createMock).not.toHaveBeenCalled()
     expect(h.bindAssistantMainSession).not.toHaveBeenCalled()
+    expect(h.attachSession).not.toHaveBeenCalled()
+    expect(h.flush).not.toHaveBeenCalled()
+
+    await h.runtime.dispose()
+
+    // The foreign Agent is never cancelled or disposed by this runtime.
+    expect(cancel).not.toHaveBeenCalled()
+    expect(dispose).not.toHaveBeenCalled()
+  })
+
+  it('reattaches the assistant surface after the conflicting owner releases the Session', async () => {
+    const h = createHarness({ mainSessionId: 'session-bound', status: 'active' })
+    h.setLive('session-bound')
+
+    await expect(h.runtime.ensureInstance('instance-1'))
+      .rejects.toMatchObject({ code: 'AGENT_HANDLE_OWNERSHIP_CONFLICT' })
+
+    h.clearLive('session-bound')
+    const recovered = await h.runtime.ensureInstance('instance-1')
+
+    expect(recovered.sessionId).toBe('session-bound')
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+    expect(String((h.resumeMock.mock.calls[0]?.[0] as ResumeAgentOptions).resumeSessionId))
+      .toBe('session-bound')
+    expect(h.bindAssistantMainSession).toHaveBeenCalledWith('instance-1', 'session-bound')
+    expect(toolsRegistered(h.handles[0]).sort())
+      .toEqual([...TASK_TOOL_NAMES, ...MEMORY_TOOL_NAMES].sort())
+
+    const task = await h.runtime.createTask('instance-1', {
+      title: 'Research pricing',
+      brief: 'Start.',
+    })
+    expect(task.parentSessionId).toBe('session-bound')
+    expect(h.createMock).toHaveBeenCalledTimes(1)
   })
 
   it('fails a missing bound Session without creating a replacement', async () => {
