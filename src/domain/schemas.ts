@@ -66,6 +66,12 @@ export const assistantInstanceSchema = z.object({
   workspaceId: nonEmpty,
   workspacePath: nonEmpty,
   mainSessionId: nonEmpty.optional(),
+  /**
+   * Prior main Sessions kept hidden after a checkpoint handoff. Added without a
+   * schema-version bump: a row stored before handoff existed carries no field and
+   * still parses; readers treat absent as `[]`.
+   */
+  retiredMainSessionIds: z.array(nonEmpty).max(100).optional(),
   status: z.enum(['idle', 'starting', 'active', 'error', 'archived']),
   pinned: z.boolean().default(false),
   revision: z.int().positive(),
@@ -182,6 +188,51 @@ export const writeAssistantMemoryEntryInputSchema = z.object({
 }).strict()
 
 export const assistantMemoryModeSchema = z.enum(['replace', 'append'])
+
+/** Lifecycle of one checkpoint; only `ready` may be handed off. */
+export const contextCheckpointStatusSchema = z.enum(['ready', 'consumed', 'archived'])
+
+/**
+ * The bounded facts copied out of one Assistant main Session. Bounds are
+ * enforced here so no unbounded transcript can ever be persisted.
+ */
+export const checkpointFactsSchema = z.object({
+  /** Last visible user/assistant messages, oldest first: <= 12, each text <= 500 chars. */
+  recentMessages: z.array(z.object({
+    role: z.enum(['user', 'assistant']),
+    text: z.string().max(500),
+  }).strict()).max(12),
+  /** Active (queued/running/needs_input) worker tasks, newest first, <= 20. */
+  activeTasks: z.array(z.object({
+    id: nonEmpty,
+    title: nonEmpty,
+    status: nonEmpty,
+  }).strict()).max(20),
+  workspacePath: nonEmpty,
+  note: z.string(),
+}).strict()
+
+/**
+ * One durable handoff artifact for an Assistant DM. Stored in its own table and
+ * never merged into `assistant_memory`; `consumedAt` records the handoff.
+ */
+export const contextCheckpointSchema = z.object({
+  schemaVersion: z.literal(1),
+  id: nonEmpty,
+  assistantId: nonEmpty,
+  sourceSessionId: nonEmpty,
+  /** Main Session created by the handoff; absent until the checkpoint is consumed. */
+  targetSessionId: nonEmpty.optional(),
+  title: nonEmpty,
+  /** User-supplied handoff note, <= 4000 chars. */
+  note: z.string().max(4000),
+  /** Seq of the last source-session event read; -1 for an empty session. */
+  capturedThroughSeq: z.int(),
+  facts: checkpointFactsSchema,
+  status: contextCheckpointStatusSchema.default('ready'),
+  createdAt: isoDate,
+  consumedAt: isoDate.optional(),
+}).strict()
 
 export const memberRuntimeStateSchema = z.enum([
   'offline',

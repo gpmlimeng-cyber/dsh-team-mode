@@ -5,6 +5,7 @@ import {
   assistantMemorySchema,
   assistantSessionSchema,
   assistantTemplateSchema,
+  contextCheckpointSchema,
   migrationBackupSchema,
   migrationRecordSchema,
   operationSchema,
@@ -17,6 +18,7 @@ import type {
   AssistantMemory,
   AssistantSession,
   AssistantTemplate,
+  ContextCheckpoint,
   Operation,
   TeamActivity,
   TeamAggregate,
@@ -30,6 +32,7 @@ export type TeamId = string
 export type MessageId = string
 export type ActivityId = string
 export type OperationId = string
+export type ContextCheckpointId = string
 
 /**
  * `@deepseek-ai/dsh-storage-domain` bundles its own zod install, so a schema
@@ -57,6 +60,9 @@ export const dshTeamModeDomainSpec = defineDomain({
     ),
     assistant_memory: domainTable<AssistantId, AssistantMemory>(
       storedTableSchema<AssistantId, AssistantMemory>(assistantMemorySchema),
+    ),
+    context_checkpoints: domainTable<ContextCheckpointId, ContextCheckpoint>(
+      storedTableSchema<ContextCheckpointId, ContextCheckpoint>(contextCheckpointSchema),
     ),
     teams: domainTable<TeamId, TeamAggregate>(
       storedTableSchema<TeamId, TeamAggregate>(teamAggregateSchema),

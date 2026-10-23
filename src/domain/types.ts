@@ -3,6 +3,9 @@ import type {
   assistantInstanceSchema,
   assistantMemoryModeSchema,
   assistantMemorySchema,
+  checkpointFactsSchema,
+  contextCheckpointSchema,
+  contextCheckpointStatusSchema,
   memoryEntrySchema,
   assistantSessionSchema,
   assistantSnapshotSchema,
@@ -52,6 +55,9 @@ export type MemoryVisibility = z.infer<typeof memoryVisibilitySchema>
 export type MemoryEntryStatus = z.infer<typeof memoryEntryStatusSchema>
 export type MemoryEntrySource = z.infer<typeof memoryEntrySourceSchema>
 export type WriteAssistantMemoryEntryInput = z.infer<typeof writeAssistantMemoryEntryInputSchema>
+export type CheckpointFacts = z.infer<typeof checkpointFactsSchema>
+export type ContextCheckpoint = z.infer<typeof contextCheckpointSchema>
+export type ContextCheckpointStatus = z.infer<typeof contextCheckpointStatusSchema>
 export type AssistantSession = z.infer<typeof assistantSessionSchema>
 /** Last visible message in an assistant's main Session, for sidebar preview. */
 export interface AssistantPreview {

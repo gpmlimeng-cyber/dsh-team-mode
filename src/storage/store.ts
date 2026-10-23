@@ -4,12 +4,30 @@ import type {
   AssistantMemory,
   AssistantSession,
   AssistantTemplate,
+  ContextCheckpoint,
   Operation,
   TeamActivity,
   TeamAggregate,
   TeamMessage,
 } from '../domain/types.js'
 import { dshTeamModeDomainSpec } from './domain.js'
+
+/**
+ * Checkpoint persistence, kept separate from `AgentTeamStore` so existing store
+ * doubles stay valid without new mandatory methods. The service that reads
+ * checkpoints takes `AgentTeamStoreWithCheckpoints`.
+ */
+export interface AgentTeamCheckpointStore {
+  getContextCheckpoint(id: string): ContextCheckpoint | undefined
+  listContextCheckpoints(): ContextCheckpoint[]
+  putContextCheckpoint(value: ContextCheckpoint): Promise<void>
+  updateContextCheckpoint(
+    id: string,
+    update: (current: ContextCheckpoint) => ContextCheckpoint,
+  ): Promise<ContextCheckpoint>
+}
+
+export type AgentTeamStoreWithCheckpoints = AgentTeamStore & AgentTeamCheckpointStore
 
 export interface AgentTeamStore {
   getAssistant(id: string): AssistantTemplate | undefined
@@ -63,11 +81,12 @@ export interface AgentTeamStore {
   deleteOperation(id: string): Promise<boolean>
 }
 
-export class DomainAgentTeamStore implements AgentTeamStore {
+export class DomainAgentTeamStore implements AgentTeamStore, AgentTeamCheckpointStore {
   private readonly assistants: KvTable<string, AssistantTemplate>
   private readonly assistantInstances: KvTable<string, AssistantInstance>
   private readonly assistantSessions: KvTable<string, AssistantSession>
   private readonly assistantMemory: KvTable<string, AssistantMemory>
+  private readonly contextCheckpoints: KvTable<string, ContextCheckpoint>
   private readonly teams: KvTable<string, TeamAggregate>
   private readonly messages: KvTable<string, TeamMessage>
   private readonly activities: KvTable<string, TeamActivity>
@@ -78,6 +97,7 @@ export class DomainAgentTeamStore implements AgentTeamStore {
     this.assistantInstances = domain.table('assistant_instances')
     this.assistantSessions = domain.table('assistant_sessions')
     this.assistantMemory = domain.table('assistant_memory')
+    this.contextCheckpoints = domain.table('context_checkpoints')
     this.teams = domain.table('teams')
     this.messages = domain.table('messages')
     this.activities = domain.table('activities')
@@ -165,6 +185,26 @@ export class DomainAgentTeamStore implements AgentTeamStore {
     update: (current: AssistantSession) => AssistantSession,
   ): Promise<AssistantSession> {
     return this.assistantSessions.update(id, update)
+  }
+
+  getContextCheckpoint(id: string): ContextCheckpoint | undefined {
+    return this.contextCheckpoints.get(id)
+  }
+
+  listContextCheckpoints(): ContextCheckpoint[] {
+    return values(this.contextCheckpoints)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
+  }
+
+  putContextCheckpoint(value: ContextCheckpoint): Promise<void> {
+    return this.contextCheckpoints.put(value.id, value)
+  }
+
+  updateContextCheckpoint(
+    id: string,
+    update: (current: ContextCheckpoint) => ContextCheckpoint,
+  ): Promise<ContextCheckpoint> {
+    return this.contextCheckpoints.update(id, update)
   }
 
   getTeam(id: string): TeamAggregate | undefined {
