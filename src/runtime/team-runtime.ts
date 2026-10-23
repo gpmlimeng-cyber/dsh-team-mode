@@ -39,8 +39,12 @@ import { TeamMessageDispatcher } from './team-message-dispatcher.js'
 import {
   createSystemTeamMessage as systemTeamMessage,
   createTeamMessage as teamMessage,
+  messageFromRecord,
   requireMessageContent as requireContent,
+  sessionHasMessage,
 } from './team-messages.js'
+import { TeamTurnCoordinator } from './team-turn-coordinator.js'
+import { resolveTeamTarget } from './team-turn-routing.js'
 import {
   linkedAssistantMemoryPrompt,
   memberPrompt,
@@ -84,6 +88,7 @@ export class TeamRuntime {
   private readonly messages: TeamMessageDispatcher
   private readonly commands: TeamCommandHandler
   private readonly interactions: TeamInteractionBridge
+  private readonly turns: TeamTurnCoordinator
   private closing = false
 
   constructor(
@@ -91,13 +96,32 @@ export class TeamRuntime {
     private readonly config: Config,
     private readonly service: AgentTeamService,
   ) {
+    this.turns = new TeamTurnCoordinator({
+      getTeam: teamId => this.service.getTeam(teamId),
+      listMessages: teamId => this.service.listMessages(teamId).items,
+      putMessage: message => this.service.putRuntimeMessage(message),
+      followup: (sessionId, message) => {
+        const agent = this.requireOwned(sessionId).handle.agent
+        if (!sessionHasMessage(agent, message.id)) agent.followup(messageFromRecord(this.service.getTeam(message.teamId), message))
+      },
+      sessionState: sessionId => {
+        const owned = this.owned.get(sessionId)
+        if (owned === undefined) return 'offline'
+        const status = owned.handle.agent.status
+        return status === 'running' ? 'running' : 'online'
+      },
+      hasMessage: (sessionId, messageId) => sessionHasMessage(this.requireOwned(sessionId).handle.agent, messageId),
+      warn: (message, error) => { ctx.logger.warn(message, error) },
+    })
     this.messages = new TeamMessageDispatcher(service, {
       resolveAgent: sessionId => this.requireOwned(sessionId).handle.agent,
       warn: (message, error) => { ctx.logger.warn(message, error) },
+      ownsQueuedTurns: () => true,
     })
     this.commands = new TeamCommandHandler(service, {
       deliverMessage: (teamId, messageId) => this.messages.deliver(teamId, messageId),
       followup: (sessionId, message) => { this.requireOwned(sessionId).handle.agent.followup(message) },
+      submitMessage: (teamId, messageId) => this.turns.submit(teamId, messageId),
       interruptAgent: async (teamId, callerSlotId, slotId, message) => {
         await this.stopMember(teamId, slotId)
         await this.commands.sendMemberMessage(teamId, callerSlotId, slotId, message, 'instruction')
@@ -113,14 +137,30 @@ export class TeamRuntime {
     this.disposeStatusListener = ctx.on('agent/status', ({ agent, status }) => {
       const owned = this.owned.get(String(agent.id))
       if (owned === undefined) return
+      if (status === 'idle') {
+        // The active speaker finished; release its turn and drain the queue.
+        void this.turns.releaseSession(String(agent.id))
+          .catch(error => this.ctx.logger.warn('dsh-team-mode: failed to release turn on idle', error))
+      }
       void this.setMemberRuntimeState(owned.teamId, owned.slotId, status)
         .catch(error => this.ctx.logger.warn('dsh-team-mode: failed to persist agent status', error))
     })
     this.disposeConversationListener = ctx.on('session/event', (session, event) => {
-      const owned = this.owned.get(String(session.id))
+      // The host dispatches `session/event` as (session, event); some emitters
+      // fold both into a single object. Accept either shape.
+      const folded = event === undefined
+        ? session as unknown as { session: { id: string }; event: SessionEvent }
+        : undefined
+      const eventSession = folded === undefined ? session : folded.session
+      const sessionEvent = folded === undefined ? event! : folded.event
+      const owned = this.owned.get(String(eventSession.id))
       if (owned === undefined) return
-      if (event.type === 'turn/end' && event.data.reason.kind === 'error') {
-        void this.recordTurnFailure(owned.teamId, owned.slotId, event.data.reason.error.message)
+      if (sessionEvent.type === 'turn/end') {
+        void this.turns.releaseSession(String(eventSession.id))
+          .catch(error => this.ctx.logger.warn('dsh-team-mode: failed to release turn on turn/end', error))
+      }
+      if (sessionEvent.type === 'turn/end' && sessionEvent.data.reason.kind === 'error') {
+        void this.recordTurnFailure(owned.teamId, owned.slotId, sessionEvent.data.reason.error.message)
           .catch(error => this.ctx.logger.warn('dsh-team-mode: failed to record turn failure', error))
       }
       if (this.conversationPublishes.has(String(session.id))) return
@@ -944,14 +984,24 @@ export class TeamRuntime {
     if (team.state !== 'active') {
       throw new AgentTeamError('TEAM_NOT_ACTIVE', `Team '${team.name}' is not active`)
     }
-    const slotId = targetSlotId ?? team.leaderSlotId
+    const content = requireContent(rawContent)
+    const routing = resolveTeamTarget({
+      team: {
+        leaderSlotId: team.leaderSlotId,
+        members: Object.fromEntries(Object.values(team.members).map(member => [
+          member.id,
+          { id: member.id, displayName: member.displayName, role: member.role },
+        ])),
+      },
+      content,
+      ...(targetSlotId === undefined ? {} : { explicitSlotId: targetSlotId }),
+    })
+    const slotId = routing.slotId
     const target = team.members[slotId]
     if (target === undefined) throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown member '${slotId}'`)
     if (slotId !== team.leaderSlotId && !team.directMemberChat) {
       throw new AgentTeamError('INVALID_REQUEST', 'Direct member chat is disabled for this team')
     }
-    const content = requireContent(rawContent)
-    const owned = this.requireOwned(target.sessionId)
     const message = createUserMessage({
       content: [{ type: 'text', text: content }],
       source: { kind: 'user' },
@@ -968,15 +1018,9 @@ export class TeamRuntime {
       idempotencyKey: String(message.id),
     })
     await this.service.putRuntimeMessage(record)
-    try {
-      owned.handle.agent.followup(message)
-      const delivered = { ...record, deliveryState: 'delivered' as const }
-      await this.service.putRuntimeMessage(delivered)
-      return delivered
-    } catch (error) {
-      await this.service.putRuntimeMessage({ ...record, deliveryState: 'failed' })
-      throw error
-    }
+    const outcome = await this.turns.submit(teamId, record.id)
+    return this.service.listMessages(teamId).items.find(item => item.id === record.id)
+      ?? { ...record, deliveryState: outcome === 'delivered' ? 'delivered' as const : 'queued' as const }
   }
 
   async recoverTeams(): Promise<void> {
@@ -988,13 +1032,15 @@ export class TeamRuntime {
       try {
         await this.exclusive(team.id, async () => {
           await this.ensureMembersOnline(team)
-      await this.messages.recover(this.service.getTeam(team.id))
+          await this.messages.recover(this.service.getTeam(team.id))
           await this.service.updateRuntimeTeam(
             team.id,
             current => ({ ...current, state: 'active' }),
             'team.recovered',
             `Team ${team.name} recovered after plugin startup`,
           )
+          // Members are online: drain persisted queued turns in creation order.
+          await this.turns.drainAll([team.id])
         })
       } catch (error) {
         this.ctx.logger.warn(`dsh-team-mode: failed to recover team ${team.id}`, error)

@@ -20,17 +20,7 @@ export class TeamTurnCoordinator {
   private readonly active = new Map<string, ActiveTurn>()
   private readonly chains = new Map<string, Promise<void>>()
 
-  constructor(
-    private readonly deps: TeamTurnDeps,
-    /**
-     * Tests own the turn end: hold the active turn until releaseSession/drain.
-     * The runtime wiring (Task 3) passes nothing and gets auto-release after
-     * delivery, which its turn/end and idle listeners refine later.
-     * ponytail: split ownership flag until the runtime proves event release;
-     * merge into one mode once Task 3 wires listeners.
-     */
-    private readonly options: { holdTurns?: boolean } = {},
-  ) {}
+  constructor(private readonly deps: TeamTurnDeps) {}
 
   submit(teamId: string, messageId: string): Promise<'delivered' | 'queued'> {
     return this.enqueue(teamId, async () => {
@@ -130,10 +120,6 @@ export class TeamTurnCoordinator {
         this.active.delete(teamId)
       }
       this.deps.warn(`turn delivery failed for message ${message.id}; keeping it queued`, error)
-    } finally {
-      if (!this.options.holdTurns && this.active.get(teamId)?.messageId === message.id) {
-        this.active.delete(teamId)
-      }
     }
   }
 }

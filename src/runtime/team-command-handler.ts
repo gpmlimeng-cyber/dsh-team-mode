@@ -46,6 +46,11 @@ export type AionTaskStatus = 'pending' | 'in_progress' | 'completed' | 'deleted'
 export interface TeamCommandPort {
   deliverMessage: (teamId: string, messageId: string) => Promise<boolean>
   followup: (sessionId: string, message: UserMessage) => void
+  /**
+   * Submit a persisted queued record to the turn coordinator. Present in the
+   * TeamRuntime wiring; absent keeps the legacy direct followup path.
+   */
+  submitMessage?: (teamId: string, messageId: string) => Promise<'delivered' | 'queued'>
   /** Stop the target's current turn, then deliver the replacement message. */
   interruptAgent?: (teamId: string, callerSlotId: string, slotId: string, message: string) => Promise<void>
   /** Give one member a fresh session without touching the rest of the team. */
@@ -1431,6 +1436,17 @@ export class TeamCommandHandler {
       idempotencyKey: String(relay.id),
     })
     await this.service.putRuntimeMessage(record, epochOptions)
+    if (this.port.submitMessage !== undefined) {
+      const outcome = await this.port.submitMessage(teamId, record.id)
+      return outcome === 'delivered'
+        ? { messageId: record.id, deliveryState: 'delivered', deliveredTo: [recipientSlotId] }
+        : {
+          messageId: record.id,
+          deliveryState: 'queued',
+          deliveredTo: [],
+          queuedFor: [recipientSlotId],
+        }
+    }
     try {
       this.port.followup(recipient.sessionId, relay)
       await this.service.putRuntimeMessage({ ...record, deliveryState: 'delivered' }, epochOptions)

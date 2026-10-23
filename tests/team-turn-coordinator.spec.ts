@@ -137,7 +137,7 @@ describe('TeamTurnCoordinator', () => {
   it('delivers the first submit and keeps the second queued with no second followup', async () => {
     const fake = createFake({ t1: teamWith('sL', 'sa') })
     const team = fake.team('t1')
-    const coordinator = new TeamTurnCoordinator(fake.deps, { holdTurns: true })
+    const coordinator = new TeamTurnCoordinator(fake.deps)
     team.messages.push(
       message({ id: 'm1', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:00.000Z' }),
       message({ id: 'm2', teamId: 't1', slotId: 'a', createdAt: '2026-10-23T10:00:01.000Z' }),
@@ -153,7 +153,7 @@ describe('TeamTurnCoordinator', () => {
   it('releaseSession delivers exactly the next queued message in createdAt/id order', async () => {
     const fake = createFake({ t1: teamWith('sL', 'sa') })
     const team = fake.team('t1')
-    const coordinator = new TeamTurnCoordinator(fake.deps, { holdTurns: true })
+    const coordinator = new TeamTurnCoordinator(fake.deps)
     team.messages.push(
       message({ id: 'm1', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:00.000Z' }),
       // Insertion order is reversed on purpose; createdAt then id decides.
@@ -176,7 +176,7 @@ describe('TeamTurnCoordinator', () => {
   it('keeps messages queued while the target is offline and delivers after drain', async () => {
     const fake = createFake({ t1: teamWith('sL', 'sa') })
     const team = fake.team('t1')
-    const coordinator = new TeamTurnCoordinator(fake.deps, { holdTurns: true })
+    const coordinator = new TeamTurnCoordinator(fake.deps)
     fake.setSessionState('sa', 'offline')
     team.messages.push(message({ id: 'm1', teamId: 't1', slotId: 'a', createdAt: '2026-10-23T10:00:00.000Z' }))
 
@@ -190,7 +190,7 @@ describe('TeamTurnCoordinator', () => {
   it('keeps a failed followup queued, clears active, and does not skip it', async () => {
     const fake = createFake({ t1: teamWith('sL', 'sa') })
     const team = fake.team('t1')
-    const coordinator = new TeamTurnCoordinator(fake.deps, { holdTurns: true })
+    const coordinator = new TeamTurnCoordinator(fake.deps)
     team.messages.push(
       message({ id: 'm1', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:00.000Z' }),
       message({ id: 'm2', teamId: 't1', slotId: 'a', createdAt: '2026-10-23T10:00:01.000Z' }),
@@ -211,7 +211,7 @@ describe('TeamTurnCoordinator', () => {
   it('skips followup when the session already has the message and marks it delivered', async () => {
     const fake = createFake({ t1: teamWith('sL', 'sa') })
     const team = fake.team('t1')
-    const coordinator = new TeamTurnCoordinator(fake.deps, { holdTurns: true })
+    const coordinator = new TeamTurnCoordinator(fake.deps)
     team.messages.push(message({ id: 'm1', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:00.000Z' }))
     // Pre-seen message models a restart duplicate: session transcript already holds it.
     const seen = new Map<string, Set<string>>([['sL', new Set(['m1'])]])
@@ -227,7 +227,7 @@ describe('TeamTurnCoordinator', () => {
     const fake = createFake({ t1: teamWith('sL', 'sa'), t2: teamWith('sL2', 'sb') })
     const first = fake.team('t1')
     const second = fake.team('t2')
-    const coordinator = new TeamTurnCoordinator(fake.deps, { holdTurns: true })
+    const coordinator = new TeamTurnCoordinator(fake.deps)
     first.messages.push(message({ id: 'm1', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:00.000Z' }))
     second.messages.push(message({ id: 'n1', teamId: 't2', slotId: 'L', createdAt: '2026-10-23T10:00:00.000Z' }))
 
@@ -244,7 +244,7 @@ describe('TeamTurnCoordinator', () => {
     const fake = createFake({ t1: teamWith('sL', 'sa'), t2: teamWith('sL2', 'sb') })
     const first = fake.team('t1')
     const second = fake.team('t2')
-    const coordinator = new TeamTurnCoordinator(fake.deps, { holdTurns: true })
+    const coordinator = new TeamTurnCoordinator(fake.deps)
     first.messages.push(
       message({ id: 'm1', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:00.000Z' }),
       message({ id: 'm2', teamId: 't1', slotId: 'a', createdAt: '2026-10-23T10:00:01.000Z' }),
@@ -263,7 +263,7 @@ describe('TeamTurnCoordinator', () => {
   it('leaves messages queued for archived or inactive teams without followup', async () => {
     const fake = createFake({ t1: { ...teamWith('sL', 'sa'), state: 'deleting' } })
     const team = fake.team('t1')
-    const coordinator = new TeamTurnCoordinator(fake.deps, { holdTurns: true })
+    const coordinator = new TeamTurnCoordinator(fake.deps)
     team.messages.push(message({ id: 'm1', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:00.000Z' }))
 
     expect(await coordinator.submit('t1', 'm1')).toBe('queued')

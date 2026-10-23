@@ -6,6 +6,12 @@ import { messageFromRecord, sessionHasMessage } from './team-messages.js'
 interface TeamMessageDispatcherPort {
   resolveAgent: (sessionId: string) => Agent
   warn: (message: string, error: unknown) => void
+  /**
+   * Queued model-bound messages are owned by the turn coordinator. When the
+   * provider is present, recovery leaves them queued for the coordinator's
+   * ordered drain instead of delivering them directly.
+   */
+  ownsQueuedTurns?: () => boolean
 }
 
 export class TeamMessageDispatcher {
@@ -25,6 +31,7 @@ export class TeamMessageDispatcher {
         await this.deliverBroadcast(team, record)
         continue
       }
+      if (this.port.ownsQueuedTurns?.() === true) continue
       const slotId = record.recipient.slotId
       if (slotId === undefined) continue
       const recipient = team.members[slotId]
