@@ -3408,10 +3408,15 @@ textarea.input {
 }
 
 .sidebarTeamRowWrap:hover .sidebarTeamStateDot,
-.sidebarTeamRowWrap:focus-within .sidebarTeamStateDot,
-.sidebarTeamRowWrap:hover .sidebarTeamBadge,
-.sidebarTeamRowWrap:focus-within .sidebarTeamBadge {
+.sidebarTeamRowWrap:focus-within .sidebarTeamStateDot {
   display: none;
+}
+
+/* The approval badge is the row's one attention mark; hover actions must not
+   take it away from the reader. */
+.sidebarTeamRowWrapTwoLine:hover .sidebarTeamBadge,
+.sidebarTeamRowWrapTwoLine:focus-within .sidebarTeamBadge {
+  display: inline-block;
 }
 
 .sidebarTeamManage:hover {
@@ -8420,5 +8425,113 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   .checkpointRow {
     align-items: flex-start;
     flex-direction: column;
+  }
+}
+
+/* Two-line team row: name + time, then the members/running/waiting summary.
+   Same grammar as the assistant row, so both lists read as one system. */
+.sidebarTeamRowWrapTwoLine {
+  height: auto;
+  min-height: 44px;
+  padding: 3px 8px;
+}
+
+.sidebarTeamRowTwoLine {
+  height: auto;
+  min-height: 38px;
+  align-items: center;
+}
+
+.sidebarTeamTop {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sidebarTeamTop .sidebarTeamName {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+/* Approval waits in the badge; dependency waiting is plain text here so it
+   never competes with the approval badge for attention. */
+.sidebarTeamSubtitle {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarTeamMore {
+  display: inline-flex;
+  flex: none;
+}
+
+/* Approval badge sits outside the hover actions so it stays readable. */
+.sidebarTeamRowWrapTwoLine .sidebarTeamBadge {
+  display: inline-block;
+}
+
+/* Active / history scope; only rendered once one team is archived. */
+.sidebarTeamScope {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 4px;
+}
+
+.sidebarTeamScopeButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  flex: none;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.sidebarTeamScopeButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sidebarTeamScopeButtonActive,
+.sidebarTeamScopeButtonActive:hover {
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.sidebarTeamScopeCount {
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebarTeamScopeButton:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+
+/* Touch has no hover: keep both row actions reachable instead of hiding them. */
+@media (hover: none) {
+  .sidebarTeamRowWrapTwoLine .sidebarTeamManage,
+  .sidebarTeamRowWrapTwoLine .sidebarTeamMoreButton {
+    display: inline-flex;
   }
 }

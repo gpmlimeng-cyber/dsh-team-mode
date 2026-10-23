@@ -4,13 +4,17 @@ import type { TeamView } from '../src/transport/contracts.js'
 import {
   compareTeamSidebar,
   recentTeamTasks,
+  teamScopeCounts,
   teamSidebarStatusText,
   teamSidebarSummary,
 } from '../src/client/team-sidebar-data.js'
 
 const NOW = '2026-01-01T00:00:00.000Z'
 
-type SidebarFixture = Partial<Pick<TeamView, 'members' | 'tasks' | 'pinned' | 'updatedAt' | 'id' | 'name'>>
+type SidebarFixture = Partial<Pick<
+  TeamView,
+  'members' | 'tasks' | 'pinned' | 'updatedAt' | 'id' | 'name' | 'archivedAt'
+>>
 
 function team(overrides: SidebarFixture = {}): TeamView {
   return {
@@ -47,12 +51,12 @@ function task(overrides: Partial<TeamTask> & Pick<TeamTask, 'id'>): TeamTask {
 
 describe('teamSidebarSummary', () => {
   it('returns zero counts for an empty team without undefined', () => {
-    expect(teamSidebarSummary(team())).toEqual({ members: 0, running: 0, waiting: 0 })
+    expect(teamSidebarSummary(team())).toEqual({ members: 0, running: 0, waiting: 0, waitingDependency: 0 })
   })
 
   it('counts one member slot whatever its runtime state', () => {
     const summary = teamSidebarSummary(team({ members: members({ leader: 'idle' }) }))
-    expect(summary).toEqual({ members: 1, running: 0, waiting: 0 })
+    expect(summary).toEqual({ members: 1, running: 0, waiting: 0, waitingDependency: 0 })
   })
 
   it('counts running and waiting members across many slots', () => {
@@ -65,21 +69,67 @@ describe('teamSidebarSummary', () => {
         d: 'error',
       }),
     }))
-    expect(summary).toEqual({ members: 5, running: 2, waiting: 1 })
+    expect(summary).toEqual({ members: 5, running: 2, waiting: 1, waitingDependency: 0 })
+  })
+
+  it('counts blocked tasks whose prerequisites are not completed', () => {
+    const summary = teamSidebarSummary(team({
+      tasks: {
+        impl: task({ id: 'impl', status: 'running' }),
+        review: task({ id: 'review', status: 'blocked', dependencyIds: ['impl'] }),
+        verify: task({ id: 'verify', status: 'blocked', dependencyIds: ['review'] }),
+      },
+    }))
+    expect(summary.waitingDependency).toBe(2)
+  })
+
+  it('ignores blocked tasks once every prerequisite completed', () => {
+    const summary = teamSidebarSummary(team({
+      tasks: {
+        impl: task({ id: 'impl', status: 'completed' }),
+        review: task({ id: 'review', status: 'blocked', dependencyIds: ['impl'] }),
+      },
+    }))
+    expect(summary.waitingDependency).toBe(0)
+  })
+
+  it('ignores tasks that carry dependencies but are not blocked', () => {
+    const summary = teamSidebarSummary(team({
+      tasks: {
+        impl: task({ id: 'impl', status: 'running' }),
+        pending: task({ id: 'pending', status: 'pending', dependencyIds: ['impl'] }),
+      },
+    }))
+    expect(summary.waitingDependency).toBe(0)
+  })
+
+  it('counts a blocked task without declared dependencies as not waiting', () => {
+    const summary = teamSidebarSummary(team({
+      tasks: { lonely: task({ id: 'lonely', status: 'blocked' }) },
+    }))
+    expect(summary.waitingDependency).toBe(0)
   })
 })
 
 describe('teamSidebarStatusText', () => {
   it('reads an idle team as members plus 空闲', () => {
-    expect(teamSidebarStatusText({ members: 3, running: 0, waiting: 0 })).toBe('3 人 · 空闲')
+    expect(teamSidebarStatusText({ members: 3, running: 0, waiting: 0, waitingDependency: 0 })).toBe('3 人 · 空闲')
   })
 
   it('drops 空闲 once a member is running', () => {
-    expect(teamSidebarStatusText({ members: 3, running: 2, waiting: 0 })).toBe('3 人 · 2 运行')
+    expect(teamSidebarStatusText({ members: 3, running: 2, waiting: 0, waitingDependency: 0 })).toBe('3 人 · 2 运行')
   })
 
   it('shows the waiting count last when approvals are pending', () => {
-    expect(teamSidebarStatusText({ members: 3, running: 2, waiting: 1 })).toBe('3 人 · 2 运行 · 1 待审批')
+    expect(teamSidebarStatusText({ members: 3, running: 2, waiting: 1, waitingDependency: 0 })).toBe('3 人 · 2 运行 · 1 待审批')
+  })
+
+  it('keeps dependency waiting text-only behind the member counts', () => {
+    expect(teamSidebarStatusText({ members: 3, running: 2, waiting: 0, waitingDependency: 4 })).toBe('3 人 · 2 运行 · 4 等待前置')
+  })
+
+  it('prefers the approval branch when both approvals and dependencies are pending', () => {
+    expect(teamSidebarStatusText({ members: 3, running: 2, waiting: 1, waitingDependency: 4 })).toBe('3 人 · 2 运行 · 1 待审批')
   })
 })
 
@@ -165,5 +215,42 @@ describe('recentTeamTasks', () => {
   it('falls back to the task id when the title is blank', () => {
     const tasks = { blank: task({ id: 'blank', title: '   ' }) }
     expect(recentTeamTasks(team({ tasks }))[0]?.title).toBe('未命名任务')
+  })
+
+  it('exposes the first unresolved prerequisite on a blocked task', () => {
+    const tasks = {
+      impl: task({ id: 'impl', title: '实现登录', status: 'running', ownerSlotId: 'engineer' }),
+      done: task({ id: 'done', title: '写方案', status: 'completed' }),
+      review: task({ id: 'review', title: '评审登录', status: 'blocked', dependencyIds: ['done', 'impl'] }),
+    }
+    const members = { engineer: { displayName: '实现者' } } as unknown as TeamView['members']
+    const review = recentTeamTasks(team({ tasks, members })).find(item => item.id === 'review')
+    expect(review?.blockedBy).toEqual({ id: 'impl', title: '实现登录', ownerName: '实现者' })
+  })
+
+  it('omits blockedBy when no prerequisite is outstanding', () => {
+    const tasks = {
+      done: task({ id: 'done', status: 'completed' }),
+      review: task({ id: 'review', status: 'blocked', dependencyIds: ['done'] }),
+      plain: task({ id: 'plain', status: 'blocked' }),
+    }
+    const rows = recentTeamTasks(team({ tasks }))
+    expect(rows.find(item => item.id === 'review')?.blockedBy).toBeUndefined()
+    expect(rows.find(item => item.id === 'plain')?.blockedBy).toBeUndefined()
+  })
+})
+
+describe('teamScopeCounts', () => {
+  it('splits active and archived teams without double counting', () => {
+    expect(teamScopeCounts([
+      team({ id: 'a' }),
+      team({ id: 'b' }),
+      team({ id: 'c', archivedAt: '2025-12-01T00:00:00.000Z' }),
+    ])).toEqual({ active: 2, archived: 1 })
+  })
+
+  it('reports zero archived teams when nothing is archived', () => {
+    expect(teamScopeCounts([])).toEqual({ active: 0, archived: 0 })
+    expect(teamScopeCounts([team({ id: 'only' })])).toEqual({ active: 1, archived: 0 })
   })
 })

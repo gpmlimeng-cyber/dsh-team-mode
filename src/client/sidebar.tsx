@@ -13,6 +13,7 @@ import {
   IconProjectAddOutlineRegular,
   IconPlusOutlineRegular,
   IconSearchOutlineRegular,
+  IconSettingsOutlineRegular,
   IconSlidersTwoOutlineRegular,
   IconWarningOutlineRegular,
   Menu,
@@ -26,7 +27,12 @@ import {
   selectTeam,
   useAgentTeamUi,
 } from './store.js'
-import { isTeamExecuting } from './team-status.js'
+import {
+  compareTeamSidebar,
+  teamScopeCounts,
+  teamSidebarStatusText,
+  teamSidebarSummary,
+} from './team-sidebar-data.js'
 import { useTeamText } from './team-i18n.js'
 import css from './AgentTeam.module.css'
 import type { TeamView } from '../transport/contracts.js'
@@ -50,13 +56,6 @@ function writeExpanded(expanded: boolean): void {
   }
 }
 
-function teamStateLabel(team: TeamView): string {
-  if (team.state === 'error') return '异常'
-  if (team.state === 'starting') return '启动中'
-  if (isTeamExecuting(team)) return '运行中'
-  return '空闲'
-}
-
 function relativeTime(iso: string): string {
   const timestamp = Date.parse(iso)
   if (Number.isNaN(timestamp)) return ''
@@ -67,10 +66,6 @@ function relativeTime(iso: string): string {
   if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}天`
   const date = new Date(timestamp)
   return `${date.getMonth() + 1}月${date.getDate()}日`
-}
-
-function waitingCount(team: TeamView): number {
-  return Object.values(team.members).filter(member => member.lastRuntimeState === 'waiting_approval').length
 }
 
 /** The collapsible “群聊” section above the native Workspace/Session browser. */
@@ -90,8 +85,9 @@ export function SidebarTeamSection({
   const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [onlyPending, setOnlyPending] = useState(false)
-  const [showArchived, setShowArchived] = useState(false)
+  const [scope, setScope] = useState<'active' | 'archived'>('active')
   const [sortMode, setSortMode] = useState<'updated' | 'name'>('updated')
+  const [menuTeamId, setMenuTeamId] = useState<string>()
   const [error, setError] = useState<string>()
 
   const load = useCallback(async () => {
@@ -119,23 +115,19 @@ export function SidebarTeamSection({
     })
   }
 
+  const scopeCounts = teamScopeCounts(teams)
+
   const visibleTeams = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase()
     const filtered = teams.filter(team => {
-      if (!showArchived && team.archivedAt !== undefined) return false
-      if (onlyPending && waitingCount(team) === 0) return false
+      if (scope === 'archived' ? team.archivedAt === undefined : team.archivedAt !== undefined) return false
+      if (onlyPending && teamSidebarSummary(team).waiting === 0) return false
       if (normalized === '') return true
       return [team.name, ...Object.values(team.members).map(member => member.displayName)]
         .some(value => value.toLocaleLowerCase().includes(normalized))
     })
-    return filtered.sort((a, b) => {
-      const pinned = Number(b.pinned === true) - Number(a.pinned === true)
-      if (pinned !== 0) return pinned
-      return sortMode === 'name'
-        ? a.name.localeCompare(b.name, 'zh-CN')
-        : Date.parse(b.updatedAt) - Date.parse(a.updatedAt)
-    })
-  }, [onlyPending, query, showArchived, sortMode, teams])
+    return filtered.sort((a, b) => compareTeamSidebar(a, b, sortMode))
+  }, [onlyPending, query, scope, sortMode, teams])
 
   const openTeam = (team: TeamView): void => {
     selectTeam(team.id)
@@ -208,7 +200,6 @@ export function SidebarTeamSection({
                 items={[
                   { type: 'label', id: 'filter-label', text: t('sidebar.filter') },
                   { id: 'only-pending', label: t('sidebar.onlyPending'), icon: <IconWarningOutlineRegular /> },
-                  { id: 'show-archived', label: t('sidebar.showArchived'), icon: <IconClockOutlineRegular /> },
                   { type: 'separator', id: 'sort-separator' },
                   { type: 'label', id: 'sort-label', text: t('sidebar.sort') },
                   { id: 'sort-updated', label: t('sidebar.sortUpdated'), icon: <IconClockOutlineRegular /> },
@@ -216,12 +207,10 @@ export function SidebarTeamSection({
                 ]}
                 selectedIds={[
                   onlyPending ? 'only-pending' : undefined,
-                  showArchived ? 'show-archived' : undefined,
                   sortMode === 'name' ? 'sort-name' : 'sort-updated',
                 ].filter((id): id is string => id !== undefined)}
                 onSelect={id => {
                   if (id === 'only-pending') setOnlyPending(value => !value)
-                  else if (id === 'show-archived') setShowArchived(value => !value)
                   else if (id === 'sort-updated' || id === 'sort-name') setSortMode(id === 'sort-name' ? 'name' : 'updated')
                   setMenuOpen(false)
                 }}
@@ -256,6 +245,26 @@ export function SidebarTeamSection({
       {expanded && (
         <div id="dsh-team-mode-sidebar-list" className={css.sidebarTeamList}>
           {error !== undefined && <div className={css.sidebarTeamError} role="alert">{error}</div>}
+          {scopeCounts.archived > 0 && (
+            <div className={css.sidebarTeamScope} role="group" aria-label="团队范围">
+              <button
+                type="button"
+                className={`${css.sidebarTeamScopeButton} ${scope === 'active' ? css.sidebarTeamScopeButtonActive : ''}`}
+                aria-pressed={scope === 'active'}
+                onClick={() => { setScope('active') }}
+              >
+                团队<span className={css.sidebarTeamScopeCount}>{scopeCounts.active}</span>
+              </button>
+              <button
+                type="button"
+                className={`${css.sidebarTeamScopeButton} ${scope === 'archived' ? css.sidebarTeamScopeButtonActive : ''}`}
+                aria-pressed={scope === 'archived'}
+                onClick={() => { setScope('archived') }}
+              >
+                历史<span className={css.sidebarTeamScopeCount}>{scopeCounts.archived}</span>
+              </button>
+            </div>
+          )}
           {teams.length === 0
             ? (
                 <button
@@ -271,63 +280,57 @@ export function SidebarTeamSection({
                 </button>
               )
             : visibleTeams.length === 0
-              ? <div className={css.sidebarTeamEmpty}>{t('sidebar.noMatches')}</div>
+              ? (
+                  <div className={css.sidebarTeamEmpty}>
+                    {query.trim() !== ''
+                      ? t('sidebar.noMatches')
+                      : scope === 'archived' ? '暂无历史团队' : '暂无进行中的团队'}
+                  </div>
+                )
               : visibleTeams.map(team => {
-              const members = Object.values(team.members)
-              const waiting = waitingCount(team)
+              const summary = teamSidebarSummary(team)
+              const statusText = teamSidebarStatusText(summary)
               const active = selectedTeamId === team.id
-              const archivable = team.state !== 'active' && team.state !== 'starting'
+              const archivable = team.archivedAt === undefined
+                && team.state !== 'active'
+                && team.state !== 'starting'
+              const rowMenuOpen = menuTeamId === team.id
               return (
                 <div key={team.id} className={css.sidebarTeamGroup}>
-                  <div className={`${css.sidebarTeamRowWrap} ${active ? css.sidebarTeamRowWrapActive : ''}`}>
+                  <div
+                    className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamRowWrapTwoLine} ${active ? css.sidebarTeamRowWrapActive : ''} ${rowMenuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
+                  >
                     <button
                       type="button"
-                      className={css.sidebarTeamRow}
+                      className={`${css.sidebarTeamRow} ${css.sidebarTeamRowTwoLine}`}
                       onClick={() => { openTeam(team) }}
                       aria-current={active ? 'page' : undefined}
-                      title={`${team.name} · ${members.length} 名成员 · ${teamStateLabel(team)}`}
+                      title={`${team.name} · ${statusText}`}
                     >
                       <span className={css.sidebarTeamAvatar} aria-hidden="true">
                         <IconUsersOutlineRegular size={16} />
                       </span>
                       <span className={css.sidebarTeamCopy}>
-                        <span className={css.sidebarTeamName}>{team.name}</span>
+                        <span className={css.sidebarTeamTop}>
+                          <span className={css.sidebarTeamName}>{team.name}</span>
+                          <span className={css.sidebarTeamTime}>{relativeTime(team.updatedAt)}</span>
+                        </span>
+                        <span className={css.sidebarTeamSubtitle} title={statusText}>{statusText}</span>
                       </span>
-                      <span className={css.sidebarTeamTime}>{relativeTime(team.updatedAt)}</span>
-                      {waiting > 0
-                        ? <span className={css.sidebarTeamBadge} title={`${waiting} 个待确认`}>{waiting > 99 ? '99+' : waiting}</span>
-                        : isTeamExecuting(team)
+                      {summary.waiting > 0
+                        ? (
+                            <span
+                              className={css.sidebarTeamBadge}
+                              title={`${summary.waiting} 个待确认`}
+                              aria-label={`${summary.waiting} 个待确认`}
+                            >
+                              {summary.waiting > 99 ? '99+' : summary.waiting}
+                            </span>
+                          )
+                        : summary.running > 0
                           ? <span className={css.sidebarTeamStateDot} aria-hidden="true" />
                           : null}
                     </button>
-                    <Tooltip label={t('sidebar.manage')} delayMs={400}>
-                      <button
-                        type="button"
-                        className={css.sidebarTeamManage}
-                        onClick={() => { openManageTeamDialog(team.id) }}
-                        aria-label={`管理 ${team.name}`}
-                      >
-                        <IconEllipsisOutlineRegular size={14} />
-                      </button>
-                    </Tooltip>
-                    <Tooltip label={archivable ? '归档团队' : '先解散团队再归档'} delayMs={400}>
-                      <button
-                        type="button"
-                        className={css.sidebarTeamManage}
-                        disabled={!archivable}
-                        onClick={() => {
-                          void callAgentTeam('team.archive', {
-                            teamId: team.id,
-                            archived: true,
-                          }, team.revision).then(() => { void load() }).catch(cause => {
-                            setError(cause instanceof Error ? cause.message : String(cause))
-                          })
-                        }}
-                        aria-label={`归档 ${team.name}`}
-                      >
-                        <IconArchiveOutlineRegular size={14} />
-                      </button>
-                    </Tooltip>
                     <Tooltip label={team.pinned === true ? t('sidebar.unpin') : t('sidebar.pin')} delayMs={400}>
                       <button
                         type="button"
@@ -347,6 +350,52 @@ export function SidebarTeamSection({
                           : <IconPinOutlineRegular size={14} />}
                       </button>
                     </Tooltip>
+                    <Menu
+                      open={rowMenuOpen}
+                      onClose={() => { setMenuTeamId(undefined) }}
+                      align="end"
+                      side="bottom"
+                      dense
+                      portal
+                      className={css.sidebarTeamMore ?? ''}
+                      items={[
+                        { id: 'manage', label: t('sidebar.manage'), icon: <IconSettingsOutlineRegular /> },
+                        {
+                          id: 'archive',
+                          label: archivable ? '归档团队' : '归档团队（先解散）',
+                          icon: <IconArchiveOutlineRegular />,
+                          disabled: !archivable,
+                        },
+                      ]}
+                      onSelect={id => {
+                        setMenuTeamId(undefined)
+                        if (id === 'manage') openManageTeamDialog(team.id)
+                        else if (id === 'archive') {
+                          void callAgentTeam('team.archive', {
+                            teamId: team.id,
+                            archived: true,
+                          }, team.revision).then(() => { void load() }).catch(cause => {
+                            setError(cause instanceof Error ? cause.message : String(cause))
+                          })
+                        }
+                      }}
+                      anchor={(
+                        <Tooltip label="更多操作" delayMs={400}>
+                          <button
+                            type="button"
+                            className={`${css.sidebarTeamManage} ${css.sidebarTeamMoreButton}`}
+                            aria-label={`更多操作 ${team.name}`}
+                            aria-haspopup="menu"
+                            aria-expanded={rowMenuOpen}
+                            onClick={() => {
+                              setMenuTeamId(current => current === team.id ? undefined : team.id)
+                            }}
+                          >
+                            <IconEllipsisOutlineRegular size={14} />
+                          </button>
+                        </Tooltip>
+                      )}
+                    />
                   </div>
                 </div>
               )
