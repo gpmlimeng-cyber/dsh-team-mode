@@ -367,7 +367,7 @@ export class AssistantRuntime {
     const sourceSessionId = instance.mainSessionId
     if (sourceSessionId === undefined) {
       throw new AgentTeamError(
-        'INVALID_REQUEST',
+        'ASSISTANT_SESSION_NOT_READY',
         `Assistant '${instance.assistantSnapshot.name}' has no main Session yet; open it once before creating a checkpoint`,
         { instanceId: instance.id },
       )

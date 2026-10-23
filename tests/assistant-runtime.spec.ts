@@ -16,6 +16,7 @@ import type {
   AssistantInstance,
   AssistantMemory,
   AssistantSession,
+  CheckpointFacts,
   ContextCheckpoint,
   CreateAssistantSessionInput,
   MemoryEntry,
@@ -401,6 +402,28 @@ function createHarness(
     checkpoints.set(id, next)
     return next
   })
+  const createContextCheckpoint = vi.fn(async (input: {
+    assistantId: string
+    sourceSessionId: string
+    capturedThroughSeq: number
+    facts: CheckpointFacts
+    note: string
+  }) => {
+    const checkpoint: ContextCheckpoint = {
+      schemaVersion: 1,
+      id: `checkpoint-${checkpoints.size + 1}`,
+      assistantId: input.assistantId,
+      sourceSessionId: input.sourceSessionId,
+      title: '检查点',
+      note: input.note,
+      capturedThroughSeq: input.capturedThroughSeq,
+      facts: input.facts,
+      status: 'ready',
+      createdAt: NOW,
+    }
+    checkpoints.set(checkpoint.id, checkpoint)
+    return checkpoint
+  })
   const seedCheckpoint = (overrides: Partial<ContextCheckpoint> = {}): ContextCheckpoint => {
     const checkpoint: ContextCheckpoint = {
       schemaVersion: 1,
@@ -431,6 +454,7 @@ function createHarness(
     getContextCheckpoint,
     advanceAssistantMainSession,
     consumeContextCheckpoint,
+    createContextCheckpoint,
     createAssistantSession,
     getAssistantSession,
     listAssistantSessions,
@@ -453,6 +477,7 @@ function createHarness(
     getContextCheckpoint,
     advanceAssistantMainSession,
     consumeContextCheckpoint,
+    createContextCheckpoint,
     seedCheckpoint,
     checkpoints,
     createAssistantSession,
@@ -488,6 +513,10 @@ function createHarness(
       live.delete(sessionId)
     },
   }
+}
+
+function sessionEvent(seq: number, type: SessionEvent['type'], data: unknown): SessionEvent {
+  return { seq, time: 1_700_000_000_000 + seq, type, data } as SessionEvent
 }
 
 function textOf(message: unknown): string {
@@ -1728,6 +1757,62 @@ describe('AssistantRuntime', () => {
     await expect(unbound.runtime.handoff('checkpoint-1'))
       .rejects.toMatchObject({ code: 'ASSISTANT_SESSION_NOT_READY' })
     expect(unbound.createMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses to checkpoint an instance with no main Session using ASSISTANT_SESSION_NOT_READY', async () => {
+    const h = createHarness()
+
+    await expect(h.runtime.createCheckpoint('instance-1', ''))
+      .rejects.toMatchObject({
+        code: 'ASSISTANT_SESSION_NOT_READY',
+        message: expect.stringContaining('no main Session'),
+      })
+
+    expect(h.createContextCheckpoint).not.toHaveBeenCalled()
+    expect(h.checkpoints.size).toBe(0)
+  })
+
+  it('creates a ready checkpoint from the live main Session', async () => {
+    const h = createHarness()
+    const main = await h.runtime.ensureInstance('instance-1')
+    const record = h.handles[0]
+    expect(record).toBeDefined()
+    h.setLive(main.sessionId, record?.agent)
+    record?.events.push(
+      sessionEvent(0, 'user/message', {
+        id: 'user-1',
+        role: 'user',
+        source: { kind: 'user' },
+        content: [{ type: 'text', text: 'Plan the handoff' }],
+      }),
+      sessionEvent(1, 'assistant/message', {
+        turn: 1,
+        step: 1,
+        message: {
+          id: 'assistant-1',
+          role: 'assistant',
+          source: { kind: 'model', provider: 'openai', model: 'gpt-5' },
+          content: [{ type: 'text', text: 'Ready' }],
+        },
+        stream: [],
+      }),
+    )
+
+    const checkpoint = await h.runtime.createCheckpoint('instance-1', 'note')
+
+    expect(checkpoint).toMatchObject({
+      assistantId: 'instance-1',
+      sourceSessionId: main.sessionId,
+      note: 'note',
+      status: 'ready',
+      capturedThroughSeq: 1,
+    })
+    expect(checkpoint.facts.recentMessages).toEqual([
+      { role: 'user', text: 'Plan the handoff' },
+      { role: 'assistant', text: 'Ready' },
+    ])
+    expect(checkpoint.facts.activeTasks).toEqual([])
+    expect(h.createContextCheckpoint).toHaveBeenCalledTimes(1)
   })
 
   it('refuses handoff while the current main Session is running a turn', async () => {
