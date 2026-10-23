@@ -5,7 +5,7 @@
 ## 当前状态
 
 ```text
-仓库：/root/dsh-team-mode
+仓库：~/dsh-team-mode
 分支：main
 远程：https://github.com/gpmlimeng-cyber/dsh-team-mode
 DSH：0.2.1-rc.2

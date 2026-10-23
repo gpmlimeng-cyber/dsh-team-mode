@@ -51,6 +51,7 @@
     "README_CN.md",
     "CHANGELOG.md",
     "docs/*.md",
+    "!docs/HANDOFF.md",
     "!docs/UI-REVIEW.md",
     "docs/assets/dsh-team-mode/*.png"
   ],
