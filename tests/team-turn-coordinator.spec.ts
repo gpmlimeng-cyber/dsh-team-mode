@@ -260,6 +260,61 @@ describe('TeamTurnCoordinator', () => {
     expect(second.messages[0]?.deliveryState).toBe('delivered')
   })
 
+  it('ignores a late release from an old speaker while another member is active', async () => {
+    // t4 blocker: a stale idle/turn/end from session B must not clear the
+    // active turn that session A now owns, nor drain the next message.
+    const fake = createFake({ t1: teamWith('sL', 'sa') })
+    const team = fake.team('t1')
+    const coordinator = new TeamTurnCoordinator(fake.deps)
+    team.messages.push(
+      message({ id: 'm1', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:00.000Z' }),
+      message({ id: 'm2', teamId: 't1', slotId: 'a', createdAt: '2026-10-23T10:00:01.000Z' }),
+      message({ id: 'm3', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:02.000Z' }),
+    )
+    // sa never addressed yet, so releaseSession('sa') has no team to drain.
+    await coordinator.submit('t1', 'm1')
+    await coordinator.releaseSession('sL')
+    expect(fake.followups).toEqual([
+      { sessionId: 'sL', messageId: 'm1' },
+      { sessionId: 'sa', messageId: 'm2' },
+    ])
+    // m3 is queued behind m2; sa now owns the active turn.
+    expect(team.messages.find(m => m.id === 'm3')?.deliveryState).toBe('queued')
+    // A late release from the old leader session must be a no-op.
+    await coordinator.releaseSession('sL')
+    expect(coordinator.activeSlot('t1')).toBe('a')
+    expect(team.messages.find(m => m.id === 'm3')?.deliveryState).toBe('queued')
+    expect(fake.followups).toHaveLength(2)
+
+    // Releasing the current owner still drains the queue.
+    await coordinator.releaseSession('sa')
+    expect(fake.followups[2]).toEqual({ sessionId: 'sL', messageId: 'm3' })
+    expect(team.messages.every(m => m.deliveryState === 'delivered')).toBe(true)
+  })
+
+  it('keeps a non-head submit queued until the head is delivered', async () => {
+    // F2: submit must never deliver a newer record ahead of an older queued one.
+    const fake = createFake({ t1: teamWith('sL', 'sa') })
+    const team = fake.team('t1')
+    const coordinator = new TeamTurnCoordinator(fake.deps)
+    team.messages.push(
+      message({ id: 'm1', teamId: 't1', slotId: 'a', createdAt: '2026-10-23T10:00:00.000Z' }),
+      message({ id: 'm2', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:01.000Z' }),
+    )
+    fake.setSessionState('sa', 'offline')
+
+    // Submitting the newer head-of-nothing record stays queued while the older
+    // record's target is offline; neither jumps the other.
+    expect(await coordinator.submit('t1', 'm2')).toBe('queued')
+    expect(fake.followups).toEqual([])
+
+    fake.setSessionState('sa', 'online')
+    await coordinator.drain('t1')
+    // The oldest record (m1) is delivered first, not m2.
+    expect(fake.followups).toEqual([{ sessionId: 'sa', messageId: 'm1' }])
+    expect(team.messages.find(m => m.id === 'm2')?.deliveryState).toBe('queued')
+  })
+
   it('drains the session team on release even after the active turn is gone', async () => {
     // turn/end can race ahead of the idle transition: the first release clears
     // the active turn while the target is still `running`, and the later idle

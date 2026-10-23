@@ -395,6 +395,52 @@ describe('team turn runtime wiring', () => {
     })
   })
 
+  it('queues turn/end and idle back-to-back without letting a third message jump the member turn', async () => {
+    const { ctx, service, store, emit } = createHarness()
+    const team = await twoMemberTeam(service, store)
+    const runtime = new TeamRuntime(ctx, config, service)
+    const leaderAgent = fakeAgent()
+    const memberAgent = fakeAgent()
+    adopt(runtime, team, team.leaderSlotId, leaderAgent)
+    const memberId = Object.keys(team.members).find(id => id !== team.leaderSlotId)!
+    adopt(runtime, team, memberId, memberAgent)
+    const leaderSession = team.members[team.leaderSlotId]!.sessionId
+    const memberSession = team.members[memberId]!.sessionId
+
+    await runtime.sendUserMessage(team.id, 'm1 to member', memberId)
+    expect(memberAgent.followup).toHaveBeenCalledOnce()
+    // From here the member reports `running`, like a live agent mid-turn.
+    memberAgent.status = 'running'
+
+    // Two queued messages land while the member turn is still active.
+    await runtime.sendUserMessage(team.id, 'm2 to leader')
+    await runtime.sendUserMessage(team.id, 'm3 to leader')
+
+    // turn/end and idle fire back-to-back before the drain runs.
+    memberAgent.status = 'idle'
+    emit('session/event', { session: { id: memberSession }, event: {
+      type: 'turn/end',
+      data: { reason: { kind: 'completed' } },
+    } })
+    emit('agent/status', { agent: { id: memberSession }, status: 'idle' })
+
+    // m2 (oldest) is delivered to the leader; m3 stays queued behind it.
+    await vi.waitFor(() => {
+      expect(service.listMessages(team.id).items.find(m => m.content === 'm2 to leader')?.deliveryState).toBe('delivered')
+    })
+    expect(service.listMessages(team.id).items.find(m => m.content === 'm3 to leader')?.deliveryState).toBe('queued')
+    expect(leaderAgent.followup).toHaveBeenCalledTimes(1)
+
+    // Releasing the leader delivers the third message in order.
+    emit('session/event', { session: { id: leaderSession }, event: {
+      type: 'turn/end',
+      data: { reason: { kind: 'completed' } },
+    } })
+    await vi.waitFor(() => {
+      expect(service.listMessages(team.id).items.find(m => m.content === 'm3 to leader')?.deliveryState).toBe('delivered')
+    })
+  })
+
   it('drains persisted queued messages exactly once during recovery', async () => {
     const { ctx, service, store } = createHarness()
     const team = await twoMemberTeam(service, store)

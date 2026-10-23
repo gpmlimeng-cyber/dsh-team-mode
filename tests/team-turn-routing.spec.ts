@@ -61,6 +61,17 @@ describe('resolveTeamTarget', () => {
     expectError('MEMBER_NOT_FOUND', () => resolveTeamTarget({ team, content: 'hi', explicitSlotId: 'ghost' }))
   })
 
+  it('rejects an unknown explicit target even when it contains an @', () => {
+    expectError('MEMBER_NOT_FOUND', () => resolveTeamTarget({ team, content: 'hi', explicitSlotId: 'x@y.z' }))
+  })
+
+  it('routes a mention by slot id, longest form first', () => {
+    expect(resolveTeamTarget({ team, content: '@b please take this' })).toEqual({
+      slotId: 'b',
+      reason: 'mention',
+    })
+  })
+
   it('rejects @all from a member', () => {
     expectError('INVALID_REQUEST', () => resolveTeamTarget({ team, content: '@all stand by', senderSlotId: 'a' }))
   })

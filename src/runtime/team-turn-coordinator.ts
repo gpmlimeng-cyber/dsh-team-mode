@@ -24,9 +24,14 @@ export class TeamTurnCoordinator {
 
   constructor(private readonly deps: TeamTurnDeps) {}
 
+  /**
+   * Enqueue one submitted record, then drain the queue head. A non-head
+   * submission stays queued: delivery always takes the oldest queued record by
+   * createdAt/id, so submitting a newer message never jumps an older one.
+   */
   submit(teamId: string, messageId: string): Promise<'delivered' | 'queued'> {
     return this.enqueue(teamId, async () => {
-      await this.drainOnce(teamId, messageId)
+      await this.drainOnce(teamId)
       return this.deps.listMessages(teamId).find(message => message.id === messageId)?.deliveryState === 'delivered'
         ? 'delivered'
         : 'queued'
@@ -34,11 +39,11 @@ export class TeamTurnCoordinator {
   }
 
   /**
-   * Release one session's turn, then drain. When the session is no longer the
-   * active turn (turn/end raced ahead of the idle transition and an earlier
-   * release already cleared it), still drain the session's team: the target
-   * may have been `running` at the first attempt, and the idle event must be
-   * able to retry delivery instead of leaving the queue stuck.
+   * Release one session's turn, then drain. Inside the per-team chain the
+   * current active turn is re-read: a late release from an old speaker must not
+   * clear the turn another session now owns. When no turn is active, the
+   * session→team fallback still drains (turn/end can race ahead of the idle
+   * transition and leave the target `running` at the first attempt).
    */
   releaseSession(sessionId: string): Promise<void> {
     const teamId = [...this.active.entries()]
@@ -48,6 +53,11 @@ export class TeamTurnCoordinator {
       return Promise.resolve()
     }
     return this.enqueue(teamId, async () => {
+      const current = this.active.get(teamId)
+      if (current !== undefined && current.sessionId !== sessionId) {
+        // Another session owns the turn; this late release is a no-op.
+        return
+      }
       this.active.delete(teamId)
       await this.drainOnce(teamId)
     })
@@ -78,7 +88,7 @@ export class TeamTurnCoordinator {
     return next
   }
 
-  private async drainOnce(teamId: string, preferredMessageId?: string): Promise<void> {
+  private async drainOnce(teamId: string): Promise<void> {
     if (this.active.has(teamId)) {
       return
     }
@@ -92,12 +102,10 @@ export class TeamTurnCoordinator {
     if (team.state !== 'active') {
       return
     }
-    const queued = this.deps.listMessages(teamId)
-      .filter(message => message.deliveryState === 'queued')
-      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
-    const message = preferredMessageId !== undefined
-      ? queued.find(candidate => candidate.id === preferredMessageId)
-      : queued[0]
+    // The queue head is the only deliverable record: createdAt ASC, then id ASC.
+    const message = this.deps.listMessages(teamId)
+      .filter(candidate => candidate.deliveryState === 'queued')
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))[0]
     if (message === undefined) {
       return
     }

@@ -22,10 +22,9 @@ export function resolveTeamTarget(input: {
     if (team.members[explicit] !== undefined) {
       return { slotId: explicit, reason: 'explicit' }
     }
-    if (!explicit.includes('@')) {
-      throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown team member: ${explicit}`, { explicitSlotId: explicit })
-    }
-    // An email-like value is not a slot id; treat it as no explicit target.
+    // Every provided explicit target that is not a current member is an error,
+    // whatever it looks like; a UI-selected target is never silently ignored.
+    throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown team member: ${explicit}`, { explicitSlotId: explicit })
   }
 
   const mentions = findMentions(content, team)
@@ -48,10 +47,17 @@ export function resolveTeamTarget(input: {
 }
 
 function findMentions(content: string, team: TurnRoutingTeam): string[] {
-  const candidates = Object.values(team.members)
-    .map(member => ({ id: member.id, name: member.displayName.trim() }))
-    .filter(candidate => candidate.name.length > 0)
-  // Longest first so "@Beta One" wins over a "@Beta" prefix.
+  const candidates: Array<{ id: string; name: string }> = []
+  for (const member of Object.values(team.members)) {
+    const displayName = member.displayName.trim()
+    if (displayName.length > 0) {
+      candidates.push({ id: member.id, name: displayName })
+    }
+    // Slot ids are routable too ("@<slotId>"); longest-first covers both forms.
+    if (member.id.trim().length > 0) {
+      candidates.push({ id: member.id, name: member.id.trim() })
+    }
+  }
   candidates.sort((left, right) => right.name.length - left.name.length || left.name.localeCompare(right.name))
   const found: string[] = []
   for (const match of content.matchAll(/(?:^|\s)@/g)) {
