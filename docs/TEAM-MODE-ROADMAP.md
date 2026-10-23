@@ -17,11 +17,11 @@ AgentTeams 值得借鉴的是 **任务所有权/调度协议**；不是照搬“
 
 ## 核心竞品结论
 
-| 竞品 | 主要机制 | 我们采用 |
-|---|---|---|
-| **DS Bot** | 群管理员先答；一次一人顺序发言；`@` 叫人；群记忆、群权限、群工作文件夹；长任务后台完成后再回群 | 群聊秩序与发言体验 |
-| **OpenMausBot** | Chief of Staff；room + responder；`coordinate_bots` 持久委派；Goal 记录、忙时 park/resume、团队记忆、审批继承 | 持久目标与委派账本 |
-| **dsh-agent-teams** | Captain + DAG + attempt + 调度器 + 质量门禁 | 任务所有权与门禁协议 |
+| 竞品                | 主要机制                                                                                                      | 我们采用             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------- | -------------------- |
+| **DS Bot**          | 群管理员先答；一次一人顺序发言；`@` 叫人；群记忆、群权限、群工作文件夹；长任务后台完成后再回群                | 群聊秩序与发言体验   |
+| **OpenMausBot**     | Chief of Staff；room + responder；`coordinate_bots` 持久委派；Goal 记录、忙时 park/resume、团队记忆、审批继承 | 持久目标与委派账本   |
+| **dsh-agent-teams** | Captain + DAG + attempt + 调度器 + 质量门禁                                                                   | 任务所有权与门禁协议 |
 
 结论：
 
@@ -92,27 +92,36 @@ Assistant DM Main Session
 
 明确拒绝“一个成员固定一个 Session 跨多个团队”：DSH 是单父级，固定会话会导致团队上下文混用、任务串行和归属不清。
 
+## 近期优先队列（2026-10-23）
+
+1. Turn Engine 收尾（team-turn-engine，进行中）
+2. 侧栏团队状态行（小需求，优先）
+3. 主 Agent 产品形态
+4. 协作总览
+
+侧栏团队行设计：[team-sidebar-row-design](./superpowers/specs/2026-10-23-team-sidebar-row-design.md)
+
 ## 后续优先级
 
 ### P0：可靠性
 
-| 项目 | 目标 | 状态 |
-|---|---|---|
-| 重载/冷启动主会话接管 | 已 live 的外来主会话返回可恢复冲突，不再静默打开无工具会话 | 已完成（显式恢复） |
-| 任务 attempt / ownership fencing | 每次分配/转派生成 attempt；旧 attempt 的迟到更新被拒绝 | 已完成 |
-| 冷恢复状态机 | 区分进程内中断、插件重载、Host 冷启动；遗留任务生成新 attempt | 待开始 |
-| 归档并发竞态 | 归档状态与停止 worker 在同一实例锁内完成 | 待开始 |
-| 提示词 attempt 提示 | 派发/更新提示补 attempt_id，避免成员首次更新被拒 | 低优先补丁 |
+| 项目                             | 目标                                                          | 状态               |
+| -------------------------------- | ------------------------------------------------------------- | ------------------ |
+| 重载/冷启动主会话接管            | 已 live 的外来主会话返回可恢复冲突，不再静默打开无工具会话    | 已完成（显式恢复） |
+| 任务 attempt / ownership fencing | 每次分配/转派生成 attempt；旧 attempt 的迟到更新被拒绝        | 已完成             |
+| 冷恢复状态机                     | 区分进程内中断、插件重载、Host 冷启动；遗留任务生成新 attempt | 待开始             |
+| 归档并发竞态                     | 归档状态与停止 worker 在同一实例锁内完成                      | 待开始             |
+| 提示词 attempt 提示              | 派发/更新提示补 attempt_id，避免成员首次更新被拒              | 低优先补丁         |
 
 ### P1：群聊编排模式
 
 按目标复杂度选择运行模式，避免把普通聊天任务化：
 
-| 模式 | 触发 | 行为 |
-|---|---|---|
-| 对话 | 1 个问题、无需交付/验证 | 直接回答，不建 Goal |
-| 单任务 | 1 个目标、1 个 owner、一个可验收交付物 | 1 个 Goal + 1 个 Task |
-| 编排 | 2+ 并行流、2+ 成员、依赖、验证/评审、长任务 | 1 个 Goal + DAG |
+| 模式   | 触发                                        | 行为                  |
+| ------ | ------------------------------------------- | --------------------- |
+| 对话   | 1 个问题、无需交付/验证                     | 直接回答，不建 Goal   |
+| 单任务 | 1 个目标、1 个 owner、一个可验收交付物      | 1 个 Goal + 1 个 Task |
+| 编排   | 2+ 并行流、2+ 成员、依赖、验证/评审、长任务 | 1 个 Goal + DAG       |
 
 多目标规则：
 
@@ -158,14 +167,14 @@ P3  会话搜索、图关系、可选社区插件适配
 
 借鉴 Raft，但保留 DSH 的 Session 约束。
 
-| 项目 | 目标 | 优先级 |
-|---|---|---|
-| membership → assistantInstance 链接 | 团队成员可解析真实助手身份，解锁 team-safe memory | P1 |
-| task claim + member inbox | 可选自动领取 ready task；inbox 先做投影 | P1 |
-| thread / task context | 消息带 threadId/taskId/goalId/replyTo | P1 |
-| reminder / follow-up | dueAt/remindAt + 超时事件 | P2 |
-| 新成员有界历史 | 注入摘要 + active memory + 相关 thread | P2 |
-| 成员私有 workspace | 团队共享目录 + 成员 scratch | P2 |
+| 项目                                | 目标                                              | 优先级 |
+| ----------------------------------- | ------------------------------------------------- | ------ |
+| membership → assistantInstance 链接 | 团队成员可解析真实助手身份，解锁 team-safe memory | P1     |
+| task claim + member inbox           | 可选自动领取 ready task；inbox 先做投影           | P1     |
+| thread / task context               | 消息带 threadId/taskId/goalId/replyTo             | P1     |
+| reminder / follow-up                | dueAt/remindAt + 超时事件                         | P2     |
+| 新成员有界历史                      | 注入摘要 + active memory + 相关 thread            | P2     |
+| 成员私有 workspace                  | 团队共享目录 + 成员 scratch                       | P2     |
 
 不照搬：
 
@@ -178,35 +187,35 @@ P3  会话搜索、图关系、可选社区插件适配
 
 ### P1：任务协议
 
-| 项目 | 目标 | 借鉴点 |
-|---|---|---|
-| 可选自动调度 | 默认手动分配；高级模式由空闲成员自动领取 ready task | AgentTeams shared scheduler |
-| 质量门禁 | requirements → implementation → verification → review → integration，失败自动 repair/re-review | AgentTeams quality gates |
-| 任务详情/重试 | 任务级查看、取消、重试、产物与摘要 | AgentTeams attempt lifecycle |
-| 成员工具策略 | 部署方声明策略 id，成员按 id 选择，不暴露原始 allow/deny | AgentTeams toolPolicies |
+| 项目          | 目标                                                                                           | 借鉴点                       |
+| ------------- | ---------------------------------------------------------------------------------------------- | ---------------------------- |
+| 可选自动调度  | 默认手动分配；高级模式由空闲成员自动领取 ready task                                            | AgentTeams shared scheduler  |
+| 质量门禁      | requirements → implementation → verification → review → integration，失败自动 repair/re-review | AgentTeams quality gates     |
+| 任务详情/重试 | 任务级查看、取消、重试、产物与摘要                                                             | AgentTeams attempt lifecycle |
+| 成员工具策略  | 部署方声明策略 id，成员按 id 选择，不暴露原始 allow/deny                                       | AgentTeams toolPolicies      |
 
 ### P1：竞品差距
 
-| 项目 | 目标 |
-|---|---|
-| Context Steward | 压缩/分段/checkpoint/handoff，解决长任务失忆 |
-| Group Chat Turn Engine | 管理员先答、顺序发言、@、迟到回复、审批胶囊 |
-| Autonomous Ops | routines、reminders、budget、busy park/resume |
-| Memory Automation | capture/recall/tidy/journal，默认只写 proposed |
-| DSH Ecosystem Reuse | 复用 MCP/Skills/Tools/Browser/UI slots，按成员策略治理 |
+| 项目                   | 目标                                                   |
+| ---------------------- | ------------------------------------------------------ |
+| Context Steward        | 压缩/分段/checkpoint/handoff，解决长任务失忆           |
+| Group Chat Turn Engine | 管理员先答、顺序发言、@、迟到回复、审批胶囊            |
+| Autonomous Ops         | routines、reminders、budget、busy park/resume          |
+| Memory Automation      | capture/recall/tidy/journal，默认只写 proposed         |
+| DSH Ecosystem Reuse    | 复用 MCP/Skills/Tools/Browser/UI slots，按成员策略治理 |
 
 完整分析：[竞品差距与后续路线](./COMPETITIVE-GAPS.md)
 
 ### P2：产品与可观察性
 
-| 项目 | 目标 |
-|---|---|
+| 项目                  | 目标                                         |
+| --------------------- | -------------------------------------------- |
 | 任务 DAG / 成员树面板 | 复用团队页展示依赖、owner、attempt、阻塞原因 |
-| 团队活动时间线 | 统一任务、消息、审批、成员变更 |
-| 团队记忆 | 团队级记忆与成员本地记忆隔离 |
-| Workspace 模型收口 | 默认工作区、助手工作区迁移/只读策略 |
-| 多 Host | 写入所有权、冲突检测、只读协作 |
-| 发布流水线 | 本地打包/CI/版本说明；外部部署单独确认 |
+| 团队活动时间线        | 统一任务、消息、审批、成员变更               |
+| 团队记忆              | 团队级记忆与成员本地记忆隔离                 |
+| Workspace 模型收口    | 默认工作区、助手工作区迁移/只读策略          |
+| 多 Host               | 写入所有权、冲突检测、只读协作               |
+| 发布流水线            | 本地打包/CI/版本说明；外部部署单独确认       |
 
 ## 执行模型策略
 
