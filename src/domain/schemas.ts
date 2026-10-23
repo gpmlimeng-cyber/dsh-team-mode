@@ -301,6 +301,17 @@ export const teamGoalSchema = z.object({
   acceptance: z.string(),
   mode: teamGoalModeSchema,
   status: teamGoalStatusSchema,
+  /**
+   * Optional bounded work budget, added without a schema-version bump. The
+   * Leader sets `maxTurns`; `usedTurns` counts the dispatch turns the task
+   * commands charged against it. A Goal that never sets a budget carries no
+   * field and stays unbounded, exactly as before. `budgetExhaustedAt` records
+   * when the last allowed turn was spent and is cleared by a renewal that
+   * raises `maxTurns` above `usedTurns` (exhaustion itself is derived).
+   */
+  maxTurns: z.int().positive().optional(),
+  usedTurns: z.int().min(0).optional(),
+  budgetExhaustedAt: isoDate.optional(),
   createdAt: isoDate,
   updatedAt: isoDate,
 }).strict()

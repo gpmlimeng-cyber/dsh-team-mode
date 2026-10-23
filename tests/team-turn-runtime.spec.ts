@@ -16,6 +16,7 @@ import type {
 } from '../src/domain/types.js'
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import type { AgentTeamStore } from '../src/storage/store.js'
+import type { TeamCommandHandler } from '../src/runtime/team-command-handler.js'
 import { TeamRuntime } from '../src/runtime/team-runtime.js'
 
 const config: Config = {
@@ -40,7 +41,8 @@ const assistantInput = {
   mcpServers: [],
 }
 
-function createHarness() {
+function createHarness(overrides: Partial<Config> = {}) {
+  const harnessConfig: Config = { ...config, ...overrides }
   const listeners = new Map<string, Set<(event: any) => void>>()
   const ctx = new Context() as any
   ctx.on = (name: string, handler: (event: any) => void) => {
@@ -95,7 +97,8 @@ function createHarness() {
   return {
     ctx,
     store,
-    service: new AgentTeamService(ctx as never, config, store),
+    config: harnessConfig,
+    service: new AgentTeamService(ctx as never, harnessConfig, store),
     emit: ctx.emit as (name: string, event: unknown) => void,
   }
 }
@@ -259,6 +262,19 @@ function emitTurnEnd(emit: (name: string, event: unknown) => void, sessionId: st
     type: 'turn/end',
     data: { reason: { kind: 'completed' } },
   } })
+}
+
+/**
+ * A routine `now` that is `extraMs` past the newest durable message. Message
+ * factories use wall-clock time, so routine tests derive the window from the
+ * stored messages instead of hard-coding an absolute timestamp.
+ */
+function afterSilence(service: AgentTeamService, teamId: string, extraMs: number): string {
+  const latest = Math.max(
+    0,
+    ...service.listMessages(teamId).items.map(message => Date.parse(message.createdAt)).filter(Number.isFinite),
+  )
+  return new Date(latest + extraMs).toISOString()
 }
 
 async function twoMemberTeam(service: AgentTeamService, _store: MemoryStore): Promise<TeamAggregate> {
@@ -480,5 +496,228 @@ describe('team turn runtime wiring', () => {
     // A second recovery must not deliver it again.
     await runtime.recoverTeams()
     expect(leaderAgent.followup).toHaveBeenCalledOnce()
+  })
+
+  it('parks a busy target in the inbox and resumes it once when the member goes idle', async () => {
+    const { ctx, service, store, emit } = createHarness()
+    const team = await twoMemberTeam(service, store)
+    const runtime = new TeamRuntime(ctx, config, service)
+    const leaderAgent = fakeAgent()
+    const memberAgent = fakeAgent()
+    adopt(runtime, team, team.leaderSlotId, leaderAgent)
+    const memberId = Object.keys(team.members).find(id => id !== team.leaderSlotId)!
+    adopt(runtime, team, memberId, memberAgent)
+    const memberSession = team.members[memberId]!.sessionId
+    const commands = (runtime as unknown as { commands: {
+      sendMemberMessage: (
+        teamId: string, senderSlotId: string, recipientSlotId: string, content: string, type?: string,
+      ) => Promise<{ messageId: string; deliveryState: string }>
+      inbox: (teamId: string, slotId: string) => {
+        unread: Array<{ id: string; parked?: { reason: string; since: string } }>
+      }
+    } }).commands
+
+    // The leader starts a turn, then the member reports `running`.
+    await runtime.sendUserMessage(team.id, 'start working')
+    memberAgent.status = 'running'
+    emit('agent/status', { agent: { id: memberSession }, status: 'running' })
+    await vi.waitFor(() => {
+      expect(service.getTeam(team.id).members[memberId]?.lastRuntimeState).toBe('running')
+    })
+
+    // A leader instruction to the busy member stays queued and is visible as
+    // parked busy in the member's read-only inbox.
+    const sent = await commands.sendMemberMessage(team.id, team.leaderSlotId, memberId, 'take this next', 'instruction')
+    expect(sent.deliveryState).toBe('queued')
+    expect(memberAgent.followup).not.toHaveBeenCalled()
+    expect(commands.inbox(team.id, memberId).unread.find(row => row.id === sent.messageId)?.parked)
+      .toMatchObject({ reason: 'busy' })
+
+    // The leader's turn can end, but the running target still cannot be woken.
+    emitTurnEnd(emit, team.members[team.leaderSlotId]!.sessionId)
+    await vi.waitFor(() => {
+      expect(service.listMessages(team.id).items.find(m => m.id === sent.messageId)?.deliveryState).toBe('queued')
+    })
+
+    // The idle transition resumes the one parked delivery exactly once.
+    memberAgent.status = 'idle'
+    emit('agent/status', { agent: { id: memberSession }, status: 'idle' })
+    await vi.waitFor(() => {
+      expect(service.listMessages(team.id).items.find(m => m.id === sent.messageId)?.deliveryState).toBe('delivered')
+    })
+    expect(memberAgent.followup).toHaveBeenCalledOnce()
+    // Delivered mail can still be unread, but it is no longer parked.
+    expect(commands.inbox(team.id, memberId).unread.find(row => row.id === sent.messageId)?.parked)
+      .toBeUndefined()
+
+    // A repeated idle event must not replay the delivered instruction.
+    emit('agent/status', { agent: { id: memberSession }, status: 'idle' })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    expect(memberAgent.followup).toHaveBeenCalledOnce()
+  })
+
+  it('nudges an idle team with open work once, without executing or approving anything', async () => {
+    const { ctx, service, store, config: routineConfig } = createHarness({ teamRoutineIdleMs: 60_000 })
+    const team = await twoMemberTeam(service, store)
+    const runtime = new TeamRuntime(ctx, routineConfig, service)
+    const leaderAgent = fakeAgent()
+    const memberAgent = fakeAgent()
+    adopt(runtime, team, team.leaderSlotId, leaderAgent)
+    const memberId = Object.keys(team.members).find(id => id !== team.leaderSlotId)!
+    adopt(runtime, team, memberId, memberAgent)
+    const commands = (runtime as unknown as { commands: TeamCommandHandler }).commands
+    const leaderSession = team.members[team.leaderSlotId]!.sessionId
+    const routineThread = `routine:${team.id}`
+
+    const goal = await commands.createGoal(team.id, team.leaderSlotId, {
+      title: 'Ship routine',
+      objective: 'Exercise the idle nudge',
+    })
+    const task = await commands.createTask(team.id, team.leaderSlotId, {
+      subject: 'Open work',
+      owner: memberId,
+      goal_id: goal.goal_id,
+    })
+    const beforeTask = service.getTeam(team.id).tasks[task.taskId]!
+    const beforeGoal = service.getTeam(team.id).goals![goal.goal_id]!
+
+    // A recent dispatch message keeps the window closed.
+    expect(await commands.runDueRoutine(team.id, afterSilence(service, team.id, 31_000)))
+      .toMatchObject({ nudged: false })
+    expect(service.listMessages(team.id).items.filter(m => m.threadId === routineThread)).toHaveLength(0)
+
+    // The Leader is busy: the one nudge is submitted through the coordinator
+    // and parks instead of being delivered immediately.
+    leaderAgent.status = 'running'
+    const first = await commands.runDueRoutine(team.id, afterSilence(service, team.id, 61_000))
+    expect(first).toMatchObject({ nudged: true, deliveryState: 'queued' })
+    expect(leaderAgent.followup).not.toHaveBeenCalled()
+    const nudge = service.listMessages(team.id).items.find(message => message.id === first.messageId)!
+    expect(nudge).toMatchObject({
+      type: 'instruction',
+      sender: { kind: 'system', id: 'dsh-team-mode' },
+      recipient: { kind: 'leader', slotId: team.leaderSlotId },
+      threadId: routineThread,
+      deliveryState: 'queued',
+    })
+    expect(nudge.content).toContain('Routine idle check')
+    expect(nudge.content).toContain('starts no work')
+
+    // Idle release delivers that single nudge exactly once.
+    leaderAgent.status = 'idle'
+    await internals(runtime).turns.releaseSession(leaderSession)
+    expect(leaderAgent.followup).toHaveBeenCalledOnce()
+    expect(service.listMessages(team.id).items.find(message => message.id === first.messageId)?.deliveryState)
+      .toBe('delivered')
+    await internals(runtime).turns.releaseSession(leaderSession)
+    expect(service.listMessages(team.id).items.filter(m => m.threadId === routineThread)).toHaveLength(1)
+
+    // The nudge itself resets the silence window: the next tick is silent.
+    expect(await commands.runDueRoutine(team.id, afterSilence(service, team.id, 30_000)))
+      .toMatchObject({ nudged: false })
+    expect(await commands.runDueRoutine(team.id, afterSilence(service, team.id, 30_000)))
+      .toMatchObject({ nudged: false })
+    expect(service.listMessages(team.id).items.filter(m => m.threadId === routineThread)).toHaveLength(1)
+
+    // No auto-execution: the board is byte-identical to before the nudge.
+    expect(service.getTeam(team.id).tasks[task.taskId]).toMatchObject({
+      status: beforeTask.status,
+      revision: beforeTask.revision,
+      ownerSlotId: beforeTask.ownerSlotId,
+      updatedAt: beforeTask.updatedAt,
+    })
+    expect(service.getTeam(team.id).goals?.[goal.goal_id]).toMatchObject({
+      status: beforeGoal.status,
+      updatedAt: beforeGoal.updatedAt,
+    })
+    expect(service.getTeam(team.id).tasks[task.taskId]).not.toHaveProperty('verdict')
+    expect(leaderAgent.followup).toHaveBeenCalledOnce()
+
+    // An active turn blocks the routine even after a full silence window.
+    await runtime.sendUserMessage(team.id, 'leader, check the board')
+    expect(await commands.runDueRoutine(team.id, afterSilence(service, team.id, 61_000)))
+      .toMatchObject({ nudged: false })
+    await internals(runtime).turns.releaseSession(leaderSession)
+    expect(await commands.runDueRoutine(team.id, afterSilence(service, team.id, 61_000)))
+      .toMatchObject({ nudged: true })
+    expect(service.listMessages(team.id).items.filter(m => m.threadId === routineThread)).toHaveLength(2)
+
+    // A running member is working: no nudge, even though the channel is silent.
+    await service.updateRuntimeTeam(team.id, current => ({
+      ...current,
+      members: {
+        ...current.members,
+        [memberId]: { ...current.members[memberId]!, lastRuntimeState: 'running' },
+      },
+    }), 'test.member_running', 'member running')
+    expect(await commands.runDueRoutine(team.id, afterSilence(service, team.id, 61_000)))
+      .toMatchObject({ nudged: false })
+    await service.updateRuntimeTeam(team.id, current => ({
+      ...current,
+      members: {
+        ...current.members,
+        [memberId]: { ...current.members[memberId]!, lastRuntimeState: 'idle' },
+      },
+    }), 'test.member_idle', 'member idle')
+
+    // Inactive and archived teams are skipped.
+    await service.updateRuntimeTeam(team.id, current => ({ ...current, state: 'deleting' }), 'test.deleting', 'deleting')
+    expect(await commands.runDueRoutine(team.id, afterSilence(service, team.id, 61_000)))
+      .toMatchObject({ nudged: false })
+    await service.updateRuntimeTeam(team.id, current => ({
+      ...current,
+      state: 'active',
+      archivedAt: '2026-01-01T00:00:00.000Z',
+    }), 'test.archived', 'archived')
+    expect(await commands.runDueRoutine(team.id, afterSilence(service, team.id, 61_000)))
+      .toMatchObject({ nudged: false })
+    await service.updateRuntimeTeam(team.id, current => {
+      const next = { ...current, state: 'active' as const }
+      delete next.archivedAt
+      return next
+    }, 'test.active', 'active')
+
+    // No open task and no active Goal: the routine has nothing to nudge about.
+    await commands.updateTask(team.id, memberId, {
+      task_id: task.taskId,
+      status: 'completed',
+      result: 'done',
+      attempt_id: task.attemptId!,
+    })
+    await commands.updateGoal(team.id, team.leaderSlotId, {
+      goal_id: goal.goal_id,
+      status: 'completed',
+    })
+    expect(await commands.runDueRoutine(team.id, afterSilence(service, team.id, 61_000)))
+      .toMatchObject({ nudged: false })
+    expect(service.listMessages(team.id).items.filter(m => m.threadId === routineThread)).toHaveLength(2)
+  })
+
+  it('keeps the routine disabled by default', async () => {
+    const { ctx, service, store } = createHarness()
+    const team = await twoMemberTeam(service, store)
+    // The base test config has no teamRoutineIdleMs: the default is off.
+    const runtime = new TeamRuntime(ctx, config, service)
+    adopt(runtime, team, team.leaderSlotId, fakeAgent())
+    const memberId = Object.keys(team.members).find(id => id !== team.leaderSlotId)!
+    adopt(runtime, team, memberId, fakeAgent())
+    const commands = (runtime as unknown as { commands: TeamCommandHandler }).commands
+
+    const goal = await commands.createGoal(team.id, team.leaderSlotId, {
+      title: 'Off by default',
+      objective: 'No routine',
+    })
+    const task = await commands.createTask(team.id, team.leaderSlotId, {
+      subject: 'Open work',
+      owner: memberId,
+      goal_id: goal.goal_id,
+    })
+
+    expect(await commands.runDueRoutine(team.id, afterSilence(service, team.id, 61_000)))
+      .toMatchObject({ nudged: false })
+    expect(service.listMessages(team.id).items.some(message => message.threadId === `routine:${team.id}`))
+      .toBe(false)
+    // The task remains exactly as created: the routine never executes it.
+    expect(service.getTeam(team.id).tasks[task.taskId]?.status).toBe(task.status)
   })
 })

@@ -1,6 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
+import { Config as ConfigSchema } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
 import type { MemoryEntry, TeamAggregate, TeamMemberSlot } from '../src/domain/types.js'
 import { epochOf } from '../src/domain/types.js'
@@ -523,7 +524,7 @@ describe('team runtime support', () => {
     expect(taskMessageType('running')).toBe('progress')
   })
 
-  it('arms one reminder tick for every team, serializes sweeps, and clears it on dispose', async () => {
+  it('reuses one 30s tick for reminders and the routine, serializes sweeps, and clears it on dispose', async () => {
     vi.useFakeTimers()
     try {
       const teams = [
@@ -534,7 +535,11 @@ describe('team runtime support', () => {
       const service = {
         listTeams: () => ({ items: teams, total: teams.length }),
       } as unknown as AgentTeamService
-      const runtime = new TeamRuntime(new Context(), {} as Config, service)
+      const runtime = new TeamRuntime(
+        new Context(),
+        { teamRoutineIdleMs: 60_000 } as Config,
+        service,
+      )
       const internals = runtime as unknown as {
         armReminderTick: () => void
         reminderTimer?: unknown
@@ -542,6 +547,10 @@ describe('team runtime support', () => {
           remindDueTasks: (teamId: string, now: string) => Promise<{
             teamId: string
             remindedTaskIds: string[]
+          }>
+          runDueRoutine: (teamId: string, now: string) => Promise<{
+            teamId: string
+            nudged: boolean
           }>
         }
       }
@@ -552,29 +561,68 @@ describe('team runtime support', () => {
       const remindDueTasks = vi.fn()
         .mockImplementationOnce(() => blocked)
         .mockResolvedValue({ teamId: 'team-b', remindedTaskIds: [] })
-      internals.commands = { remindDueTasks } as never
+      const runDueRoutine = vi.fn(async (teamId: string) => ({ teamId, nudged: false }))
+      internals.commands = { remindDueTasks, runDueRoutine } as never
 
       internals.armReminderTick()
       const armed = internals.reminderTimer
       internals.armReminderTick()
       expect(internals.reminderTimer).toBe(armed)
 
-      // The first tick blocks on team-a, so a second tick must not overlap it.
+      // The first tick blocks on team-a's reminder, so a second tick must not
+      // overlap it — neither the reminders nor the routine run twice.
       await vi.advanceTimersByTimeAsync(30_000)
       await vi.advanceTimersByTimeAsync(30_000)
       expect(remindDueTasks).toHaveBeenCalledTimes(1)
       expect(remindDueTasks).toHaveBeenCalledWith('team-a', expect.any(String))
+      expect(runDueRoutine).not.toHaveBeenCalled()
 
       release()
       await vi.advanceTimersByTimeAsync(0)
       expect(remindDueTasks.mock.calls.map(call => call[0])).toEqual(['team-a', 'team-b'])
       expect(remindDueTasks.mock.calls.some(call => call[0] === 'team-c')).toBe(false)
+      expect(runDueRoutine.mock.calls.map(call => call[0])).toEqual(['team-a', 'team-b'])
+      expect(runDueRoutine.mock.calls.some(call => call[0] === 'team-c')).toBe(false)
 
       await runtime.dispose()
       expect(internals.reminderTimer).toBeUndefined()
       remindDueTasks.mockClear()
+      runDueRoutine.mockClear()
       await vi.advanceTimersByTimeAsync(120_000)
       expect(remindDueTasks).not.toHaveBeenCalled()
+      expect(runDueRoutine).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the routine off when teamRoutineIdleMs is absent or zero', async () => {
+    // The deployment default is off without adding a required config field.
+    const defaults = (ConfigSchema as unknown as (value: Record<string, never>) => Config)({})
+    expect(defaults.teamRoutineIdleMs).toBe(0)
+    vi.useFakeTimers()
+    try {
+      const teams = [{ id: 'team-a', state: 'active' }] as unknown as TeamAggregate[]
+      const service = {
+        listTeams: () => ({ items: teams, total: teams.length }),
+      } as unknown as AgentTeamService
+      const runtime = new TeamRuntime(new Context(), {} as Config, service)
+      const internals = runtime as unknown as {
+        armReminderTick: () => void
+        commands: {
+          remindDueTasks: (teamId: string, now: string) => Promise<{ teamId: string; remindedTaskIds: string[] }>
+          runDueRoutine: (teamId: string, now: string) => Promise<{ teamId: string; nudged: boolean }>
+        }
+      }
+      const remindDueTasks = vi.fn(async (teamId: string) => ({ teamId, remindedTaskIds: [] }))
+      const runDueRoutine = vi.fn(async (teamId: string) => ({ teamId, nudged: false }))
+      internals.commands = { remindDueTasks, runDueRoutine } as never
+
+      internals.armReminderTick()
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(remindDueTasks).toHaveBeenCalledTimes(1)
+      expect(runDueRoutine).not.toHaveBeenCalled()
+      await runtime.dispose()
     } finally {
       vi.useRealTimers()
     }

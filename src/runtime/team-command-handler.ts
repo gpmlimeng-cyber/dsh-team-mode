@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto'
 import { createUserMessage, MessageId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { AgentTeamError } from '../domain/errors.js'
 import { teamTaskKindSchema, teamTaskVerdictSchema } from '../domain/schemas.js'
-import { taskKindOf } from '../domain/types.js'
+import {
+  chargeGoalTurn,
+  goalBudgetExhausted,
+  goalTurnsUsed,
+  setGoalBudget,
+  taskKindOf,
+} from '../domain/types.js'
 import type {
   MemoryEntry,
   TeamAggregate,
@@ -63,6 +69,12 @@ export interface TeamCommandPort {
    * provider or a restart degrades to an empty approvals section.
    */
   pendingInteractions?: (sessionId: string) => PendingInteractionView[]
+  /**
+   * Whether the team currently has an active speaker. Present in the
+   * TeamRuntime wiring; absent means the legacy direct path where the routine
+   * only checks member state.
+   */
+  activeTurn?: (teamId: string) => boolean
 }
 
 export interface TeamMemberView {
@@ -133,6 +145,13 @@ export interface TeamMessageView {
   thread_id?: string
   goal_id?: string
   reply_to?: string
+  /**
+   * Present while one queued turn record cannot be delivered yet: the team is
+   * busy with another speaker, or the target is not online. The record stays
+   * queued exactly once and the coordinator resumes it on the idle release;
+   * `since` is when it started waiting (its createdAt).
+   */
+  parked?: { reason: 'busy' | 'offline'; since: string }
   created_at: string
   was_unread: boolean
 }
@@ -190,13 +209,6 @@ export interface CreateTaskInput {
   remind_at?: string
 }
 
-export interface CreateGoalInput {
-  title?: string
-  objective?: string
-  acceptance?: string
-  mode?: 'direct' | 'single' | 'orchestrated'
-}
-
 /** Goal plus the tasks it groups; the shape tools and future UI read. */
 export interface TeamGoalView {
   goal_id: string
@@ -205,16 +217,43 @@ export interface TeamGoalView {
   acceptance: string
   mode: 'direct' | 'single' | 'orchestrated'
   status: TeamGoal['status']
+  /** Leader-set ceiling; absent for an unbounded (legacy) Goal. */
+  max_turns?: number
+  /** Dispatch turns charged so far; absent when none was ever charged. */
+  used_turns?: number
+  /** Ceiling minus spent turns; absent for an unbounded Goal. */
+  remaining_turns?: number
+  /**
+   * Explicit budget state: true once the ceiling is reached. Work creation is
+   * refused and update calls stop waking anyone until the Leader renews the
+   * Goal, so exhaustion is never a silent stop.
+   */
+  budget_exhausted: boolean
+  /** When the last allowed turn was spent; absent until exhaustion. */
+  budget_exhausted_at?: string
   task_ids: string[]
   created_at: string
   updated_at: string
 }
 
-/** Only the status is writable through the tool: resume/pause/close. */
+/** Create a Goal, optionally with a bounded turn budget. */
+export interface CreateGoalInput {
+  title?: string
+  objective?: string
+  acceptance?: string
+  mode?: 'direct' | 'single' | 'orchestrated'
+  maxTurns?: number
+  max_turns?: number
+}
+
+/** Status and/or budget are writable through the tool: resume/pause/close/renew. */
 export interface UpdateGoalInput {
   goalId?: string
   goal_id?: string
   status?: string
+  /** New turn ceiling; raising it above the spent count renews the budget. */
+  maxTurns?: number
+  max_turns?: number
 }
 
 export interface TeamMemoryView {
@@ -371,6 +410,12 @@ const OPEN_TASK_STATUSES: ReadonlySet<InternalTaskStatus> = new Set([
 /** One sweep never emits more than this many reminders per team. */
 const TASK_REMINDER_LIMIT = 20
 
+/**
+ * The runtime's 30 s sweep cadence. A positive routine window never fires
+ * faster than one tick, so the nudge itself always suppresses the next tick.
+ */
+const ROUTINE_TICK_MS = 30_000
+
 /** Thrown inside a sweep closure to abort without a revision/activity write. */
 class NoReminderDue extends Error {}
 
@@ -431,7 +476,8 @@ export class TeamCommandHandler {
     const blockedBy = this.validateBlockedBy(team, undefined, input.blocked_by ?? input.blockedBy)
     const fileScopes = uniqueStrings(input.fileScopes ?? []).slice(0, 64)
     const goalId = normalizeGoalId(input.goal_id ?? input.goalId)
-    if (goalId !== undefined) requireGoal(team, goalId)
+    const goal = goalId === undefined ? undefined : requireGoal(team, goalId)
+    if (goal !== undefined) assertGoalBudgetAvailable(goal)
     const kind = normalizeTaskKind(input.kind)
     const acceptance = normalizeTaskAcceptance(input.acceptance)
     const reviewedTaskId = normalizeTaskReviewedId(
@@ -471,37 +517,53 @@ export class TeamCommandHandler {
       })
     await this.service.updateRuntimeTeam(
       teamId,
-      current => ({
-        ...current,
-        tasks: {
-          ...current.tasks,
-          [taskId]: {
-            id: taskId,
-            title,
-            description,
-            status,
-            ...(ownerSlotId === undefined ? {} : { ownerSlotId }),
-            ...(attemptId === undefined ? {} : { attemptId }),
-            createdBySlotId: creatorSlotId,
-            dependencyIds: blockedBy,
-            fileScopes,
-            ...(goalId === undefined ? {} : { goalId }),
-            // New tasks always record their kind so the gate never has to guess;
-            // `taskKindOf` exists only for rows written before the vocabulary.
-            kind,
-            ...(acceptance === undefined ? {} : { acceptance }),
-            ...(reviewedTaskId === undefined ? {} : { reviewedTaskId }),
-            ...(dueAt === undefined ? {} : { dueAt }),
-            ...(remindAt === undefined ? {} : { remindAt }),
-            revision: 1,
-            createdAt: now,
-            updatedAt: now,
+      current => {
+        // Re-check inside the serialized write: a concurrent update may have
+        // spent the last allowed turn since the snapshot above.
+        const currentGoal = goalId === undefined ? undefined : requireGoal(current, goalId)
+        if (currentGoal !== undefined) assertGoalBudgetAvailable(currentGoal)
+        // Creating a task that starts another member's turn spends one turn;
+        // an unassigned/blocked/self-owned task starts none and is free.
+        const chargedGoal = currentGoal !== undefined
+          && currentGoal.maxTurns !== undefined
+          && assignment !== undefined
+          ? chargeGoalTurn(currentGoal, now)
+          : undefined
+        return {
+          ...current,
+          tasks: {
+            ...current.tasks,
+            [taskId]: {
+              id: taskId,
+              title,
+              description,
+              status,
+              ...(ownerSlotId === undefined ? {} : { ownerSlotId }),
+              ...(attemptId === undefined ? {} : { attemptId }),
+              createdBySlotId: creatorSlotId,
+              dependencyIds: blockedBy,
+              fileScopes,
+              ...(goalId === undefined ? {} : { goalId }),
+              // New tasks always record their kind so the gate never has to guess;
+              // `taskKindOf` exists only for rows written before the vocabulary.
+              kind,
+              ...(acceptance === undefined ? {} : { acceptance }),
+              ...(reviewedTaskId === undefined ? {} : { reviewedTaskId }),
+              ...(dueAt === undefined ? {} : { dueAt }),
+              ...(remindAt === undefined ? {} : { remindAt }),
+              revision: 1,
+              createdAt: now,
+              updatedAt: now,
+            },
           },
-        },
-        outbox: assignment === undefined
-          ? current.outbox
-          : { ...current.outbox, [assignment.id]: assignment },
-      }),
+          outbox: assignment === undefined
+            ? current.outbox
+            : { ...current.outbox, [assignment.id]: assignment },
+          ...(chargedGoal === undefined
+            ? {}
+            : { goals: { ...(current.goals ?? {}), [chargedGoal.id]: chargedGoal } }),
+        }
+      },
       'team.task_created',
       `Task ${title} created`,
       this.epochOption(epoch),
@@ -678,9 +740,13 @@ export class TeamCommandHandler {
         finalAttemptId = stored.attemptId
         finalVerdict = stored.verdict
 
-        const nextNotifications: TeamMessage[] = []
+        // Only an instruction that starts another member's turn is budgeted
+        // work; the member's progress/result report stays free, exactly like a
+        // Leader's own turn. The two lists are merged in delivery order below.
+        const workNotifications: TeamMessage[] = []
+        const reportNotifications: TeamMessage[] = []
         if (ownerChanged && ownerSlotId !== undefined && ownerSlotId !== callerSlotId) {
-          nextNotifications.push(createTaskDispatchMessage({
+          workNotifications.push(createTaskDispatchMessage({
             team: current,
             senderSlotId: callerSlotId,
             recipientSlotId: ownerSlotId,
@@ -690,7 +756,7 @@ export class TeamCommandHandler {
             ...(base.goalId === undefined ? {} : { goalId: base.goalId }),
           }))
         } else if (callerSlotId !== current.leaderSlotId) {
-          nextNotifications.push(createTaskDispatchMessage({
+          reportNotifications.push(createTaskDispatchMessage({
             team: current,
             senderSlotId: callerSlotId,
             recipientSlotId: current.leaderSlotId,
@@ -703,7 +769,7 @@ export class TeamCommandHandler {
         const nextWoken: string[] = []
         for (const ready of unblocked) {
           if (ready.ownerSlotId === undefined || ready.ownerSlotId === callerSlotId) continue
-          nextNotifications.push(createTaskDispatchMessage({
+          workNotifications.push(createTaskDispatchMessage({
             team: current,
             senderSlotId: callerSlotId,
             recipientSlotId: ready.ownerSlotId,
@@ -717,6 +783,27 @@ export class TeamCommandHandler {
           }))
           nextWoken.push(ready.ownerSlotId)
         }
+        let nextNotifications: TeamMessage[] = [...reportNotifications, ...workNotifications]
+        // A Goal budget bounds the instructions the board may still start. When
+        // it is spent, the bookkeeping above still lands and the report is still
+        // delivered, but no owner is woken; the Leader gets one explicit notice
+        // instead, so exhaustion is visible without a silent stop.
+        let chargedGoal: TeamGoal | undefined
+        const budgetGoal = base.goalId === undefined ? undefined : current.goals?.[base.goalId]
+        // Only a Goal that opted into a ceiling carries budget counters; an
+        // unbounded (legacy) Goal keeps exactly the old shape and timestamps.
+        if (budgetGoal !== undefined && budgetGoal.maxTurns !== undefined && workNotifications.length > 0) {
+          if (goalBudgetExhausted(budgetGoal)) {
+            nextNotifications = [...reportNotifications, createSystemTeamMessage({
+              team: current,
+              recipientSlotId: current.leaderSlotId,
+              content: `Goal '${budgetGoal.title}' has used its ${budgetGoal.maxTurns}-turn budget. This update to task '${base.title}' (${taskId}) was recorded, but nobody was woken. Raise the ceiling with team_mode_goal_update {goal_id:"${budgetGoal.id}", max_turns:<larger number>} to renew it, then re-dispatch the work.`,
+            })]
+            nextWoken.length = 0
+          } else {
+            chargedGoal = chargeGoalTurn(budgetGoal, now)
+          }
+        }
         notifications = nextNotifications
         woken = nextWoken
         return {
@@ -728,6 +815,9 @@ export class TeamCommandHandler {
               ...current.outbox,
               ...Object.fromEntries(nextNotifications.map(message => [message.id, message])),
             },
+          ...(chargedGoal === undefined
+            ? {}
+            : { goals: { ...(current.goals ?? {}), [chargedGoal.id]: chargedGoal } }),
         }
       },
       'team.task_updated',
@@ -922,6 +1012,59 @@ export class TeamCommandHandler {
     }
   }
 
+  /**
+   * Disposable routine nudge: at most one Leader-addressed instruction per
+   * silence window. It never creates or changes tasks/Goals, never dispatches
+   * work, and never approves anything — its only effect is the message itself,
+   * which also resets the window and therefore suppresses the next tick.
+   */
+  async runDueRoutine(teamId: string, now = new Date().toISOString()): Promise<{
+    teamId: string
+    nudged: boolean
+    messageId?: string
+    deliveryState?: 'queued' | 'delivered'
+  }> {
+    const idleMs = this.service.config.teamRoutineIdleMs ?? 0
+    const nowMs = Date.parse(now)
+    if (Number.isNaN(nowMs)) {
+      throw new AgentTeamError('INVALID_REQUEST', 'Routine time must be an ISO 8601 timestamp')
+    }
+    if (idleMs <= 0) return { teamId, nudged: false }
+    const team = this.service.getTeam(teamId)
+    if (team.state !== 'active' || team.archivedAt !== undefined) return { teamId, nudged: false }
+    if (this.port.activeTurn?.(teamId) === true) return { teamId, nudged: false }
+    if (Object.values(team.members).some(member => member.lastRuntimeState === 'running')) {
+      return { teamId, nudged: false }
+    }
+    if (!hasOpenWork(team)) return { teamId, nudged: false }
+    // Fire only after a full silence window. A window below the tick cadence
+    // would otherwise fire on every tick; one tick is the effective floor.
+    const windowMs = Math.max(idleMs, ROUTINE_TICK_MS)
+    const lastMessageMs = lastMessageTime(this.service.listMessages(teamId).items)
+    const sinceMs = lastMessageMs ?? Date.parse(team.createdAt)
+    if (Number.isFinite(sinceMs) && nowMs - sinceMs <= windowMs) return { teamId, nudged: false }
+
+    const id = String(MessageId(`dsh-team-mode:${randomUUID()}`))
+    const message = createTeamMessage({
+      id,
+      teamId,
+      sender: { kind: 'system', id: 'dsh-team-mode' },
+      recipient: { kind: 'leader', slotId: team.leaderSlotId },
+      // `instruction`, never `system`: the coordinator skips system records, so
+      // a system nudge would sit in the queue forever when the Leader is busy.
+      type: 'instruction',
+      content: routineNudgeContent(team),
+      summary: 'Routine idle check-in',
+      threadId: `routine:${teamId}`,
+      idempotencyKey: id,
+    })
+    await this.service.putRuntimeMessage(message)
+    const deliveryState = this.port.submitMessage === undefined
+      ? await this.port.deliverMessage(teamId, id).then(delivered => delivered ? 'delivered' as const : 'queued' as const)
+      : await this.port.submitMessage(teamId, id)
+    return { teamId, nudged: true, messageId: id, deliveryState }
+  }
+
   listTasks(teamId: string, limit = 200): TeamTaskView[] {
     const team = this.service.getTeam(teamId)
     const bounded = Math.max(1, Math.min(limit, 200))
@@ -981,18 +1124,26 @@ export class TeamCommandHandler {
   ): Promise<TeamGoalView> {
     const team = this.service.getTeam(teamId)
     this.assertLeader(team, creatorSlotId, 'create goals')
+    const maxTurns = normalizeGoalMaxTurns(input.max_turns ?? input.maxTurns)
     const goal = await this.service.createGoal(teamId, {
       title: requireShortText(input.title ?? '', 'Goal title', 200),
       objective: requireShortText(input.objective ?? '', 'Goal objective', 2_000),
       ...(input.acceptance === undefined ? {} : { acceptance: input.acceptance }),
       ...(input.mode === undefined ? {} : { mode: input.mode }),
     }, epoch)
-    return this.goalView(this.service.getTeam(teamId), goal)
+    // Budget fields live on the optional Goal extension, so they are written
+    // through the same aggregate closure instead of the legacy create input.
+    const withBudget = maxTurns === undefined
+      ? goal
+      : await this.updateGoalBudget(teamId, goal.id, maxTurns, epoch)
+    return this.goalView(this.service.getTeam(teamId), withBudget)
   }
 
   /**
-   * Leader-only Goal status write. Resuming a Goal paused by an epoch change is
-   * the only way back to `active`, so the tool ships with `paused` itself.
+   * Leader-only Goal budget/status write. Resuming a Goal paused by an epoch
+   * change and renewing an exhausted budget are the two ways back to usable
+   * work; an exhausted Goal stays visibly exhausted until the ceiling is raised
+   * above the spent count.
    */
   async updateGoal(
     teamId: string,
@@ -1005,16 +1156,47 @@ export class TeamCommandHandler {
     const goalId = (input.goal_id ?? input.goalId ?? '').trim()
     if (goalId === '') throw new AgentTeamError('INVALID_REQUEST', 'Goal id is required')
     const status = input.status?.trim()
-    if (status === undefined || status === '') {
-      throw new AgentTeamError('INVALID_REQUEST', 'Goal status is required')
+    const maxTurns = normalizeGoalMaxTurns(input.max_turns ?? input.maxTurns)
+    if ((status === undefined || status === '') && maxTurns === undefined) {
+      throw new AgentTeamError('INVALID_REQUEST', 'Goal status or max_turns is required')
     }
-    const goal = await this.service.updateGoal(teamId, goalId, {
-      status: normalizeGoalStatus(status),
-    }, epoch)
+    if (status !== undefined && status !== '') {
+      await this.service.updateGoal(teamId, goalId, {
+        status: normalizeGoalStatus(status),
+      }, epoch)
+    }
+    const goal = maxTurns === undefined
+      ? requireGoal(this.service.getTeam(teamId), goalId)
+      : await this.updateGoalBudget(teamId, goalId, maxTurns, epoch)
     return this.goalView(this.service.getTeam(teamId), goal)
   }
 
+  /** Write one Goal ceiling through the aggregate closure, keeping counters. */
+  private async updateGoalBudget(
+    teamId: string,
+    goalId: string,
+    maxTurns: number,
+    epoch?: number,
+  ): Promise<TeamGoal> {
+    const now = new Date().toISOString()
+    await this.service.updateRuntimeTeam(
+      teamId,
+      current => {
+        const existing = requireGoal(current, goalId)
+        return {
+          ...current,
+          goals: { ...current.goals, [goalId]: setGoalBudget(existing, maxTurns, now) },
+        }
+      },
+      'team.goal_budget_updated',
+      `Goal ${goalId} budget set to ${maxTurns} turns`,
+      this.epochOption(epoch),
+    )
+    return requireGoal(this.service.getTeam(teamId), goalId)
+  }
+
   goalView(team: TeamAggregate, goal: TeamGoal): TeamGoalView {
+    const usedTurns = goalTurnsUsed(goal)
     return {
       goal_id: goal.id,
       title: goal.title,
@@ -1022,6 +1204,13 @@ export class TeamCommandHandler {
       acceptance: goal.acceptance,
       mode: goal.mode,
       status: goal.status,
+      ...(goal.maxTurns === undefined ? {} : {
+        max_turns: goal.maxTurns,
+        remaining_turns: Math.max(0, goal.maxTurns - usedTurns),
+      }),
+      ...(goal.usedTurns === undefined ? {} : { used_turns: goal.usedTurns }),
+      budget_exhausted: goalBudgetExhausted(goal),
+      ...(goal.budgetExhaustedAt === undefined ? {} : { budget_exhausted_at: goal.budgetExhaustedAt }),
       task_ids: Object.values(team.tasks)
         .filter(task => task.goalId === goal.id)
         .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
@@ -1340,6 +1529,7 @@ export class TeamCommandHandler {
     const retiredSender = senderSlotId === undefined
       ? undefined
       : Object.values(team.retiredSessions).find(session => session.formerSlotId === senderSlotId)
+    const parked = this.parkedView(team, message)
     return {
       id: message.id,
       from: sender?.displayName
@@ -1355,9 +1545,40 @@ export class TeamCommandHandler {
       ...(message.threadId === undefined ? {} : { thread_id: message.threadId }),
       ...(message.goalId === undefined ? {} : { goal_id: message.goalId }),
       ...(message.replyTo === undefined ? {} : { reply_to: message.replyTo }),
+      ...(parked === undefined ? {} : { parked }),
       created_at: message.createdAt,
       was_unread: !isReadBy(message, readerSlotId),
     }
+  }
+
+  /**
+   * Why one queued turn record is not deliverable yet. The record itself stays
+   * queued exactly once; the coordinator resumes it on the idle release. A
+   * missing/removing recipient is not parked — the coordinator fails it — and
+   * non-turn records (broadcast/system) belong to the dispatcher path.
+   */
+  private parkedView(
+    team: TeamAggregate,
+    message: TeamMessage,
+  ): TeamMessageView['parked'] | undefined {
+    if (message.deliveryState !== 'queued') return undefined
+    if (!isTurnMessage(message)) return undefined
+    const slotId = message.recipient.slotId
+    if (slotId === undefined) return undefined
+    const member = team.members[slotId]
+    if (member === undefined || member.desiredState === 'removing') return undefined
+    if (member.desiredState !== 'online'
+      || member.lastRuntimeState === 'offline'
+      || member.lastRuntimeState === 'starting'
+      || member.lastRuntimeState === 'error') {
+      return { reason: 'offline', since: message.createdAt }
+    }
+    // One active speaker per team: any running member parks every queued turn,
+    // not just the one addressed to that member.
+    if (Object.values(team.members).some(other => other.lastRuntimeState === 'running')) {
+      return { reason: 'busy', since: message.createdAt }
+    }
+    return undefined
   }
 
   async sendMessage(
@@ -1913,6 +2134,34 @@ function reminderCandidates(team: TeamAggregate, nowMs: number): TeamTask[] {
     .slice(0, TASK_REMINDER_LIMIT)
 }
 
+/** Work the routine may nudge about: an open task or a Goal still active. */
+function hasOpenWork(team: TeamAggregate): boolean {
+  return Object.values(team.tasks).some(task => OPEN_TASK_STATUSES.has(task.status))
+    || Object.values(team.goals ?? {}).some(goal => goal.status === 'active')
+}
+
+/** Newest durable message time, or undefined when the team has no message. */
+function lastMessageTime(messages: readonly TeamMessage[]): number | undefined {
+  let latest: number | undefined
+  for (const message of messages) {
+    const at = Date.parse(message.createdAt)
+    if (!Number.isFinite(at)) continue
+    if (latest === undefined || at > latest) latest = at
+  }
+  return latest
+}
+
+/** Informational only: bounded copy that starts no work and grants no approval. */
+function routineNudgeContent(team: TeamAggregate): string {
+  const openTasks = Object.values(team.tasks).filter(task => OPEN_TASK_STATUSES.has(task.status)).length
+  const activeGoals = Object.values(team.goals ?? {}).filter(goal => goal.status === 'active').length
+  return [
+    `Routine idle check for team '${team.name}': no member is running and no message arrived within the configured silence window.`,
+    `${openTasks} open task(s) and ${activeGoals} active Goal(s) remain on the board.`,
+    'This is an informational nudge only: inspect team_mode_task_list and team_mode_goal_list, then decide whether to continue, reassign, or stop. It starts no work and is not an approval.',
+  ].join(' ')
+}
+
 /** The task owner when it is online and healthy; otherwise the Leader. */
 function reminderRecipientSlotId(team: TeamAggregate, task: TeamTask): string {
   const owner = task.ownerSlotId === undefined ? undefined : team.members[task.ownerSlotId]
@@ -2146,6 +2395,38 @@ function requireGoal(team: TeamAggregate, goalId: string): TeamGoal {
     throw new AgentTeamError('INVALID_REQUEST', `Unknown goal '${goalId}' in team '${team.id}'`)
   }
   return goal
+}
+
+/**
+ * Refuse new work under a spent Goal budget. Kept separate from the writer so
+ * the pre-check and the serialized re-check use the same rule and details.
+ */
+function assertGoalBudgetAvailable(goal: TeamGoal): void {
+  if (!goalBudgetExhausted(goal)) return
+  throw new AgentTeamError(
+    'GOAL_BUDGET_EXHAUSTED',
+    `Goal '${goal.title}' has used its ${goal.maxTurns}-turn budget; raise max_turns with team_mode_goal_update to renew it before creating more work.`,
+    { goalId: goal.id, maxTurns: goal.maxTurns, usedTurns: goalTurnsUsed(goal) },
+  )
+}
+
+/** A positive bounded ceiling; a missing value keeps the Goal unbounded. */
+function normalizeGoalMaxTurns(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined
+  if (!Number.isInteger(value) || value <= 0 || value > 10_000) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      'Goal max_turns must be a positive integer no greater than 10000',
+    )
+  }
+  return value
+}
+
+/** Mirrors the coordinator's turn-record filter; parked state only applies there. */
+function isTurnMessage(message: TeamMessage): boolean {
+  return (message.recipient.kind === 'leader' || message.recipient.kind === 'member')
+    && message.recipient.slotId !== undefined
+    && message.type !== 'system'
 }
 
 function normalizeGoalId(value: string | undefined): string | undefined {

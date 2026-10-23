@@ -157,11 +157,14 @@ describe('Team Mode tool surface', () => {
     expect(tools.get('team_mode_goal_create')?.description).toContain('Leader only')
     expect(tools.get('team_mode_goal_create')?.parameters.required).toEqual(['title', 'objective'])
     expect(tools.get('team_mode_goal_create')?.parameters.properties?.mode).toBeDefined()
+    expect(tools.get('team_mode_goal_create')?.parameters.properties?.max_turns).toBeDefined()
     expect(tools.get('team_mode_goal_update')?.description).toContain('Leader only')
-    expect(tools.get('team_mode_goal_update')?.parameters.required).toEqual(['goal_id', 'status'])
+    // status is optional now: the same tool renews an exhausted max_turns budget.
+    expect(tools.get('team_mode_goal_update')?.parameters.required).toEqual(['goal_id'])
     expect(tools.get('team_mode_goal_update')?.parameters.properties?.status).toMatchObject({
       enum: ['active', 'paused', 'completed', 'cancelled'],
     })
+    expect(tools.get('team_mode_goal_update')?.parameters.properties?.max_turns).toBeDefined()
     expect(tools.get('team_memory_propose')?.parameters.required)
       .toEqual(expect.arrayContaining(['expected_revision', 'title', 'body']))
     expect(tools.get('team_memory_accept')?.parameters.required)
@@ -263,7 +266,7 @@ describe('Team Mode tool surface', () => {
     const exec = { agent: { id: 'agent-1' } }
 
     const created = await tools.get('team_mode_goal_create')!.execute(
-      { title: 'Ship parser', objective: 'Parse input', acceptance: 'tests pass', mode: 'single' },
+      { title: 'Ship parser', objective: 'Parse input', acceptance: 'tests pass', mode: 'single', max_turns: 3 },
       exec,
     )
     expect(handlers.createGoal).toHaveBeenCalledWith({
@@ -271,6 +274,7 @@ describe('Team Mode tool surface', () => {
       objective: 'Parse input',
       acceptance: 'tests pass',
       mode: 'single',
+      max_turns: 3,
     })
     expect(created).toMatchObject({ goal: { goal_id: 'g1', mode: 'single' } })
 
@@ -288,6 +292,10 @@ describe('Team Mode tool surface', () => {
     )
     expect(handlers.updateGoal).toHaveBeenCalledWith({ goal_id: 'g1', status: 'active' })
     expect(resumed).toMatchObject({ goal: { goal_id: 'g1' } })
+
+    // Renewal is a budget-only write: no status is needed to raise the ceiling.
+    await tools.get('team_mode_goal_update')!.execute({ goal_id: 'g1', max_turns: 9 }, exec)
+    expect(handlers.updateGoal).toHaveBeenLastCalledWith({ goal_id: 'g1', max_turns: 9 })
 
     await tools.get('team_mode_task_create')!.execute(
       { subject: 'Implement', owner: 'a', goal_id: 'g1' },

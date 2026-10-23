@@ -40,6 +40,7 @@ export type AgentTeamErrorCode =
   | 'SESSION_CREATE_FAILED'
   | 'TEAM_LIMIT_REACHED'
   | 'TEAM_DELETE_FAILED'
+  | 'GOAL_BUDGET_EXHAUSTED'
   | 'INVALID_REQUEST'
 
 export class AgentTeamError extends Error {

@@ -8,9 +8,9 @@
 | `team_read_messages` | 读取成员邮箱消息（可按 `thread_id` / `task_id` 过滤），标记返回的消息已读 |
 | `team_send_message` | 向成员/Leader 发送团队消息，可带 `thread_id` / `goal_id` / `reply_to` |
 | `team_interrupt_agent` | 打断正在运行的成员 |
-| `team_mode_goal_create` | Leader 专用：为一个需要交付物的目标创建 Goal（mode=`direct` / `single` / `orchestrated`） |
-| `team_mode_goal_list` | 按 Goal 汇总任务板：每个 Goal 及其 `task_ids` |
-| `team_mode_goal_update` | Leader 专用：修改 Goal 状态（`active` 恢复被纪元暂停的 Goal，`paused` 暂停，`completed` / `cancelled` 结束） |
+| `team_mode_goal_create` | Leader 专用：为一个需要交付物的目标创建 Goal（mode=`direct` / `single` / `orchestrated`，可选 `max_turns` 预算） |
+| `team_mode_goal_list` | 按 Goal 汇总任务板：每个 Goal 及其 `task_ids`、`max_turns` / `used_turns` / `budget_exhausted` |
+| `team_mode_goal_update` | Leader 专用：修改 Goal 状态（`active` 恢复被纪元暂停的 Goal，`paused` 暂停，`completed` / `cancelled` 结束），或提高 `max_turns` 续期预算 |
 | `team_mode_task_create` | 创建任务，指定 owner / blocked_by / 文件范围 / `goal_id`，可选 `kind` / `acceptance` / `reviewed_task_id` / `due_at` / `remind_at` |
 | `team_mode_task_update` | 更新任务状态、owner、依赖、结果、`due_at` / `remind_at`；review/verification 用 `verdict` / `findings` 结案；成员需带当前 `attempt_id` |
 | `team_mode_task_claim` | 成员认领一个就绪且无 owner 的任务：原子占用并生成新的 `attempt_id` |
@@ -42,6 +42,31 @@
 - `team_mode_task_create` 的 `goal_id` 可选，必须指向**同一团队**的 Goal，否则以 `INVALID_REQUEST` 拒绝；缺省时任务不归属任何 Goal，旧任务/旧调用保持有效。
 - Goal 与 `goal_id` 都是可选字段，`schemaVersion` 不变；`team.reset` 会同时清空任务与 Goal，避免遗留孤立 Goal。
 - 本轮不包含 Goal UI、自动调度与自动修复循环；质量门禁见下节。
+
+## Goal 预算（max_turns / used_turns）
+
+- Goal 新增三个**可选**字段，`schemaVersion` 不变，无迁移：`maxTurns`（Leader 设定的回合上限）、`usedTurns`（已消耗回合数）、`budgetExhaustedAt`（耗尽时刻）。旧 Goal 没有这些字段，保持无限预算、行为与之前一致；`budget_exhausted` 由 `usedTurns >= maxTurns` 派生，不新增 Goal 状态。
+- 计费点在既有任务写入闭包内，**不额外写聚合**：`team_mode_goal_create` / `team_mode_goal_update` 可写 `max_turns`；`team_mode_task_create` 只有在真的派发/唤醒另一个成员时扣 1 回合；`team_mode_task_update` 只有在真的会产生**成员指令**（改 owner、解锁下游）时扣 1 回合；成员回报/进度消息与纯看板记账不扣预算。
+- 预算耗尽后仍**显式可见**、不静默停止：`team_mode_goal_list` 返回 `budget_exhausted=true`、`remaining_turns=0` 与 `budget_exhausted_at`。`team_mode_task_create` 以 `GOAL_BUDGET_EXHAUSTED` 拒绝（details 带 `goalId` / `maxTurns` / `usedTurns`）；`team_mode_task_update` 仍记录状态/结果、仍投递成员回报，但**不再唤醒任何人**，改为给 Leader 发一条 system 通知说明预算已耗尽。
+- 续期：Leader 用 `team_mode_goal_update {goal_id, max_turns}` 把上限提高到已用回合之上（可只传 `max_turns`；`status` 现为可选）。续期清掉 `budgetExhaustedAt`，但保留 `usedTurns`，因此续期可审计、下一次扣费从已用数继续。
+- 预算是**人控刹车**，不是自动执行：没有新的自动建任务、自动派发或自动续期逻辑，工具总数仍为 24。
+
+## 忙碌暂存（park / resume）
+
+- 回合队列里的单播消息（`leader` / `member` 收件人、非 `system`）在无法立即投递时**原样留在队列里**，不会复制、不会重放；`team_mode_inbox` 与 `team_read_messages` 的消息视图会给出 `parked: { reason: 'busy' | 'offline', since }`，`since` 即该消息开始等待的时间。
+  - `busy`：团队内已有成员在跑（一个团队同时只有一个发言者）——当前活跃回合结束时，`releaseSession` 会按 createdAt/id 顺序取队首投递，只投一次。
+  - `offline`：目标成员 `desiredState!='online'` 或处于 `offline` / `starting` / `error`；成员恢复空闲后同样由 idle / turn-end 释放路径恢复投递。
+- 队列头如果指向**已不存在或正在移除**的成员，不再永久堵住队列：协调器把这条消息标记为 `failed` 并继续 drain 下一条，同时写一条 warning 日志；`failed` 是显式终态，不会静默消失。
+- 任务派发/转派/解锁邮件仍走原有直投路径，**没有**与回合队列合并；park/resume 只作用于协调器管理的单播回合消息。没有自动重试循环，也没有新的调度器。
+
+## 团队例行提醒（routine idle nudge）
+
+- 部署配置新增可选 `teamRoutineIdleMs`（毫秒，`min 0`、`max 24h`、**默认 0 = 关闭**）；不写该字段时行为与之前完全一致，没有新增任务/Goal 字段，也没有新增工具（仍为 24 个）。
+- 复用已有的 **30 秒** `unref` tick（与任务提醒同一个定时器、同样的 single-flight sweep 与 dispose 清理顺序），对 `state==='active'` 的团队额外执行一次 `runDueRoutine`。关闭时运行时直接跳过，不产生额外调用。
+- 触发条件**全部满足**才会发一条消息：团队 active 且无 `archivedAt`；没有活跃发言者（协调器 `activeSlot` 为空）；没有任何成员处于 `running`；仍有开放工作（`pending`/`assigned`/`running`/`blocked` 任务，或 `active` Goal）；最后一条消息的时间超过窗口（正数配置按 30 秒 tick 兜底，因此至少隔一个 tick 才会再触发）。
+- 效果只有一条 **Leader 收件人**、`sender.kind='system'`、`type='instruction'`、`threadId='routine:<teamId>'` 的消息，经 `submitMessage` 进入回合队列（Leader 忙时按 park 规则排队，空闲时投递）。用 `instruction` 而非 `system`，否则协调器会把它当成不可投递的 system 记录。
+- 去重/抑制：不落任何新字段，幂等键就是消息本身——这条消息刷新了“最后消息时间”，所以下一个 tick 必然落在窗口内而不再提醒。重启后同样以消息为准，不会双发；同一 tick 内两次调用也只会产生一条。
+- **不自动执行**：routine 不创建/修改任务或 Goal、不派发工作、不改 owner/attempt、不写 verdict、不产生审批或批准；它只提示 Leader 查看任务板与 Goal 后自行决定。没有外部队列或 cron。
 
 ## 团队记忆（P0）
 

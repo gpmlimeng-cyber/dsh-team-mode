@@ -73,8 +73,9 @@ interface OwnedAgent {
 }
 
 /**
- * One reminder sweep per interval for the whole runtime. The timer is unref'd,
- * so it never keeps the host process alive; dispose clears it.
+ * One timer sweep per interval for the whole runtime: task reminders plus the
+ * optional routine nudge. The timer is unref'd, so it never keeps the host
+ * process alive; dispose clears it.
  */
 const TASK_REMINDER_TICK_MS = 30_000
 
@@ -139,6 +140,7 @@ export class TeamRuntime {
       clearAgentContext: (teamId, slotId) => this.clearMemberContext(teamId, slotId),
       removeMember: (teamId, slotId) => this.removeMember(teamId, slotId),
       pendingInteractions: sessionId => this.interactions.list(sessionId),
+      activeTurn: teamId => this.turns.activeSlot(teamId) !== undefined,
     })
     this.interactions = new TeamInteractionBridge(ctx, {
       acceptsSession: sessionId => this.owned.has(sessionId),
@@ -1095,8 +1097,9 @@ export class TeamRuntime {
   }
 
   /**
-   * One unref'd interval drives every team's reminder sweep. Arming is
-   * idempotent, and dispose clears the timer before any other teardown.
+   * One unref'd interval drives every team's reminder and routine sweep.
+   * Arming is idempotent, and dispose clears the timer before any other
+   * teardown.
    */
   private armReminderTick(): void {
     if (this.closing || this.reminderTimer !== undefined) return
@@ -1109,6 +1112,8 @@ export class TeamRuntime {
   private async sweepTaskReminders(): Promise<void> {
     if (this.closing || this.reminderSweep !== undefined) return
     const now = new Date().toISOString()
+    // A zero/absent window keeps the routine off; the reminder sweep still runs.
+    const routineIdleMs = this.config.teamRoutineIdleMs ?? 0
     const sweep = (async () => {
       for (const team of this.service.listTeams().items) {
         if (this.closing) return
@@ -1117,6 +1122,15 @@ export class TeamRuntime {
           await this.commands.remindDueTasks(team.id, now)
         } catch (error) {
           this.ctx.logger.warn(`dsh-team-mode: task reminder sweep failed for team ${team.id}`, error)
+        }
+        if (routineIdleMs > 0) {
+          try {
+            // Disposable: the nudge message itself is the only state, so a
+            // restart cannot double-fire and a delivered tick resets the window.
+            await this.commands.runDueRoutine(team.id, now)
+          } catch (error) {
+            this.ctx.logger.warn(`dsh-team-mode: routine sweep failed for team ${team.id}`, error)
+          }
         }
       }
     })()

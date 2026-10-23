@@ -88,6 +88,63 @@ export type TeamGoalMode = z.infer<typeof teamGoalModeSchema>
 export type TeamGoalStatus = z.infer<typeof teamGoalStatusSchema>
 export type CreateTeamGoalInput = z.infer<typeof createTeamGoalInputSchema>
 export type UpdateTeamGoalInput = z.infer<typeof updateTeamGoalInputSchema>
+
+/** Turns a Goal has already spent; absent counters mean none. Never write `?? 0` inline. */
+export function goalTurnsUsed(goal: Pick<TeamGoal, 'usedTurns'>): number {
+  return goal.usedTurns ?? 0
+}
+
+/**
+ * The single reader for a Goal's budget state. `unbounded` is every Goal stored
+ * before budgets existed (and every Goal that never set `maxTurns`); `exhausted`
+ * is derived from the counters alone, so a renewal takes effect immediately and
+ * `goal.status` stays the only lifecycle authority.
+ */
+export function goalBudgetOf(goal: Pick<TeamGoal, 'maxTurns' | 'usedTurns'>): 'unbounded' | 'available' | 'exhausted' {
+  if (goal.maxTurns === undefined) return 'unbounded'
+  return goalTurnsUsed(goal) >= goal.maxTurns ? 'exhausted' : 'available'
+}
+
+/** Whether the Leader-set ceiling is reached. */
+export function goalBudgetExhausted(goal: Pick<TeamGoal, 'maxTurns' | 'usedTurns'>): boolean {
+  return goalBudgetOf(goal) === 'exhausted'
+}
+
+/**
+ * Record one dispatch turn against a Goal budget. The caller charges only when
+ * the operation actually starts another member's turn, so plain bookkeeping
+ * stays free. The stamp is kept on later over-budget writes.
+ */
+export function chargeGoalTurn(goal: TeamGoal, now: string): TeamGoal {
+  const usedTurns = goalTurnsUsed(goal) + 1
+  const exhausted = goal.maxTurns !== undefined && usedTurns >= goal.maxTurns
+  return {
+    ...goal,
+    usedTurns,
+    ...(exhausted && goal.budgetExhaustedAt === undefined
+      ? { budgetExhaustedAt: now }
+      : {}),
+    updatedAt: now,
+  }
+}
+
+/**
+ * Set/replace a Goal ceiling (the renewal path). Raising it above the spent
+ * count clears the exhaustion stamp; the counters themselves are never reset,
+ * so a renewal is auditable and the next charge continues from `usedTurns`.
+ */
+export function setGoalBudget(goal: TeamGoal, maxTurns: number, now: string): TeamGoal {
+  const usedTurns = goalTurnsUsed(goal)
+  const next: TeamGoal = {
+    ...goal,
+    maxTurns,
+    usedTurns,
+    updatedAt: now,
+  }
+  if (usedTurns < maxTurns) delete next.budgetExhaustedAt
+  else next.budgetExhaustedAt = goal.budgetExhaustedAt ?? now
+  return next
+}
 export type FileScopeLease = z.infer<typeof fileScopeLeaseSchema>
 export type TeamAggregate = z.infer<typeof teamAggregateSchema>
 

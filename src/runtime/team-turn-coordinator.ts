@@ -118,12 +118,21 @@ export class TeamTurnCoordinator {
     }
     const member = team.members[slotId]
     if (member === undefined || member.desiredState === 'removing') {
-      this.deps.warn(`turn drain skipped: message ${message.id} targets missing or removing slot ${slotId}`)
+      // The recipient can never take this turn again. Failing the record is an
+      // explicit terminal state and lets the next queued turn through instead
+      // of leaving the queue head-of-line blocked forever.
+      this.deps.warn(`turn drain failed: message ${message.id} targets missing or removing slot ${slotId}`)
+      await this.deps.putMessage({ ...message, deliveryState: 'failed' })
+      await this.drainOnce(teamId)
       return
     }
     const sessionId = member.sessionId
     this.sessions.set(sessionId, teamId)
     if (this.deps.sessionState(sessionId) !== 'online') {
+      // Parked: the record stays queued (views derive the busy/offline reason)
+      // and the idle/turn-end release retries it. ponytail: no age timeout, so a
+      // member that never returns holds one record forever; add a TTL if lost
+      // sessions become common.
       return
     }
     if (this.deps.hasMessage(sessionId, message.id)) {

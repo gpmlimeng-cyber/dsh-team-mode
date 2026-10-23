@@ -422,4 +422,69 @@ describe('TeamTurnCoordinator', () => {
     expect(fake.followups).toEqual([])
     expect(team.messages[0]?.deliveryState).toBe('queued')
   })
+
+  it('fails a turn whose recipient is gone or removing and keeps draining', async () => {
+    // A permanently undeliverable head used to stall every later turn. The
+    // record must reach an explicit terminal state and the queue must advance.
+    const fake = createFake({
+      t1: {
+        members: {
+          L: { id: 'L', sessionId: 'sL' },
+          a: { id: 'a', sessionId: 'sa' },
+          gone: { id: 'gone', sessionId: 'sgone', desiredState: 'removing' },
+        },
+        messages: [],
+      },
+    })
+    const team = fake.team('t1')
+    const coordinator = new TeamTurnCoordinator(fake.deps)
+    team.messages.push(
+      message({ id: 'missing', teamId: 't1', slotId: 'ghost', createdAt: '2026-10-23T10:00:00.000Z' }),
+      message({ id: 'removing', teamId: 't1', slotId: 'gone', createdAt: '2026-10-23T10:00:01.000Z' }),
+      message({ id: 'next', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:02.000Z' }),
+    )
+
+    await coordinator.drain('t1')
+
+    expect(team.messages.find(m => m.id === 'missing')?.deliveryState).toBe('failed')
+    expect(team.messages.find(m => m.id === 'removing')?.deliveryState).toBe('failed')
+    expect(fake.followups).toEqual([{ sessionId: 'sL', messageId: 'next' }])
+    expect(fake.warnings.filter(warning => warning.includes('missing or removing'))).toHaveLength(2)
+  })
+
+  it('parks a busy target once and resumes it once without replay', async () => {
+    const fake = createFake({ t1: teamWith('sL', 'sa') })
+    const team = fake.team('t1')
+    const coordinator = new TeamTurnCoordinator(fake.deps)
+    team.messages.push(
+      message({ id: 'm1', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:00.000Z' }),
+      message({ id: 'm2', teamId: 't1', slotId: 'a', createdAt: '2026-10-23T10:00:01.000Z' }),
+    )
+    fake.setSessionState('sa', 'running')
+
+    await coordinator.submit('t1', 'm1')
+    expect(await coordinator.submit('t1', 'm2')).toBe('queued')
+    // The busy target leaves exactly one queued record, never a duplicate.
+    expect(team.messages.filter(m => m.id === 'm2')).toHaveLength(1)
+    expect(team.messages.find(m => m.id === 'm2')?.deliveryState).toBe('queued')
+
+    // Releasing the active speaker cannot deliver into a running target.
+    await coordinator.releaseSession('sL')
+    expect(fake.followups).toEqual([{ sessionId: 'sL', messageId: 'm1' }])
+    expect(team.messages.find(m => m.id === 'm2')?.deliveryState).toBe('queued')
+
+    // The idle release resumes it exactly once.
+    fake.setSessionState('sa', 'online')
+    await coordinator.releaseSession('sL')
+    expect(fake.followups).toEqual([
+      { sessionId: 'sL', messageId: 'm1' },
+      { sessionId: 'sa', messageId: 'm2' },
+    ])
+    expect(team.messages.find(m => m.id === 'm2')?.deliveryState).toBe('delivered')
+
+    // Repeated releases (turn/end then idle) must not replay the delivered turn.
+    await coordinator.releaseSession('sa')
+    await coordinator.releaseSession('sL')
+    expect(fake.followups).toHaveLength(2)
+  })
 })

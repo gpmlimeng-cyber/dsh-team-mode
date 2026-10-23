@@ -32,6 +32,13 @@ export interface Config {
   /** Cancel a member that stays `running` this long (default 10 min). */
   memberIdleWatchdogMs?: number
   /**
+   * Silence window for the disposable routine nudge. When positive, an active
+   * team with open work, no active turn, no running member, and no message in
+   * this window gets one Leader-addressed instruction from the 30 s tick. The
+   * default 0 keeps the routine off; the nudge itself resets the window.
+   */
+  teamRoutineIdleMs?: number
+  /**
    * Deployment-declared member tool policies by id. Empty by default: every
    * member keeps the full baseline tool surface.
    */
@@ -52,6 +59,7 @@ export const Config: Schema<Config> = Schema.object({
   maxTeamTasks: Schema.number().min(1).max(4096).default(256),
   maxTeamMessageBytes: Schema.number().min(1024).max(1024 * 1024).default(64 * 1024),
   memberIdleWatchdogMs: Schema.number().min(30_000).max(60 * 60 * 1000).default(10 * 60 * 1000),
+  teamRoutineIdleMs: Schema.number().min(0).max(24 * 60 * 60 * 1000).step(1).default(0),
   toolPolicies: Schema.dict(Schema.object({
     description: Schema.string().default(''),
     allow: Schema.array(Schema.string()).required(),

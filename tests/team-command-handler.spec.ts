@@ -2443,3 +2443,287 @@ describe('TeamCommandHandler task reminders', () => {
     expect(vi.mocked(service.updateRuntimeTeam).mock.calls.length).toBe(writes)
   })
 })
+
+describe('TeamCommandHandler Goal budgets', () => {
+  it('charges one turn per dispatch, refuses new work when exhausted, and exposes the state', async () => {
+    const { commands, team } = harness()
+    const goal = await commands.createGoal(team().id, 'leader', {
+      title: 'Bounded goal',
+      objective: 'Do a bounded amount of work',
+      max_turns: 2,
+    })
+    expect(goal).toMatchObject({
+      max_turns: 2,
+      used_turns: 0,
+      remaining_turns: 2,
+      budget_exhausted: false,
+    })
+    expect(goal).not.toHaveProperty('budget_exhausted_at')
+
+    const first = await commands.createTask(team().id, 'leader', {
+      subject: 'First dispatch',
+      owner: 'a',
+      goal_id: goal.goal_id,
+    })
+    expect(commands.listGoals(team().id)[0]).toMatchObject({ used_turns: 1, budget_exhausted: false })
+
+    // A blocked task starts no turn: creating it is board bookkeeping, not work.
+    await commands.createTask(team().id, 'leader', {
+      subject: 'Blocked follow-up',
+      owner: 'b',
+      blocked_by: [first.taskId],
+      goal_id: goal.goal_id,
+    })
+    expect(commands.listGoals(team().id)[0]).toMatchObject({ used_turns: 1, remaining_turns: 1 })
+
+    await commands.createTask(team().id, 'leader', {
+      subject: 'Last allowed dispatch',
+      owner: 'b',
+      goal_id: goal.goal_id,
+    })
+    expect(commands.listGoals(team().id)[0]).toMatchObject({
+      used_turns: 2,
+      remaining_turns: 0,
+      budget_exhausted: true,
+    })
+    expect(commands.listGoals(team().id)[0]?.budget_exhausted_at).toBeDefined()
+
+    await expect(commands.createTask(team().id, 'leader', {
+      subject: 'Over budget',
+      owner: 'b',
+      goal_id: goal.goal_id,
+    })).rejects.toMatchObject({
+      code: 'GOAL_BUDGET_EXHAUSTED',
+      details: { goalId: goal.goal_id, maxTurns: 2, usedTurns: 2 },
+    })
+    expect(Object.keys(team().tasks)).toHaveLength(3)
+
+    // Optional counters persist in the existing aggregate, still schemaVersion 1.
+    const parsed = teamAggregateSchema.parse(JSON.parse(JSON.stringify(team())))
+    expect(parsed.schemaVersion).toBe(1)
+    expect(parsed.goals?.[goal.goal_id]).toMatchObject({ maxTurns: 2, usedTurns: 2 })
+  })
+
+  it('stops waking on an exhausted Goal, reports once, and renews through goal_update', async () => {
+    const { commands, team, messages } = harness()
+    const goal = await commands.createGoal(team().id, 'leader', {
+      title: 'Two-turn goal',
+      objective: 'Finish within two turns',
+      max_turns: 2,
+    })
+    const first = await commands.createTask(team().id, 'leader', {
+      subject: 'First',
+      owner: 'a',
+      goal_id: goal.goal_id,
+    })
+    // A blocked follow-up starts no turn, so it costs no budget.
+    const second = await commands.createTask(team().id, 'leader', {
+      subject: 'Second',
+      owner: 'b',
+      blocked_by: [first.taskId],
+      goal_id: goal.goal_id,
+    })
+    // Lowering the ceiling to the spent count exhausts the Goal by definition.
+    const tightened = await commands.updateGoal(team().id, 'leader', {
+      goal_id: goal.goal_id,
+      max_turns: 1,
+    })
+    expect(tightened).toMatchObject({ max_turns: 1, used_turns: 1, budget_exhausted: true })
+    expect(tightened.budget_exhausted_at).toBeDefined()
+
+    // Bookkeeping still lands and the member report is still delivered, but the
+    // unblocked owner is not woken and the Leader gets one explicit system
+    // notice instead of a silent stop.
+    const before = messages.length
+    const done = await commands.updateTask(team().id, 'a', {
+      task_id: first.taskId,
+      status: 'completed',
+      result: 'finished',
+      attempt_id: first.attemptId!,
+    })
+    expect(done.status).toBe('completed')
+    expect(done.woken).toBeUndefined()
+    const emitted = messages.slice(before)
+    expect(emitted.some(message =>
+      message.relatedTaskId === first.taskId && message.type === 'result'
+      && message.recipient.kind === 'leader')).toBe(true)
+    const notice = emitted.filter(message => message.type === 'system')
+    expect(notice).toHaveLength(1)
+    expect(notice[0]).toMatchObject({
+      type: 'system',
+      recipient: { kind: 'leader', slotId: 'leader' },
+    })
+    expect(notice[0]?.content).toContain('turn budget')
+    // The unblocked follow-up instruction to b was dropped, not delivered.
+    expect(emitted.some(message => message.recipient.slotId === 'b')).toBe(false)
+    expect(commands.listGoals(team().id)[0]).toMatchObject({ used_turns: 1, budget_exhausted: true })
+
+    // Renewal raises the ceiling above the spent count and clears the marker.
+    const renewed = await commands.updateGoal(team().id, 'leader', {
+      goal_id: goal.goal_id,
+      max_turns: 3,
+    })
+    expect(renewed).toMatchObject({
+      max_turns: 3,
+      used_turns: 1,
+      remaining_turns: 2,
+      budget_exhausted: false,
+    })
+    expect(renewed).not.toHaveProperty('budget_exhausted_at')
+
+    // Work charges resume from the spent count: a reassignment is an
+    // instruction that starts another member's turn.
+    const reassigned = await commands.updateTask(team().id, 'b', {
+      task_id: second.taskId,
+      status: 'assigned',
+      owner: 'a',
+      attempt_id: second.attemptId!,
+    })
+    expect(reassigned.status).toBe('assigned')
+    expect(messages.some(message =>
+      message.relatedTaskId === second.taskId && message.type === 'instruction'
+      && message.recipient.slotId === 'a')).toBe(true)
+    expect(commands.listGoals(team().id)[0]).toMatchObject({ used_turns: 2, budget_exhausted: false })
+  })
+
+  it('leaves a Goal without max_turns unbounded and legacy-parsable', async () => {
+    const { commands, team } = harness()
+    const goal = await commands.createGoal(team().id, 'leader', {
+      title: 'Unbounded goal',
+      objective: 'Never exhaust',
+    })
+    expect(goal).toMatchObject({ budget_exhausted: false })
+    expect(goal).not.toHaveProperty('max_turns')
+    expect(goal).not.toHaveProperty('used_turns')
+
+    const created = await commands.createTask(team().id, 'leader', {
+      subject: 'Free work',
+      owner: 'a',
+      goal_id: goal.goal_id,
+    })
+    await commands.updateTask(team().id, 'a', {
+      task_id: created.taskId,
+      status: 'completed',
+      result: 'done',
+      attempt_id: created.attemptId!,
+    })
+    const stored = team().goals?.[goal.goal_id]
+    expect(stored).not.toHaveProperty('maxTurns')
+    expect(stored).not.toHaveProperty('usedTurns')
+
+    // A legacy Goal row without any budget field still parses and views cleanly.
+    const legacy = teamAggregateSchema.parse({
+      ...team(),
+      goals: {
+        [goal.goal_id]: {
+          id: goal.goal_id,
+          teamId: team().id,
+          title: 'Legacy goal',
+          objective: 'Stored before budgets existed',
+          acceptance: '',
+          mode: 'single',
+          status: 'active',
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      },
+    })
+    expect(legacy.goals?.[goal.goal_id]).not.toHaveProperty('maxTurns')
+    expect(commands.listGoals(team().id)[0]?.budget_exhausted).toBe(false)
+  })
+
+  it('rejects an invalid max_turns and requires a status or budget on update', async () => {
+    const { commands, team } = harness()
+    await expect(commands.createGoal(team().id, 'leader', {
+      title: 'Bad budget',
+      objective: 'Never created',
+      max_turns: 0,
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    const goal = await commands.createGoal(team().id, 'leader', {
+      title: 'Valid',
+      objective: 'Created',
+      max_turns: 1,
+    })
+    await expect(commands.updateGoal(team().id, 'leader', {
+      goal_id: goal.goal_id,
+      max_turns: -1,
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    // members can never change a budget
+    await expect(commands.updateGoal(team().id, 'a', {
+      goal_id: goal.goal_id,
+      max_turns: 5,
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  })
+})
+
+describe('TeamCommandHandler parked deliveries', () => {
+  function queueMessage(teamId: string, id: string, slotId: string): TeamMessage {
+    return {
+      schemaVersion: 1,
+      id,
+      teamId,
+      sender: { kind: 'member', id: 'leader' },
+      recipient: { kind: 'member', slotId },
+      type: 'instruction',
+      content: `deliver ${id}`,
+      attachments: [],
+      readBy: [],
+      deliveryState: 'queued',
+      idempotencyKey: id,
+      createdAt: NOW,
+    }
+  }
+
+  it('shows a busy or offline queued delivery as parked and clears it when deliverable', async () => {
+    const { commands, team, messages, mutate } = harness()
+    messages.push(queueMessage(team().id, 'parked-busy', 'a'))
+    mutate({
+      ...team(),
+      members: { ...team().members, a: { ...team().members.a!, lastRuntimeState: 'running' } },
+    })
+    expect(commands.inbox(team().id, 'a').unread[0]?.parked)
+      .toEqual({ reason: 'busy', since: NOW })
+
+    // Idle with no active speaker: the record is ordinary queued mail, not parked.
+    mutate({
+      ...team(),
+      members: { ...team().members, a: { ...team().members.a!, lastRuntimeState: 'idle' } },
+    })
+    expect(commands.inbox(team().id, 'a').unread[0]?.parked).toBeUndefined()
+
+    // Offline delivery is parked with the same shape.
+    mutate({
+      ...team(),
+      members: { ...team().members, a: { ...team().members.a!, desiredState: 'offline' } },
+    })
+    expect(commands.inbox(team().id, 'a').unread[0]?.parked)
+      .toEqual({ reason: 'offline', since: NOW })
+
+    // Once delivered, the parked hint is gone and the record is not replayed.
+    messages[0] = { ...messages[0]!, deliveryState: 'delivered' }
+    expect(commands.inbox(team().id, 'a').unread[0]?.parked).toBeUndefined()
+  })
+
+  it('does not park non-turn records or mail for a removing recipient', async () => {
+    const { commands, team, messages, mutate } = harness()
+    messages.push(
+      queueMessage(team().id, 'system-notice', 'a'),
+      queueMessage(team().id, 'for-removing', 'b'),
+    )
+    messages[0] = { ...messages[0]!, type: 'system' }
+    mutate({
+      ...team(),
+      members: {
+        ...team().members,
+        a: { ...team().members.a!, lastRuntimeState: 'running' },
+        b: { ...team().members.b!, desiredState: 'removing', lastRuntimeState: 'running' },
+      },
+    })
+    const inbox = commands.inbox(team().id, 'a')
+    // Read-only inbox for 'a' does not include b's mail; read it as b instead.
+    expect(inbox.unread.find(message => message.id === 'system-notice')?.parked).toBeUndefined()
+    const bInbox = commands.inbox(team().id, 'b')
+    expect(bInbox.unread.find(message => message.id === 'for-removing')?.parked).toBeUndefined()
+  })
+})

@@ -65,8 +65,8 @@ export interface TeamToolHandlers {
   inbox: (input: InboxInput) => TeamInboxResult
   listTasks: (limit?: number) => TeamTaskView[]
   createGoal: (input: CreateGoalInput) => Promise<TeamGoalView>
-  /** Leader-only Goal status write; `active` resumes a paused Goal. */
-  updateGoal: (input: { goal_id: string; status: string }) => Promise<TeamGoalView>
+  /** Leader-only Goal write; `active` resumes a paused Goal, max_turns renews its budget. */
+  updateGoal: (input: { goal_id: string; status?: string; max_turns?: number }) => Promise<TeamGoalView>
   listGoals: () => TeamGoalView[]
   proposeMemory: (input: ProposeMemoryInput) => Promise<TeamMemoryWriteResult>
   listMemory: () => TeamMemoryList
@@ -360,6 +360,10 @@ export function registerTeamTools(
         enum: ['direct', 'single', 'orchestrated'],
         description: 'direct = answer only, single = one deliverable and one task, orchestrated = multiple parallel or dependent tasks.',
       },
+      max_turns: {
+        type: 'number',
+        description: 'Optional bounded work budget: dispatch turns this Goal may start before it is exhausted. Omit for unbounded.',
+      },
     },
     output: textOutput,
     execute: async (args, exec) => {
@@ -369,6 +373,7 @@ export function registerTeamTools(
         objective: args.objective,
         ...(args.acceptance === undefined ? {} : { acceptance: args.acceptance }),
         ...(args.mode === undefined ? {} : { mode: args.mode as NonNullable<CreateGoalInput['mode']> }),
+        ...(args.max_turns === undefined ? {} : { max_turns: args.max_turns }),
       })
       return { goal } as never
     },
@@ -376,20 +381,27 @@ export function registerTeamTools(
 
   register(defineTool({
     name: 'team_mode_goal_update',
-    description: 'Leader only. Set a Goal status. A Leader change (new team epoch) pauses every active Goal; pass status=active to resume the ones you still need, paused to suspend one, completed or cancelled to close it. The Goal keeps the task ids grouped under it.',
+    description: 'Leader only. Set a Goal status and/or its turn budget. A Leader change (new team epoch) pauses every active Goal; pass status=active to resume the ones you still need, paused to suspend one, completed or cancelled to close it. When a Goal exhausts its max_turns budget, raise max_turns to renew it. The Goal keeps the task ids grouped under it.',
     parameters: {
       goal_id: { type: 'string', required: true, description: 'Goal id from team_mode_goal_list.' },
       status: {
         type: 'string',
-        required: true,
         enum: ['active', 'paused', 'completed', 'cancelled'],
         description: 'New Goal status; active resumes a paused Goal.',
+      },
+      max_turns: {
+        type: 'number',
+        description: 'New turn ceiling. Raising it above the spent count renews an exhausted budget; omit to leave it unchanged.',
       },
     },
     output: textOutput,
     execute: async (args, exec) => {
       handlers.assertIdentity(exec.agent)
-      const goal = await handlers.updateGoal({ goal_id: args.goal_id, status: args.status })
+      const goal = await handlers.updateGoal({
+        goal_id: args.goal_id,
+        ...(args.status === undefined ? {} : { status: args.status }),
+        ...(args.max_turns === undefined ? {} : { max_turns: args.max_turns }),
+      })
       return { goal } as never
     },
   }))
