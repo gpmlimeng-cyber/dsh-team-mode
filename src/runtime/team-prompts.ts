@@ -12,6 +12,7 @@ const SHARED_RULES = [
   'Team memory holds durable team decisions and project facts, not task status or chat transcripts. Team memory_list shows proposals and active entries; members propose with team_memory_propose and the Leader decides with team_memory_accept. Only active entries are loaded into prompts.',
   'Use team_read_messages at the start of a turn, or team_mode_inbox for a read-only view of assigned tasks, claimable work, unread mail and approvals (it never marks mail read). Use team_mode_task_list before claiming or reporting work. Put durable decisions and results in the task board or mailbox, not only in your private context.',
   'A review or verification task completes only with verdict=pass; to fail it, pass verdict=needs_revision or reject together with findings. Only the task owner records a verdict, and a Leader who is not the owner must reassign the task first.',
+  'Tasks may carry optional due_at/remind_at times (ISO 8601). When remind_at passes, the runtime sends one system reminder to the owner (or the Leader); it never starts, completes, reassigns, or verifies the task. Set or clear them with team_mode_task_create/team_mode_task_update; a later remind_at re-arms a task already reminded.',
   'Do NOT use platform-native team tools (list_agents, spawn_teammate, send_message, wait_agent, interrupt_agent). They manage a different, implicit team and will report wrong members/tasks. This team uses only the team_* tools listed above.',
 ]
 

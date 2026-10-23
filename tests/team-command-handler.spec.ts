@@ -2186,3 +2186,260 @@ describe('TeamCommandHandler task quality gates', () => {
     expect(workView).not.toHaveProperty('reviewed_task_id')
   })
 })
+
+describe('TeamCommandHandler task reminders', () => {
+  const REMIND_AT = '2026-01-01T00:00:00.000Z'
+  const NOW = '2026-01-01T00:01:00.000Z'
+
+  function systemReminders(messages: TeamMessage[], taskId: string): TeamMessage[] {
+    return messages.filter(message => message.relatedTaskId === taskId && message.type === 'system')
+  }
+
+  it('stores optional due/remind times in UTC and leaves legacy tasks untouched', async () => {
+    const { commands, team } = harness()
+    const created = await commands.createTask(team().id, 'leader', {
+      subject: 'Timed work',
+      owner: 'a',
+      due_at: '2026-02-01T18:30:00+08:00',
+      remindAt: REMIND_AT,
+    })
+    expect(team().tasks[created.taskId]).toMatchObject({
+      dueAt: '2026-02-01T10:30:00.000Z',
+      remindAt: REMIND_AT,
+    })
+    expect(team().tasks[created.taskId]?.remindedAt).toBeUndefined()
+    const view = commands.listTasks(team().id).find(task => task.task_id === created.taskId)!
+    expect(view).toMatchObject({ due_at: '2026-02-01T10:30:00.000Z', remind_at: REMIND_AT })
+    expect(view).not.toHaveProperty('reminded_at')
+
+    // Legacy shape: a task without reminders stores no fields and stays valid.
+    const legacy = await commands.createTask(team().id, 'leader', { subject: 'Legacy' })
+    expect(team().tasks[legacy.taskId]).not.toHaveProperty('dueAt')
+    expect(team().tasks[legacy.taskId]).not.toHaveProperty('remindAt')
+    expect(teamTaskSchema.safeParse(team().tasks[created.taskId]).success).toBe(true)
+    expect(teamTaskSchema.safeParse(team().tasks[legacy.taskId]).success).toBe(true)
+    expect(commands.listTasks(team().id).find(task => task.task_id === legacy.taskId))
+      .not.toHaveProperty('remind_at')
+
+    await expect(commands.createTask(team().id, 'leader', { subject: 'Bad', due_at: 'tomorrow-ish' }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(commands.updateTask(team().id, 'leader', { task_id: legacy.taskId, remind_at: 'nope' }))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  })
+
+  it('treats omitted due/remind as unchanged, empty as clear, and never clears remindedAt', async () => {
+    const { commands, team, mutate } = harness()
+    const created = await commands.createTask(team().id, 'leader', {
+      subject: 'Adjustable',
+      owner: 'a',
+      due_at: '2026-02-01T10:00:00.000Z',
+      remind_at: REMIND_AT,
+    })
+    const attempt = team().tasks[created.taskId]!.attemptId!
+    // Stamp a reminder the way the sweep would, then prove updates keep it.
+    mutate({
+      ...team(),
+      tasks: {
+        ...team().tasks,
+        [created.taskId]: { ...team().tasks[created.taskId]!, remindedAt: NOW },
+      },
+    })
+
+    await commands.updateTask(team().id, 'a', {
+      taskId: created.taskId,
+      status: 'in_progress',
+      attempt_id: attempt,
+      result: 'progress',
+    })
+    expect(team().tasks[created.taskId]).toMatchObject({
+      dueAt: '2026-02-01T10:00:00.000Z',
+      remindAt: REMIND_AT,
+      remindedAt: NOW,
+    })
+
+    await commands.updateTask(team().id, 'leader', {
+      task_id: created.taskId,
+      due_at: '',
+      remind_at: '',
+    })
+    const cleared = team().tasks[created.taskId]!
+    expect(cleared.dueAt).toBeUndefined()
+    expect(cleared.remindAt).toBeUndefined()
+    expect(cleared.remindedAt).toBe(NOW)
+  })
+
+  it('emits one reminder to an online owner, stamps remindedAt, and never changes status', async () => {
+    const { commands, team, service, messages, followup } = harness()
+    const created = await commands.createTask(team().id, 'leader', {
+      subject: 'Follow up',
+      owner: 'a',
+      remind_at: REMIND_AT,
+    })
+    const before = team().tasks[created.taskId]!
+    const first = await commands.remindDueTasks(team().id, NOW)
+    expect(first).toMatchObject({
+      teamId: team().id,
+      remindedTaskIds: [created.taskId],
+      deliveryState: 'delivered',
+    })
+
+    const stamped = team().tasks[created.taskId]!
+    expect(stamped).toMatchObject({
+      status: before.status,
+      ownerSlotId: 'a',
+      attemptId: before.attemptId,
+      remindAt: REMIND_AT,
+      remindedAt: NOW,
+      revision: before.revision + 1,
+    })
+    expect(stamped.verdict).toBeUndefined()
+    const reminders = systemReminders(messages, created.taskId)
+    expect(reminders).toHaveLength(1)
+    expect(reminders[0]).toMatchObject({
+      recipient: { kind: 'member', slotId: 'a' },
+      threadId: created.taskId,
+    })
+    expect(reminders[0]!.content).toContain('does not start, complete')
+    expect(reminders[0]!.content.length).toBeLessThan(2_000)
+    expect(followup).toHaveBeenCalledWith('session-a', expect.anything())
+    expect(commands.listTasks(team().id).find(task => task.task_id === created.taskId))
+      .toMatchObject({ reminded_at: NOW })
+
+    // A duplicate tick is a no-op: no mail and no aggregate write.
+    const writes = vi.mocked(service.updateRuntimeTeam).mock.calls.length
+    const second = await commands.remindDueTasks(team().id, '2026-01-01T00:02:00.000Z')
+    expect(second.remindedTaskIds).toEqual([])
+    expect(systemReminders(messages, created.taskId)).toHaveLength(1)
+    expect(vi.mocked(service.updateRuntimeTeam).mock.calls.length).toBe(writes)
+  })
+
+  it('serializes overlapping ticks so a task is reminded exactly once', async () => {
+    const { commands, team, messages } = harness()
+    const created = await commands.createTask(team().id, 'leader', {
+      subject: 'Contested reminder',
+      owner: 'a',
+      remind_at: REMIND_AT,
+    })
+
+    const [left, right] = await Promise.all([
+      commands.remindDueTasks(team().id, NOW),
+      commands.remindDueTasks(team().id, NOW),
+    ])
+
+    expect([...left.remindedTaskIds, ...right.remindedTaskIds]).toEqual([created.taskId])
+    expect(systemReminders(messages, created.taskId)).toHaveLength(1)
+    expect(team().tasks[created.taskId]?.remindedAt).toBe(NOW)
+  })
+
+  it('never reminds terminal tasks or a task with only dueAt, and caps a sweep at 20', async () => {
+    const { commands, team, messages } = harness()
+    const dueOnly = await commands.createTask(team().id, 'leader', {
+      subject: 'Due but no reminder',
+      owner: 'a',
+      due_at: REMIND_AT,
+    })
+    const terminalIds: string[] = []
+    for (const status of ['completed', 'cancelled', 'failed'] as const) {
+      const task = await commands.createTask(team().id, 'leader', {
+        subject: `Terminal ${status}`,
+        owner: 'a',
+        remind_at: REMIND_AT,
+      })
+      await commands.updateTask(team().id, 'a', {
+        taskId: task.taskId,
+        status,
+        attempt_id: team().tasks[task.taskId]!.attemptId!,
+      })
+      terminalIds.push(task.taskId)
+    }
+    expect((await commands.remindDueTasks(team().id, NOW)).remindedTaskIds).toEqual([])
+    expect(systemReminders(messages, dueOnly.taskId)).toHaveLength(0)
+    for (const taskId of terminalIds) expect(systemReminders(messages, taskId)).toHaveLength(0)
+
+    // A bounded sweep picks the earliest reminders, then the next sweep the rest.
+    const ids: string[] = []
+    for (let index = 0; index < 21; index += 1) {
+      const created = await commands.createTask(team().id, 'leader', {
+        subject: `Reminder ${index}`,
+        owner: 'a',
+        remind_at: new Date(Date.parse(REMIND_AT) + index * 1_000).toISOString(),
+      })
+      ids.push(created.taskId)
+    }
+    const first = await commands.remindDueTasks(team().id, NOW)
+    expect(first.remindedTaskIds).toHaveLength(20)
+    expect(first.remindedTaskIds).toEqual(ids.slice(0, 20))
+    const second = await commands.remindDueTasks(team().id, NOW)
+    expect(second.remindedTaskIds).toEqual([ids[20]])
+  })
+
+  it('routes to the Leader when the owner is errored and inherits the Goal link', async () => {
+    const { commands, team, messages, mutate } = harness()
+    const goal = await commands.createGoal(team().id, 'leader', {
+      title: 'Reminder goal',
+      objective: 'Prove routing',
+    })
+    const created = await commands.createTask(team().id, 'leader', {
+      subject: 'Owned by an errored member',
+      owner: 'b',
+      goal_id: goal.goal_id,
+      remind_at: REMIND_AT,
+    })
+    mutate({
+      ...team(),
+      members: {
+        ...team().members,
+        b: { ...team().members.b!, lastRuntimeState: 'error' },
+      },
+    })
+
+    await commands.remindDueTasks(team().id, NOW)
+    const reminder = systemReminders(messages, created.taskId)[0]!
+    expect(reminder).toMatchObject({
+      recipient: { kind: 'leader', slotId: 'leader' },
+      goalId: goal.goal_id,
+      threadId: created.taskId,
+    })
+  })
+
+  it('re-arms only when remindAt moves past the stamp', async () => {
+    const { commands, team } = harness()
+    const created = await commands.createTask(team().id, 'leader', {
+      subject: 'Re-arm me',
+      owner: 'a',
+      remind_at: REMIND_AT,
+    })
+    await commands.remindDueTasks(team().id, NOW)
+    expect(team().tasks[created.taskId]?.remindedAt).toBe(NOW)
+
+    // Earlier than the stamp: already reminded for this schedule, no repeat.
+    await commands.updateTask(team().id, 'leader', {
+      task_id: created.taskId,
+      remind_at: '2025-12-31T23:00:00.000Z',
+    })
+    expect((await commands.remindDueTasks(team().id, NOW)).remindedTaskIds).toEqual([])
+
+    // Later than the stamp: re-armed without clearing reminder history.
+    await commands.updateTask(team().id, 'leader', {
+      task_id: created.taskId,
+      remind_at: '2026-01-01T01:00:00.000Z',
+    })
+    expect(team().tasks[created.taskId]?.remindedAt).toBe(NOW)
+    const later = await commands.remindDueTasks(team().id, '2026-01-01T02:00:00.000Z')
+    expect(later.remindedTaskIds).toEqual([created.taskId])
+    expect(team().tasks[created.taskId]?.remindedAt).toBe('2026-01-01T02:00:00.000Z')
+  })
+
+  it('does not write when no task is due', async () => {
+    const { commands, team, service } = harness()
+    await commands.createTask(team().id, 'leader', {
+      subject: 'Later',
+      owner: 'a',
+      remind_at: '2030-01-01T00:00:00.000Z',
+    })
+    const writes = vi.mocked(service.updateRuntimeTeam).mock.calls.length
+    const result = await commands.remindDueTasks(team().id, NOW)
+    expect(result.remindedTaskIds).toEqual([])
+    expect(vi.mocked(service.updateRuntimeTeam).mock.calls.length).toBe(writes)
+  })
+})

@@ -467,7 +467,7 @@ export function registerTeamTools(
 
   register(defineTool({
     name: 'team_mode_task_create',
-    description: 'Leader only. Create a task on the shared task board. `blocked_by` lists task ids that must finish first; `goal_id` groups it under an existing Goal of this team. `kind` defaults to work: a review or verification task completes only with verdict=pass, and `reviewed_task_id` names the implementation/repair task it judges. Assigning an owner wakes that member automatically and returns the task attempt_id.',
+    description: 'Leader only. Create a task on the shared task board. `blocked_by` lists task ids that must finish first; `goal_id` groups it under an existing Goal of this team. `kind` defaults to work: a review or verification task completes only with verdict=pass, and `reviewed_task_id` names the implementation/repair task it judges. Optional `due_at`/`remind_at` (ISO 8601) set a due time and one-shot reminder; the reminder never starts work. Assigning an owner wakes that member automatically and returns the task attempt_id.',
     parameters: {
       subject: { type: 'string', required: true, description: 'Short task subject.' },
       description: { type: 'string', description: 'Task details.' },
@@ -481,6 +481,8 @@ export function registerTeamTools(
       },
       acceptance: { type: 'string', description: 'Done-when statement for this task.' },
       reviewed_task_id: { type: 'string', description: 'Implementation or repair task judged by a review/verification task.' },
+      due_at: { type: 'string', description: 'Optional due time (ISO 8601); stored in UTC. Informational only.' },
+      remind_at: { type: 'string', description: 'Optional reminder time (ISO 8601); one bounded reminder is sent to the owner or Leader when it passes.' },
     },
     output: textOutput,
     execute: async (args, exec) => {
@@ -494,6 +496,8 @@ export function registerTeamTools(
         ...(args.kind === undefined ? {} : { kind: args.kind }),
         ...(args.acceptance === undefined ? {} : { acceptance: args.acceptance }),
         ...(args.reviewed_task_id === undefined ? {} : { reviewed_task_id: args.reviewed_task_id }),
+        ...(args.due_at === undefined ? {} : { due_at: args.due_at }),
+        ...(args.remind_at === undefined ? {} : { remind_at: args.remind_at }),
       })
       return {
         task_id: result.taskId,
@@ -508,7 +512,7 @@ export function registerTeamTools(
 
   register(defineTool({
     name: 'team_mode_task_update',
-    description: 'Update a task you own (the Leader may update any task). Completing a task clears its downstream blockers. The task owner or Leader may reassign an owner or change blockers; reassignment wakes the new owner and rotates the attempt_id. A review or verification task completes only with verdict=pass; to fail it, the owner passes verdict=needs_revision or reject together with findings. When you are not the Leader, pass the attempt_id listed for the task or the update is rejected as stale.',
+    description: 'Update a task you own (the Leader may update any task). Completing a task clears its downstream blockers. The task owner or Leader may reassign an owner or change blockers; reassignment wakes the new owner and rotates the attempt_id. Optional `due_at`/`remind_at` set or, with an empty string, clear reminder times; reminded history is never cleared. A review or verification task completes only with verdict=pass; to fail it, the owner passes verdict=needs_revision or reject together with findings. When you are not the Leader, pass the attempt_id listed for the task or the update is rejected as stale.',
     parameters: {
       task_id: { type: 'string', required: true, description: 'Task id.' },
       status: {
@@ -526,6 +530,8 @@ export function registerTeamTools(
         description: 'Review decision; review/verification tasks only, recorded by the task owner. pass requires completed; needs_revision/reject require failed plus findings.',
       },
       findings: { type: 'string', description: 'Required with verdict=needs_revision or reject; stored as the task error.' },
+      due_at: { type: 'string', description: 'New due time (ISO 8601, stored in UTC); empty string clears it, omit to keep it.' },
+      remind_at: { type: 'string', description: 'New reminder time (ISO 8601); empty string clears it, omit to keep it. A later time re-arms a task already reminded.' },
     },
     output: textOutput,
     execute: async (args, exec) => {
@@ -539,6 +545,8 @@ export function registerTeamTools(
         ...(attemptId === undefined ? {} : { attemptId }),
         ...(args.verdict === undefined ? {} : { verdict: args.verdict }),
         ...(args.findings === undefined ? {} : { findings: args.findings }),
+        ...(args.due_at === undefined ? {} : { due_at: args.due_at }),
+        ...(args.remind_at === undefined ? {} : { remind_at: args.remind_at }),
       })
       return {
         task_id: result.taskId,

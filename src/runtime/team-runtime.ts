@@ -72,6 +72,12 @@ interface OwnedAgent {
   modelSelection: ModelSelectionRef
 }
 
+/**
+ * One reminder sweep per interval for the whole runtime. The timer is unref'd,
+ * so it never keeps the host process alive; dispose clears it.
+ */
+const TASK_REMINDER_TICK_MS = 30_000
+
 export class TeamRuntime {
   private readonly owned = new Map<string, OwnedAgent>()
   private readonly activating = new Map<string, {
@@ -85,6 +91,10 @@ export class TeamRuntime {
   private readonly disposeConversationListener: () => void
   private readonly conversationPublishes = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly watchdogs = new Map<string, ReturnType<typeof setTimeout>>()
+  /** Single disposable task-reminder interval; armed at the end of recovery. */
+  private reminderTimer: ReturnType<typeof setInterval> | undefined
+  /** The in-flight sweep, so overlapping ticks never double-scan a team. */
+  private reminderSweep: Promise<void> | undefined
   private readonly messages: TeamMessageDispatcher
   private readonly commands: TeamCommandHandler
   private readonly interactions: TeamInteractionBridge
@@ -1047,11 +1057,18 @@ export class TeamRuntime {
         await this.markTeamError(team.id, error)
       }
     })
+    this.armReminderTick()
   }
 
   async dispose(): Promise<void> {
     if (this.closing) return
     this.closing = true
+    // Stop the reminder tick first: it can otherwise start a sweep while the
+    // rest of the runtime is being torn down.
+    if (this.reminderTimer !== undefined) {
+      clearInterval(this.reminderTimer)
+      this.reminderTimer = undefined
+    }
     this.disposeStatusListener()
     this.disposeConversationListener()
     await this.interactions.dispose()
@@ -1059,7 +1076,10 @@ export class TeamRuntime {
     this.conversationPublishes.clear()
     for (const timer of this.watchdogs.values()) clearTimeout(timer)
     this.watchdogs.clear()
-    await Promise.allSettled([...this.operations.values()])
+    await Promise.allSettled([
+      ...this.operations.values(),
+      ...(this.reminderSweep === undefined ? [] : [this.reminderSweep]),
+    ])
     const owned = [...this.owned.values()]
     for (const entry of owned) entry.handle.agent.cancel({ kind: 'disposed' }, { keepInbox: true })
     await Promise.allSettled(owned.map(entry => entry.handle.agent.whenIdle()))
@@ -1074,6 +1094,39 @@ export class TeamRuntime {
     this.owned.clear()
   }
 
+  /**
+   * One unref'd interval drives every team's reminder sweep. Arming is
+   * idempotent, and dispose clears the timer before any other teardown.
+   */
+  private armReminderTick(): void {
+    if (this.closing || this.reminderTimer !== undefined) return
+    const timer = setInterval(() => { void this.sweepTaskReminders() }, TASK_REMINDER_TICK_MS)
+    timer.unref?.()
+    this.reminderTimer = timer
+  }
+
+  /** A sweep is single-flight: an overlapping tick returns immediately. */
+  private async sweepTaskReminders(): Promise<void> {
+    if (this.closing || this.reminderSweep !== undefined) return
+    const now = new Date().toISOString()
+    const sweep = (async () => {
+      for (const team of this.service.listTeams().items) {
+        if (this.closing) return
+        if (team.state !== 'active') continue
+        try {
+          await this.commands.remindDueTasks(team.id, now)
+        } catch (error) {
+          this.ctx.logger.warn(`dsh-team-mode: task reminder sweep failed for team ${team.id}`, error)
+        }
+      }
+    })()
+    this.reminderSweep = sweep
+    try {
+      await sweep
+    } finally {
+      if (this.reminderSweep === sweep) this.reminderSweep = undefined
+    }
+  }
 
   private publishOwnedConversation(sessionId: string): void {
     try {

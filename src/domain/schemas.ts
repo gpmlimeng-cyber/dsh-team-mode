@@ -354,6 +354,16 @@ export const teamTaskSchema = z.object({
   fileScopes: z.array(nonEmpty),
   result: z.string().optional(),
   error: z.string().optional(),
+  /**
+   * Optional due/reminder times, added without a schema-version bump. A task
+   * stored before reminders existed carries none and behaves exactly as before.
+   * `remindedAt` is the reminder already emitted for `remindAt`; the runtime
+   * stamps it once and never clears it, so moving `remindAt` later re-arms it
+   * while an unchanged time stays silent.
+   */
+  dueAt: isoDate.optional(),
+  remindAt: isoDate.optional(),
+  remindedAt: isoDate.optional(),
   revision: z.int().positive(),
   createdAt: isoDate,
   updatedAt: isoDate,

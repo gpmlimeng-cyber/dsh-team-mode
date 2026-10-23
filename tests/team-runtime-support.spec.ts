@@ -1,5 +1,5 @@
 import { Context } from '@deepseek-ai/cordis'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
 import type { MemoryEntry, TeamAggregate, TeamMemberSlot } from '../src/domain/types.js'
@@ -521,6 +521,63 @@ describe('team runtime support', () => {
     expect(taskMessageType('blocked')).toBe('question')
     expect(taskMessageType('failed')).toBe('warning')
     expect(taskMessageType('running')).toBe('progress')
+  })
+
+  it('arms one reminder tick for every team, serializes sweeps, and clears it on dispose', async () => {
+    vi.useFakeTimers()
+    try {
+      const teams = [
+        { id: 'team-a', state: 'active' },
+        { id: 'team-b', state: 'active' },
+        { id: 'team-c', state: 'deleting' },
+      ] as unknown as TeamAggregate[]
+      const service = {
+        listTeams: () => ({ items: teams, total: teams.length }),
+      } as unknown as AgentTeamService
+      const runtime = new TeamRuntime(new Context(), {} as Config, service)
+      const internals = runtime as unknown as {
+        armReminderTick: () => void
+        reminderTimer?: unknown
+        commands: {
+          remindDueTasks: (teamId: string, now: string) => Promise<{
+            teamId: string
+            remindedTaskIds: string[]
+          }>
+        }
+      }
+      let release!: () => void
+      const blocked = new Promise<{ teamId: string; remindedTaskIds: string[] }>(resolve => {
+        release = () => resolve({ teamId: 'team-a', remindedTaskIds: [] })
+      })
+      const remindDueTasks = vi.fn()
+        .mockImplementationOnce(() => blocked)
+        .mockResolvedValue({ teamId: 'team-b', remindedTaskIds: [] })
+      internals.commands = { remindDueTasks } as never
+
+      internals.armReminderTick()
+      const armed = internals.reminderTimer
+      internals.armReminderTick()
+      expect(internals.reminderTimer).toBe(armed)
+
+      // The first tick blocks on team-a, so a second tick must not overlap it.
+      await vi.advanceTimersByTimeAsync(30_000)
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(remindDueTasks).toHaveBeenCalledTimes(1)
+      expect(remindDueTasks).toHaveBeenCalledWith('team-a', expect.any(String))
+
+      release()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(remindDueTasks.mock.calls.map(call => call[0])).toEqual(['team-a', 'team-b'])
+      expect(remindDueTasks.mock.calls.some(call => call[0] === 'team-c')).toBe(false)
+
+      await runtime.dispose()
+      expect(internals.reminderTimer).toBeUndefined()
+      remindDueTasks.mockClear()
+      await vi.advanceTimersByTimeAsync(120_000)
+      expect(remindDueTasks).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 

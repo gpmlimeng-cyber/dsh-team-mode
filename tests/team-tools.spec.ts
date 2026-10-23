@@ -599,6 +599,63 @@ describe('Team Mode tool surface', () => {
       attemptId: 'att-3',
     })
   })
+
+  it('declares due/remind times on the primary task tools and freezes the aliases', () => {
+    const { tools } = harness()
+    const create = tools.get('team_mode_task_create')!
+    expect(create.parameters.properties?.due_at).toBeDefined()
+    expect(create.parameters.properties?.remind_at).toBeDefined()
+
+    const update = tools.get('team_mode_task_update')!
+    expect(update.parameters.properties?.due_at).toBeDefined()
+    expect(update.parameters.properties?.remind_at).toBeDefined()
+
+    // The legacy aliases stay frozen at their pre-reminder shape.
+    expect(tools.get('team_create_task')?.parameters.properties).not.toHaveProperty('due_at')
+    expect(tools.get('team_update_task')?.parameters.properties).not.toHaveProperty('remind_at')
+  })
+
+  it('forwards due/remind times from the primary tools and omits absent values', async () => {
+    const { tools, handlers } = harness()
+    const exec = { agent: { id: 'agent-1' } }
+    const create = tools.get('team_mode_task_create')!
+    const update = tools.get('team_mode_task_update')!
+
+    await create.execute(
+      {
+        subject: 'Timed work',
+        due_at: '2026-02-01T10:30:00.000Z',
+        remind_at: '2026-02-01T08:00:00.000Z',
+      },
+      exec,
+    )
+    expect(handlers.createTask).toHaveBeenLastCalledWith({
+      subject: 'Timed work',
+      due_at: '2026-02-01T10:30:00.000Z',
+      remind_at: '2026-02-01T08:00:00.000Z',
+    })
+
+    await create.execute({ subject: 'Plain work' }, exec)
+    expect(handlers.createTask).toHaveBeenLastCalledWith({ subject: 'Plain work' })
+
+    await update.execute(
+      {
+        task_id: 't1',
+        status: 'in_progress',
+        attempt_id: 'att-1',
+        due_at: '',
+        remind_at: '2026-02-01T08:00:00.000Z',
+      },
+      exec,
+    )
+    expect(handlers.updateTask).toHaveBeenLastCalledWith({
+      task_id: 't1',
+      status: 'in_progress',
+      attemptId: 'att-1',
+      due_at: '',
+      remind_at: '2026-02-01T08:00:00.000Z',
+    })
+  })
 })
 
 describe('member tool policies', () => {

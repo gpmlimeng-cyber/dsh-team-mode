@@ -11,10 +11,10 @@
 | `team_mode_goal_create` | Leader 专用：为一个需要交付物的目标创建 Goal（mode=`direct` / `single` / `orchestrated`） |
 | `team_mode_goal_list` | 按 Goal 汇总任务板：每个 Goal 及其 `task_ids` |
 | `team_mode_goal_update` | Leader 专用：修改 Goal 状态（`active` 恢复被纪元暂停的 Goal，`paused` 暂停，`completed` / `cancelled` 结束） |
-| `team_mode_task_create` | 创建任务，指定 owner / blocked_by / 文件范围 / `goal_id`，可选 `kind` / `acceptance` / `reviewed_task_id` |
-| `team_mode_task_update` | 更新任务状态、owner、依赖、结果；review/verification 用 `verdict` / `findings` 结案；成员需带当前 `attempt_id` |
+| `team_mode_task_create` | 创建任务，指定 owner / blocked_by / 文件范围 / `goal_id`，可选 `kind` / `acceptance` / `reviewed_task_id` / `due_at` / `remind_at` |
+| `team_mode_task_update` | 更新任务状态、owner、依赖、结果、`due_at` / `remind_at`；review/verification 用 `verdict` / `findings` 结案；成员需带当前 `attempt_id` |
 | `team_mode_task_claim` | 成员认领一个就绪且无 owner 的任务：原子占用并生成新的 `attempt_id` |
-| `team_mode_task_list` | 查询任务板（含 owner、依赖、`attempt_id`、`goal_id`、`kind`、`verdict`） |
+| `team_mode_task_list` | 查询任务板（含 owner、依赖、`attempt_id`、`goal_id`、`kind`、`verdict`、`due_at` / `remind_at` / `reminded_at`） |
 | `team_mode_inbox` | 只读成员收件箱：分派给我的任务、可认领任务、未读消息、待审批 |
 | `team_memory_propose` | 提议/写入团队记忆：成员提议待 Leader 决定，Leader 写入立即生效 |
 | `team_memory_list` | 列出团队记忆（状态、可见性、key、作者、版本）；只有 `active` 会进入提示 |
@@ -91,6 +91,17 @@
 - 裁决只属于本次终态写入：任务离开终态（重开、回到 in_progress 等）时 `verdict` 被删除，再次结案需要新的裁决；`pass` 会清掉上一轮遗留的 `error`，任务板不会显示过期的 `pass`。
 - 本流程**没有自动修复/自动评审循环**：`needs_revision` 只把评审任务置为 `failed` 并把 findings 邮给 Leader，是否新建修复任务由 Leader 手动决定。`requirements` / `integration` 两类暂不引入（当前没有可执行规则），自评审（实现者评审自己）也未在 P0 禁止。
 - 工具参数：`team_mode_task_update` 用 `verdict` / `findings`；兼容别名 `team_update_task` / `team_create_task` 参数保持冻结，不暴露新字段。工具总数仍为 24。
+
+## 任务提醒（dueAt / remindAt）
+
+- 任务新增三个**可选**字段，`schemaVersion` 不变，无迁移：`dueAt`（截止时间）、`remindAt`（提醒时间）、`remindedAt`（已发出的提醒时间）。旧任务没有这些字段，行为完全不变；没有 `remindAt` 的任务永远不会提醒，也不会从 `dueAt` 推导提醒。
+- 创建：`team_mode_task_create` 可选 `due_at` / `remind_at`，按 ISO 8601 解析并统一存为 UTC；非法时间以 `INVALID_REQUEST` 拒绝。更新：`team_mode_task_update` 同样接受 `due_at` / `remind_at`——省略表示保持原值，空字符串表示清除，给值则替换；`remindedAt` 只由运行时写入，任何工具都无法清除它。
+- 提醒只对**未终结**任务（`pending` / `assigned` / `running` / `blocked`）生效：`remindAt <= now` 且（从未提醒或 `remindedAt < remindAt`）才进入候选。把 `remindAt` 改到 `remindedAt` 之后会重新武装提醒；改到之前不会补发。`completed` / `failed` / `cancelled` 永不提醒。
+- 运行时只在启动恢复结束时武装**一个** `unref` 的 30 秒间隔，同一时刻只允许一次 sweep 在飞；`dispose` 会先清除定时器并等待在飞 sweep。sweep 遍历活跃团队，每个团队每轮最多提醒 20 个任务，按 `remindAt`、任务 id 排序。
+- 提醒写入是**一次原子聚合更新**：在串行写闭包内复查候选、写入 `remindedAt` 与一条 `system` 消息，然后才投递。并发/重复 tick 第二轮看到候选已被盖章，直接放弃且不产生 revision/activity；因此同一 `remindAt` 只提醒一次。
+- 投递对象：当前 owner 若在线且非 `error` 状态则发给 owner，否则发给 Leader。消息带 `relatedTaskId=threadId=任务 id`，任务有 `goalId` 时一并继承，便于按任务或 thread 过滤。
+- **不自动执行**：提醒只写 `remindedAt`（以及通知），不改变任务状态、owner、`attemptId`、结果或 verdict，也不会自动开始、完成、重派或评审任何工作。任务的 `revision` / `updatedAt` 会因盖章递增。
+- 工具参数只加在 `team_mode_task_create` / `team_mode_task_update` 主工具上；兼容别名 `team_create_task` / `team_update_task` 的参数保持冻结。
 
 ## 消息 thread / goal / reply 上下文
 

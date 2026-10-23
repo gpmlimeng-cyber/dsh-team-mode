@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, MessageId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { AgentTeamError } from '../domain/errors.js'
 import { teamTaskKindSchema, teamTaskVerdictSchema } from '../domain/schemas.js'
 import { taskKindOf } from '../domain/types.js'
@@ -108,6 +108,12 @@ export interface TeamTaskView {
   verdict?: TeamTaskVerdict
   result?: string
   error?: string
+  /** Optional due time; absent when the task has none. */
+  due_at?: string
+  /** Optional reminder time; absent when the task has none. */
+  remind_at?: string
+  /** Reminder already emitted for `remind_at`; absent until one fires. */
+  reminded_at?: string
   revision: number
   created_at: string
   updated_at: string
@@ -176,6 +182,12 @@ export interface CreateTaskInput {
   /** Implementation/repair task judged by a review or verification task. */
   reviewedTaskId?: string
   reviewed_task_id?: string
+  /** Optional due time; ISO 8601, normalized to UTC. */
+  dueAt?: string
+  due_at?: string
+  /** Optional reminder time; ISO 8601, normalized to UTC. */
+  remindAt?: string
+  remind_at?: string
 }
 
 export interface CreateGoalInput {
@@ -263,6 +275,12 @@ export interface UpdateTaskInput {
   verdict?: string
   /** Findings required with verdict=needs_revision or reject; stored as `error`. */
   findings?: string
+  /** Due time; ISO 8601, normalized to UTC. Empty string clears it. */
+  dueAt?: string
+  due_at?: string
+  /** Reminder time; ISO 8601, normalized to UTC. Empty string clears it. */
+  remindAt?: string
+  remind_at?: string
 }
 
 export interface ClaimTaskInput {
@@ -342,6 +360,20 @@ const TASK_STATUS_ALIASES: Readonly<Record<string, InternalTaskStatus>> = {
   deleted: 'cancelled',
 }
 
+/** Only open work can remind; every terminal status is silent. */
+const OPEN_TASK_STATUSES: ReadonlySet<InternalTaskStatus> = new Set([
+  'pending',
+  'assigned',
+  'running',
+  'blocked',
+])
+
+/** One sweep never emits more than this many reminders per team. */
+const TASK_REMINDER_LIMIT = 20
+
+/** Thrown inside a sweep closure to abort without a revision/activity write. */
+class NoReminderDue extends Error {}
+
 export class TeamCommandHandler {
   private readonly shutdownRequests = new Map<string, ShutdownRequest>()
 
@@ -407,6 +439,8 @@ export class TeamCommandHandler {
       kind,
       input.reviewed_task_id ?? input.reviewedTaskId,
     )
+    const dueAt = normalizeTaskTimestamp(input.due_at ?? input.dueAt, 'Task due_at')
+    const remindAt = normalizeTaskTimestamp(input.remind_at ?? input.remindAt, 'Task remind_at')
     const taskLimit = this.service.config.maxTeamTasks ?? 256
     if (Object.keys(team.tasks).length >= taskLimit) {
       throw new AgentTeamError(
@@ -457,6 +491,8 @@ export class TeamCommandHandler {
             kind,
             ...(acceptance === undefined ? {} : { acceptance }),
             ...(reviewedTaskId === undefined ? {} : { reviewedTaskId }),
+            ...(dueAt === undefined ? {} : { dueAt }),
+            ...(remindAt === undefined ? {} : { remindAt }),
             revision: 1,
             createdAt: now,
             updatedAt: now,
@@ -528,6 +564,9 @@ export class TeamCommandHandler {
     const nextBlockedBy = requestedBlockedBy === undefined
       ? task.dependencyIds
       : this.validateBlockedBy(team, taskId, requestedBlockedBy)
+    // undefined keeps the stored value, '' clears it, a value replaces it.
+    const requestedDueAt = readTaskTimestamp(input.due_at ?? input.dueAt, 'Task due_at')
+    const requestedRemindAt = readTaskTimestamp(input.remind_at ?? input.remindAt, 'Task remind_at')
     const now = new Date().toISOString()
     let notifications: TeamMessage[] = []
     let woken: string[] = []
@@ -594,6 +633,13 @@ export class TeamCommandHandler {
           revision: base.revision + 1,
           updatedAt: now,
         }
+        // `remindedAt` is deliberately not writable here: only the reminder
+        // sweep stamps it. Moving `remindAt` later than the stamp re-arms the
+        // reminder through the sweep's comparison instead of clearing history.
+        if (requestedDueAt === null) delete updated.dueAt
+        else if (requestedDueAt !== undefined) updated.dueAt = requestedDueAt
+        if (requestedRemindAt === null) delete updated.remindAt
+        else if (requestedRemindAt !== undefined) updated.remindAt = requestedRemindAt
         // A verdict describes the task's current terminal decision: leaving a
         // terminal status drops it, and a failed task never keeps a stale
         // `pass`. A `failed` re-report without a verdict keeps its findings
@@ -807,6 +853,75 @@ export class TeamCommandHandler {
     return { taskId, status: 'assigned', owner: callerSlotId, attemptId }
   }
 
+  /**
+   * One bounded reminder sweep for one team. Candidates are open tasks whose
+   * `remindAt` arrived and whose last reminder predates that time. The stamp
+   * and the notification are written in one serialized aggregate update, so
+   * overlapping ticks cannot send a second reminder; status, owner, attempt,
+   * result, and verdict are never touched. Delivery happens after the write.
+   */
+  async remindDueTasks(teamId: string, now = new Date().toISOString()): Promise<{
+    teamId: string
+    remindedTaskIds: string[]
+    deliveryState?: 'queued' | 'delivered'
+  }> {
+    const nowMs = Date.parse(now)
+    if (Number.isNaN(nowMs)) throw new AgentTeamError('INVALID_REQUEST', 'Reminder time must be an ISO 8601 timestamp')
+    const nowIso = new Date(nowMs).toISOString()
+    const team = this.service.getTeam(teamId)
+    if (team.state !== 'active' || reminderCandidates(team, nowMs).length === 0) {
+      return { teamId, remindedTaskIds: [] }
+    }
+    const notifications: TeamMessage[] = []
+    const remindedTaskIds: string[] = []
+    try {
+      await this.service.updateRuntimeTeam(
+        teamId,
+        current => {
+          // Re-check against the aggregate being written: a concurrent tick may
+          // have stamped these tasks after the snapshot above.
+          const candidates = current.state === 'active' ? reminderCandidates(current, nowMs) : []
+          if (candidates.length === 0) throw new NoReminderDue()
+          const tasks = { ...current.tasks }
+          const nextNotifications: TeamMessage[] = []
+          for (const task of candidates) {
+            tasks[task.id] = {
+              ...task,
+              remindedAt: nowIso,
+              revision: task.revision + 1,
+              updatedAt: nowIso,
+            }
+            nextNotifications.push(taskReminderMessage(current, task))
+            remindedTaskIds.push(task.id)
+          }
+          notifications.push(...nextNotifications)
+          return {
+            ...current,
+            tasks,
+            outbox: {
+              ...current.outbox,
+              ...Object.fromEntries(nextNotifications.map(message => [message.id, message])),
+            },
+          }
+        },
+        'team.task_reminded',
+        `Task reminder emitted for ${remindedTaskIds.length} task(s)`,
+      )
+    } catch (error) {
+      if (error instanceof NoReminderDue) return { teamId, remindedTaskIds: [] }
+      throw error
+    }
+    let delivered = true
+    for (const notification of notifications) {
+      delivered = await this.port.deliverMessage(teamId, notification.id) && delivered
+    }
+    return {
+      teamId,
+      remindedTaskIds,
+      ...(notifications.length === 0 ? {} : { deliveryState: delivered ? 'delivered' as const : 'queued' as const }),
+    }
+  }
+
   listTasks(teamId: string, limit = 200): TeamTaskView[] {
     const team = this.service.getTeam(teamId)
     const bounded = Math.max(1, Math.min(limit, 200))
@@ -841,6 +956,9 @@ export class TeamCommandHandler {
       file_scopes: [...task.fileScopes],
       ...(task.result === undefined ? {} : { result: task.result }),
       ...(task.error === undefined ? {} : { error: task.error }),
+      ...(task.dueAt === undefined ? {} : { due_at: task.dueAt }),
+      ...(task.remindAt === undefined ? {} : { remind_at: task.remindAt }),
+      ...(task.remindedAt === undefined ? {} : { reminded_at: task.remindedAt }),
       revision: task.revision,
       created_at: task.createdAt,
       updated_at: task.updatedAt,
@@ -1753,6 +1871,89 @@ function normalizeFiles(files: readonly string[] | undefined): TeamMessage['atta
 
 function uniqueStrings(values: readonly string[]): string[] {
   return [...new Set(values.map(value => value.trim()).filter(Boolean))]
+}
+
+/**
+ * Create-time timestamps: blank/absent means "not provided", and any value
+ * must parse as a date so a typo never lands in the board. Stored as UTC.
+ */
+function normalizeTaskTimestamp(value: string | undefined, label: string): string | undefined {
+  const trimmed = value?.trim()
+  if (trimmed === undefined || trimmed.length === 0) return undefined
+  const parsed = Date.parse(trimmed)
+  if (Number.isNaN(parsed)) {
+    throw new AgentTeamError('INVALID_REQUEST', `${label} must be an ISO 8601 timestamp`)
+  }
+  return new Date(parsed).toISOString()
+}
+
+/**
+ * Update-time timestamps: `undefined` keeps the stored value, an empty string
+ * clears it, and a value replaces it. `remindedAt` exists only for the reader,
+ * never as an input, so nothing here can clear reminder history.
+ */
+function readTaskTimestamp(value: string | undefined, label: string): string | null | undefined {
+  if (value === undefined) return undefined
+  if (value.trim().length === 0) return null
+  return normalizeTaskTimestamp(value, label)
+}
+
+/**
+ * Open tasks whose reminder arrived and whose last stamp predates that time.
+ * Sorted by reminder time then id for a deterministic bounded sweep.
+ */
+function reminderCandidates(team: TeamAggregate, nowMs: number): TeamTask[] {
+  return Object.values(team.tasks)
+    .filter(task => task.remindAt !== undefined
+      && OPEN_TASK_STATUSES.has(task.status)
+      && Date.parse(task.remindAt) <= nowMs
+      && (task.remindedAt === undefined || Date.parse(task.remindedAt) < Date.parse(task.remindAt)))
+    .sort((left, right) => (left.remindAt ?? '').localeCompare(right.remindAt ?? '')
+      || left.id.localeCompare(right.id))
+    .slice(0, TASK_REMINDER_LIMIT)
+}
+
+/** The task owner when it is online and healthy; otherwise the Leader. */
+function reminderRecipientSlotId(team: TeamAggregate, task: TeamTask): string {
+  const owner = task.ownerSlotId === undefined ? undefined : team.members[task.ownerSlotId]
+  if (owner !== undefined && owner.desiredState === 'online' && owner.lastRuntimeState !== 'error') {
+    return owner.id
+  }
+  return team.leaderSlotId
+}
+
+/**
+ * Runtime-authored task mail: `relatedTaskId` is the one task link, and
+ * `threadId` is the task's conversation key, so a reminder joins the same
+ * thread as dispatch and status mail. The Goal is inherited from the task.
+ */
+function taskReminderMessage(team: TeamAggregate, task: TeamTask): TeamMessage {
+  const id = String(MessageId(`dsh-team-mode:${randomUUID()}`))
+  const recipientSlotId = reminderRecipientSlotId(team, task)
+  return createTeamMessage({
+    id,
+    teamId: team.id,
+    sender: { kind: 'system', id: 'dsh-team-mode' },
+    recipient: recipientSlotId === team.leaderSlotId
+      ? { kind: 'leader', slotId: recipientSlotId }
+      : { kind: 'member', slotId: recipientSlotId },
+    type: 'system',
+    content: taskReminderContent(task),
+    relatedTaskId: task.id,
+    threadId: task.id,
+    ...(task.goalId === undefined ? {} : { goalId: task.goalId }),
+    idempotencyKey: id,
+  })
+}
+
+/** Bounded notification copy; the title is already capped at create time. */
+function taskReminderContent(task: TeamTask): string {
+  return [
+    `TASK REMINDER: task '${task.title}' (${task.id}) reached remind_at ${task.remindAt ?? ''}.`,
+    `Current status: ${task.status}.`,
+    task.dueAt === undefined ? undefined : `Due at: ${task.dueAt}.`,
+    'This reminder is informational only: it does not start, complete, reassign, or verify any work. Update the task board when you act on it.',
+  ].filter((line): line is string => line !== undefined).join(' ')
 }
 
 /**
