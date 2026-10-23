@@ -412,9 +412,15 @@ describe('team turn runtime wiring', () => {
     // From here the member reports `running`, like a live agent mid-turn.
     memberAgent.status = 'running'
 
-    // Two queued messages land while the member turn is still active.
-    await runtime.sendUserMessage(team.id, 'm2 to leader')
-    await runtime.sendUserMessage(team.id, 'm3 to leader')
+    // Two queued messages land while the member turn is still active. Their
+    // createdAt must be strictly ordered so the queue head is deterministic:
+    // without it the equal timestamps fall through to the random message id
+    // and m3 can become the head, which is not what this test asserts.
+    const m2 = await runtime.sendUserMessage(team.id, 'm2 to leader')
+    const m3 = await runtime.sendUserMessage(team.id, 'm3 to leader')
+    expect(m2.id).not.toBe(m3.id)
+    await store.putMessage({ ...m2, createdAt: '2026-10-23T10:00:01.000Z' })
+    await store.putMessage({ ...m3, createdAt: '2026-10-23T10:00:02.000Z' })
 
     // turn/end and idle fire back-to-back before the drain runs.
     memberAgent.status = 'idle'
