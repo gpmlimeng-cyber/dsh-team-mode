@@ -253,19 +253,23 @@ team-epoch
 quality-gates
 ```
 
-进行中：
+已完成：
 
 ```text
 tool-policies
+release-readiness
+Team Turn Coordinator
+Assistant DM checkpoint + handoff
+Team main agent panel / surface switch
+Global overview / collaboration overview
 ```
 
-后续：
+下一步：
 
 ```text
-Release readiness（本地/CI，不外部部署）
-→ Context Steward
-→ Group Chat Turn Engine
-→ Autonomous Ops
+Task reminders + follow-up
+→ Autonomous Ops（routines/budget/park）
 → Memory Automation
+→ Context Steward 自动化 / 团队 handoff
 → DSH Ecosystem Reuse
 ```
