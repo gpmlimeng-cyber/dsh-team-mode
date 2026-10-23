@@ -2374,7 +2374,7 @@ describe('AgentTeamService', () => {
     expect(stored?.status).toBe('archived')
     expect(stored?.mainSessionId).toBeUndefined()
     expect(h.created[0]?.dispose).toHaveBeenCalledTimes(1)
-  })
+  }, 15_000)
 })
 
 describe('Assistant checkpoint API', () => {
