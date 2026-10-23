@@ -12,6 +12,9 @@ import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import { isTeamExecuting } from './team-status.js'
 import { teamIdentityColor } from './team-identity.js'
 import css from './TeamBoard.module.css'
+import overviewCss from './AgentTeam.module.css'
+import { TeamOverview } from './team-overview.js'
+import { defaultBoardMode, type BoardMode } from './team-overview-data.js'
 import { setTeamConversationView } from './team-view-presence.js'
 import type { TeamMessage, TeamTask } from '../domain/types.js'
 import type { TeamView } from '../transport/contracts.js'
@@ -25,6 +28,7 @@ export const TEAM_BOARD_VIEW_ORDER = 7
 
 const UNASSIGNED = '__unassigned__'
 const FILTER_STORAGE_KEY = 'dsh-team-mode:team-board:filters'
+const VIEW_STORAGE_KEY = 'dsh-team-mode:team-board:view'
 const KNOWN_SESSION_KEY_PREFIX = 'dsh-team-mode:team-board:session:'
 /**
  * The shell persists a Session's active conversation view under this key
@@ -200,6 +204,10 @@ function reviveBoardFilters(raw: unknown): BoardFilters {
     member: typeof value.member === 'string' && value.member !== '' ? value.member : 'all',
     query: typeof value.query === 'string' ? value.query : '',
   }
+}
+
+function reviveBoardMode(raw: unknown): BoardMode | undefined {
+  return raw === 'overview' || raw === 'tasks' ? raw : undefined
 }
 
 function reviveKnownTeam(raw: unknown): KnownTeam | undefined {
@@ -494,6 +502,10 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
     DEFAULT_BOARD_FILTERS,
     reviveBoardFilters,
   )
+  const [modeChoice, setModeChoice] = useState<BoardMode | undefined>(() => (
+    reviveBoardMode(readStorageJson(VIEW_STORAGE_KEY))
+  ))
+  const [selectedTaskId, setSelectedTaskId] = useState<string>()
   const now = useNow()
   const messagesGeneration = useRef(0)
 
@@ -504,6 +516,7 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
     setMessagesTeamId(undefined)
     setMessagesError(undefined)
     setActionNotice(undefined)
+    setSelectedTaskId(undefined)
     setKnownTeam(sessionId === undefined ? undefined : readKnownTeam(sessionId))
   }, [sessionId])
 
@@ -600,14 +613,8 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
     setRefreshVersion(value => value + 1)
   }, [])
 
-  const openTaskSession = useCallback((task: TeamTask): void => {
-    if (team === undefined) return
+  const launchSession = useCallback((target: string): void => {
     setActionNotice(undefined)
-    const target = taskSessionId(team, task)
-    if (target === undefined) {
-      setActionNotice('无法定位该任务所有者的会话')
-      return
-    }
     const workspace = props.uiWorkspace
     if (workspace === undefined && props.openSession === undefined) {
       setActionNotice('无法打开会话：uiWorkspace 未注入')
@@ -621,7 +628,17 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
     } catch (cause) {
       setActionNotice(`打开会话失败：${errorMessage(cause)}`)
     }
-  }, [props.openSession, props.uiWorkspace, sessionId, team])
+  }, [props.openSession, props.uiWorkspace, sessionId])
+
+  const openTaskSession = useCallback((task: TeamTask): void => {
+    if (team === undefined) return
+    const target = taskSessionId(team, task)
+    if (target === undefined) {
+      setActionNotice('无法定位该任务所有者的会话')
+      return
+    }
+    launchSession(target)
+  }, [launchSession, team])
 
   const memberEntries = useMemo(() => (
     team === undefined
@@ -639,6 +656,12 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
         (Date.parse(right.updatedAt) || 0) - (Date.parse(left.updatedAt) || 0)
       ))
   ), [team])
+
+  const mode = modeChoice ?? defaultBoardMode(tasks)
+  const changeMode = useCallback((next: BoardMode): void => {
+    setModeChoice(next)
+    writeStorageJson(VIEW_STORAGE_KEY, next)
+  }, [])
 
   const taskById = useMemo<ReadonlyMap<string, TeamTask>>(() => (
     new Map(tasks.map(task => [task.id, task]))
@@ -698,6 +721,7 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
   const scopedMessages = useMemo(() => (
     team !== undefined && messagesTeamId === team.id ? messages : []
   ), [messages, messagesTeamId, team])
+  const inboxLoading = messagesLoading || (team !== undefined && messagesTeamId !== team.id)
 
   const feedResult = useMemo(() => {
     if (team === undefined) return { items: [] as FeedItem[], truncated: false }
@@ -855,6 +879,30 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
         </div>
       )}
 
+      <div className={overviewCss.overviewSwitchRow}>
+        <div className={overviewCss.overviewSwitch} role="group" aria-label="看板视图">
+          <button
+            type="button"
+            className={overviewCss.overviewSwitchButton}
+            aria-pressed={mode === 'overview'}
+            onClick={() => { changeMode('overview') }}
+          >
+            总览
+          </button>
+          <button
+            type="button"
+            className={overviewCss.overviewSwitchButton}
+            aria-pressed={mode === 'tasks'}
+            onClick={() => { changeMode('tasks') }}
+          >
+            任务
+          </button>
+        </div>
+        <span className={overviewCss.overviewSwitchHint}>
+          {mode === 'overview' ? '协作进度、依赖与 Leader 收件箱' : '按成员查看任务'}
+        </span>
+      </div>
+
       <div className={css.toolbar}>
         <div className={css.searchField}>
           <IconSearchOutlineRegular size={14} className={css.searchIcon} />
@@ -877,6 +925,7 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
             </button>
           )}
         </div>
+        {mode === 'tasks' && (
         <div className={css.statusFilterGroup} role="group" aria-label="按状态筛选">
           <button
             type="button"
@@ -904,6 +953,7 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
             </button>
           ))}
         </div>
+        )}
         <label className={css.memberFilter}>
           <span className={css.memberFilterLabel}>成员</span>
           <select
@@ -933,6 +983,18 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
       </div>
 
       <div className={css.boardScroll}>
+        {mode === 'overview' ? (
+          <TeamOverview
+            team={team}
+            tasks={baseTasks}
+            messages={scopedMessages}
+            selectedTaskId={selectedTaskId}
+            messagesLoading={inboxLoading}
+            messagesError={messagesError}
+            onSelectTask={setSelectedTaskId}
+            onOpenSession={launchSession}
+          />
+        ) : (
         <div className={css.memberColumns} data-count={String(memberColumns.length)}>
           {memberColumns.map(column => (
             <section key={column.id} className={css.memberColumn} aria-label={`${column.name} 的任务`}>
@@ -976,6 +1038,7 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
             </section>
           ))}
         </div>
+        )}
       </div>
     </section>
   )
