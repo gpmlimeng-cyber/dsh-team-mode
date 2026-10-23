@@ -229,6 +229,21 @@ describe('TeamMainAgentPanel blockers and approvals', () => {
     expect(text(html)).toContain('阻塞：实现面板 · 等待 小码')
   })
 
+  it('explains blocked tasks without a resolvable dependency instead of claiming none', () => {
+    const html = render({
+      team: team({
+        members: [leader],
+        leaderSlotId: 'leader',
+        tasks: [task('stuck', 'blocked', { title: '等待外部依赖', dependencyIds: ['deleted'] })],
+      }),
+    })
+    const visible = text(html)
+
+    expect(visible).toContain('1 个阻塞任务等待重新派发')
+    expect(visible).not.toContain('暂无阻塞')
+    expect(visible).toContain('阻塞 1')
+  })
+
   it('states no blockers when nothing is blocked', () => {
     const html = render({
       team: team({

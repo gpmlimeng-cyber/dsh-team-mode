@@ -26,10 +26,19 @@ function initial(name: string): string {
 }
 
 function blockerText(view: PanelView): string {
-  if (view.firstBlocker === undefined) return '暂无阻塞'
-  return view.firstBlocker.ownerName === undefined
-    ? `阻塞：${view.firstBlocker.title}`
-    : `阻塞：${view.firstBlocker.title} · 等待 ${view.firstBlocker.ownerName}`
+  if (view.firstBlocker !== undefined) {
+    return view.firstBlocker.ownerName === undefined
+      ? `阻塞：${view.firstBlocker.title}`
+      : `阻塞：${view.firstBlocker.title} · 等待 ${view.firstBlocker.ownerName}`
+  }
+  // A blocked task whose dependency was deleted has no resolvable blocker.
+  // Saying 暂无阻塞 next to a 阻塞 count would contradict the panel.
+  if (view.blocked > 0) return `${view.blocked} 个阻塞任务等待重新派发`
+  return '暂无阻塞'
+}
+
+function hasBlocker(view: PanelView): boolean {
+  return view.firstBlocker !== undefined || view.blocked > 0
 }
 
 function summaryText(view: PanelView): string {
@@ -169,7 +178,7 @@ export function TeamMainAgentPanel({
       <div className={css.mainAgentPanelBody}>
         <p className={css.mainAgentPanelSummary}>{summaryText(view)}</p>
         <Progress view={view} />
-        <p className={view.firstBlocker === undefined ? css.mainAgentNoBlocker : css.mainAgentBlocker}>
+        <p className={hasBlocker(view) ? css.mainAgentBlocker : css.mainAgentNoBlocker}>
           {blockerText(view)}
         </p>
         <section className={css.mainAgentMembers} aria-label="成员">
