@@ -7,7 +7,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
-import { assistantMemorySchema, teamAggregateSchema, teamTaskSchema } from '../src/domain/schemas.js'
+import {
+  assistantMemorySchema,
+  createTeamDraftInputSchema,
+  teamAggregateSchema,
+  teamTaskSchema,
+} from '../src/domain/schemas.js'
 import type {
   AssistantInstance,
   AssistantMemory,
@@ -859,6 +864,111 @@ describe('AgentTeamService', () => {
     expect(Object.values(removed.members).map(member => member.displayName)).toEqual(['Codex Lead'])
     expect(removed.epoch).toBe(2)
     expect(service.getAssistant(assistant.id).revision).toBe(1)
+  })
+
+  it('stores a deployment tool policy id on members and rejects unknown ids', async () => {
+    const toolPolicies = {
+      readonly: { description: 'Read-only members', allow: ['team_members', 'team_mode_task_list'] },
+      'empty-surface': { allow: [] },
+    }
+    const { service } = createHarness(undefined, { toolPolicies })
+    const assistant = await service.createAssistant(assistantInput())
+
+    const draft = await service.createTeamDraft({
+      name: 'Policy Team',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader', toolPolicy: 'readonly' },
+        { assistantId: assistant.id, role: 'member', toolPolicy: 'empty-surface' },
+      ],
+    })
+    const members = Object.values(draft.members)
+    const leader = members.find(member => member.role === 'leader')!
+    const coder = members.find(member => member.role === 'member')!
+    expect(leader.toolPolicy).toBe('readonly')
+    expect(coder.toolPolicy).toBe('empty-surface')
+
+    // Omitted policy keeps the field absent, not an empty default.
+    const baseline = await service.createTeamDraft({
+      name: 'Baseline Team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    expect(Object.values(baseline.members)[0]?.toolPolicy).toBeUndefined()
+
+    await expect(service.createTeamDraft({
+      name: 'Unknown Policy Team',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader' },
+        { assistantId: assistant.id, role: 'member', toolPolicy: 'missing' },
+      ],
+    })).rejects.toMatchObject({ code: 'TOOL_POLICY_INVALID' })
+
+    const added = await service.addMemberWithSlot(draft.id, {
+      assistantId: assistant.id,
+      toolPolicy: 'readonly',
+    }, { expectedRevision: service.getTeam(draft.id).revision })
+    expect(added.member.toolPolicy).toBe('readonly')
+
+    await expect(service.addMember(draft.id, {
+      assistantId: assistant.id,
+      toolPolicy: 'missing',
+    })).rejects.toMatchObject({ code: 'TOOL_POLICY_INVALID' })
+  })
+
+  it('accepts policy ids only and never raw allow or deny lists', () => {
+    const base = {
+      name: 'Policy Team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: 'assistant-1', role: 'member' }],
+    }
+    expect(createTeamDraftInputSchema.safeParse(base).success).toBe(true)
+    expect(createTeamDraftInputSchema.safeParse({
+      ...base,
+      members: [{ assistantId: 'assistant-1', role: 'member', toolPolicy: 'readonly' }],
+    }).success).toBe(true)
+
+    for (const raw of [
+      { allow: ['team_members'] },
+      { deny: ['team_members'] },
+      ['team_members'],
+    ]) {
+      expect(createTeamDraftInputSchema.safeParse({
+        ...base,
+        members: [{ assistantId: 'assistant-1', role: 'member', toolPolicy: raw }],
+      }).success, JSON.stringify(raw)).toBe(false)
+    }
+    // Raw lists next to the id are rejected too, not merged.
+    expect(createTeamDraftInputSchema.safeParse({
+      ...base,
+      members: [{
+        assistantId: 'assistant-1',
+        role: 'member',
+        toolPolicy: 'readonly',
+        toolAllow: ['team_members'],
+      }],
+    }).success).toBe(false)
+  })
+
+  it('clones a member tool policy id but re-resolves it on activation', async () => {
+    const toolPolicies = { readonly: { allow: ['team_members'] } }
+    const { service } = createHarness(undefined, { toolPolicies })
+    const assistant = await service.createAssistant(assistantInput())
+    const source = await service.createTeamDraft({
+      name: 'Source Team',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader' },
+        { assistantId: assistant.id, role: 'member', toolPolicy: 'readonly' },
+      ],
+    })
+    const clone = await service.cloneTeam(source.id, {
+      name: 'Cloned Team',
+      workspaceId: 'workspace-1',
+    })
+    expect(Object.values(clone.members).find(member => member.role === 'member')?.toolPolicy)
+      .toBe('readonly')
   })
 
   it('renames the team and refuses to reset the leader context', async () => {
@@ -2261,7 +2371,10 @@ describe('AgentTeamService', () => {
   })
 })
 
-function createHarness(workspacePath = '/tmp/dsh-team-mode-workspace'): {
+function createHarness(
+  workspacePath = '/tmp/dsh-team-mode-workspace',
+  configOverrides: Partial<Config> = {},
+): {
   ctx: Context
   service: AgentTeamService
   store: MemoryStore
@@ -2352,7 +2465,13 @@ function createHarness(workspacePath = '/tmp/dsh-team-mode-workspace'): {
     list: () => [workspace],
   } as never)
   const store = new MemoryStore()
-  return { ctx, service: new AgentTeamService(ctx, config, store), store, workspace, permissionSet }
+  return {
+    ctx,
+    service: new AgentTeamService(ctx, { ...config, ...configOverrides }, store),
+    store,
+    workspace,
+    permissionSet,
+  }
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {

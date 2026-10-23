@@ -56,6 +56,27 @@
 - 团队界面只渲染 `scope=team` 且 `visibility=team-safe` 的条目。助手私有记忆、`scope=assistant` 条目以及旧版 `content` 永远不会出现在团队面板中。
 - 没有自动捕获或写入提示；团队记忆仍主要由成员工具和 Leader 写入。
 
+## 成员工具策略（部署配置）
+
+成员默认拥有完整工具面。部署方可以在插件配置中声明命名策略，创建/添加成员时用 `toolPolicy` 选择其中一个，从部署侧收窄成员可用的工具；模型无法定义或放宽策略。
+
+```yaml
+toolPolicies:
+  readonly-member:
+    description: 只读协作者
+    allow: [team_members, team_read_messages, team_mode_task_list]
+```
+
+规则：
+
+- 配置结构为 `toolPolicies: { [id]: { description?: string, allow: string[] } }`；成员槽位新增可选 `toolPolicy` 字段（仅策略 id），入口为 `team.createDraft` 的 `members[]` 与 `team.addMember`。schema 为 strict，直接传 `allow`/`deny` 列表会被拒绝，`team_spawn_agent` 也没有策略参数。
+- 有效工具面 = 成员基线 ∩ `allow`：策略只能移除工具，不能授予基线之外的工具；`allow` 中无法识别的名称被忽略。`allow: []` 表示关闭该成员的全部团队工具。
+- 未指定 `toolPolicy` 的成员保持完整基线，行为与之前一致；旧团队/旧成员没有该字段，照常加载（无 schema 版本升级）。
+- 未知策略 id（创建/添加时）以 `TOOL_POLICY_INVALID` 明确拒绝。已持久化的成员若引用的策略在部署配置中缺失，成员激活时同样失败关闭，不会静默回退到完整基线。
+- Leader 不受任何策略影响：即使此前以成员身份保存了 `toolPolicy`，成为 Leader 后仍使用完整工具面；Leader 变更会重建所有 Session，普通成员按新角色重新计算工具面。
+- 过滤发生在成员注册团队工具时（团队工具属于成员自己的作用域，`tools.restrict` 无法移除）；继承的 Host、Preset 与 MCP 工具在 MCP/Skill 校验之后用 `tools.restrict({allow})` 收窄。成员提示词中的工具清单按实际注册结果生成。
+- 策略只在创建/添加成员时写入，本版没有运行时修改入口。修改部署配置后需要重载插件或重新连接团队，下一次成员激活才生效。
+
 ## 移出成员
 
 可以从成员卡片、顶部标签悬停操作或团队管理窗口移出普通成员。操作前会出现自定义警示弹窗。

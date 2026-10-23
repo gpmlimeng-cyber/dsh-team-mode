@@ -71,6 +71,14 @@
 - 已拥有该任务的成员重复认领是只读操作：原样返回当前的 owner 与 `attemptId`，不轮换围栏、不写任务板。
 - 认领成功不额外发消息给 Leader（任务板立即可见，成员随后的 `in_progress` 更新会走既有状态消息路径）；Leader 重派或接管会生成新 `attemptId`，旧 claim token 随之失效。
 
+## 成员工具策略（部署配置）
+
+- 工具基线仍是上表的 24 个团队工具，**没有新增工具**。部署配置 `toolPolicies: { [id]: { description?, allow: string[] } }` 声明命名策略；成员创建/添加时用 `toolPolicy` 只传策略 id，模型和传输层都不能直接传 allow/deny 列表。
+- 有效工具面 = 基线 ∩ `allow`：策略只能收窄，不能授予基线外的工具，`allow` 中的未知名称被忽略；`allow: []` 表示关闭该成员的全部团队工具。
+- 未指定策略保持完整基线；未知 id 在创建/添加时以 `TOOL_POLICY_INVALID` 拒绝；已存储成员引用的策略在部署配置中缺失时，激活失败关闭而不是回退基线。Leader 永远使用完整工具面。
+- 团队工具在成员注册时按策略过滤；继承的 Host/Preset/MCP 工具在 MCP/Skill 校验后用 `tools.restrict({allow})` 收窄。成员提示词的 “Available team tools” 行由实际注册结果生成，默认输出与之前完全一致（兼容别名不进入提示词）。
+- 策略只在创建/添加成员时写入，没有运行时修改入口；修改部署配置后需重载插件或重新连接团队，下一次成员激活才生效。
+
 ## 任务质量门禁（P0）
 
 - 任务新增四个**可选**字段，`schemaVersion` 不变，无迁移：`kind`（`work` / `implementation` / `repair` / `verification` / `review`，缺省即 `work`）、`acceptance`（验收标准，trim，≤2,000 字符）、`reviewedTaskId`（被评审的实现/修复任务）、`verdict`（`pass` / `needs_revision` / `reject`）。旧任务没有这些字段，`taskKindOf` 按 `work` 读取，行为与之前完全一致。

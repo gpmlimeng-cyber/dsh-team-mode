@@ -1,5 +1,17 @@
 import Schema from '@deepseek-ai/schemastery'
 
+/**
+ * One deployment-declared member tool policy. A member names a policy by id;
+ * the model never sees or supplies the allowlist itself. `allow` narrows the
+ * member tool baseline and can never add a tool the baseline does not offer.
+ */
+export interface MemberToolPolicyConfig {
+  /** Optional human note for deployment operators; no runtime effect. */
+  description?: string
+  /** Member tool names this policy permits. Unknown names are ignored. */
+  allow: string[]
+}
+
 export interface Config {
   maxRequestBytes: number
   sseHeartbeatMs: number
@@ -19,6 +31,11 @@ export interface Config {
   maxTeamMessageBytes?: number
   /** Cancel a member that stays `running` this long (default 10 min). */
   memberIdleWatchdogMs?: number
+  /**
+   * Deployment-declared member tool policies by id. Empty by default: every
+   * member keeps the full baseline tool surface.
+   */
+  toolPolicies?: Record<string, MemberToolPolicyConfig>
 }
 
 export const Config: Schema<Config> = Schema.object({
@@ -35,4 +52,8 @@ export const Config: Schema<Config> = Schema.object({
   maxTeamTasks: Schema.number().min(1).max(4096).default(256),
   maxTeamMessageBytes: Schema.number().min(1024).max(1024 * 1024).default(64 * 1024),
   memberIdleWatchdogMs: Schema.number().min(30_000).max(60 * 60 * 1000).default(10 * 60 * 1000),
+  toolPolicies: Schema.dict(Schema.object({
+    description: Schema.string().default(''),
+    allow: Schema.array(Schema.string()).required(),
+  })).default({}),
 })

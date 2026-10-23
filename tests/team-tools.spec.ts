@@ -1,6 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
+import { AgentTeamError } from '../src/domain/errors.js'
 import type { TeamToolHandlers } from '../src/runtime/team-tools.js'
-import { registerTeamTools } from '../src/runtime/team-tools.js'
+import {
+  allowedInheritedToolNames,
+  allowedTeamToolNames,
+  memberToolPolicyFor,
+  registerTeamTools,
+  resolveMemberToolPolicy,
+  TEAM_TOOL_NAMES,
+} from '../src/runtime/team-tools.js'
 
 type RegisteredTool = {
   name: string
@@ -12,7 +20,7 @@ type RegisteredTool = {
   execute: (args: Record<string, unknown>, exec: { agent: unknown }) => Promise<Record<string, unknown>>
 }
 
-function harness(): {
+function harness(options: { allow: string[] } | undefined = undefined): {
   tools: Map<string, RegisteredTool>
   handlers: TeamToolHandlers
   ctx: { tools: { register: (definition: RegisteredTool) => void } }
@@ -95,7 +103,11 @@ function harness(): {
       register: (definition: RegisteredTool) => { tools.set(definition.name, definition) },
     },
   }
-  registerTeamTools(ctx as never, handlers)
+  registerTeamTools(
+    ctx as never,
+    handlers,
+    options === undefined ? {} : { policy: { allow: options.allow } },
+  )
   return { tools, handlers, ctx }
 }
 
@@ -589,7 +601,78 @@ describe('Team Mode tool surface', () => {
   })
 })
 
-function memoryView(entryId: string, status: 'active' | 'proposed' | 'superseded' | 'archived') {
+describe('member tool policies', () => {
+  it('keeps the member tool baseline at exactly 24 names', () => {
+    expect(TEAM_TOOL_NAMES).toHaveLength(24)
+    expect(new Set(TEAM_TOOL_NAMES).size).toBe(24)
+    const { tools } = harness()
+    expect(tools.size).toBe(24)
+    expect([...tools.keys()].sort()).toEqual([...TEAM_TOOL_NAMES].sort())
+  })
+
+  it('narrows the baseline in baseline order and never widens it', () => {
+    expect(allowedTeamToolNames(TEAM_TOOL_NAMES, {
+      allow: ['team_send_message', 'team_members', 'tool_that_does_not_exist'],
+    })).toEqual(['team_members', 'team_send_message'])
+
+    // An empty policy is a closed surface, not a re-opened baseline.
+    expect(allowedTeamToolNames(TEAM_TOOL_NAMES, { allow: [] })).toEqual([])
+
+    // Omitted policy keeps the full baseline, and the result is a copy.
+    const full = allowedTeamToolNames(TEAM_TOOL_NAMES, undefined)
+    expect(full).toEqual([...TEAM_TOOL_NAMES])
+    full.pop()
+    expect(TEAM_TOOL_NAMES).toHaveLength(24)
+
+    // Whitespace and blank entries are normalized out.
+    expect(allowedTeamToolNames(TEAM_TOOL_NAMES, { allow: [' team_members ', ''] }))
+      .toEqual(['team_members'])
+  })
+
+  it('filters team tools at registration instead of through tools.restrict', () => {
+    const { tools } = harness({ allow: ['team_members', 'team_mode_task_list'] })
+    expect([...tools.keys()]).toEqual(['team_members', 'team_mode_task_list'])
+    expect(tools.has('team_spawn_agent')).toBe(false)
+    expect(tools.has('team_create_task')).toBe(false)
+  })
+
+  it('resolves a policy id against deployment config and fails closed on unknown ids', () => {
+    const policies = { readonly: { description: 'read only', allow: ['team_members'] } }
+    expect(resolveMemberToolPolicy(policies, undefined)).toBeUndefined()
+    expect(resolveMemberToolPolicy(policies, 'readonly')).toBe(policies.readonly)
+    expect(resolveMemberToolPolicy(undefined, undefined)).toBeUndefined()
+
+    expect(() => resolveMemberToolPolicy(policies, 'missing')).toThrowError(AgentTeamError)
+    expect(() => resolveMemberToolPolicy(policies, 'missing'))
+      .toThrowError(/Unknown member tool policy 'missing'/)
+    expect(() => resolveMemberToolPolicy(undefined, 'readonly')).toThrowError(AgentTeamError)
+    // Inherited Object members are not policy ids.
+    expect(() => resolveMemberToolPolicy(policies, 'constructor')).toThrowError(AgentTeamError)
+  })
+
+  it('applies policies to members only, so the Leader surface is unaffected', () => {
+    const policies = { readonly: { allow: ['team_members'] } }
+    expect(memberToolPolicyFor('leader', policies, 'readonly')).toBeUndefined()
+    // Even an id that deployment config no longer declares cannot fail Leader startup.
+    expect(memberToolPolicyFor('leader', policies, 'missing')).toBeUndefined()
+    expect(memberToolPolicyFor('member', policies, 'readonly')).toBe(policies.readonly)
+    expect(memberToolPolicyFor('member', policies, undefined)).toBeUndefined()
+    expect(() => memberToolPolicyFor('member', policies, 'missing')).toThrowError(AgentTeamError)
+  })
+
+  it('allows only inherited tools named by the policy, never team tools or run_code', () => {
+    expect(allowedInheritedToolNames(
+      ['bash', 'read', 'skill', 'run_code', 'team_members', 'team_create_task'],
+      { allow: ['bash', 'skill', 'team_members', 'run_code', 'missing'] },
+    )).toEqual(['bash', 'skill'])
+    expect(allowedInheritedToolNames(['bash'], { allow: ['team_members'] })).toEqual([])
+  })
+})
+
+function memoryView(
+  entryId: string,
+  status: 'active' | 'proposed' | 'superseded' | 'archived',
+) {
   return {
     entry_id: entryId,
     title: 'Memory',

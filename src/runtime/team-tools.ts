@@ -1,6 +1,8 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
-import { defineTool } from '@deepseek-ai/dsh-tools'
+import { defineTool, RUN_CODE_NAME } from '@deepseek-ai/dsh-tools'
+import type { MemberToolPolicyConfig } from '../config.js'
+import { AgentTeamError } from '../domain/errors.js'
 import type { TeamTaskKind, TeamTaskVerdict } from '../domain/types.js'
 import type {
   ClaimTaskInput,
@@ -112,11 +114,150 @@ const membersOutput = {
   ],
 }
 
+/**
+ * Every team tool in one ordered list: the member tool baseline. Registration
+ * filters this baseline against an optional deployment policy, and the member
+ * prompt advertises the primary names (the legacy aliases stay unlisted).
+ */
+export const TEAM_TOOL_NAMES = [
+  'team_members',
+  'team_read_messages',
+  'team_send_message',
+  'team_interrupt_agent',
+  'team_mode_goal_create',
+  'team_mode_goal_list',
+  'team_mode_goal_update',
+  'team_mode_task_create',
+  'team_mode_task_update',
+  'team_mode_task_claim',
+  'team_mode_task_list',
+  'team_mode_inbox',
+  'team_memory_propose',
+  'team_memory_list',
+  'team_memory_accept',
+  'team_list_assistants',
+  'team_describe_assistant',
+  'team_spawn_agent',
+  'team_rename_agent',
+  'team_clear_agent_context',
+  'team_shutdown_agent',
+  'team_get_task_board',
+  'team_create_task',
+  'team_update_task',
+] as const
+
+/** Backward-compatible aliases; registered but not advertised in the prompt. */
+export const TEAM_TOOL_ALIAS_NAMES: ReadonlySet<string> = new Set([
+  'team_get_task_board',
+  'team_create_task',
+  'team_update_task',
+])
+
+const TEAM_TOOL_NAME_SET: ReadonlySet<string> = new Set(TEAM_TOOL_NAMES)
+
+/** The prompt's tool line, generated from the surface actually registered. */
+export function teamToolListLine(toolNames: readonly string[]): string {
+  const listed = toolNames.filter(name => !TEAM_TOOL_ALIAS_NAMES.has(name))
+  return listed.length === 0
+    ? 'No team tools are enabled for this member.'
+    : `Available team tools: ${listed.join(', ')}.`
+}
+
+/**
+ * Rewrite the prompt's single tool-list line to the surface actually
+ * registered. The prompt template carries the baseline list; a deployment
+ * policy replaces it, and the full baseline regenerates it unchanged.
+ */
+export function applyToolSurfaceToPrompt(
+  prompt: string,
+  toolNames: readonly string[],
+): string {
+  return prompt.replace(/^Available team tools:.*$/m, teamToolListLine(toolNames))
+}
+
+export interface RegisterTeamToolsOptions {
+  /**
+   * Deployment policy for a member. Omitted keeps the full baseline; a policy
+   * can only remove names from {@link TEAM_TOOL_NAMES}.
+   */
+  policy?: MemberToolPolicyConfig
+}
+
+/**
+ * The member tool surface: the baseline narrowed by a policy allowlist. Order
+ * comes from the baseline, and an allowlist name outside it grants nothing.
+ */
+export function allowedTeamToolNames(
+  baseline: readonly string[],
+  policy: Pick<MemberToolPolicyConfig, 'allow'> | undefined,
+): string[] {
+  if (policy === undefined) return [...baseline]
+  const allow = new Set(policy.allow.map(name => name.trim()).filter(name => name !== ''))
+  return baseline.filter(name => allow.has(name))
+}
+
+/**
+ * Inherited (preset, host, and MCP) tools a policy permits. Team tools are
+ * excluded because they are filtered at registration; `run_code` is the PTC
+ * presentation transport, which no restriction may name.
+ */
+export function allowedInheritedToolNames(
+  visibleNames: readonly string[],
+  policy: Pick<MemberToolPolicyConfig, 'allow'>,
+): string[] {
+  const allow = new Set(policy.allow.map(name => name.trim()).filter(name => name !== ''))
+  return visibleNames.filter(name => (
+    !TEAM_TOOL_NAME_SET.has(name) && name !== RUN_CODE_NAME && allow.has(name)
+  ))
+}
+
+/**
+ * Resolve a member's policy id against deployment config. An absent id keeps
+ * the full surface; a declared but unknown id fails closed instead of silently
+ * widening back to the baseline.
+ */
+export function resolveMemberToolPolicy(
+  policies: Readonly<Record<string, MemberToolPolicyConfig>> | undefined,
+  policyId: string | undefined,
+): MemberToolPolicyConfig | undefined {
+  if (policyId === undefined) return undefined
+  const policy = policies !== undefined && Object.hasOwn(policies, policyId)
+    ? policies[policyId]
+    : undefined
+  if (policy === undefined) {
+    throw new AgentTeamError(
+      'TOOL_POLICY_INVALID',
+      `Unknown member tool policy '${policyId}'`,
+      { toolPolicy: policyId, available: Object.keys(policies ?? {}).sort() },
+    )
+  }
+  return policy
+}
+
+/**
+ * The policy that applies to one member slot. The Leader always keeps the full
+ * surface: a stale id on a former member slot must not fail Leader startup.
+ */
+export function memberToolPolicyFor(
+  role: 'leader' | 'member',
+  policies: Readonly<Record<string, MemberToolPolicyConfig>> | undefined,
+  policyId: string | undefined,
+): MemberToolPolicyConfig | undefined {
+  return role === 'leader' ? undefined : resolveMemberToolPolicy(policies, policyId)
+}
+
 export function registerTeamTools(
   agentCtx: Context,
   handlers: TeamToolHandlers,
+  options: RegisterTeamToolsOptions = {},
 ): void {
+  const allowed = options.policy === undefined
+    ? undefined
+    : new Set(allowedTeamToolNames(TEAM_TOOL_NAMES, options.policy))
   const register = (tool: Parameters<typeof agentCtx.tools.register>[0]): void => {
+    // Team tools live in the member's own scope, so `tools.restrict` cannot
+    // remove them; the policy has to filter them before registration.
+    if (allowed !== undefined && !allowed.has(tool.name)) return
     try {
       agentCtx.tools.register(tool)
     } catch (error) {

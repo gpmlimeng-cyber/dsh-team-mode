@@ -57,6 +57,7 @@ import {
 import type { AgentTeamStore } from '../storage/store.js'
 import type { AssistantBuilderRuntime } from '../runtime/assistant-builder-runtime.js'
 import type { AssistantEnsureResult, AssistantRuntime } from '../runtime/assistant-runtime.js'
+import { resolveMemberToolPolicy } from '../runtime/team-tools.js'
 import type { TeamRuntime } from '../runtime/team-runtime.js'
 import { WorkspaceService } from './workspace-service.js'
 import type {
@@ -1456,6 +1457,9 @@ export class AgentTeamService extends Service {
     let leaderSlotId = ''
     for (const item of input.members) {
       const assistant = requireAssistant(this.store, item.assistantId)
+      // A policy id must exist in deployment config at creation time; the
+      // persisted id is re-resolved on every activation.
+      resolveMemberToolPolicy(this.config.toolPolicies, item.toolPolicy)
       const assistantInstanceId = item.assistantInstanceId === undefined
         ? undefined
         : this.requireLinkableAssistantInstance(linkScope, item.assistantInstanceId).id
@@ -1469,6 +1473,7 @@ export class AgentTeamService extends Service {
         assistantSnapshot: snapshotAssistant(assistant),
         permissionPresetId: assistant.permissionPresetId,
         ...(assistant.reasoningEffort === undefined ? {} : { reasoningEffort: assistant.reasoningEffort }),
+        ...(item.toolPolicy === undefined ? {} : { toolPolicy: item.toolPolicy }),
         sessionId: `session-${randomUUID()}`,
         desiredState: 'offline',
         lastRuntimeState: 'offline',
@@ -1639,6 +1644,7 @@ export class AgentTeamService extends Service {
       )
     }
     const assistant = requireAssistant(this.store, input.assistantId)
+    resolveMemberToolPolicy(this.config.toolPolicies, input.toolPolicy)
     const displayName = normalizeMemberDisplayName(input.displayName ?? assistant.name)
     if (input.displayName !== undefined) assertMemberDisplayNameAvailable(team, displayName)
     const assistantInstanceId = input.assistantInstanceId === undefined
@@ -1652,6 +1658,7 @@ export class AgentTeamService extends Service {
       now,
       team.state === 'draft' ? 'offline' : 'online',
       assistantInstanceId,
+      input.toolPolicy,
     )
     const next = await this.store.updateTeam(teamId, current => {
       // Re-check inside the atomic update: another team may have linked the
@@ -2726,6 +2733,7 @@ function createMemberSlot(
   now: string,
   desiredState: 'online' | 'offline',
   assistantInstanceId?: string,
+  toolPolicy?: string,
 ): TeamMemberSlot {
   const slotId = randomUUID()
   return {
@@ -2737,6 +2745,7 @@ function createMemberSlot(
     assistantSnapshot: snapshotAssistant(assistant),
     permissionPresetId: assistant.permissionPresetId,
     ...(assistant.reasoningEffort === undefined ? {} : { reasoningEffort: assistant.reasoningEffort }),
+    ...(toolPolicy === undefined ? {} : { toolPolicy }),
     sessionId: `session-${randomUUID()}`,
     desiredState,
     lastRuntimeState: desiredState === 'online' ? 'starting' : 'offline',
@@ -2747,6 +2756,8 @@ function createMemberSlot(
 /**
  * A clone is a new team: it deliberately drops every member's explicit
  * Assistant instance link instead of sharing memory with the source team.
+ * A tool policy id is copied because it describes the member's role, and the
+ * deployment config re-resolves it on the clone's first activation.
  */
 function cloneMemberSlot(source: TeamMemberSlot, now: string): TeamMemberSlot {
   const slotId = randomUUID()
@@ -2762,6 +2773,7 @@ function cloneMemberSlot(source: TeamMemberSlot, now: string): TeamMemberSlot {
     },
     permissionPresetId: source.permissionPresetId,
     ...(source.reasoningEffort === undefined ? {} : { reasoningEffort: source.reasoningEffort }),
+    ...(source.toolPolicy === undefined ? {} : { toolPolicy: source.toolPolicy }),
     sessionId: `session-${randomUUID()}`,
     desiredState: 'offline',
     lastRuntimeState: 'offline',

@@ -47,7 +47,15 @@ import {
   rosterPrompt,
   teamMemoryPrompt,
 } from './team-prompts.js'
-import { registerTeamTools, type TeamAssistantView } from './team-tools.js'
+import {
+  allowedInheritedToolNames,
+  allowedTeamToolNames,
+  applyToolSurfaceToPrompt,
+  memberToolPolicyFor,
+  registerTeamTools,
+  TEAM_TOOL_NAMES,
+  type TeamAssistantView,
+} from './team-tools.js'
 
 interface OwnedAgent {
   teamId: string
@@ -1292,6 +1300,18 @@ export class TeamRuntime {
     }
 
     const epochAtStart = epochOf(this.service.getTeam(team.id))
+    // The Leader always keeps the full surface. A member resolves its declared
+    // policy id before any Agent exists, so a policy removed from deployment
+    // config fails the activation closed instead of silently widening back to
+    // the baseline.
+    const toolPolicy = memberToolPolicyFor(
+      member.role,
+      this.config.toolPolicies,
+      member.toolPolicy,
+    )
+    const allowedTeamTools = toolPolicy === undefined
+      ? TEAM_TOOL_NAMES
+      : allowedTeamToolNames(TEAM_TOOL_NAMES, toolPolicy)
     try {
       this.activating.set(member.sessionId, {
         teamId: team.id,
@@ -1332,9 +1352,13 @@ export class TeamRuntime {
           text: () => {
             const latest = this.service.getTeam(team.id)
             const latestMember = latest.members[member.id]
-            return latestMember === undefined
-              ? 'This Agent Team membership is no longer active.'
-              : memberPrompt(latest, latestMember)
+            if (latestMember === undefined) {
+              return 'This Agent Team membership is no longer active.'
+            }
+            return applyToolSurfaceToPrompt(
+              memberPrompt(latest, latestMember),
+              allowedTeamTools,
+            )
           },
         })
         agentCtx.systemPrompt.section({
@@ -1395,7 +1419,7 @@ export class TeamRuntime {
             slotId,
             message,
           ),
-        })
+        }, toolPolicy === undefined ? {} : { policy: toolPolicy })
         const selectedMcpServers = new Set(member.assistantSnapshot.mcpServers)
         const mcpTools = agentCtx.tools.schemas(agent).flatMap(tool => {
           const serverName = mcpServerFromToolName(tool.name)
@@ -1486,6 +1510,18 @@ export class TeamRuntime {
             ? undefined
             : 'This Skill is not selected for the assistant.'
         })
+        // Inherited tools (host globals, preset tools, MCP) are filtered here,
+        // after the MCP/Skill reference checks read the unfiltered surface.
+        // `allow` intersects the policy with what the scope actually inherits,
+        // so a policy name that is not inherited grants nothing.
+        if (toolPolicy !== undefined) {
+          agentCtx.tools.restrict({
+            allow: allowedInheritedToolNames(
+              agentCtx.tools.schemas(agent).map(tool => tool.name),
+              toolPolicy,
+            ),
+          })
+        }
         this.ctx.permissionPresets.set(
           agent.session,
           member.permissionPresetId,

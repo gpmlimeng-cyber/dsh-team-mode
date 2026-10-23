@@ -205,6 +205,12 @@ export const teamMemberSlotSchema = z.object({
   role: z.enum(['leader', 'member']),
   assistantSnapshot: assistantSnapshotSchema,
   permissionPresetId: nonEmpty,
+  /**
+   * Optional deployment-declared tool policy id. Added without a schema-version
+   * bump: a member stored before policies existed carries no field and keeps the
+   * full baseline surface. The Leader ignores any policy.
+   */
+  toolPolicy: nonEmpty.optional(),
   reasoningEffort: nonEmpty.optional(),
   sessionId: nonEmpty,
   desiredState: z.enum(['online', 'offline', 'removing']),
@@ -548,6 +554,8 @@ export const createTeamMemberInputSchema = z.object({
   role: z.enum(['leader', 'member']),
   /** Optional explicit Assistant instance link; never inferred. */
   assistantInstanceId: nonEmpty.optional(),
+  /** Policy id only: the model never supplies an allow/deny list. */
+  toolPolicy: nonEmpty.optional(),
 }).strict()
 
 /**

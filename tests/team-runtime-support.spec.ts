@@ -19,6 +19,11 @@ import {
   rosterPrompt,
   teamMemoryPrompt,
 } from '../src/runtime/team-prompts.js'
+import {
+  applyToolSurfaceToPrompt,
+  TEAM_TOOL_NAMES,
+  teamToolListLine,
+} from '../src/runtime/team-tools.js'
 
 describe('team runtime support', () => {
   it('builds identity and roster prompts with stable member ids', () => {
@@ -40,6 +45,43 @@ describe('team runtime support', () => {
     expect(rosterPrompt(team)).toContain('Code Leader (leader), slotId=leader-slot')
     expect(rosterPrompt(team)).toContain('Coder (member), slotId=coder-slot')
     expect(rosterPrompt(team)).toContain('team_read_messages')
+  })
+
+  it('advertises the registered tool surface and keeps the default list frozen', () => {
+    const leader = member('leader-slot', 'Code Leader', 'leader')
+    const coder = member('coder-slot', 'Coder', 'member')
+    const team = {
+      id: 'team-1',
+      name: 'Compiler Team',
+      leaderSlotId: leader.id,
+      members: { [leader.id]: leader, [coder.id]: coder },
+    } as unknown as TeamAggregate
+
+    // The pre-policy prompt line must not change for the default surface.
+    expect(teamToolListLine(TEAM_TOOL_NAMES)).toBe(
+      'Available team tools: team_members, team_read_messages, team_send_message, '
+        + 'team_interrupt_agent, team_mode_goal_create, team_mode_goal_list, team_mode_goal_update, '
+        + 'team_mode_task_create, team_mode_task_update, team_mode_task_claim, team_mode_task_list, '
+        + 'team_mode_inbox, team_memory_propose, team_memory_list, team_memory_accept, '
+        + 'team_list_assistants, team_describe_assistant, team_spawn_agent, team_rename_agent, '
+        + 'team_clear_agent_context, team_shutdown_agent.',
+    )
+    expect(memberPrompt(team, coder)).toContain(teamToolListLine(TEAM_TOOL_NAMES))
+    expect(memberPrompt(team, coder)).not.toContain('team_create_task')
+
+    // A narrowed member surface is what the prompt advertises.
+    const narrowed = ['team_members', 'team_mode_task_list']
+    const filtered = applyToolSurfaceToPrompt(memberPrompt(team, coder), narrowed)
+    const filteredLine = filtered.split('\n').find(line => line.startsWith('Available team tools:'))
+    expect(filteredLine).toBe('Available team tools: team_members, team_mode_task_list.')
+
+    // A closed surface says so instead of printing an empty list.
+    expect(applyToolSurfaceToPrompt(memberPrompt(team, coder), []))
+      .toContain('No team tools are enabled for this member.')
+    // Regenerating from the full baseline keeps the byte-identical default line.
+    expect(teamToolListLine(TEAM_TOOL_NAMES)).toBe(
+      memberPrompt(team, coder).split('\n').find(line => line.startsWith('Available team tools:')),
+    )
   })
 
   it('documents the steward modes and Goal rules in the Leader prompt', () => {
