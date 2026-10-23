@@ -98,20 +98,24 @@ function team(input: {
 function render(options: {
   team: TeamView
   tasks?: TeamTask[]
+  visibleTasks?: TeamTask[]
   messages?: TeamMessage[]
   selectedTaskId?: string
   messagesLoading?: boolean
   messagesError?: string
+  onClearFilters?: () => void
   onSelectTask?: (taskId: string) => void
   onOpenSession?: (sessionId: string) => void
 }): string {
   return renderToStaticMarkup(createElement(TeamOverview, {
     team: options.team,
     tasks: options.tasks ?? [],
+    ...(options.visibleTasks === undefined ? {} : { visibleTasks: options.visibleTasks }),
     messages: options.messages ?? [],
     ...(options.selectedTaskId === undefined ? {} : { selectedTaskId: options.selectedTaskId }),
     ...(options.messagesLoading === undefined ? {} : { messagesLoading: options.messagesLoading }),
     ...(options.messagesError === undefined ? {} : { messagesError: options.messagesError }),
+    ...(options.onClearFilters === undefined ? {} : { onClearFilters: options.onClearFilters }),
     onSelectTask: options.onSelectTask ?? (() => undefined),
     onOpenSession: options.onOpenSession ?? (() => undefined),
   }))
@@ -180,8 +184,10 @@ const populated = team({
 
 describe('TeamOverview summary and progress', () => {
   it('summarizes dispatch and counts all four progress buckets', () => {
-    const view = text(render({ team: populated, tasks: [impl, verify, deep, split] }))
+    const html = render({ team: populated, tasks: [impl, verify, deep, split] })
+    const view = text(html)
 
+    expect(html).toContain('aria-valuetext=')
     expect(view).toContain('Leader 摘要')
     expect(view).toContain('任务进度')
     expect(view).toContain('小码')
@@ -211,7 +217,27 @@ describe('TeamOverview summary and progress', () => {
     expect(view).toContain('暂无任务')
     expect(view).toContain('暂无待处理消息')
     expect(view).toContain('共 0 个任务，已完成 0，进行中 0，等待 0，异常 0')
+    expect(html).not.toContain('role="progressbar"')
+    expect(html).not.toContain('aria-valuemax="0"')
     expect(html).not.toContain('undefined')
+  })
+
+  it('keeps team-wide totals when a filter hides every task', () => {
+    const html = render({
+      team: populated,
+      tasks: [impl, verify, deep, split],
+      visibleTasks: [],
+      onClearFilters: () => undefined,
+    })
+    const view = text(html)
+
+    expect(view).toContain('已派发 4 项任务给 2 名成员')
+    expect(view).toContain('共 4 个任务，已完成 0，进行中 1，等待 2，异常 1')
+    expect(view).toContain('当前筛选下没有任务')
+    expect(view).toContain('团队全量')
+    expect(view).not.toContain('还没有任务，Leader 派发后会出现在这里')
+    expect(view).toContain('实现总览')
+    expect(region(html, 'filter-empty')).toContain('清除筛选')
   })
 })
 
@@ -229,6 +255,8 @@ describe('TeamOverview dependency graph', () => {
     expect(graph).toContain('data-task-id="verify"')
     expect(graph).toContain('data-task-id="deep"')
     expect(graph).toContain('data-task-id="split"')
+    expect(graph).toContain('依赖 · 实现总览')
+    expect(graph).toContain('解锁 · 验收总览')
   })
 
   it('says when tasks have no dependencies but keeps the nodes', () => {
@@ -247,13 +275,43 @@ describe('TeamOverview dependency graph', () => {
     const view = text(html)
     const graph = region(html, 'dependency-graph')
 
-    expect(view).toContain('循环依赖')
+    expect(view).toContain('存在循环或缺失依赖')
     expect(view).toContain('未分层')
     expect(view).toContain('循环甲')
     expect(view).toContain('循环乙')
     expect(view).toContain('循环下游')
     expect(graph).toContain('data-depth="0"')
     expect(graph.match(/data-task-id=/g)).toHaveLength(4)
+  })
+
+  it('keeps tasks with missing dependencies in the unlayered area', () => {
+    const orphan = task('orphan', 'pending', {
+      title: '孤儿任务',
+      dependencyIds: ['deleted-task'],
+    })
+    const html = render({ team: populated, tasks: [orphan, impl] })
+    const view = text(html)
+    const graph = region(html, 'dependency-graph')
+
+    expect(view).toContain('存在循环或缺失依赖')
+    expect(graph).toContain('data-task-id="orphan"')
+    expect(graph).toContain('缺失 deleted-')
+  })
+
+  it('hides filtered-out nodes but keeps the selection in the detail', () => {
+    const html = render({
+      team: populated,
+      tasks: [impl, verify, deep, split],
+      visibleTasks: [impl],
+      selectedTaskId: 'verify',
+    })
+    const graph = region(html, 'dependency-graph')
+    const detail = text(region(html, 'task-detail'))
+
+    expect(graph).not.toContain('data-task-id="verify"')
+    expect(detail).toContain('验收总览')
+    expect(detail).toContain('当前筛选已隐藏该任务')
+    expect(detail).not.toContain('原选中任务已移除')
   })
 })
 
@@ -326,9 +384,12 @@ describe('TeamOverview leader inbox', () => {
     }),
   ]
 
-  it('shows only Leader-addressed non-system mail, newest five', () => {
-    const view = text(region(render({ team: populated, tasks: [impl], messages: mail }), 'leader-inbox'))
+  it('shows only Leader-addressed non-system mail, newest five, with an inline expand', () => {
+    const inboxHtml = region(render({ team: populated, tasks: [impl], messages: mail }), 'leader-inbox')
+    const view = text(inboxHtml)
 
+    expect(inboxHtml).toContain('aria-expanded="false"')
+    expect(view).toContain('查看全部（7）')
     expect(view).toContain('消息七')
     expect(view).toContain('消息六')
     expect(view).toContain('消息五')
@@ -345,6 +406,19 @@ describe('TeamOverview leader inbox', () => {
     expect(text(render({ team: populated, messagesLoading: true }))).toContain('正在加载收件箱')
     expect(text(render({ team: populated, messagesError: '网络错误' }))).toContain('收件箱加载失败')
   })
+
+  it('clamps a long fallback preview to a fixed character budget', () => {
+    const longBody = '长'.repeat(200)
+    const html = render({
+      team: populated,
+      tasks: [impl],
+      messages: [message('long', { content: longBody, createdAt: '2026-01-01T09:00:00.000Z' })],
+    })
+    const view = text(html)
+
+    expect(view).toContain(`${'长'.repeat(120)}…`)
+    expect(view).not.toContain('长'.repeat(121))
+  })
 })
 
 describe('board switch and static layout contract', () => {
@@ -357,6 +431,10 @@ describe('board switch and static layout contract', () => {
     expect(board).toContain('reviveBoardMode')
     expect(board).toContain('writeStorageJson(VIEW_STORAGE_KEY, next)')
     expect(board).toContain('<TeamOverview')
+    expect(board).toContain('tasks={tasks}')
+    expect(board).toContain('visibleTasks={visibleTasks}')
+    expect(board).toContain('onClearFilters={clearFilters}')
+    expect(board).not.toContain('tasks={baseTasks}')
     expect(board).toContain("aria-pressed={mode === 'overview'}")
     expect(board).toContain("aria-pressed={mode === 'tasks'}")
     expect(board).toContain("mode === 'overview'")
@@ -367,7 +445,8 @@ describe('board switch and static layout contract', () => {
 
     expect(board).toContain("mode === 'overview' ? (")
     expect(board).toContain('<div className={css.memberColumns}')
-    expect(board).toContain("mode === 'tasks' && (")
+    expect(board).toContain('<div className={css.toolbar}>')
+    expect(board).not.toContain("mode === 'tasks' && (")
   })
 
   it('stacks at narrow widths and lets only the dependency graph scroll horizontally', () => {
@@ -375,11 +454,38 @@ describe('board switch and static layout contract', () => {
     const main = moduleCss.match(/\.overviewMain \{([^}]*)\}/)?.[1] ?? ''
     const viewport = moduleCss.match(/\.overviewGraphViewport \{([^}]*)\}/)?.[1] ?? ''
     const layers = moduleCss.match(/\.overviewLayers \{([^}]*)\}/)?.[1] ?? ''
+    const inboxText = moduleCss.match(/\.overviewInboxText \{([^}]*)\}/)?.[1] ?? ''
 
     expect(main).toContain('grid-template-columns: minmax(0, 1fr)')
     expect(viewport).toContain('overflow-x: auto')
     expect(viewport).not.toContain('overflow: hidden')
     expect(layers).toContain('min-width: max-content')
+    expect(inboxText).toContain('-webkit-line-clamp: 2')
+    expect(moduleCss).not.toContain('.overviewLayer + .overviewLayer::before')
     expect(moduleCss).toContain('@container board (min-width: 50rem)')
+  })
+
+  it('records the aligned design decisions', () => {
+    const design = readFileSync(
+      new URL('../docs/superpowers/specs/2026-10-23-team-collaboration-overview-design.md', import.meta.url),
+      'utf8',
+    )
+
+    expect(design).toContain('running` / `blocked` / `failed')
+    expect(design).not.toContain('running` / `blocked` / `failed` / `assigned')
+    expect(design).toContain('缺失依赖')
+    expect(design).toContain('分层顺序视图')
+    expect(design).toContain('当前筛选已隐藏该任务')
+    expect(design).toContain('内联展开全部 Leader 消息')
+  })
+
+  it('implements the inline inbox expansion instead of a dead activity link', () => {
+    const overview = source('team-overview.tsx')
+
+    expect(overview).toContain('expanded ? allInbox : allInbox.slice(0, INBOX_LIMIT)')
+    expect(overview).toContain('setExpanded(value => !value)')
+    expect(overview).toContain('aria-expanded={expanded}')
+    expect(overview).toContain('查看全部')
+    expect(overview).not.toContain('team-view-presence')
   })
 })

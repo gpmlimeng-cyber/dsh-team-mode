@@ -70,8 +70,8 @@ export function pickOverviewTask(
 
 Rules:
 
-- `defaultBoardMode`: stored `overview|tasks` wins; otherwise overview when any task is running/blocked/failed/assigned, else tasks.
-- `dependencyGraph`: Kahn-style depth by unfinished dependencies; missing deps are ignored; cycle nodes and tasks depending on them go to `unlayered`; preserve updatedAt desc/id asc within each layer.
+- `defaultBoardMode`: stored `overview|tasks` wins; otherwise overview when any task is running/blocked/failed, else tasks.
+- `dependencyGraph`: Kahn-style depth by dependencies; unknown dependency ids, cycle nodes and tasks depending on either go to `unlayered`; preserve updatedAt desc/id asc within each layer.
 - `leaderInbox`: recipient.kind `leader`, matching `slotId`, type not `system`, sorted createdAt desc/id; default limit 5.
 - `pickOverviewTask`: selected id if still present; else first running, then first task by updatedAt desc; undefined for empty.
 - Reuse `TeamTask`, `TeamMessage`; no React/CSS.
@@ -112,10 +112,10 @@ export function TeamOverview(props: {
   - `defaultBoardMode(tasks)` fallback;
   - segmented `[总览] [任务]` with `aria-pressed`;
   - switching preserves filters.
-- [ ] **Step 3: Render overview** when mode is overview: header summary, segmented progress, member chips, dependency graph, selected task detail, leader inbox. Keep existing header/toolbar; hide the member-column board only in overview.
+- [ ] **Step 3: Render overview** when mode is overview: header summary, segmented progress, member chips, dependency graph, selected task detail, leader inbox. Keep existing header/toolbar (filters only narrow graph/detail visibility); hide the member-column board only in overview.
 - [ ] **Step 4: Task detail** shows title/status/owner/dependencies/unlocks/updatedAt and “打开成员会话” when owner exists; no inline edit.
-- [ ] **Step 5: Graph** uses dependency layers; nodes are buttons, keyboard operable; unlayered area warns but keeps tasks; no library.
-- [ ] **Step 6: Inbox** filters to Leader; shows latest 5; empty state; read-only.
+- [ ] **Step 5: Graph** uses dependency layers; nodes are buttons, keyboard operable and show 依赖/解锁 labels; unlayered area warns cause-neutrally but keeps tasks; no library, no cross-layer arrows.
+- [ ] **Step 6: Inbox** filters to Leader; shows latest 5; empty state; read-only; 内联“查看全部”展开全部消息（无独立活动视图目标）。
 - [ ] **Step 7: CSS** semantic tokens, two-column desktop, stacked 320px, `overflow-x:auto` for graph, no `overflow:hidden` clipping.
 - [ ] **Step 8: Run tests + typecheck + build.**
 - [ ] **Step 9: Commit** `feat: add team collaboration overview`.

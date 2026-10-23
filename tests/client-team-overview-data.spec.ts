@@ -66,14 +66,14 @@ describe('defaultBoardMode', () => {
     expect(defaultBoardMode([], '')).toBe('tasks')
   })
 
-  it.each(['assigned', 'running', 'blocked', 'failed'] as const)(
+  it.each(['running', 'blocked', 'failed'] as const)(
     'opens the overview when a %s task exists',
     status => {
       expect(defaultBoardMode([task('a'), task('b', { status })])).toBe('overview')
     },
   )
 
-  it.each(['pending', 'completed', 'cancelled'] as const)(
+  it.each(['pending', 'assigned', 'completed', 'cancelled'] as const)(
     'stays on tasks when only %s tasks exist',
     status => {
       expect(defaultBoardMode([task('a', { status })])).toBe('tasks')
@@ -144,13 +144,15 @@ describe('dependencyGraph', () => {
     ])
   })
 
-  it('ignores dependency ids without a task on this board', () => {
+  it('keeps unknown dependency ids and their dependents in unlayered', () => {
     const graph = dependencyGraph([
       task('alone', { dependencyIds: ['deleted-task', 'other-team-task'] }),
+      task('downstream', { dependencyIds: ['alone'] }),
+      task('free'),
     ])
 
-    expect(layerIds(graph)).toEqual([{ depth: 0, ids: ['alone'] }])
-    expect(graph.unlayered).toEqual([])
+    expect(layerIds(graph)).toEqual([{ depth: 0, ids: ['free'] }])
+    expect(ids(graph.unlayered)).toEqual(['alone', 'downstream'])
   })
 
   it('keeps cycle members and their dependents in unlayered', () => {

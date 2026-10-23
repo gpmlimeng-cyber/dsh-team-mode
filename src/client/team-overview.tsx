@@ -1,10 +1,13 @@
-import type { CSSProperties } from 'react'
+import { useState, type CSSProperties } from 'react'
 import css from './AgentTeam.module.css'
 import { dependencyGraph, leaderInbox, pickOverviewTask } from './team-overview-data.js'
 import type { TeamMemberSlot, TeamMessage, TeamTask } from '../domain/types.js'
 import type { TeamView } from '../transport/contracts.js'
 
 type Tone = 'neutral' | 'business' | 'success' | 'warn' | 'danger'
+
+const INBOX_LIMIT = 5
+const PREVIEW_CHARS = 120
 
 const TASK_STATUS_LABELS: Record<TeamTask['status'], string> = {
   pending: '待处理',
@@ -38,11 +41,15 @@ const UNTITLED_TASK = '未命名任务'
 
 export interface TeamOverviewProps {
   readonly team: TeamView
+  /** Every task in the team; totals and member progress always use this list. */
   readonly tasks: readonly TeamTask[]
+  /** Filtered subset for graph/detail visibility; defaults to `tasks`. */
+  readonly visibleTasks?: readonly TeamTask[] | undefined
   readonly messages: readonly TeamMessage[]
   readonly selectedTaskId?: string | undefined
   readonly messagesLoading?: boolean | undefined
   readonly messagesError?: string | undefined
+  readonly onClearFilters?: (() => void) | undefined
   readonly onSelectTask: (taskId: string) => void
   readonly onOpenSession: (sessionId: string) => void
 }
@@ -180,7 +187,12 @@ function senderName(team: TeamView, message: TeamMessage): string {
 
 function messagePreview(message: TeamMessage): string {
   const summary = message.summary?.trim() ?? ''
-  return summary === '' ? message.content : summary
+  const raw = summary === '' ? message.content : summary
+  const firstLine = raw.split(/\r?\n/).find(line => line.trim() !== '') ?? ''
+  const normalized = firstLine.trim()
+  return normalized.length > PREVIEW_CHARS
+    ? `${normalized.slice(0, PREVIEW_CHARS)}…`
+    : normalized
 }
 
 function Progress({ progress }: { progress: ProgressCounts }): JSX.Element {
@@ -191,26 +203,36 @@ function Progress({ progress }: { progress: ProgressCounts }): JSX.Element {
     { id: 'error', label: '异常', count: progress.error, tone: css.overviewProgressError },
   ]
   const label = progressText(progress)
+  const track = segments.map(segment => (
+    <span
+      key={segment.id}
+      className={`${css.overviewProgressSegment} ${segment.tone}`}
+      style={{ flexGrow: segment.count } as CSSProperties}
+      data-dsh-progress={segment.id}
+      aria-hidden="true"
+    />
+  ))
   return (
     <div className={css.overviewProgress} data-overview-progress="true">
-      <div
-        className={css.overviewProgressBar}
-        role="progressbar"
-        aria-label={label}
-        aria-valuemin={0}
-        aria-valuemax={progress.total}
-        aria-valuenow={progress.completed}
-      >
-        {segments.map(segment => (
-          <span
-            key={segment.id}
-            className={`${css.overviewProgressSegment} ${segment.tone}`}
-            style={{ flexGrow: segment.count } as CSSProperties}
-            data-dsh-progress={segment.id}
-            aria-hidden="true"
-          />
-        ))}
-      </div>
+      {progress.total > 0
+        ? (
+          <div
+            className={css.overviewProgressBar}
+            role="progressbar"
+            aria-label={label}
+            aria-valuemin={0}
+            aria-valuemax={progress.total}
+            aria-valuenow={progress.completed}
+            aria-valuetext={label}
+          >
+            {track}
+          </div>
+        )
+        : (
+          <div className={css.overviewProgressBar} aria-hidden="true">
+            {track}
+          </div>
+        )}
       <p className={css.overviewProgressText}>{label}</p>
       <ul className={css.overviewProgressLegend}>
         {segments.map(segment => (
@@ -224,9 +246,11 @@ function Progress({ progress }: { progress: ProgressCounts }): JSX.Element {
   )
 }
 
-function GraphNode({ team, task, selected, onSelect }: {
+function GraphNode({ team, task, dependencies, unlocks, selected, onSelect }: {
   readonly team: TeamView
   readonly task: TeamTask
+  readonly dependencies: readonly string[]
+  readonly unlocks: readonly string[]
   readonly selected: boolean
   readonly onSelect: (taskId: string) => void
 }): JSX.Element {
@@ -248,6 +272,20 @@ function GraphNode({ team, task, selected, onSelect }: {
           </span>
           <span className={css.overviewNodeOwner}>{ownerName(team, task)}</span>
         </span>
+        {(dependencies.length > 0 || unlocks.length > 0) && (
+          <span className={css.overviewNodeEdges}>
+            {dependencies.length > 0 && (
+              <span className={css.overviewNodeEdge} title={`依赖：${dependencies.join('、')}`}>
+                依赖 · {dependencies.join('、')}
+              </span>
+            )}
+            {unlocks.length > 0 && (
+              <span className={css.overviewNodeEdge} title={`解锁：${unlocks.join('、')}`}>
+                解锁 · {unlocks.join('、')}
+              </span>
+            )}
+          </span>
+        )}
       </button>
     </li>
   )
@@ -308,11 +346,12 @@ function MemberRow({ team, member, tasks, selectedId, onSelectTask, onOpenSessio
   )
 }
 
-function TaskDetail({ team, tasks, selectedId, selectedTaskId, onSelectTask, onOpenSession }: {
+function TaskDetail({ team, tasks, selectedId, selectedTaskId, visibleTaskIds, onSelectTask, onOpenSession }: {
   readonly team: TeamView
   readonly tasks: readonly TeamTask[]
   readonly selectedId: string | undefined
   readonly selectedTaskId: string | undefined
+  readonly visibleTaskIds: ReadonlySet<string>
   readonly onSelectTask: (taskId: string) => void
   readonly onOpenSession: (sessionId: string) => void
 }): JSX.Element {
@@ -334,7 +373,10 @@ function TaskDetail({ team, tasks, selectedId, selectedTaskId, onSelectTask, onO
   const dependencies = selected.dependencyIds.map(id => ({ id, title: byId.get(id)?.title }))
   const unlocks = tasks.filter(task => task.dependencyIds.includes(selected.id))
   const owner = ownerOf(team, selected)
-  const fallback = selectedTaskId !== undefined && selectedTaskId !== selected.id
+  const selectedExists = selectedTaskId !== undefined
+    && tasks.some(task => task.id === selectedTaskId)
+  const removed = selectedTaskId !== undefined && !selectedExists
+  const hidden = !removed && !visibleTaskIds.has(selected.id)
   const title = taskTitle(selected.title)
 
   return (
@@ -343,7 +385,8 @@ function TaskDetail({ team, tasks, selectedId, selectedTaskId, onSelectTask, onO
         <h3 className={css.overviewPanelTitle}>任务详情</h3>
         <span className={css.overviewPanelCount}>{TASK_STATUS_LABELS[selected.status]}</span>
       </header>
-      {fallback && <p className={css.overviewHint}>原选中任务已移除，已自动切换。</p>}
+      {removed && <p className={css.overviewHint}>原选中任务已移除，已自动切换。</p>}
+      {hidden && <p className={css.overviewHint}>当前筛选已隐藏该任务，详情仍显示。</p>}
       <div className={css.overviewDetail} data-task-id={selected.id}>
         <div className={css.overviewDetailHead}>
           <h4 className={css.overviewDetailTitle} title={title}>{title}</h4>
@@ -426,45 +469,62 @@ function Inbox({ team, messages, loading, error }: {
   readonly loading: boolean
   readonly error: string | undefined
 }): JSX.Element {
-  const inbox = leaderInbox(messages, team.leaderSlotId)
+  const [expanded, setExpanded] = useState(false)
+  const allInbox = leaderInbox(messages, team.leaderSlotId, Number.MAX_SAFE_INTEGER)
+  const inbox = expanded ? allInbox : allInbox.slice(0, INBOX_LIMIT)
+  const showList = error === undefined && !(loading && allInbox.length === 0) && allInbox.length > 0
   return (
     <section className={`${css.overviewPanel} ${css.overviewInbox}`} aria-label="Leader 收件箱" data-overview-region="leader-inbox">
       <header className={css.overviewPanelHeader}>
         <h3 className={css.overviewPanelTitle}>Leader 收件箱</h3>
-        <span className={css.overviewPanelCount}>最近 {inbox.length} 条</span>
+        <span className={css.overviewPanelCount}>
+          {expanded ? `全部 ${allInbox.length} 条` : `最近 ${inbox.length} 条`}
+        </span>
       </header>
       {error !== undefined
         ? <p className={css.overviewErrorText} role="status">收件箱加载失败：{error}</p>
-        : loading && inbox.length === 0
+        : loading && allInbox.length === 0
           ? <p className={css.overviewEmpty}>正在加载收件箱…</p>
-          : inbox.length === 0
+          : allInbox.length === 0
             ? <p className={css.overviewEmpty}>暂无待处理消息</p>
             : (
-              <ul className={css.overviewInboxList}>
-                {inbox.map(item => {
-                  const unread = !item.readBy.includes(team.leaderSlotId)
-                  return (
-                    <li key={item.id} className={css.overviewInboxItem}>
-                      <span className={css.overviewInboxAvatar} data-kind={item.sender.kind} aria-hidden="true">
-                        {initial(senderName(team, item))}
-                      </span>
-                      <div className={css.overviewInboxBody}>
-                        <div className={css.overviewInboxTop}>
-                          <strong className={css.overviewInboxSender}>{senderName(team, item)}</strong>
-                          <span className={css.overviewType} data-tone={messageTone(item.type)}>
-                            {MESSAGE_TYPE_LABELS[item.type]}
-                          </span>
-                          {unread && <span className={css.overviewUnread}>未读</span>}
-                          <span className={css.overviewInboxTime} title={formatTime(item.createdAt)}>
-                            {formatTime(item.createdAt)}
-                          </span>
+              <>
+                <ul className={css.overviewInboxList}>
+                  {inbox.map(item => {
+                    const unread = !item.readBy.includes(team.leaderSlotId)
+                    return (
+                      <li key={item.id} className={css.overviewInboxItem}>
+                        <span className={css.overviewInboxAvatar} data-kind={item.sender.kind} aria-hidden="true">
+                          {initial(senderName(team, item))}
+                        </span>
+                        <div className={css.overviewInboxBody}>
+                          <div className={css.overviewInboxTop}>
+                            <strong className={css.overviewInboxSender}>{senderName(team, item)}</strong>
+                            <span className={css.overviewType} data-tone={messageTone(item.type)}>
+                              {MESSAGE_TYPE_LABELS[item.type]}
+                            </span>
+                            {unread && <span className={css.overviewUnread}>未读</span>}
+                            <span className={css.overviewInboxTime} title={formatTime(item.createdAt)}>
+                              {formatTime(item.createdAt)}
+                            </span>
+                          </div>
+                          <p className={css.overviewInboxText}>{messagePreview(item)}</p>
                         </div>
-                        <p className={css.overviewInboxText}>{messagePreview(item)}</p>
-                      </div>
-                    </li>
-                  )
-                })}
-              </ul>
+                      </li>
+                    )
+                  })}
+                </ul>
+                {showList && allInbox.length > INBOX_LIMIT && (
+                  <button
+                    type="button"
+                    className={css.overviewInboxMore}
+                    aria-expanded={expanded}
+                    onClick={() => { setExpanded(value => !value) }}
+                  >
+                    {expanded ? '收起' : `查看全部（${allInbox.length}）`}
+                  </button>
+                )}
+              </>
             )}
     </section>
   )
@@ -472,11 +532,24 @@ function Inbox({ team, messages, loading, error }: {
 
 /**
  * Read-only collaboration view derived from the same `TeamView`/tasks/messages
- * as the task board. It never edits a task and never fetches; every count is a
- * real count and every empty area says why it is empty.
+ * as the task board. Team totals, progress and member chips always use the full
+ * task list; search/member/status filters only narrow graph and detail
+ * visibility, which is labelled explicitly. It never edits a task or fetches.
  */
 export function TeamOverview(props: TeamOverviewProps): JSX.Element {
-  const { team, tasks, messages, selectedTaskId, messagesLoading = false, messagesError } = props
+  const {
+    team,
+    tasks,
+    messages,
+    visibleTasks,
+    selectedTaskId,
+    messagesLoading = false,
+    messagesError,
+    onClearFilters,
+  } = props
+  const visible = visibleTasks ?? tasks
+  const visibleTaskIds = new Set(visible.map(task => task.id))
+  const filtered = visible.length !== tasks.length
   const leader = team.members[team.leaderSlotId]
   const leaderName = leader?.displayName ?? 'Leader'
   const memberCount = Object.values(team.members).filter(member => member.role !== 'leader').length
@@ -485,10 +558,34 @@ export function TeamOverview(props: TeamOverviewProps): JSX.Element {
   const members = orderedMembers(team)
   const selected = pickOverviewTask(tasks, selectedTaskId)
   const selectedId = selected?.id
+  const taskById = new Map(tasks.map(task => [task.id, task]))
+  const unlocksByTask = new Map<string, string[]>()
+  for (const task of tasks) {
+    for (const dependencyId of new Set(task.dependencyIds)) {
+      const list = unlocksByTask.get(dependencyId)
+      if (list === undefined) unlocksByTask.set(dependencyId, [taskTitle(task.title)])
+      else list.push(taskTitle(task.title))
+    }
+  }
+  const dependenciesOf = (task: TeamTask): string[] => [...new Set(task.dependencyIds)]
+    .map(id => taskById.get(id)?.title ?? `缺失 ${shortId(id)}`)
+  const unlocksOf = (task: TeamTask): string[] => unlocksByTask.get(task.id) ?? []
   const hasDependencies = tasks.some(task => task.dependencyIds.length > 0)
   const summary = tasks.length === 0
     ? '还没有任务，Leader 派发后会出现在这里'
     : `已派发 ${tasks.length} 项任务给 ${memberCount} 名成员`
+  const visibleLayers = graph.layers
+    .map(layer => ({
+      depth: layer.depth,
+      tasks: layer.tasks.filter(task => visibleTaskIds.has(task.id)),
+    }))
+    .filter(layer => layer.tasks.length > 0)
+  const visibleUnlayered = graph.unlayered.filter(task => visibleTaskIds.has(task.id))
+  const graphHint = filtered
+    ? `筛选后显示 ${visible.length} 个任务（团队共 ${tasks.length} 个）`
+    : hasDependencies
+      ? `按依赖分为 ${graph.layers.length} 层，节点标注依赖与解锁`
+      : '任务暂无依赖'
 
   return (
     <div className={css.overviewRoot} data-view="overview">
@@ -516,7 +613,9 @@ export function TeamOverview(props: TeamOverviewProps): JSX.Element {
           <section className={css.overviewPanel} aria-label="成员与任务">
             <header className={css.overviewPanelHeader}>
               <h3 className={css.overviewPanelTitle}>成员与任务</h3>
-              <span className={css.overviewPanelCount}>{members.length} 名成员</span>
+              <span className={css.overviewPanelCount}>
+                {filtered ? `${members.length} 名成员 · 团队全量` : `${members.length} 名成员`}
+              </span>
             </header>
             <ul className={css.overviewMembers}>
               {members.map(member => (
@@ -539,67 +638,82 @@ export function TeamOverview(props: TeamOverviewProps): JSX.Element {
           <section className={css.overviewPanel} aria-label="任务依赖图" data-overview-region="dependency-graph">
             <header className={css.overviewPanelHeader}>
               <h3 className={css.overviewPanelTitle}>任务依赖图</h3>
-              <span className={css.overviewPanelCount}>{tasks.length} 个任务</span>
+              <span className={css.overviewPanelCount}>
+                {filtered
+                  ? `筛选后 ${visible.length} / 共 ${tasks.length} 个`
+                  : `${tasks.length} 个任务`}
+              </span>
             </header>
             {tasks.length === 0
               ? <p className={css.overviewEmpty}>还没有任务，Leader 派发后会出现在这里</p>
-              : (
-                <>
-                  <p className={css.overviewHint}>
-                    {hasDependencies
-                      ? `按依赖分为 ${graph.layers.length} 层，点击节点查看任务详情`
-                      : '任务暂无依赖'}
-                  </p>
-                  <div className={css.overviewGraphViewport}>
-                    <div className={css.overviewLayers}>
-                      {graph.layers.map(layer => (
-                        <div
-                          key={layer.depth}
-                          className={css.overviewLayer}
-                          data-depth={layer.depth}
-                          role="group"
-                          aria-label={`第 ${layer.depth + 1} 层，${layer.tasks.length} 个任务`}
-                        >
-                          <span className={css.overviewLayerLabel}>
-                            第 {layer.depth + 1} 层
-                            <span className={css.overviewLayerCount}>{layer.tasks.length}</span>
-                          </span>
-                          <ul className={css.overviewLayerList}>
-                            {layer.tasks.map(task => (
-                              <GraphNode
-                                key={task.id}
-                                team={team}
-                                task={task}
-                                selected={task.id === selectedId}
-                                onSelect={props.onSelectTask}
-                              />
-                            ))}
-                          </ul>
-                        </div>
-                      ))}
-                    </div>
+              : visible.length === 0
+                ? (
+                  <div className={css.overviewFilterEmpty} data-overview-region="filter-empty">
+                    <p className={css.overviewEmpty}>当前筛选下没有任务</p>
+                    {onClearFilters !== undefined && (
+                      <button type="button" className={css.overviewClearButton} onClick={onClearFilters}>
+                        清除筛选
+                      </button>
+                    )}
                   </div>
-                  {graph.unlayered.length > 0 && (
-                    <div className={css.overviewUnlayered}>
-                      <p className={css.overviewWarning} role="status">
-                        <span className={css.overviewWarningMark} aria-hidden="true">!</span>
-                        存在循环依赖，{graph.unlayered.length} 个任务进入未分层区，仍保留在下方
-                      </p>
-                      <ul className={css.overviewLayerList}>
-                        {graph.unlayered.map(task => (
-                          <GraphNode
-                            key={task.id}
-                            team={team}
-                            task={task}
-                            selected={task.id === selectedId}
-                            onSelect={props.onSelectTask}
-                          />
+                )
+                : (
+                  <>
+                    <p className={css.overviewHint}>{graphHint}</p>
+                    <div className={css.overviewGraphViewport}>
+                      <div className={css.overviewLayers}>
+                        {visibleLayers.map(layer => (
+                          <div
+                            key={layer.depth}
+                            className={css.overviewLayer}
+                            data-depth={layer.depth}
+                            role="group"
+                            aria-label={`第 ${layer.depth + 1} 层，${layer.tasks.length} 个任务`}
+                          >
+                            <span className={css.overviewLayerLabel}>
+                              第 {layer.depth + 1} 层
+                              <span className={css.overviewLayerCount}>{layer.tasks.length}</span>
+                            </span>
+                            <ul className={css.overviewLayerList}>
+                              {layer.tasks.map(task => (
+                                <GraphNode
+                                  key={task.id}
+                                  team={team}
+                                  task={task}
+                                  dependencies={dependenciesOf(task)}
+                                  unlocks={unlocksOf(task)}
+                                  selected={task.id === selectedId}
+                                  onSelect={props.onSelectTask}
+                                />
+                              ))}
+                            </ul>
+                          </div>
                         ))}
-                      </ul>
+                      </div>
                     </div>
-                  )}
-                </>
-              )}
+                    {visibleUnlayered.length > 0 && (
+                      <div className={css.overviewUnlayered}>
+                        <p className={css.overviewWarning} role="status">
+                          <span className={css.overviewWarningMark} aria-hidden="true">!</span>
+                          存在循环或缺失依赖，{visibleUnlayered.length} 个任务进入未分层区，仍保留在下方
+                        </p>
+                        <ul className={css.overviewLayerList}>
+                          {visibleUnlayered.map(task => (
+                            <GraphNode
+                              key={task.id}
+                              team={team}
+                              task={task}
+                              dependencies={dependenciesOf(task)}
+                              unlocks={unlocksOf(task)}
+                              selected={task.id === selectedId}
+                              onSelect={props.onSelectTask}
+                            />
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </>
+                )}
           </section>
 
           <TaskDetail
@@ -607,6 +721,7 @@ export function TeamOverview(props: TeamOverviewProps): JSX.Element {
             tasks={tasks}
             selectedId={selectedId}
             selectedTaskId={selectedTaskId}
+            visibleTaskIds={visibleTaskIds}
             onSelectTask={props.onSelectTask}
             onOpenSession={props.onOpenSession}
           />

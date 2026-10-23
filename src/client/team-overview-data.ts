@@ -11,8 +11,8 @@ export interface DependencyLayer {
 
 /**
  * A layered view of the board. `unlayered` holds tasks whose prerequisites
- * cannot be ordered (a cycle, or a task waiting behind one); they are kept
- * rather than dropped so the graph never loses work.
+ * cannot be ordered (a cycle, a missing dependency, or a task waiting behind
+ * either); they are kept rather than dropped so the graph never loses work.
  */
 export interface DependencyGraph {
   layers: DependencyLayer[]
@@ -21,7 +21,6 @@ export interface DependencyGraph {
 
 /** A team with one of these tasks still needs the overview first. */
 const LIVE_TASK_STATUSES: ReadonlySet<TeamTask['status']> = new Set([
-  'assigned',
   'running',
   'blocked',
   'failed',
@@ -60,21 +59,25 @@ export function defaultBoardMode(
 }
 
 /**
- * Layers tasks by their resolvable `dependencyIds`: roots are depth 0 and each
- * dependent sits one past its deepest prerequisite. Unknown ids (a deleted or
- * foreign task) are ignored. Cycles and everything downstream of them cannot
- * be ordered and land in `unlayered` instead of being dropped.
+ * Layers tasks by their `dependencyIds`: roots are depth 0 and each dependent
+ * sits one past its deepest prerequisite. A dependency id with no task on this
+ * board cannot be resolved, so its dependent (and everything behind it) cannot
+ * be ordered and lands in `unlayered`; nothing is silently treated as ready.
+ * Cycles behave the same way and are kept instead of dropped.
  */
 export function dependencyGraph(tasks: readonly TeamTask[]): DependencyGraph {
   const byId = new Map(tasks.map(task => [task.id, task]))
   const dependencies = new Map<string, TeamTask[]>()
+  const dependencyCount = new Map<string, number>()
   const dependents = new Map<string, string[]>()
 
   for (const task of tasks) {
-    const unique = [...new Set(task.dependencyIds)]
+    const uniqueIds = [...new Set(task.dependencyIds)]
+    const unique = uniqueIds
       .map(id => byId.get(id))
       .filter((entry): entry is TeamTask => entry !== undefined)
     dependencies.set(task.id, unique)
+    dependencyCount.set(task.id, uniqueIds.length)
     for (const dependency of unique) {
       const list = dependents.get(dependency.id)
       if (list === undefined) dependents.set(dependency.id, [task.id])
@@ -85,7 +88,7 @@ export function dependencyGraph(tasks: readonly TeamTask[]): DependencyGraph {
   const waitingOn = new Map<string, number>()
   const ready: TeamTask[] = []
   for (const task of tasks) {
-    const count = dependencies.get(task.id)?.length ?? 0
+    const count = dependencyCount.get(task.id) ?? 0
     waitingOn.set(task.id, count)
     if (count === 0) ready.push(task)
   }

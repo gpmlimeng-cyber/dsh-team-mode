@@ -925,7 +925,6 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
             </button>
           )}
         </div>
-        {mode === 'tasks' && (
         <div className={css.statusFilterGroup} role="group" aria-label="按状态筛选">
           <button
             type="button"
@@ -953,7 +952,6 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
             </button>
           ))}
         </div>
-        )}
         <label className={css.memberFilter}>
           <span className={css.memberFilterLabel}>成员</span>
           <select
@@ -986,11 +984,13 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
         {mode === 'overview' ? (
           <TeamOverview
             team={team}
-            tasks={baseTasks}
+            tasks={tasks}
+            visibleTasks={visibleTasks}
             messages={scopedMessages}
             selectedTaskId={selectedTaskId}
             messagesLoading={inboxLoading}
             messagesError={messagesError}
+            onClearFilters={clearFilters}
             onSelectTask={setSelectedTaskId}
             onOpenSession={launchSession}
           />

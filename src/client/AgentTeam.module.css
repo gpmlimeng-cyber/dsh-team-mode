@@ -9599,6 +9599,34 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   overflow-wrap: anywhere;
 }
 
+.overviewFilterEmpty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.overviewFilterEmpty .overviewEmpty {
+  width: 100%;
+}
+
+.overviewClearButton {
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.overviewClearButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
 .overviewGraphViewport {
   overflow-x: auto;
   overscroll-behavior-x: contain;
@@ -9623,16 +9651,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   gap: 6px;
   width: 180px;
   min-width: 180px;
-}
-
-.overviewLayer + .overviewLayer::before {
-  content: '→';
-  position: absolute;
-  left: -11px;
-  top: 2px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 16px;
 }
 
 .overviewLayerLabel {
@@ -9748,6 +9766,25 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 .overviewNodeOwner {
   overflow: hidden;
   min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overviewNodeEdges {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  margin-top: 2px;
+  padding-top: 3px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+}
+
+.overviewNodeEdge {
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 9px;
+  line-height: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -10082,10 +10119,32 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 }
 
 .overviewInboxText {
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--dsw-alias-label-secondary);
   font-size: 11px;
   line-height: 16px;
   overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.overviewInboxMore {
+  align-self: flex-start;
+  height: 24px;
+  padding: 0 9px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.overviewInboxMore:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
 }
 
 .overviewSwitchButton:focus-visible,
@@ -10093,7 +10152,9 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 .overviewChip:focus-visible,
 .overviewMemberName:focus-visible,
 .overviewRefButton:focus-visible,
-.overviewOpenButton:focus-visible {
+.overviewOpenButton:focus-visible,
+.overviewClearButton:focus-visible,
+.overviewInboxMore:focus-visible {
   outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 2px;
 }
