@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamClientContext } from './client-context.js'
 import {
+  AgentTeamOverlay,
   AgentTeamSettingsSection,
   type WorkspaceChoice,
 } from './components.js'
@@ -136,6 +137,14 @@ export function apply(ctx: AgentTeamClientContext): void {
       .catch(() => undefined)
   }
   const openNativeLanding = (): void => { ctx.uiWorkspace.startSession() }
+  /**
+   * The team workbench is a shell overlay: closed it renders the floating
+   * launcher, open it covers the shell with the default page and team views.
+   * Mounting it here is what keeps the global overview in the shipped bundle.
+   */
+  const TeamWorkbenchHost = (): JSX.Element => (
+    <AgentTeamOverlay pickWorkspace={pickWorkspace} openSession={openSession} />
+  )
   const SidebarTeamHost = (): JSX.Element => (
     <>
       <TeamTriggerEnhancer />
@@ -264,6 +273,13 @@ export function apply(ctx: AgentTeamClientContext): void {
   slotApi.inject('team.parallel.pane', () => slotApi.register({
     name: 'team.parallel.pane',
   }, TeamParallelPane))
+
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'dsh-team-mode-workbench',
+    order: 15,
+    label: '团队工作台',
+  }, TeamWorkbenchHost))
 
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
     name: 'shell.overlay',

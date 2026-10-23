@@ -32,6 +32,10 @@ export interface GlobalOverviewProps {
   readonly onOpenTeam: (teamId: string) => void
   /** Opens an Assistant main Session; absent when the host cannot navigate. */
   readonly onOpenAssistant?: ((sessionId: string) => void) | undefined
+  /** Team list has not answered yet; unknown is not zero. */
+  readonly teamsLoading?: boolean | undefined
+  /** Team list failed; unknown is not zero. */
+  readonly teamsError?: string | undefined
 }
 
 export interface GlobalOverviewPanelProps {
@@ -41,6 +45,8 @@ export interface GlobalOverviewPanelProps {
   readonly filter: GlobalFilter
   readonly loading?: boolean | undefined
   readonly error?: string | undefined
+  readonly teamsLoading?: boolean | undefined
+  readonly teamsError?: string | undefined
   readonly onFilterChange?: ((filter: GlobalFilter) => void) | undefined
   readonly onOpenTeam: (teamId: string) => void
   readonly onOpenAssistant?: ((sessionId: string) => void) | undefined
@@ -67,14 +73,6 @@ function teamState(item: GlobalTeamItem): string {
 function assistantState(item: GlobalAssistantItem): string {
   const status = item.running ? '运行中' : ASSISTANT_STATUS_LABELS[item.status]
   return item.needsInput > 0 ? `${status} · ${item.needsInput} 个待输入` : status
-}
-
-/** Assistant navigation needs a bound main Session; nothing ever ensures one. */
-function assistantOpenable(
-  item: GlobalAssistantItem,
-  onOpenAssistant: ((sessionId: string) => void) | undefined,
-): boolean {
-  return item.mainSessionId !== undefined && onOpenAssistant !== undefined
 }
 
 function Summary({ model }: { model: GlobalOverviewModel }): JSX.Element {
@@ -134,10 +132,8 @@ function Attention({
                     type="button"
                     className={css.globalOverviewAttentionRow}
                     data-attention-assistant-id={item.id}
-                    disabled={!assistantOpenable(item, onOpenAssistant)}
-                    title={item.mainSessionId === undefined
-                      ? '未创建主会话'
-                      : onOpenAssistant === undefined ? '当前工作台无法跳转' : undefined}
+                    disabled={item.mainSessionId === undefined}
+                    title={item.mainSessionId === undefined ? '未创建主会话' : undefined}
                     onClick={() => {
                       const sessionId = item.mainSessionId
                       if (sessionId !== undefined && onOpenAssistant !== undefined) onOpenAssistant(sessionId)
@@ -187,17 +183,14 @@ function AssistantRow({
   item: GlobalAssistantItem
   onOpenAssistant: ((sessionId: string) => void) | undefined
 }): JSX.Element {
-  const openable = assistantOpenable(item, onOpenAssistant)
   return (
     <li>
       <button
         type="button"
         className={css.globalOverviewRow}
         data-assistant-id={item.id}
-        disabled={!openable}
-        title={item.mainSessionId === undefined
-          ? '未创建主会话'
-          : onOpenAssistant === undefined ? '当前工作台无法跳转' : undefined}
+        disabled={item.mainSessionId === undefined}
+        title={item.mainSessionId === undefined ? '未创建主会话' : undefined}
         onClick={() => {
           const sessionId = item.mainSessionId
           if (sessionId !== undefined && onOpenAssistant !== undefined) onOpenAssistant(sessionId)
@@ -215,6 +208,23 @@ function AssistantRow({
   )
 }
 
+/** One panel shell for a state where the numbers are not known yet. */
+function StatusCard({ tone, message }: { tone: 'loading' | 'error', message: string }): JSX.Element {
+  return (
+    <section className={css.globalOverview} aria-label="全局总览" data-overview-region="global-overview">
+      <header className={css.globalOverviewHeader}>
+        <h2 className={css.globalOverviewTitle}>全局总览</h2>
+      </header>
+      <p
+        className={tone === 'loading' ? css.globalOverviewLoading : css.globalOverviewError}
+        role={tone === 'loading' ? 'status' : 'alert'}
+      >
+        {message}
+      </p>
+    </section>
+  )
+}
+
 /**
  * Presentational overview: every number comes from the pure model built over the
  * props, and the filter only narrows rows. Loading never renders zeros, because
@@ -227,30 +237,17 @@ export function GlobalOverviewPanel({
   filter,
   loading = false,
   error,
+  teamsLoading,
+  teamsError,
   onFilterChange,
   onOpenTeam,
   onOpenAssistant,
 }: GlobalOverviewPanelProps): JSX.Element {
-  if (loading) {
-    return (
-      <section className={css.globalOverview} aria-label="全局总览" data-overview-region="global-overview">
-        <header className={css.globalOverviewHeader}>
-          <h2 className={css.globalOverviewTitle}>全局总览</h2>
-        </header>
-        <p className={css.globalOverviewLoading} role="status">正在加载助手和任务…</p>
-      </section>
-    )
-  }
-
+  if (teamsLoading === true) return <StatusCard tone="loading" message="正在加载团队和助手…" />
+  if (teamsError !== undefined) return <StatusCard tone="error" message={`团队数据加载失败：${teamsError}`} />
+  if (loading) return <StatusCard tone="loading" message="正在加载助手和任务…" />
   if (error !== undefined && instances.length === 0 && tasks.length === 0) {
-    return (
-      <section className={css.globalOverview} aria-label="全局总览" data-overview-region="global-overview">
-        <header className={css.globalOverviewHeader}>
-          <h2 className={css.globalOverviewTitle}>全局总览</h2>
-        </header>
-        <p className={css.globalOverviewError} role="alert">{error}</p>
-      </section>
-    )
+    return <StatusCard tone="error" message={error} />
   }
 
   const model = globalOverviewModel({ teams, instances, tasks })
@@ -346,6 +343,8 @@ export function GlobalOverview({
   teams,
   onOpenTeam,
   onOpenAssistant,
+  teamsLoading,
+  teamsError,
 }: GlobalOverviewProps): JSX.Element {
   const [instances, setInstances] = useState<AssistantInstanceView[]>()
   const [tasks, setTasks] = useState<AssistantSession[]>()
@@ -381,6 +380,8 @@ export function GlobalOverview({
       instances={instances ?? []}
       tasks={tasks ?? []}
       filter={filter}
+      {...(teamsLoading === undefined ? {} : { teamsLoading })}
+      {...(teamsError === undefined ? {} : { teamsError })}
       loading={error === undefined && (instances === undefined || tasks === undefined)}
       {...(error === undefined ? {} : { error })}
       onFilterChange={setFilter}

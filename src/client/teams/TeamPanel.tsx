@@ -70,6 +70,8 @@ export function TeamPanel({
   pickWorkspace,
   onChanged,
   openSession,
+  teamsLoading,
+  teamsError,
 }: {
   catalog: CatalogView | undefined
   assistants: AssistantView[]
@@ -80,6 +82,10 @@ export function TeamPanel({
   onChanged: () => Promise<void>
   /** Opens an Assistant main Session; absent hosts simply cannot navigate. */
   openSession?: (sessionId: string) => void
+  /** Team list has not answered yet; the overview must not show zero counts. */
+  teamsLoading?: boolean
+  /** Team list failed; the overview must say so instead of showing zero counts. */
+  teamsError?: string
 }): JSX.Element {
   const [creating, setCreating] = useState(false)
   const [managingAssistants, setManagingAssistants] = useState(false)
@@ -106,6 +112,8 @@ export function TeamPanel({
           teams={teams}
           onOpenTeam={teamId => { openTeam(teamId) }}
           {...(openSession === undefined ? {} : { onOpenAssistant: openSession })}
+          {...(teamsLoading === undefined ? {} : { teamsLoading })}
+          {...(teamsError === undefined ? {} : { teamsError })}
         />
       )}
       {selectedTeam === undefined && <div className={css.sectionHeader}>

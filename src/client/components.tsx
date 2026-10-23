@@ -305,11 +305,15 @@ export function useAgentTeamData(includeTeams: boolean, active = true): {
   teams: TeamView[]
   loading: boolean
   error: string | undefined
+  teamsLoading: boolean
+  teamsError: string | undefined
   load: () => Promise<void>
 } {
   const [catalog, setCatalog] = useState<CatalogView>()
   const [assistants, setAssistants] = useState<AssistantView[]>([])
   const [teams, setTeams] = useState<TeamView[]>([])
+  const [teamsLoaded, setTeamsLoaded] = useState(false)
+  const [teamsError, setTeamsError] = useState<string>()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>()
 
@@ -326,8 +330,21 @@ export function useAgentTeamData(includeTeams: boolean, active = true): {
       const coreRequests = [
         callAgentTeam('assistant.list').then(value => { setAssistants(value.items) }),
         includeTeams
-          ? callAgentTeam('team.list').then(value => { setTeams(value.items) })
-          : Promise.resolve().then(() => { setTeams([]) }),
+          ? callAgentTeam('team.list')
+              .then(value => {
+                setTeams(value.items)
+                setTeamsError(undefined)
+              })
+              .catch((cause: unknown) => {
+                const message = cause instanceof Error ? cause.message : String(cause)
+                setTeamsError(message)
+                throw cause
+              })
+              .finally(() => { setTeamsLoaded(true) })
+          : Promise.resolve().then(() => {
+            setTeams([])
+            setTeamsLoaded(true)
+          }),
       ]
       const results = await Promise.allSettled(coreRequests)
       const failures = results
@@ -345,7 +362,16 @@ export function useAgentTeamData(includeTeams: boolean, active = true): {
     return subscribeAgentTeam(() => { void load() }, () => { setError('事件连接已断开，正在等待重连') }, () => { void load() })
   }, [active, load])
 
-  return { catalog, assistants, teams, loading, error, load }
+  return {
+    catalog,
+    assistants,
+    teams,
+    loading,
+    error,
+    teamsLoading: !teamsLoaded,
+    teamsError,
+    load,
+  }
 }
 
 export function AgentTeamSettingsSection(_props: SettingsSectionOwnerProps): JSX.Element {
@@ -367,9 +393,15 @@ export function AgentTeamSettingsSection(_props: SettingsSectionOwnerProps): JSX
   )
 }
 
-export function AgentTeamOverlay({ pickWorkspace }: { pickWorkspace: () => Promise<WorkspaceChoice | null> }): JSX.Element | null {
+export function AgentTeamOverlay({
+  pickWorkspace,
+  openSession,
+}: {
+  pickWorkspace: () => Promise<WorkspaceChoice | null>
+  openSession: (sessionId: string) => void
+}): JSX.Element {
   const { visible, createTeamRequest, selectedTeamId } = useAgentTeamUi()
-  const { catalog, assistants, teams, error, load } = useAgentTeamData(true)
+  const { catalog, assistants, teams, error, teamsLoading, teamsError, load } = useAgentTeamData(true)
   const selectedTeam = teams.find(team => team.id === selectedTeamId)
   const hasExecutingTeam = teams.some(isTeamExecuting)
   const headerTitle = selectedTeam?.name ?? '团队'
@@ -377,7 +409,7 @@ export function AgentTeamOverlay({ pickWorkspace }: { pickWorkspace: () => Promi
     ? 'Leader 与成员共享一个 Workspace'
     : `${Object.keys(selectedTeam.members).length} 名成员 · ${selectedTeam.workspacePath}`
 
-  if (!visible) return null
+  if (!visible) return <FloatingTeamLauncher hasExecutingTeam={hasExecutingTeam} />
 
   return (
     <section className={css.fullscreenWorkbench} aria-label="团队工作台">
@@ -453,6 +485,9 @@ export function AgentTeamOverlay({ pickWorkspace }: { pickWorkspace: () => Promi
             selectedTeamId={selectedTeamId}
             pickWorkspace={pickWorkspace}
             onChanged={load}
+            openSession={openSession}
+            teamsLoading={teamsLoading}
+            {...(teamsError === undefined ? {} : { teamsError })}
           />
         </main>
       </div>
