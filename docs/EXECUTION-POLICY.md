@@ -6,14 +6,14 @@
 
 ```text
 Captain（当前会话）：保持当前模型
-执行成员（auditor / implementer / verifier）：
+执行成员（auditor / implementer）：
   provider: xiaomi-token-plan-cn
   model:    mimo-v2.6-flash
 
-Reviewer：
+思考 / 验证 / 评审（planning / verifier / reviewer）：
   provider: deepseek-account
   model:    deepseek-flash
-  目的：保留独立评审质量
+  目的：保留分析、验证与评审质量
 ```
 
 如果 mimo flash 路由不可用：
@@ -54,6 +54,9 @@ model: mimo-v2.6-flash
 
 从下一个团队开始生效。  
 已经在运行的团队不中途换模型，避免截断 in-flight 任务。
+
+`context-steward` 团队在策略明确前创建，执行成员仍是 deepseek-flash；  
+该团队完成后，新团队按本策略创建。
 
 ## 例外
 
