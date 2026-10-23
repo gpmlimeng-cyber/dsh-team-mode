@@ -28,6 +28,7 @@ Grok Bot 是 xAI 的常驻 Agent 产品，不是普通聊天框。
 本地已安装 `Grok Bot.app 0.70.2`（`com.anysphere.sand`），后续可用 REA 做行为与协议分析。
 
 来源：
+
 - https://x.ai/news/designing-grok-bot
 - https://www.infoq.com/news/2026/08/grok-bot-agent/
 
@@ -35,19 +36,20 @@ Grok Bot 是 xAI 的常驻 Agent 产品，不是普通聊天框。
 
 ## 2. 竞品地图
 
-| 项目 | 类型 | License | Stars（约） | 与 Grok Bot 的关系 |
-| --- | --- | --- | --- | --- |
-| Grok Bot | 商业产品 | 闭源 | — | 产品形态基准 |
-| DS Bot / DeepSeek-Bot | DSH Bot 插件 | Apache-2.0 | 2.7k | 最接近的 DSH 原生竞品 |
-| OpenMausBot | 开源 Grok Bot 替代 | Apache-2.0 | 5.3k | 产品/运行时最接近的开源实现 |
-| OpenBot | 自托管 Bot 平台 | MIT | 31 | 最接近的运行时/编排参考 |
-| LibreChat | Agent 聊天平台 | MIT | 46k | Agent 目录、会话、管理 UX 参考 |
-| Letta | Stateful Agent 平台 | Apache-2.0 | 25k | 长期记忆/状态参考 |
-| OpenHands Agent Canvas | Agent 控制中心 | MIT | 91k | 任务/自动化/多后端参考 |
-| CrewAI | 多 Agent 框架 | MIT | 60k | 角色编排参考 |
-| AutoGen | 多 Agent 框架 | CC-BY-4.0（仓库元数据） | 61k | 对话式多 Agent 参考；不建议直接重建 |
-| grok-bot-0.18-reconstructed | Grok Bot 非官方重构 | 无 License | 42 | 只能做理解，不可重建 |
-| grokbot-shim | Grok Bot 本地宿主/协议 shim | ISC | 27 | 协议、Computer、桌面接管参考 |
+| 项目                        | 类型                        | License                 | Stars（约） | 与 Grok Bot 的关系                                 |
+| --------------------------- | --------------------------- | ----------------------- | ----------- | -------------------------------------------------- |
+| Grok Bot                    | 商业产品                    | 闭源                    | —           | 产品形态基准                                       |
+| DS Bot / DeepSeek-Bot       | DSH Bot 插件                | Apache-2.0              | 2.7k        | 最接近的 DSH 原生竞品                              |
+| OpenMausBot                 | 开源 Grok Bot 替代          | Apache-2.0              | 5.3k        | 产品/运行时最接近的开源实现                        |
+| OpenBot                     | 自托管 Bot 平台             | MIT                     | 31          | 最接近的运行时/编排参考                            |
+| LibreChat                   | Agent 聊天平台              | MIT                     | 46k         | Agent 目录、会话、管理 UX 参考                     |
+| Letta                       | Stateful Agent 平台         | Apache-2.0              | 25k         | 长期记忆/状态参考                                  |
+| OpenHands Agent Canvas      | Agent 控制中心              | MIT                     | 91k         | 任务/自动化/多后端参考                             |
+| CrewAI                      | 多 Agent 框架               | MIT                     | 60k         | 角色编排参考                                       |
+| AutoGen                     | 多 Agent 框架               | CC-BY-4.0（仓库元数据） | 61k         | 对话式多 Agent 参考；不建议直接重建                |
+| grok-bot-0.18-reconstructed | Grok Bot 非官方重构         | 无 License              | 42          | 只能做理解，不可重建                               |
+| grokbot-shim                | Grok Bot 本地宿主/协议 shim | ISC                     | 27          | 协议、Computer、桌面接管参考                       |
+| GrokBot Guide               | Grok Bot 中文实践指南       | MIT                     | 3           | 用户语言、Bot 模板、场景、工作台用法参考；不含实现 |
 
 ---
 
@@ -207,15 +209,31 @@ Harness server (127.0.0.1:8799)
 两者都是框架，不是 Bot 产品；不建议作为 UI/产品对标，只作为编排概念参考。
 
 来源：
+
 - https://github.com/crewAIInc/crewAI
 - https://github.com/microsoft/autogen
 
-### 3.8 Grok Bot 非官方项目
+### 3.8 GrokBot Guide（中文实践指南）
+
+**是什么**：MIT 许可的 Grok Bot 中文教程站，仓库是 VuePress 文档与模板数据，不是 Grok Bot 实现。内容覆盖：
+
+- 30 分钟入门、7 天路径、按角色路径
+- 六类 Bot 模板（选题、工程、例程、审批、研究、对账）
+- 场景库：邮件、审批门、云 Agent PR、CSV 对账、情报摘要、Notion 摘要、配额监控
+- 工作台：channels、cloud agents、connectors、memory、multi-bot、routines、skills、security、settings
+
+**用途**：校准中文产品语言、模板/场景分类、routines 与审批的真实用户预期。  
+**边界**：教程中的产品描述只能作为行为参考，不能替代对 Grok Bot 本体的 REA/黑盒验证；代码与资产不进入我们的仓库。
+
+来源：https://github.com/anightmonarch/grokbot-guide
+
+### 3.9 Grok Bot 非官方项目
 
 - `xianyu110/grok-bot-0.18-reconstructed`：非官方重构，**无 License**。只能做行为理解，不能进入重建。
 - `codeaashu/grokbot-shim`：ISC。把 Grok Bot UI 接到本地 host/runtime，支持本地 Computer、模型代理、noVNC 接管。适合看宿主协议、Computer 沙箱、桌面接管，不适合直接做产品。
 
 来源：
+
 - https://github.com/xianyu110/grok-bot-0.18-reconstructed
 - https://github.com/codeaashu/grokbot-shim
 
@@ -233,16 +251,16 @@ Harness server (127.0.0.1:8799)
         └─ worker session C
 ```
 
-| 能力 | Grok Bot | DS Bot | OpenBot | LibreChat | 我们的落点 |
-| --- | --- | --- | --- | --- | --- |
-| 一个 Bot 一个入口 | 是 | 是 | 偏 thread | 偏会话列表 | 侧栏助手行 |
-| Bot 常驻 DM | 是 | 是 | thread | 是 | 原生 Session |
-| 内部任务 worker | 云电脑/任务 | 未公开 | actor/thread | Subagent | 隐藏 task Session |
-| Bot 自主路由 | 是 | 部分 | @handoff | Agent 工具 | 编排工具 + 规则 |
-| 长期记忆 | 是 | 是 | LangMem | 有 | 后续接 |
-| 多 Bot 群聊 | 是 | 是 | 是 | 多 Agent | 团队模式已有 |
-| 审批/人工介入 | 是 | 有 | 有 | 有 | 原生审批 |
-| 任务状态 UI | 是 | 群聊动态 | Threads | 工具活动 | Bot DM 任务卡 |
+| 能力              | Grok Bot    | DS Bot   | OpenBot      | LibreChat  | 我们的落点        |
+| ----------------- | ----------- | -------- | ------------ | ---------- | ----------------- |
+| 一个 Bot 一个入口 | 是          | 是       | 偏 thread    | 偏会话列表 | 侧栏助手行        |
+| Bot 常驻 DM       | 是          | 是       | thread       | 是         | 原生 Session      |
+| 内部任务 worker   | 云电脑/任务 | 未公开   | actor/thread | Subagent   | 隐藏 task Session |
+| Bot 自主路由      | 是          | 部分     | @handoff     | Agent 工具 | 编排工具 + 规则   |
+| 长期记忆          | 是          | 是       | LangMem      | 有         | 后续接            |
+| 多 Bot 群聊       | 是          | 是       | 是           | 多 Agent   | 团队模式已有      |
+| 审批/人工介入     | 是          | 有       | 有           | 有         | 原生审批          |
+| 任务状态 UI       | 是          | 群聊动态 | Threads      | 工具活动   | Bot DM 任务卡     |
 
 **结论**：
 
@@ -261,6 +279,7 @@ Harness server (127.0.0.1:8799)
 - **OpenMausBot**：deepfork（Apache-2.0），重点看 Bot roster、thread、channels/rooms、Assignment runtime、Decision model、审批卡片。
 - **DS Bot**：deepfork（Apache-2.0），重点看 DSH 上的 Bot→Session 映射、群聊、记忆、重启恢复。
 - **LibreChat**（可选，只拆 Agent 目录/详情/会话管理子系统）。
+- **GrokBot Guide**（MIT，中文实践指南）：校准用户语言、Bot 模板、场景库、routines / channels / memory / approval 的真实使用方式；只作产品与文案参考，不作代码或内核依据。
 
 产出：产品形态 + 运行时契约 + DSH 落点的完整方案。
 
@@ -282,14 +301,14 @@ Harness server (127.0.0.1:8799)
 
 ## 6. 确定范围后 REA + deepfork 的分工
 
-| 目标 | 工具 | 产出 |
-| --- | --- | --- |
-| Grok Bot 0.70.2 | REA（asar/JS 应用图、协议、UI 结构） | Bot 入口、DM、任务/审批、Computer 行为模型 |
-| OpenMausBot 0.1.108 | deepfork（Apache-2.0）+ 可选 REA | Bot roster、thread、channels/rooms、Assignment runtime、Decision model、审批 |
-| DS Bot | deepfork（Apache-2.0） | Bot→Session 映射、群聊、记忆、恢复、UI 槽位 |
-| OpenBot | deepfork（MIT） | actor/inbox/thread、handoff、并发、审批、记忆 |
-| LibreChat | deepfork 子系统（MIT） | Agent 目录、详情、会话管理、Subagent/后台工具 |
-| Letta | deepfork（Apache-2.0，可选） | 长期记忆分层与自我编辑 |
+| 目标                | 工具                                 | 产出                                                                         |
+| ------------------- | ------------------------------------ | ---------------------------------------------------------------------------- |
+| Grok Bot 0.70.2     | REA（asar/JS 应用图、协议、UI 结构） | Bot 入口、DM、任务/审批、Computer 行为模型                                   |
+| OpenMausBot 0.1.108 | deepfork（Apache-2.0）+ 可选 REA     | Bot roster、thread、channels/rooms、Assignment runtime、Decision model、审批 |
+| DS Bot              | deepfork（Apache-2.0）               | Bot→Session 映射、群聊、记忆、恢复、UI 槽位                                  |
+| OpenBot             | deepfork（MIT）                      | actor/inbox/thread、handoff、并发、审批、记忆                                |
+| LibreChat           | deepfork 子系统（MIT）               | Agent 目录、详情、会话管理、Subagent/后台工具                                |
+| Letta               | deepfork（Apache-2.0，可选）         | 长期记忆分层与自我编辑                                                       |
 
 License gate：
 

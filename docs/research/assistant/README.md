@@ -40,3 +40,12 @@ REA was attempted against the locally installed OpenMausBot app bundle. The REA 
 could not see host paths (`ENOENT`) and its Ghidra provider failed on the local Swift toolchain.
 The landing plan therefore relies on deepfork static analysis plus the public app/runtime
 documentation. Re-run REA on the next machine if deeper native protocol analysis is needed.
+
+## Additional product reference
+
+- **GrokBot Guide** — MIT-licensed Chinese practice guide at
+  https://github.com/anightmonarch/grokbot-guide. It is a documentation site and template
+  dataset, not a Grok Bot implementation. Use it to calibrate Chinese product language,
+  bot templates, scenario taxonomy, routines, channels, memory, and approval expectations.
+  It is not deepfork source and cannot substitute for REA/black-box verification of Grok Bot
+  itself. No guide code, copy, images, or templates are copied into this repository.
