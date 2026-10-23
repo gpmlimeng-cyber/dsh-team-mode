@@ -7,7 +7,7 @@ import {
   AgentTeamSettingsSection,
   type WorkspaceChoice,
 } from './components.js'
-import { SidebarPortal } from './sidebar.js'
+import { SidebarPortal, useSurfaceMode } from './sidebar.js'
 import { SessionRowHider } from './session-row-hider.js'
 import { AssistantSessionTitle, AssistantSessionTitleHost } from './assistant-session-title.js'
 import { TeamModeDialogs } from './team-dialogs.js'
@@ -56,9 +56,11 @@ export function apply(ctx: AgentTeamClientContext): void {
       title: workspace.title,
     }
   }
-  const TeamModeDialogsHost = (): JSX.Element => (
-    <TeamModeDialogs pickWorkspace={pickWorkspace} openSession={openSession} />
-  )
+  const TeamModeDialogsHost = (): JSX.Element | null => {
+    const mode = useSurfaceMode()
+    if (mode !== 'team') return null
+    return <TeamModeDialogs pickWorkspace={pickWorkspace} openSession={openSession} />
+  }
   const openTeamPage = (teamId: string): void => {
     void callAgentTeam('team.list')
       .then(value => {
@@ -69,11 +71,18 @@ export function apply(ctx: AgentTeamClientContext): void {
       })
       .catch(() => undefined)
   }
+  const openNativeLanding = (): void => { ctx.uiWorkspace.startSession() }
   const SidebarTeamHost = (): JSX.Element => (
     <>
       <TeamTriggerEnhancer />
+      {/* Row hiding is mode-independent: native mode must never surface a team
+          member Session row. */}
       <SessionRowHider />
-      <SidebarPortal openSession={openSession} openTeamPage={openTeamPage} />
+      <SidebarPortal
+        openSession={openSession}
+        openTeamPage={openTeamPage}
+        onOpenNativeLanding={openNativeLanding}
+      />
     </>
   )
 
@@ -82,8 +91,9 @@ export function apply(ctx: AgentTeamClientContext): void {
   // ordinary Sessions must not grow Team Mode tabs.
   const TeamViewTabs = ({ sessionId }: { sessionId?: string }): null => {
     const [teamSession, setTeamSession] = useState(false)
+    const mode = useSurfaceMode()
     useEffect(() => {
-      if (sessionId === undefined) {
+      if (sessionId === undefined || mode !== 'team') {
         setTeamSession(false)
         return
       }
@@ -97,10 +107,10 @@ export function apply(ctx: AgentTeamClientContext): void {
         })
         .catch(() => { if (live) setTeamSession(false) })
       return () => { live = false }
-    }, [sessionId])
+    }, [mode, sessionId])
 
     useEffect(() => {
-      if (!teamSession) return
+      if (!teamSession || mode !== 'team') return
       const disposers: Array<() => void> = []
       const register = (id: string, label: string, order: number, component: never): void => {
         const dispose = slotApi.inject('conversation.view', () => slotApi.register({
@@ -119,8 +129,19 @@ export function apply(ctx: AgentTeamClientContext): void {
       register(TEAM_BOARD_VIEW_ID, TEAM_BOARD_VIEW_LABEL, TEAM_BOARD_VIEW_ORDER, TeamBoardView as never)
       register(TEAM_MANAGE_VIEW_ID, TEAM_MANAGE_VIEW_LABEL, TEAM_MANAGE_VIEW_ORDER, TeamManageView as never)
       return () => { for (const dispose of disposers) dispose() }
-    }, [teamSession])
+    }, [mode, teamSession])
     return null
+  }
+
+  const TeamParallelOverlay = (props: Record<string, unknown>): JSX.Element | null => {
+    const mode = useSurfaceMode()
+    if (mode !== 'team') return null
+    return (
+      <TeamParallelHost
+        {...props}
+        sessions={(ctx as unknown as { sessions: never }).sessions}
+      />
+    )
   }
 
   slotApi.inject('shell.overlay', () => slotApi.register({
@@ -131,12 +152,7 @@ export function apply(ctx: AgentTeamClientContext): void {
     children: {
       'team.parallel.pane': { kind: 'single', scope: 'session' },
     },
-  }, (props: Record<string, unknown>) => (
-    <TeamParallelHost
-      {...props}
-      sessions={(ctx as unknown as { sessions: never }).sessions}
-    />
-  )))
+  }, TeamParallelOverlay))
 
   slotApi.inject('team.parallel.pane', () => slotApi.register({
     name: 'team.parallel.pane',

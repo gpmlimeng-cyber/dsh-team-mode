@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import {
   IconArchiveOutlineRegular,
@@ -35,10 +35,118 @@ import {
   teamSidebarSummary,
 } from './team-sidebar-data.js'
 import { useTeamText } from './team-i18n.js'
+import {
+  SURFACE_MODE_KEY,
+  parseSurfaceMode,
+  readSurfaceMode,
+  writeSurfaceMode,
+  type SurfaceMode,
+} from './surface-mode.js'
 import css from './AgentTeam.module.css'
 import type { TeamView } from '../transport/contracts.js'
 
 const SIDEBAR_TEAM_EXPANDED_KEY = 'dsh-team-mode:sidebar-expanded'
+
+const SURFACE_MODE_EVENT = 'dsh-team-mode:surface-mode-change'
+
+/** localStorage read; a restricted WebView simply has no stored mode. */
+function surfaceStorage(): Storage | undefined {
+  try {
+    return window.localStorage
+  } catch {
+    return undefined
+  }
+}
+
+let currentSurfaceMode: SurfaceMode | undefined
+const surfaceModeListeners = new Set<() => void>()
+
+function publishSurfaceMode(next: SurfaceMode): void {
+  if (currentSurfaceMode === next) return
+  currentSurfaceMode = next
+  for (const listener of surfaceModeListeners) listener()
+}
+
+function getSurfaceMode(): SurfaceMode {
+  currentSurfaceMode ??= readSurfaceMode(surfaceStorage())
+  return currentSurfaceMode
+}
+
+function syncSurfaceModeFromStorage(): void {
+  publishSurfaceMode(readSurfaceMode(surfaceStorage()))
+}
+
+function subscribeSurfaceMode(listener: () => void): () => void {
+  surfaceModeListeners.add(listener)
+  if (typeof window === 'undefined') return () => { surfaceModeListeners.delete(listener) }
+  const onStorage = (event: StorageEvent): void => {
+    if (event.key !== null && event.key !== SURFACE_MODE_KEY) return
+    syncSurfaceModeFromStorage()
+  }
+  const onModeChange = (event: Event): void => {
+    const detail = typeof CustomEvent !== 'undefined' && event instanceof CustomEvent
+      ? event.detail
+      : undefined
+    publishSurfaceMode(typeof detail === 'string' ? parseSurfaceMode(detail) : readSurfaceMode(surfaceStorage()))
+  }
+  window.addEventListener('storage', onStorage)
+  window.addEventListener(SURFACE_MODE_EVENT, onModeChange)
+  return () => {
+    surfaceModeListeners.delete(listener)
+    window.removeEventListener('storage', onStorage)
+    window.removeEventListener(SURFACE_MODE_EVENT, onModeChange)
+  }
+}
+
+/** Persist the mode and notify every mounted surface; never reloads the plugin. */
+export function setSurfaceMode(mode: SurfaceMode): void {
+  const next = parseSurfaceMode(mode)
+  currentSurfaceMode = next
+  writeSurfaceMode(surfaceStorage(), next)
+  for (const listener of surfaceModeListeners) listener()
+  try {
+    window.dispatchEvent(new CustomEvent(SURFACE_MODE_EVENT, { detail: next }))
+  } catch {
+    // A blocked event dispatch never blocks the already-updated local state.
+  }
+}
+
+/** Current surface mode; `team` is the product default when nothing is stored. */
+export function useSurfaceMode(): SurfaceMode {
+  return useSyncExternalStore(subscribeSurfaceMode, getSurfaceMode, () => 'team' as const)
+}
+
+/** Compact always-visible switch; native mode must still be able to return to team. */
+function SurfaceModeSwitch({
+  mode,
+  onChange,
+}: {
+  mode: SurfaceMode
+  onChange: (mode: SurfaceMode) => void
+}): JSX.Element {
+  return (
+    <div className={css.surfaceModeSwitch} role="group" aria-label="界面模式" data-dsh-surface-switch>
+      <button
+        type="button"
+        className={`${css.surfaceModeButton} ${mode === 'native' ? css.surfaceModeButtonActive : ''}`}
+        aria-pressed={mode === 'native'}
+        data-dsh-surface-mode="native"
+        onClick={() => { onChange('native') }}
+      >
+        原生
+      </button>
+      <button
+        type="button"
+        className={`${css.surfaceModeButton} ${mode === 'team' ? css.surfaceModeButtonActive : ''}`}
+        aria-pressed={mode === 'team'}
+        data-dsh-surface-mode="team"
+        onClick={() => { onChange('team') }}
+      >
+        团队
+      </button>
+    </div>
+  )
+}
 
 
 function readExpanded(): boolean {
@@ -484,11 +592,58 @@ const SIDEBAR_HOST_ID = 'dsh-team-mode-sidebar-host'
 export function SidebarPortal({
   openSession,
   openTeamPage,
+  onOpenNativeLanding,
 }: {
   openSession: (sessionId: string) => void
   openTeamPage: (teamId: string) => void
+  onOpenNativeLanding?: () => void
 }): JSX.Element | null {
   const [host, setHost] = useState<HTMLElement>()
+  const mode = useSurfaceMode()
+
+  // Expose the mode on <html> so CSS and DOM-level helpers can follow it
+  // without remounting the plugin or touching Team data.
+  useEffect(() => {
+    document.documentElement.dataset.dshSurfaceMode = mode
+    return () => {
+      if (document.documentElement.dataset.dshSurfaceMode === mode) {
+        delete document.documentElement.dataset.dshSurfaceMode
+      }
+    }
+  }, [mode])
+
+  /**
+   * Native mode must not keep showing a team member Session. Read-only
+   * navigation: prefer an existing visible native row; fall back to the shell's
+   * own new-Session landing when every Session belongs to the plugin.
+   */
+  const leaveTeamSession = useCallback(async (): Promise<void> => {
+    const active = document.querySelector<HTMLElement>('[data-conversation-session]')
+      ?.dataset.conversationSession
+    if (active === undefined || active === '') return
+    let teamSessionIds: Set<string>
+    try {
+      const value = await callAgentTeam('team.list')
+      teamSessionIds = new Set(value.items.flatMap(team =>
+        Object.values(team.members).map(member => member.sessionId)))
+    } catch {
+      return
+    }
+    if (!teamSessionIds.has(active)) return
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('[data-row-key^="session:"]'))
+    const nativeId = rows
+      .filter(row => row.style.display !== 'none')
+      .map(row => row.dataset.rowKey?.slice('session:'.length))
+      .find(id => id !== undefined && id !== '' && !teamSessionIds.has(id))
+    if (nativeId !== undefined) openSession(nativeId)
+    else onOpenNativeLanding?.()
+  }, [onOpenNativeLanding, openSession])
+
+  const switchMode = (next: SurfaceMode): void => {
+    if (next === mode) return
+    setSurfaceMode(next)
+    if (next === 'native') void leaveTeamSession()
+  }
 
   useEffect(() => {
     let current: HTMLElement | undefined
@@ -959,8 +1114,13 @@ export function SidebarPortal({
 
   return host === undefined ? null : createPortal(
     <>
-      <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
-      <AssistantSidebarSection openSession={openSession} />
+      <SurfaceModeSwitch mode={mode} onChange={switchMode} />
+      {mode === 'team' && (
+        <>
+          <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
+          <AssistantSidebarSection openSession={openSession} />
+        </>
+      )}
     </>,
     host,
   )
