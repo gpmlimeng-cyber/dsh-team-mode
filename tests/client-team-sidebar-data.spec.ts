@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { TeamTask } from '../src/domain/types.js'
 import type { TeamView } from '../src/transport/contracts.js'
@@ -13,7 +14,7 @@ const NOW = '2026-01-01T00:00:00.000Z'
 
 type SidebarFixture = Partial<Pick<
   TeamView,
-  'members' | 'tasks' | 'pinned' | 'updatedAt' | 'id' | 'name' | 'archivedAt'
+  'members' | 'tasks' | 'pinned' | 'updatedAt' | 'id' | 'name' | 'archivedAt' | 'state'
 >>
 
 function team(overrides: SidebarFixture = {}): TeamView {
@@ -93,6 +94,27 @@ describe('teamSidebarSummary', () => {
     expect(summary.waitingDependency).toBe(0)
   })
 
+  it('keeps a reachable prerequisite visible behind a stale id', () => {
+    const fixture = team({
+      tasks: {
+        impl: task({ id: 'impl', status: 'running' }),
+        review: task({ id: 'review', status: 'blocked', dependencyIds: ['gone', 'impl'] }),
+      },
+    })
+    expect(teamSidebarSummary(fixture).waitingDependency).toBe(1)
+    expect(recentTeamTasks(fixture).find(item => item.id === 'review')?.blockedBy?.id).toBe('impl')
+  })
+
+  it('does not count a prerequisite id that no task in the view resolves', () => {
+    // Documented behavior: an unreachable id (deleted or foreign) cannot be
+    // named in the sidebar, so it is not reported as a wait.
+    const fixture = team({
+      tasks: { review: task({ id: 'review', status: 'blocked', dependencyIds: ['gone'] }) },
+    })
+    expect(teamSidebarSummary(fixture).waitingDependency).toBe(0)
+    expect(recentTeamTasks(fixture).find(item => item.id === 'review')?.blockedBy).toBeUndefined()
+  })
+
   it('ignores tasks that carry dependencies but are not blocked', () => {
     const summary = teamSidebarSummary(team({
       tasks: {
@@ -130,6 +152,51 @@ describe('teamSidebarStatusText', () => {
 
   it('prefers the approval branch when both approvals and dependencies are pending', () => {
     expect(teamSidebarStatusText({ members: 3, running: 2, waiting: 1, waitingDependency: 4 })).toBe('3 人 · 2 运行 · 1 待审批')
+  })
+})
+
+describe('teamSidebarStatusText · team state', () => {
+  it('reads an error team as 异常 instead of 空闲', () => {
+    expect(teamSidebarStatusText(teamSidebarSummary(team({ state: 'error' })))).toBe('0 人 · 异常')
+  })
+
+  it('reads a starting team as 启动中', () => {
+    expect(teamSidebarStatusText(teamSidebarSummary(team({ state: 'starting' })))).toBe('0 人 · 启动中')
+  })
+
+  it('keeps the member running count while a non-active state stays visible', () => {
+    const summary = teamSidebarSummary(team({
+      state: 'error',
+      members: members({ leader: 'running', helper: 'idle' }),
+    }))
+    expect(summary.running).toBe(1)
+    expect(teamSidebarStatusText(summary)).toBe('2 人 · 1 运行 · 异常')
+  })
+
+  it('reads a running task with idle members as 任务执行中, not 空闲', () => {
+    const summary = teamSidebarSummary(team({
+      state: 'active',
+      members: members({ leader: 'idle' }),
+      tasks: { work: task({ id: 'work', status: 'running' }) },
+    }))
+    expect(summary.running).toBe(0)
+    expect(teamSidebarStatusText(summary)).toBe('1 人 · 任务执行中')
+  })
+
+  it('leaves an active team with idle members reading 空闲', () => {
+    expect(teamSidebarStatusText(teamSidebarSummary(team({
+      state: 'active',
+      members: members({ leader: 'idle' }),
+    })))).toBe('1 人 · 空闲')
+  })
+
+  it.each([
+    ['ownership_conflict', '归属冲突'],
+    ['delete_blocked', '删除受阻'],
+    ['deleting', '删除中'],
+    ['draft', '草稿'],
+  ] as const)('labels %s as %s like the team page does', (state, label) => {
+    expect(teamSidebarStatusText(teamSidebarSummary(team({ state })))).toBe(`0 人 · ${label}`)
   })
 })
 
@@ -252,5 +319,42 @@ describe('teamScopeCounts', () => {
   it('reports zero archived teams when nothing is archived', () => {
     expect(teamScopeCounts([])).toEqual({ active: 0, archived: 0 })
     expect(teamScopeCounts([team({ id: 'only' })])).toEqual({ active: 1, archived: 0 })
+  })
+})
+
+
+describe('sidebar narrow-width CSS', () => {
+  const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+
+  /** Every block of one exact media header, brace-matched so nested rules stay intact. */
+  function mediaBlocks(source: string, header: string): string[] {
+    const blocks: string[] = []
+    let from = 0
+    while (from < source.length) {
+      const start = source.indexOf(header, from)
+      if (start < 0) break
+      const open = source.indexOf('{', start)
+      let depth = 0
+      for (let index = open; index < source.length; index += 1) {
+        if (source[index] === '{') depth += 1
+        else if (source[index] === '}') {
+          depth -= 1
+          if (depth === 0) {
+            blocks.push(source.slice(open + 1, index))
+            from = index + 1
+            break
+          }
+        }
+      }
+      if (depth !== 0) break
+    }
+    return blocks
+  }
+
+  it('hides the team row time on a narrow phone viewport, which covers 320px', () => {
+    const narrow = mediaBlocks(css, '@media (max-width: 420px)')
+    expect(narrow.some(block => (
+      /\.sidebarTeamRowWrapTwoLine\s+\.sidebarTeamTime\s*\{[^}]*display:\s*none/.test(block)
+    ))).toBe(true)
   })
 })

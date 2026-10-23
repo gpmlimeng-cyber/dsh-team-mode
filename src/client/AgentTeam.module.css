@@ -8654,3 +8654,11 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   font-size: 11px;
   line-height: 16px;
 }
+
+/* The 320px phone drawer is too narrow for name, time and badge on one line:
+   the badge is the attention mark, so the relative time yields first. */
+@media (max-width: 420px) {
+  .sidebarTeamRowWrapTwoLine .sidebarTeamTime {
+    display: none;
+  }
+}

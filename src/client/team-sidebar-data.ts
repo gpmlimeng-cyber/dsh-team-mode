@@ -7,6 +7,10 @@ export interface TeamSidebarSummary {
   waiting: number
   /** Blocked tasks that still wait on an unfinished prerequisite. */
   waitingDependency: number
+  /** Lifecycle state; absent when the caller only supplies member counts. */
+  state?: TeamView['state']
+  /** A task is running; member slots alone would read this team as idle. */
+  taskRunning?: boolean
 }
 
 /** The prerequisite a blocked task is waiting for, as the sidebar shows it. */
@@ -30,7 +34,7 @@ export interface TeamScopeCounts {
   archived: number
 }
 
-type SummarySource = Pick<TeamView, 'members'> & Partial<Pick<TeamView, 'tasks'>>
+type SummarySource = Pick<TeamView, 'members'> & Partial<Pick<TeamView, 'tasks' | 'state'>>
 type TaskSource = Pick<TeamView, 'tasks'> & Partial<Pick<TeamView, 'members'>>
 
 /** `in_progress` also reads through, so legacy board rows stay labeled. */
@@ -45,6 +49,20 @@ const TASK_STATUS_LABELS: Readonly<Record<string, string>> = {
   cancelled: '已取消',
 }
 
+/**
+ * Mirrors `teamStateView` in team-board.tsx so a sidebar row never disagrees
+ * with the team page. `active` is deliberately absent: an active team reads
+ * from its member/task activity, not from its lifecycle state.
+ */
+const TEAM_STATE_LABELS: Readonly<Record<string, string>> = {
+  draft: '草稿',
+  starting: '启动中',
+  ownership_conflict: '归属冲突',
+  deleting: '删除中',
+  delete_blocked: '删除受阻',
+  error: '异常',
+}
+
 const RECENT_TASK_LIMIT = 3
 const UNTITLED_TASK = '未命名任务'
 
@@ -54,8 +72,13 @@ function taskTitle(title: string): string {
 
 /**
  * The task this one still waits for. Mirrors `clearDownstreamBlockers`: only a
- * completed prerequisite is removed from `dependencyIds`, so anything else
- * (missing, failed, cancelled) still holds the downstream task.
+ * completed prerequisite leaves `dependencyIds`, so a failed or cancelled
+ * prerequisite still holds the downstream task.
+ *
+ * An id with no task in this TeamView is not reachable: it was deleted or never
+ * belonged here, so the sidebar cannot name it and does not count it as a wait.
+ * Skipping it (rather than returning early) keeps a later reachable
+ * prerequisite visible behind a stale id.
  */
 function unresolvedDependency(
   task: Pick<TeamTask, 'dependencyIds'>,
@@ -63,7 +86,8 @@ function unresolvedDependency(
 ): TeamTask | undefined {
   for (const id of task.dependencyIds) {
     const dependency = tasks[id]
-    if (dependency === undefined || dependency.status !== 'completed') return dependency
+    if (dependency === undefined) continue
+    if (dependency.status !== 'completed') return dependency
   }
   return undefined
 }
@@ -81,17 +105,32 @@ export function teamSidebarSummary(team: SummarySource): TeamSidebarSummary {
     if (task.status !== 'blocked') continue
     if (unresolvedDependency(task, tasks) !== undefined) waitingDependency += 1
   }
-  return { members: Object.keys(team.members).length, running, waiting, waitingDependency }
+  const taskRunning = Object.values(tasks).some(task => task.status === 'running')
+  return {
+    members: Object.keys(team.members).length,
+    running,
+    waiting,
+    waitingDependency,
+    ...(team.state === undefined ? {} : { state: team.state }),
+    ...(taskRunning ? { taskRunning: true } : {}),
+  }
 }
 
-/** Approval is the only count that earns the badge; dependency waiting is text. */
+/**
+ * Approval is the only count that earns the badge; dependency waiting is text.
+ * A non-active lifecycle state replaces 空闲, and a running task keeps an idle
+ * member list from reading as 空闲 — the row states what the team page states.
+ */
 export function teamSidebarStatusText(summary: TeamSidebarSummary): string {
-  if (summary.waiting > 0) return `${summary.members} 人 · ${summary.running} 运行 · ${summary.waiting} 待审批`
-  if (summary.waitingDependency > 0) {
-    return `${summary.members} 人 · ${summary.running} 运行 · ${summary.waitingDependency} 等待前置`
-  }
-  if (summary.running > 0) return `${summary.members} 人 · ${summary.running} 运行`
-  return `${summary.members} 人 · 空闲`
+  const stateLabel = summary.state === undefined ? undefined : TEAM_STATE_LABELS[summary.state]
+  const parts = [`${summary.members} 人`]
+  if (summary.running > 0) parts.push(`${summary.running} 运行`)
+  else if (summary.taskRunning === true) parts.push('任务执行中')
+  else if (stateLabel === undefined) parts.push('空闲')
+  if (stateLabel !== undefined) parts.push(stateLabel)
+  if (summary.waiting > 0) parts.push(`${summary.waiting} 待审批`)
+  else if (summary.waitingDependency > 0) parts.push(`${summary.waitingDependency} 等待前置`)
+  return parts.join(' · ')
 }
 
 type SortableTeam = Pick<TeamView, 'pinned' | 'members' | 'updatedAt' | 'id' | 'name'>
