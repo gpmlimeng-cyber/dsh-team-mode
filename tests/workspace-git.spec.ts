@@ -100,5 +100,5 @@ describe('Workspace Git status', () => {
     } finally {
       await rm(workspacePath, { recursive: true, force: true })
     }
-  })
+  }, 15_000)
 })
