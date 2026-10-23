@@ -16,6 +16,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import { selectAssistant, useAgentTeamUi } from './store.js'
+import { AssistantCheckpointDialog } from './assistant-checkpoint-dialog.js'
 import { AssistantCreateDialog } from './assistant-dialogs.js'
 import {
   setAssistantDisplayMode,
@@ -90,6 +91,38 @@ function taskStatusClass(status: AssistantSession['status']): string {
   return css.assistantTaskStatusIdle ?? ''
 }
 
+export interface AssistantMenuEntry {
+  id: 'checkpoint' | 'settings' | 'pin' | 'tasks' | 'mark-read' | 'mark-unread' | 'open-main'
+  label: string
+  icon: JSX.Element
+}
+
+/**
+ * Row menu of one Assistant. `checkpoint` is the single entry for both
+ * creating a checkpoint and handing off; there is deliberately no second
+ * handoff item, so the dialog owns that flow end to end.
+ */
+export function assistantMenuEntries(
+  instance: AssistantInstance,
+  unread: boolean,
+): AssistantMenuEntry[] {
+  const pinned = instance.pinned === true
+  return [
+    { id: 'checkpoint', label: '检查点与交接', icon: <IconChecklistOutlineRegular size={14} /> },
+    { id: 'settings', label: '助手设置', icon: <IconEditOutlineRegular size={14} /> },
+    {
+      id: 'pin',
+      label: pinned ? '取消置顶' : '置顶',
+      icon: pinned ? <IconPinFillRegular size={14} /> : <IconPinOutlineRegular size={14} />,
+    },
+    { id: 'tasks', label: '查看任务', icon: <IconChecklistOutlineRegular size={14} /> },
+    unread
+      ? { id: 'mark-read', label: '标记已读', icon: <IconChecklistOutlineRegular size={14} /> }
+      : { id: 'mark-unread', label: '标记未读', icon: <IconChecklistOutlineRegular size={14} /> },
+    { id: 'open-main', label: '打开主会话', icon: <IconNewChatOutlineRegular size={14} /> },
+  ]
+}
+
 /**
  * The “单聊” section: one row per Assistant instance. Opening a row ensures the
  * instance's main Session in the Host and hands off to the shipped conversation
@@ -126,6 +159,8 @@ export function AssistantSidebarSection({
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
   const [settingsAssistant, setSettingsAssistant] = useState<AssistantInstance>()
   const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
+  const [checkpointAssistant, setCheckpointAssistant] = useState<AssistantInstance>()
+  const [checkpointDialogOpen, setCheckpointDialogOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [listError, setListError] = useState<string>()
   const [error, setError] = useState<string>()
@@ -284,6 +319,13 @@ export function AssistantSidebarSection({
     setSettingsAssistant(instance)
     setSettingsDialogOpen(true)
     setMenuOpenId(undefined)
+  }
+
+  const openCheckpoint = (instance: AssistantInstance): void => {
+    setCheckpointAssistant(instance)
+    setCheckpointDialogOpen(true)
+    setMenuOpenId(undefined)
+    setError(undefined)
   }
 
   async function openAssistant(instance: AssistantInstance): Promise<void> {
@@ -801,24 +843,11 @@ export function AssistantSidebarSection({
                         dense
                         portal
                         className={css.sidebarAssistantMore ?? ''}
-                        items={[
-                          { id: 'settings', label: '助手设置', icon: <IconEditOutlineRegular size={14} /> },
-                          {
-                            id: 'pin',
-                            label: instance.pinned === true ? '取消置顶' : '置顶',
-                            icon: instance.pinned === true
-                              ? <IconPinFillRegular size={14} />
-                              : <IconPinOutlineRegular size={14} />,
-                          },
-                          { id: 'tasks', label: '查看任务', icon: <IconChecklistOutlineRegular size={14} /> },
-                          unread
-                            ? { id: 'mark-read', label: '标记已读', icon: <IconChecklistOutlineRegular size={14} /> }
-                            : { id: 'mark-unread', label: '标记未读', icon: <IconChecklistOutlineRegular size={14} /> },
-                          { id: 'open-main', label: '打开主会话', icon: <IconNewChatOutlineRegular size={14} /> },
-                        ]}
+                        items={assistantMenuEntries(instance, unread)}
                         onSelect={id => {
                           setMenuOpenId(undefined)
-                          if (id === 'settings') openSettings(instance)
+                          if (id === 'checkpoint') openCheckpoint(instance)
+                          else if (id === 'settings') openSettings(instance)
                           else if (id === 'pin') void togglePin(instance)
                           else if (id === 'tasks') openTasks(instance)
                           else if (id === 'mark-read') setReadState(markAssistantRead(instance.id))
@@ -902,6 +931,14 @@ export function AssistantSidebarSection({
           assistant={taskAssistant}
           tasks={tasks}
           onClose={() => { setTaskDialogOpen(false) }}
+          openSession={openSession}
+        />
+      )}
+      {checkpointAssistant !== undefined && (
+        <AssistantCheckpointDialog
+          open={checkpointDialogOpen}
+          assistant={checkpointAssistant}
+          onClose={() => { setCheckpointDialogOpen(false) }}
           openSession={openSession}
         />
       )}
