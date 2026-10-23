@@ -93,6 +93,10 @@ export function TeamPanel({
   const visibleTeams = selectedTeamId === undefined
     ? teams
     : teams.filter(team => team.id === selectedTeamId)
+  // Unknown is not zero: while loading, or after a failure with no rows, the
+  // header must not claim "团队 0"; a successful (even empty) list shows 0.
+  const teamCountUnknown = teamsLoading === true
+    || (teamsError !== undefined && teams.length === 0)
 
   useEffect(() => {
     if (createRequest > 0) {
@@ -125,7 +129,7 @@ export function TeamPanel({
       {selectedTeam === undefined && <div className={css.sectionHeader}>
         <div>
           <h2 className={css.sectionHeading}>
-            团队 <span className={css.count}>{teamsLoading === true ? '…' : teams.length}</span>
+            团队 <span className={css.count}>{teamCountUnknown ? '…' : teams.length}</span>
           </h2>
           <p className={css.sectionDescription}>选择 Leader 和成员，共享同一个 Workspace 协作。</p>
         </div>

@@ -10517,6 +10517,9 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   }
 
   .globalOverviewCount {
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
     white-space: normal;
   }
 }
