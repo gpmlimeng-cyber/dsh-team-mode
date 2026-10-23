@@ -23,7 +23,6 @@
 ## File Structure
 
 ```text
-src/config.ts                         defaultMode
 src/client/surface-mode.ts            mode type, storage, default resolution
 src/client/sidebar.tsx                mode switch + conditional plugin groups
 src/client/index.tsx                  register team views only in team mode
@@ -76,7 +75,7 @@ export function resolveSurfaceMode(input: {
 
 - [ ] **Step 1: Write failing tests** for valid stored values, invalid/missing storage fallback, configured fallback, and storage write failure.
 - [ ] **Step 2: Run** `npx vitest run tests/client-surface-mode.spec.ts`; expect fail.
-- [ ] **Step 3: Implement** the helpers and add `defaultMode: 'native' | 'team'` to `Config` with default `'team'`.
+- [ ] **Step 3: Implement** the helpers. With no stored value, resolve to `team`; do not add a Host config field or API in v1.
 - [ ] **Step 4: Run tests + typecheck**.
 - [ ] **Step 5: Commit** `feat: add surface mode state`.
 

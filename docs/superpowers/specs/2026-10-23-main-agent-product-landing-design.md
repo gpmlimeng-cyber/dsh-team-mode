@@ -89,13 +89,7 @@ type SurfaceMode = "native" | "team";
 
 - 侧栏顶部或命令面板：`[原生] [团队]`
 - 客户端持久化：`dsh-team-mode:surface-mode`
-- 插件配置只提供默认值：
-
-```yaml
-dsh-team-mode:
-  defaultMode: team
-```
-
+- 无存储值时默认 `team`；服务端配置默认值延后（客户端当前读不到 Host 配置，不为它新增 API）
 - 切换不重启、不重载插件、不写业务数据
 - 刷新后保持上次选择
 
