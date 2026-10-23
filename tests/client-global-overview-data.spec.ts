@@ -177,7 +177,11 @@ describe('globalOverviewModel', () => {
             member('leader', { role: 'leader', displayName: '阿Leader', lastRuntimeState: 'running' }),
             member('worker', { lastRuntimeState: 'waiting_approval' }),
           ],
-          tasks: [task('t1', 'blocked'), task('t2', 'running')],
+          tasks: [
+            task('t0', 'pending'),
+            task('t1', 'assigned', { dependencyIds: ['t0'] }),
+            task('t2', 'running'),
+          ],
         }),
         team({ id: 'team-b', name: '安静团队' }),
       ],
@@ -231,8 +235,51 @@ describe('globalOverviewModel', () => {
     })
   })
 
+  it('counts blocked by unfinished dependencies instead of the task status', () => {
+    const model = globalOverviewModel({
+      teams: [
+        team({
+          id: 'epoch-retired',
+          tasks: [
+            task('done', 'completed'),
+            // Leader-epoch retire sets every open task to blocked without adding dependencies.
+            task('retired', 'blocked'),
+          ],
+        }),
+        team({
+          id: 'waiting-on-dep',
+          tasks: [
+            task('dep', 'running'),
+            task('queued', 'assigned', { dependencyIds: ['dep'] }),
+          ],
+        }),
+        team({
+          id: 'dep-completed',
+          tasks: [
+            task('finished', 'completed'),
+            task('ready', 'pending', { dependencyIds: ['finished'] }),
+          ],
+        }),
+      ],
+      instances: [],
+      tasks: [],
+    })
+
+    expect(model.teams[0]).toMatchObject({ blocked: 0, running: false })
+    expect(model.teams[1]).toMatchObject({ blocked: 1, running: true })
+    expect(model.teams[2]).toMatchObject({ blocked: 0, running: false })
+    expect(model.counts.blocked).toBe(1)
+    expect(model.counts.idle).toBe(2)
+  })
+
   it('puts only waiting approvals and needs-input tasks in attention', () => {
-    const blocked = team({ id: 'blocked-team', tasks: [task('b1', 'blocked')] })
+    const blocked = team({
+      id: 'blocked-team',
+      tasks: [
+        task('b0', 'assigned'),
+        task('b1', 'pending', { dependencyIds: ['b0'] }),
+      ],
+    })
     const waiting = team({
       id: 'waiting-team',
       members: [member('leader', { role: 'leader', lastRuntimeState: 'waiting_approval' })],
@@ -309,9 +356,18 @@ describe('globalOverviewModel', () => {
             member('leader', { role: 'leader', lastRuntimeState: 'running' }),
             member('approver', { lastRuntimeState: 'waiting_approval' }),
           ],
-          tasks: [task('t1', 'blocked')],
+          tasks: [
+            task('t0', 'pending'),
+            task('t1', 'assigned', { dependencyIds: ['t0'] }),
+          ],
         }),
-        team({ id: 'team-blocked', tasks: [task('b1', 'blocked')] }),
+        team({
+          id: 'team-blocked',
+          tasks: [
+            task('b0', 'assigned'),
+            task('b1', 'pending', { dependencyIds: ['b0'] }),
+          ],
+        }),
         team({ id: 'team-idle' }),
       ],
       instances: [

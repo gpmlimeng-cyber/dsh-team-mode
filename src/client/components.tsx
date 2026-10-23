@@ -432,9 +432,15 @@ export function AgentTeamOverlay({
           </Tooltip>
         </div>
         <div className={css.teamNavigatorList}>
-          {teams.length === 0
-            ? <div className={css.teamNavigatorEmpty}>还没有团队，点击 + 新建。</div>
-            : teams.map(team => {
+          {teamsLoading
+            ? <div className={css.teamNavigatorEmpty} role="status">正在读取团队…</div>
+            : teams.length === 0
+              ? (
+                <div className={css.teamNavigatorEmpty}>
+                  {teamsError === undefined ? '还没有团队，点击 + 新建。' : '团队读取失败，请稍后重试。'}
+                </div>
+                )
+              : teams.map(team => {
               const isSelected = team.id === selectedTeamId
               const executing = isTeamExecuting(team)
               return (
@@ -454,7 +460,11 @@ export function AgentTeamOverlay({
             })}
         </div>
         <div className={css.teamNavigatorFooter}>
-          <span>{teams.length} 个团队</span>
+          <span>
+            {teamsLoading
+              ? '正在读取团队…'
+              : teamsError !== undefined ? '团队读取失败' : `${teams.length} 个团队`}
+          </span>
         </div>
       </aside>
 

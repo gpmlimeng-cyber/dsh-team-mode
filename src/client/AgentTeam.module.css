@@ -10515,4 +10515,8 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   .globalOverviewRowState {
     white-space: normal;
   }
+
+  .globalOverviewCount {
+    white-space: normal;
+  }
 }

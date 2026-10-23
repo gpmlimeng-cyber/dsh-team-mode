@@ -26,7 +26,7 @@ import { epochOf } from '../../domain/types.js'
 import { callAgentTeam, subscribeAgentTeamConversation } from '../api.js'
 import { AssistantPanel } from '../assistants/AssistantPanel.js'
 import css from '../AgentTeam.module.css'
-import { GlobalOverview } from '../global-overview.js'
+import { GlobalOverview, openAssistantSession } from '../global-overview.js'
 import { CrownIcon } from '../icons/CrownIcon.js'
 import {
   filterGoalGroups,
@@ -53,7 +53,7 @@ import {
   toggleVisibleMemberSlot,
 } from '../member-visibility.js'
 import { AnimatedModal, Empty, Field } from '../shared.js'
-import { openTeam } from '../store.js'
+import { closeAgentTeam, openTeam } from '../store.js'
 import { isTeamExecuting } from '../team-status.js'
 import type { WorkspaceChoice } from '../types.js'
 import { ConversationColumn } from '../workbench/ConversationColumn.js'
@@ -111,14 +111,22 @@ export function TeamPanel({
         <GlobalOverview
           teams={teams}
           onOpenTeam={teamId => { openTeam(teamId) }}
-          {...(openSession === undefined ? {} : { onOpenAssistant: openSession })}
+          {...(openSession === undefined
+            ? {}
+            : {
+                onOpenAssistant: (sessionId: string) => {
+                  openAssistantSession(sessionId, closeAgentTeam, openSession)
+                },
+              })}
           {...(teamsLoading === undefined ? {} : { teamsLoading })}
           {...(teamsError === undefined ? {} : { teamsError })}
         />
       )}
       {selectedTeam === undefined && <div className={css.sectionHeader}>
         <div>
-          <h2 className={css.sectionHeading}>团队 <span className={css.count}>{teams.length}</span></h2>
+          <h2 className={css.sectionHeading}>
+            团队 <span className={css.count}>{teamsLoading === true ? '…' : teams.length}</span>
+          </h2>
           <p className={css.sectionDescription}>选择 Leader 和成员，共享同一个 Workspace 协作。</p>
         </div>
         <div className={css.sectionHeaderActions}>
@@ -131,22 +139,26 @@ export function TeamPanel({
         </div>
       </div>}
       {selectedTeam === undefined
-        ? visibleTeams.length === 0
-          ? <Empty text="还没有团队" hint="先通过“成员模板”创建助手，再选择 Leader 和团队成员。" />
-          : <div className={css.cardList}>{visibleTeams.map(team => (
-              <TeamCard
-                key={team.id}
-                team={team}
-                catalog={catalog}
-                assistants={assistants}
-                pickWorkspace={pickWorkspace}
-                onChanged={onChanged}
-                onCloned={async teamId => {
-                  openTeam(teamId)
-                  await onChanged()
-                }}
-              />
-            ))}</div>
+        ? teamsLoading === true
+          ? <p className={css.sectionDescription} role="status">正在读取团队列表…</p>
+          : teamsError !== undefined && teams.length === 0
+            ? <div className={css.error} role="alert">团队列表加载失败：{teamsError}</div>
+            : visibleTeams.length === 0
+              ? <Empty text="还没有团队" hint="先通过“成员模板”创建助手，再选择 Leader 和团队成员。" />
+              : <div className={css.cardList}>{visibleTeams.map(team => (
+                  <TeamCard
+                    key={team.id}
+                    team={team}
+                    catalog={catalog}
+                    assistants={assistants}
+                    pickWorkspace={pickWorkspace}
+                    onChanged={onChanged}
+                    onCloned={async teamId => {
+                      openTeam(teamId)
+                      await onChanged()
+                    }}
+                  />
+                ))}</div>
         : <TeamWorkbench
           team={selectedTeam}
           catalog={catalog}

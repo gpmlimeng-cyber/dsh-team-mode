@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { GlobalOverviewPanel } from '../src/client/global-overview.js'
+import { GlobalOverviewPanel, openAssistantSession } from '../src/client/global-overview.js'
 import type { GlobalFilter } from '../src/client/global-overview-data.js'
 import type { AssistantSession, TeamMemberSlot, TeamTask } from '../src/domain/types.js'
 import type { AssistantInstanceView, TeamView } from '../src/transport/contracts.js'
@@ -202,9 +202,19 @@ const runningTeam = team({
     member('leader', { role: 'leader', displayName: '阿Leader', lastRuntimeState: 'running' }),
     member('approver', { lastRuntimeState: 'waiting_approval' }),
   ],
-  tasks: [task('t1', 'blocked')],
+  tasks: [
+    task('t0', 'pending'),
+    task('t1', 'assigned', { dependencyIds: ['t0'] }),
+  ],
 })
-const blockedTeam = team({ id: 'team-blocked', name: '阻塞团队', tasks: [task('b1', 'blocked')] })
+const blockedTeam = team({
+  id: 'team-blocked',
+  name: '阻塞团队',
+  tasks: [
+    task('b0', 'assigned'),
+    task('b1', 'pending', { dependencyIds: ['b0'] }),
+  ],
+})
 const idleTeam = team({ id: 'team-idle', name: '空闲团队' })
 const activeAssistant = instance({
   id: 'assistant-run',
@@ -246,6 +256,7 @@ describe('GlobalOverview summary and attention', () => {
     expect(attention).toContain('1 个待审批')
     expect(attention).toContain('待输入助手')
     expect(attention).toContain('1 个待输入')
+    expect(attention).toContain('1 个待输入 · 未创建主会话')
     expect(html.indexOf('data-overview-region="attention"')).toBeLessThan(
       html.indexOf('data-overview-region="filters"'),
     )
@@ -285,11 +296,28 @@ describe('GlobalOverview navigation', () => {
     expect(withoutMain).toContain('未创建主会话')
     expect(buttonTag(html, 'data-team-id', 'team-run')).not.toContain('disabled')
 
-    // Presence of a main session alone decides the disabled state; a host
-    // without a navigation callback still renders the row enabled.
+    // Presence of a main session and a host navigation face both decide the
+    // disabled state; an enabled no-op button would be a dead control.
     const noHandler = render(populated)
-    expect(buttonTag(noHandler, 'data-assistant-id', 'assistant-run')).not.toContain('disabled')
+    const noHandlerRow = buttonTag(noHandler, 'data-assistant-id', 'assistant-run')
+    expect(noHandlerRow).toContain('disabled')
+    expect(noHandlerRow).toContain('当前工作台无法跳转')
     expect(buttonTag(noHandler, 'data-assistant-id', 'assistant-needs')).toContain('disabled')
+
+    const attentionRow = buttonTag(html, 'data-attention-assistant-id', 'assistant-needs')
+    expect(attentionRow).toContain('disabled')
+    expect(attentionRow).toContain('未创建主会话')
+  })
+
+  it('closes the workbench before opening an assistant main session', () => {
+    const calls: string[] = []
+    openAssistantSession(
+      'session-main',
+      () => { calls.push('close-workbench') },
+      sessionId => { calls.push(`open:${sessionId}`) },
+    )
+
+    expect(calls).toEqual(['close-workbench', 'open:session-main'])
   })
 
   it('uses only the existing list calls and never ensures a session or offers bulk actions', () => {
@@ -316,7 +344,9 @@ describe('GlobalOverview navigation', () => {
     expect(components).toContain('<TeamPanel')
     expect(components).toContain('openSession={openSession}')
     expect(components).toContain('teamsLoading={teamsLoading}')
-    expect(panel).toContain('onOpenAssistant: openSession')
+    expect(components).toContain('正在读取团队…')
+    expect(components).toContain('团队读取失败')
+    expect(panel).toContain('openAssistantSession(sessionId, closeAgentTeam, openSession)')
     expect(panel).toContain('{...(teamsLoading === undefined ? {} : { teamsLoading })')
     expect(panel).toContain('{...(teamsError === undefined ? {} : { teamsError })')
   })
@@ -333,12 +363,15 @@ describe('GlobalOverview navigation', () => {
   it('mounts only on the default workbench page and forwards the session opener', () => {
     const panel = source('teams/TeamPanel.tsx')
 
-    expect(panel).toContain("import { GlobalOverview } from '../global-overview.js'")
+    expect(panel).toContain("import { GlobalOverview, openAssistantSession } from '../global-overview.js'")
     expect(panel).toContain('openSession?: (sessionId: string) => void')
     expect(panel).toContain('{selectedTeam === undefined && (')
     expect(panel).toContain('<GlobalOverview')
     expect(panel).toContain('onOpenTeam={teamId => { openTeam(teamId) }}')
-    expect(panel).toContain('onOpenAssistant: openSession')
+    expect(panel).toContain('openAssistantSession(sessionId, closeAgentTeam, openSession)')
+    expect(panel).toContain("teamsLoading === true ? '…' : teams.length")
+    expect(panel).toContain('正在读取团队列表…')
+    expect(panel).toContain('团队列表加载失败：{teamsError}')
   })
 })
 
@@ -434,6 +467,7 @@ describe('GlobalOverview layout contract', () => {
     const filters = cssRule(moduleCss, 'globalOverviewFilters')
     const row = cssRule(moduleCss, 'globalOverviewRow')
     const globalCss = moduleCss.slice(moduleCss.indexOf('Read-only global overview'))
+    const narrow = globalCss.slice(globalCss.indexOf('@media (max-width: 420px)'))
 
     expect(root).toContain('min-width: 0')
     expect(stats).toContain('flex-wrap: wrap')
@@ -443,6 +477,7 @@ describe('GlobalOverview layout contract', () => {
     expect(row).toContain('flex-wrap: wrap')
     expect(row).toContain('min-width: 0')
     expect(globalCss).not.toContain('overflow: hidden')
-    expect(globalCss).toContain('@media (max-width: 420px)')
+    expect(narrow).toContain('.globalOverviewCount {')
+    expect(narrow).toContain('white-space: normal')
   })
 })

@@ -56,10 +56,41 @@ function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }
 
+/**
+ * Host navigation for an Assistant row. The workbench is a full-screen shell
+ * overlay, so it must close before the main panel swaps to the target Session;
+ * otherwise the Session opens behind the still-visible workbench.
+ */
+export function openAssistantSession(
+  sessionId: string,
+  closeWorkbench: () => void,
+  openSession: (sessionId: string) => void,
+): void {
+  closeWorkbench()
+  openSession(sessionId)
+}
+
 function attentionMeta(item: GlobalTeamItem | GlobalAssistantItem): string {
-  return item.kind === 'team'
-    ? `${item.approval} 个待审批`
-    : `${item.needsInput} 个待输入`
+  if (item.kind === 'team') return `${item.approval} 个待审批`
+  const base = `${item.needsInput} 个待输入`
+  return item.mainSessionId === undefined ? `${base} · 未创建主会话` : base
+}
+
+/** A row is inert when there is no target Session or no host navigation face. */
+function assistantDisabled(
+  item: GlobalAssistantItem,
+  onOpenAssistant: ((sessionId: string) => void) | undefined,
+): boolean {
+  return item.mainSessionId === undefined || onOpenAssistant === undefined
+}
+
+function assistantUnavailableTitle(
+  item: GlobalAssistantItem,
+  onOpenAssistant: ((sessionId: string) => void) | undefined,
+): string | undefined {
+  if (item.mainSessionId === undefined) return '未创建主会话'
+  if (onOpenAssistant === undefined) return '当前工作台无法跳转'
+  return undefined
 }
 
 function teamState(item: GlobalTeamItem): string {
@@ -132,8 +163,8 @@ function Attention({
                     type="button"
                     className={css.globalOverviewAttentionRow}
                     data-attention-assistant-id={item.id}
-                    disabled={item.mainSessionId === undefined}
-                    title={item.mainSessionId === undefined ? '未创建主会话' : undefined}
+                    disabled={assistantDisabled(item, onOpenAssistant)}
+                    title={assistantUnavailableTitle(item, onOpenAssistant)}
                     onClick={() => {
                       const sessionId = item.mainSessionId
                       if (sessionId !== undefined && onOpenAssistant !== undefined) onOpenAssistant(sessionId)
@@ -189,8 +220,8 @@ function AssistantRow({
         type="button"
         className={css.globalOverviewRow}
         data-assistant-id={item.id}
-        disabled={item.mainSessionId === undefined}
-        title={item.mainSessionId === undefined ? '未创建主会话' : undefined}
+        disabled={assistantDisabled(item, onOpenAssistant)}
+        title={assistantUnavailableTitle(item, onOpenAssistant)}
         onClick={() => {
           const sessionId = item.mainSessionId
           if (sessionId !== undefined && onOpenAssistant !== undefined) onOpenAssistant(sessionId)
@@ -259,7 +290,7 @@ export function GlobalOverviewPanel({
     <section className={css.globalOverview} aria-label="全局总览" data-overview-region="global-overview">
       <header className={css.globalOverviewHeader}>
         <h2 className={css.globalOverviewTitle}>全局总览</h2>
-        <span className={css.globalOverviewCount}>
+        <span className={css.globalOverviewCount} data-overview-count>
           {model.counts.teams} 个团队 · {model.counts.assistants} 个助手
         </span>
       </header>

@@ -1,6 +1,7 @@
 import type { AssistantSession } from '../domain/types.js'
 import type { AssistantInstanceView, TeamView } from '../transport/contracts.js'
 import { assistantInstanceName, assistantTasksFor } from './assistant-instances.js'
+import { unresolvedDependency } from './team-sidebar-data.js'
 import { isTeamExecuting } from './team-status.js'
 
 /** Which subset of the overview rows a filter shows. */
@@ -15,7 +16,7 @@ export interface GlobalTeamItem {
   running: boolean
   /** Members waiting for user approval. */
   approval: number
-  /** Tasks the board marked blocked on an unfinished dependency. */
+  /** Tasks still waiting on an unfinished prerequisite (status-independent). */
   blocked: number
 }
 
@@ -66,8 +67,10 @@ function timeOf(iso: string): number {
 
 /**
  * One team row. `running` is the board's own execution rule; approvals are
- * members parked on `waiting_approval`; blocked tasks are the status the board
- * sets when a dependency is unfinished.
+ * members parked on `waiting_approval`. `blocked` is dependency-derived, not a
+ * status check: a pending/assigned task with an unfinished prerequisite still
+ * blocks the team, while a `status: 'blocked'` row with no unfinished
+ * dependency (for example a Leader-epoch retire) does not.
  */
 function teamItem(team: TeamView): GlobalTeamItem {
   const members = Object.values(team.members)
@@ -79,7 +82,8 @@ function teamItem(team: TeamView): GlobalTeamItem {
     members: members.length,
     running: isTeamExecuting(team),
     approval: members.filter(member => member.lastRuntimeState === 'waiting_approval').length,
-    blocked: Object.values(team.tasks).filter(task => task.status === 'blocked').length,
+    blocked: Object.values(team.tasks)
+      .filter(task => unresolvedDependency(task, team.tasks) !== undefined).length,
   }
 }
 

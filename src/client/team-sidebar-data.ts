@@ -79,8 +79,11 @@ function taskTitle(title: string): string {
  * belonged here, so the sidebar cannot name it and does not count it as a wait.
  * Skipping it (rather than returning early) keeps a later reachable
  * prerequisite visible behind a stale id.
+ *
+ * Exported because the global overview's "blocked" count must use the same
+ * dependency rule instead of trusting `status === 'blocked'`.
  */
-function unresolvedDependency(
+export function unresolvedDependency(
   task: Pick<TeamTask, 'dependencyIds'>,
   tasks: Readonly<Record<string, TeamTask>>,
 ): TeamTask | undefined {
