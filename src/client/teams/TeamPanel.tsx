@@ -26,6 +26,7 @@ import { epochOf } from '../../domain/types.js'
 import { callAgentTeam, subscribeAgentTeamConversation } from '../api.js'
 import { AssistantPanel } from '../assistants/AssistantPanel.js'
 import css from '../AgentTeam.module.css'
+import { GlobalOverview } from '../global-overview.js'
 import { CrownIcon } from '../icons/CrownIcon.js'
 import {
   filterGoalGroups,
@@ -68,6 +69,7 @@ export function TeamPanel({
   selectedTeamId,
   pickWorkspace,
   onChanged,
+  openSession,
 }: {
   catalog: CatalogView | undefined
   assistants: AssistantView[]
@@ -76,6 +78,8 @@ export function TeamPanel({
   selectedTeamId: string | undefined
   pickWorkspace: () => Promise<WorkspaceChoice | null>
   onChanged: () => Promise<void>
+  /** Opens an Assistant main Session; absent hosts simply cannot navigate. */
+  openSession?: (sessionId: string) => void
 }): JSX.Element {
   const [creating, setCreating] = useState(false)
   const [managingAssistants, setManagingAssistants] = useState(false)
@@ -97,6 +101,13 @@ export function TeamPanel({
 
   return (
     <section className={css.section}>
+      {selectedTeam === undefined && (
+        <GlobalOverview
+          teams={teams}
+          onOpenTeam={teamId => { openTeam(teamId) }}
+          {...(openSession === undefined ? {} : { onOpenAssistant: openSession })}
+        />
+      )}
       {selectedTeam === undefined && <div className={css.sectionHeader}>
         <div>
           <h2 className={css.sectionHeading}>团队 <span className={css.count}>{teams.length}</span></h2>
