@@ -20,6 +20,7 @@ npm 发布：未发布
 95a8f4e chore: prepare 0.4.0 release readiness
 25054f9 fix: keep handoff out of the release package
 88d39ca fix: mount global overview in the live team detail view
+c0df2c9 feat: add autonomous ops budgets and idle routine
 ```
 
 安装/打包已验证，但未 publish、未部署、未打 0.4.0 tag。
@@ -110,7 +111,7 @@ dsh plugin --profile web add /absolute/path/to/dsh-team-mode
 | ---------------------------------------------------- | ------------------------------- | ------ |
 | Context Steward 自动化（阈值压缩/团队 handoff） | `COMPETITIVE-GAPS.md` | 部分：Assistant DM 手动 checkpoint 已完成 |
 | Group Chat Turn Engine（管理员先答/顺序/@/迟到回复） | Team Turn Coordinator | 已完成基础版，迟到回复/审批胶囊待补 |
-| Autonomous Ops（routines/reminders/budget/park）     | `COMPETITIVE-GAPS.md` + roadmap | 未开始 |
+| Autonomous Ops（routines/reminders/budget/park）     | `COMPETITIVE-GAPS.md` + roadmap | 已完成 Phase 2 |
 | Memory Automation（capture/recall/tidy/journal）     | `MEMORY-ARCHITECTURE.md` P2/P3  | 未开始 |
 | DSH Ecosystem Reuse（能力发现/成员策略/权限边界）    | `COMPETITIVE-GAPS.md`           | 未开始 |
 | Task reminders / follow-up                           | roadmap P2                      | 未开始 |
@@ -220,10 +221,9 @@ mimo 在本机出现过 TRANSPORT 断连；release 团队已回退 deepseek。
 ```text
 1. 先跑 npm run check / release:smoke
 2. 确认最新 commit（当前 88d39ca）
-3. 先做 Task reminders + follow-up
-4. 再做 Autonomous Ops Phase 2（routines/budget/park）
-5. 再做 Memory Automation
-6. 再做 Context Steward 自动化 / DSH 生态
+3. Task reminders + Autonomous Ops Phase 2 已完成
+4. 下一步：Memory Automation（capture/recall/tidy/journal）
+5. 再做 Context Steward 自动化 / DSH 生态
 ```
 
 不要先做多 Host、云部署或外部 npm publish。
