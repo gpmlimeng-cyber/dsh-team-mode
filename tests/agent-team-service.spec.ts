@@ -2451,7 +2451,10 @@ describe('Assistant checkpoint API', () => {
     await h.store.putAssistantInstance(seedInstance())
 
     await expect(h.service.createAssistantCheckpoint('instance-1'))
-      .rejects.toMatchObject({ code: 'INVALID_REQUEST', message: expect.stringContaining('no main Session') })
+      .rejects.toMatchObject({
+        code: 'ASSISTANT_SESSION_NOT_READY',
+        message: expect.stringContaining('no main Session'),
+      })
     expect(h.store.listContextCheckpoints()).toEqual([])
   })
 
