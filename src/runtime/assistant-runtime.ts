@@ -30,7 +30,7 @@ import {
   registerAssistantTaskTools,
   type AssistantTaskSummaryMessage,
 } from './assistant-tools.js'
-import { buildCheckpointFacts } from './checkpoint-facts.js'
+import { buildCheckpointFacts, checkpointHandoffMessage } from './checkpoint-facts.js'
 import { projectConversation } from './conversation-projector.js'
 import { TeamInteractionBridge } from './team-interaction-bridge.js'
 import type { ConversationNode } from '../transport/contracts.js'
@@ -389,6 +389,111 @@ export class AssistantRuntime {
       facts,
       note,
     })
+  }
+
+  /**
+   * Hand one ready checkpoint into a brand-new main Session and retire the
+   * previous one. The new binding commits only after the fresh Agent accepted
+   * the checkpoint message; before that every failure disposes the fresh
+   * handle and leaves the old binding untouched. The old Session log is never
+   * deleted, and a failure after the instance update is reported without
+   * blindly rolling the committed binding back.
+   */
+  async handoff(checkpointId: string): Promise<{ checkpoint: ContextCheckpoint; sessionId: string }> {
+    const checkpoint = this.service.getContextCheckpoint(checkpointId)
+    const instance = this.service.getAssistantInstance(checkpoint.assistantId)
+    if (checkpoint.status !== 'ready') {
+      throw new AgentTeamError(
+        'CHECKPOINT_NOT_READY',
+        `Checkpoint '${checkpoint.id}' is ${checkpoint.status}; create a new checkpoint before handing off`,
+        { checkpointId: checkpoint.id, status: checkpoint.status },
+      )
+    }
+    if (instance.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${instance.id}' is archived`,
+      )
+    }
+    const active = this.service.listAssistantSessions(instance.id).items
+      .filter(task => ACTIVE_TASK_STATUSES.has(task.status))
+    if (active.length > 0) {
+      throw new AgentTeamError(
+        'ASSISTANT_TASKS_ACTIVE',
+        `Assistant '${instance.assistantSnapshot.name}' has ${active.length} active task(s); wait for them to finish before handing off`,
+        { instanceId: instance.id, taskIds: active.map(task => task.id) },
+      )
+    }
+    const previousSessionId = instance.mainSessionId
+    if (previousSessionId === undefined) {
+      throw new AgentTeamError(
+        'ASSISTANT_SESSION_NOT_READY',
+        `Assistant '${instance.assistantSnapshot.name}' has no main Session to hand off from`,
+        { instanceId: instance.id },
+      )
+    }
+    const live = this.ctx.agents.get(SessionId(previousSessionId))
+    if (live !== undefined && !this.owned.has(previousSessionId)) {
+      throw new AgentTeamError(
+        'AGENT_HANDLE_OWNERSHIP_CONFLICT',
+        `Assistant '${instance.id}' main Session '${previousSessionId}' is live under another lifecycle; retry after a reloading plugin releases it, or restart the DSH host if native ownership persists`,
+        { instanceId: instance.id, sessionId: previousSessionId },
+      )
+    }
+    if (live?.status === 'running') {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Assistant '${instance.assistantSnapshot.name}' is running a turn; wait for it to finish before handing off`,
+        { instanceId: instance.id },
+      )
+    }
+    const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(instance.workspaceId))
+    if (workspace === undefined || await workspace.status() !== 'ok') {
+      throw new AgentTeamError(
+        'WORKSPACE_UNAVAILABLE',
+        `Workspace '${instance.workspaceId}' is unavailable`,
+      )
+    }
+
+    const sessionId = `session-${randomUUID()}`
+    let handle: AgentHandle
+    try {
+      handle = await this.ctx.agents.create({
+        sessionId: SessionId(sessionId),
+        meta: {
+          cwd: instance.workspacePath,
+          agentPreset: instance.assistantSnapshot.agentPresetId,
+        },
+        agentOptions: agentOptionsFor(instance.assistantSnapshot),
+        setup: this.mainSetup(instance.id, instance),
+      })
+    } catch (error) {
+      throw this.startupError(instance, error)
+    }
+
+    try {
+      handle.agent.followup(checkpointHandoffMessage(checkpoint))
+      await workspace.attachSession(SessionId(sessionId))
+      await this.ctx.sessions.flush(handle.agent.session)
+      await this.service.advanceAssistantMainSession(instance.id, sessionId, previousSessionId)
+    } catch (error) {
+      // The instance still points at the old Session: drop the fresh handle.
+      await this.disposeQuietly(handle, `handoff Session '${sessionId}' failed`)
+      throw this.startupError(instance, error)
+    }
+
+    // The new binding is committed from here on; a later failure is reported
+    // without disposing the Session the Assistant now points at. The retired
+    // handle is disposed before the checkpoint is consumed so a failing
+    // consume cannot leave a live handle nothing owns.
+    const previous = this.owned.get(previousSessionId)
+    this.owned.set(sessionId, handle)
+    this.owned.delete(previousSessionId)
+    if (previous !== undefined) {
+      await this.disposeQuietly(previous, `retired main Session '${previousSessionId}'`)
+    }
+    const consumed = await this.service.consumeContextCheckpoint(checkpoint.id, sessionId)
+    return { checkpoint: consumed, sessionId }
   }
 
   /** Pending human interactions raised by one hidden worker task. */
@@ -1000,43 +1105,7 @@ export class AssistantRuntime {
 
     const sessionId = boundSessionId ?? `session-${randomUUID()}`
     const snapshot = instance.assistantSnapshot
-    const modelSelection = modelSelectionFor(snapshot)
-    const setup = async (agentCtx: Context, agent: Agent): Promise<void> => {
-      await this.ctx.agentPresets.mount(agentCtx, snapshot.agentPresetId)
-      installModelSelection(agentCtx, modelSelection)
-      agentCtx.systemPrompt.section({
-        name: `dsh-team-mode:assistant-memory:${instance.id}`,
-        order: 9,
-        text: () => memoryPrompt(this.service.getAssistantMemory(id), 'main'),
-      })
-      agentCtx.systemPrompt.section({
-        name: `dsh-team-mode:assistant-identity:${instance.id}`,
-        order: 10,
-        text: () => assistantPrompt(this.service.getAssistantInstance(id).assistantSnapshot),
-      })
-      agentCtx.systemPrompt.section({
-        name: `dsh-team-mode:assistant-tasks:${instance.id}`,
-        order: 11,
-        text: () => this.taskDigest(id),
-      })
-      this.ctx.permissionPresets.set(agent.session, snapshot.permissionPresetId)
-      registerAssistantTaskTools(agentCtx, {
-        assertIdentity: agent => { this.assertMainToolIdentity(id, agent) },
-        createTask: input => this.createTask(id, input),
-        sendTask: (taskId, message) => this.sendTask(id, taskId, message),
-        listTasks: limit => this.listTasks(id, limit),
-        waitTask: (taskId, timeoutMs) => this.waitTask(id, taskId, timeoutMs),
-        summaryTask: taskId => this.summaryTask(id, taskId),
-        cancelTask: taskId => this.cancelTask(id, taskId),
-      })
-      registerAssistantMemoryTools(agentCtx, {
-        assertIdentity: agent => { this.assertMainToolIdentity(id, agent) },
-        readMemory: () => this.service.getAssistantMemory(id),
-        writeMemory: input => this.service.writeAssistantMemory(id, input.content, input.mode),
-        writeEntry: (input, expectedRevision) =>
-          this.service.writeAssistantMemoryEntry(id, input, { expectedRevision }),
-      })
-    }
+    const setup = this.mainSetup(id, instance)
     const agentOptions = agentOptionsFor(snapshot)
 
     let handle: AgentHandle
@@ -1076,6 +1145,53 @@ export class AssistantRuntime {
         )
       }
       throw this.startupError(instance, error)
+    }
+  }
+
+  /**
+   * Setup shared by every main Session of one Assistant: preset mount, model
+   * selection, the identity/memory/task prompt sections, and the task and
+   * memory tools. A handoff reuses it so a fresh Session is configured exactly
+   * like a normal main-Session start.
+   */
+  private mainSetup(id: string, instance: AssistantInstance): AgentSetup {
+    const snapshot = instance.assistantSnapshot
+    const modelSelection = modelSelectionFor(snapshot)
+    return async (agentCtx, agent): Promise<void> => {
+      await this.ctx.agentPresets.mount(agentCtx, snapshot.agentPresetId)
+      installModelSelection(agentCtx, modelSelection)
+      agentCtx.systemPrompt.section({
+        name: `dsh-team-mode:assistant-memory:${instance.id}`,
+        order: 9,
+        text: () => memoryPrompt(this.service.getAssistantMemory(id), 'main'),
+      })
+      agentCtx.systemPrompt.section({
+        name: `dsh-team-mode:assistant-identity:${instance.id}`,
+        order: 10,
+        text: () => assistantPrompt(this.service.getAssistantInstance(id).assistantSnapshot),
+      })
+      agentCtx.systemPrompt.section({
+        name: `dsh-team-mode:assistant-tasks:${instance.id}`,
+        order: 11,
+        text: () => this.taskDigest(id),
+      })
+      this.ctx.permissionPresets.set(agent.session, snapshot.permissionPresetId)
+      registerAssistantTaskTools(agentCtx, {
+        assertIdentity: agent => { this.assertMainToolIdentity(id, agent) },
+        createTask: input => this.createTask(id, input),
+        sendTask: (taskId, message) => this.sendTask(id, taskId, message),
+        listTasks: limit => this.listTasks(id, limit),
+        waitTask: (taskId, timeoutMs) => this.waitTask(id, taskId, timeoutMs),
+        summaryTask: taskId => this.summaryTask(id, taskId),
+        cancelTask: taskId => this.cancelTask(id, taskId),
+      })
+      registerAssistantMemoryTools(agentCtx, {
+        assertIdentity: agent => { this.assertMainToolIdentity(id, agent) },
+        readMemory: () => this.service.getAssistantMemory(id),
+        writeMemory: input => this.service.writeAssistantMemory(id, input.content, input.mode),
+        writeEntry: (input, expectedRevision) =>
+          this.service.writeAssistantMemoryEntry(id, input, { expectedRevision }),
+      })
     }
   }
 

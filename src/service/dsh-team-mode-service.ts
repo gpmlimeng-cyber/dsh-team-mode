@@ -103,6 +103,12 @@ export const ASSISTANT_MEMORY_MAX_CHARS = 16_000
 export const CHECKPOINT_NOTE_LIMIT = 4_000
 
 /**
+ * How many retired main Sessions one instance remembers for sidebar hiding.
+ * The schema bound is the same number; keep the newest entries.
+ */
+export const ASSISTANT_RETIRED_SESSION_LIMIT = 100
+
+/**
  * Structured memory is unbounded by design only up to this many entries; past it
  * a runaway writer would keep growing the record with no reader able to show it.
  */
@@ -1069,6 +1075,109 @@ export class AgentTeamService extends Service {
     await this.checkpointStore().putContextCheckpoint(checkpoint)
     this.publish('assistant-checkpoint', checkpoint.id, 0, 'assistant.checkpoint.created')
     return checkpoint
+  }
+
+  /** Read one checkpoint; an unknown id is CHECKPOINT_NOT_FOUND. */
+  getContextCheckpoint(id: string): ContextCheckpoint {
+    const checkpointId = id.trim()
+    if (checkpointId === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Checkpoint id cannot be empty')
+    }
+    const checkpoint = this.checkpointStore().getContextCheckpoint(checkpointId)
+    if (checkpoint === undefined) {
+      throw new AgentTeamError('CHECKPOINT_NOT_FOUND', `Unknown checkpoint '${checkpointId}'`)
+    }
+    return checkpoint
+  }
+
+  /**
+   * Move one instance to a freshly created main Session in a single update:
+   * the previous id is appended to `retiredMainSessionIds` (deduplicated) and
+   * the retired list stays bounded. An archive that committed first wins.
+   */
+  async advanceAssistantMainSession(
+    assistantId: string,
+    mainSessionId: string,
+    retiredSessionId: string,
+  ): Promise<AssistantInstance> {
+    const id = assistantId.trim()
+    const nextSessionId = mainSessionId.trim()
+    if (id === '' || nextSessionId === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Assistant instance id and main Session id cannot be empty')
+    }
+    const retired = retiredSessionId.trim()
+    const now = new Date().toISOString()
+    const next = await this.store.updateAssistantInstance(id, value => {
+      if (value.status === 'archived') {
+        throw new AgentTeamError(
+          'ASSISTANT_INSTANCE_ARCHIVED',
+          `Assistant instance '${id}' is archived`,
+        )
+      }
+      const retiredIds = [...(value.retiredMainSessionIds ?? [])]
+      if (retired !== '' && retired !== nextSessionId && !retiredIds.includes(retired)) {
+        retiredIds.push(retired)
+      }
+      return {
+        ...value,
+        mainSessionId: nextSessionId,
+        retiredMainSessionIds: retiredIds.slice(-ASSISTANT_RETIRED_SESSION_LIMIT),
+        status: 'active',
+        revision: value.revision + 1,
+        updatedAt: now,
+      }
+    })
+    this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.handoff')
+    return next
+  }
+
+  /**
+   * Runtime-only hook: mark a checkpoint consumed by the handoff that used it.
+   * A checkpoint that is no longer `ready` cannot be consumed twice.
+   */
+  async consumeContextCheckpoint(
+    checkpointId: string,
+    targetSessionId: string,
+  ): Promise<ContextCheckpoint> {
+    const current = this.getContextCheckpoint(checkpointId)
+    if (current.status !== 'ready') {
+      throw new AgentTeamError(
+        'CHECKPOINT_NOT_READY',
+        `Checkpoint '${current.id}' is ${current.status}`,
+        { checkpointId: current.id, status: current.status },
+      )
+    }
+    const sessionId = targetSessionId.trim()
+    const now = new Date().toISOString()
+    const next = await this.checkpointStore().updateContextCheckpoint(current.id, value => {
+      if (value.status !== 'ready') {
+        throw new AgentTeamError(
+          'CHECKPOINT_NOT_READY',
+          `Checkpoint '${value.id}' is ${value.status}`,
+          { checkpointId: value.id, status: value.status },
+        )
+      }
+      return {
+        ...value,
+        status: 'consumed',
+        targetSessionId: sessionId,
+        consumedAt: now,
+      }
+    })
+    this.publish('assistant-checkpoint', next.id, 0, 'assistant.checkpoint.consumed')
+    return next
+  }
+
+  /** Hand one checkpoint into a fresh main Session through the attached runtime. */
+  async handoffAssistant(checkpointId: string): Promise<{
+    checkpoint: ContextCheckpoint
+    sessionId: string
+  }> {
+    const id = checkpointId.trim()
+    if (id === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Checkpoint id cannot be empty')
+    }
+    return this.requireAssistantRuntime().handoff(id)
   }
 
   /** Reattach one task's worker Session and return the Session to navigate to. */

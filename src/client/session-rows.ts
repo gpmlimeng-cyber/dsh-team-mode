@@ -5,6 +5,8 @@ export interface TeamSessionSource {
 
 export interface AssistantInstanceSessionSource {
   mainSessionId?: string | undefined
+  /** Main Sessions retired by a checkpoint handoff; kept hidden but never deleted. */
+  retiredMainSessionIds?: readonly string[] | undefined
 }
 
 export interface AssistantTaskSessionSource {
@@ -13,9 +15,9 @@ export interface AssistantTaskSessionSource {
 
 /**
  * Every native Sidebar row the hider owns: team member Sessions, the bound main
- * Session of each Assistant, and every Assistant task worker Session. A single
- * Set deduplicates the sources so one Session always has one hiding decision,
- * regardless of which source also references it.
+ * Session of each Assistant (plus every retired one), and every Assistant task
+ * worker Session. A single Set deduplicates the sources so one Session always
+ * has one hiding decision, regardless of which source also references it.
  */
 export function hiddenSessionIds(
   teams: readonly TeamSessionSource[],
@@ -31,6 +33,9 @@ export function hiddenSessionIds(
   for (const instance of instances) {
     const sessionId = instance.mainSessionId
     if (sessionId !== undefined && sessionId !== '') ids.add(sessionId)
+    for (const retired of instance.retiredMainSessionIds ?? []) {
+      if (retired !== '') ids.add(retired)
+    }
   }
   for (const task of tasks) {
     if (task.sessionId !== '') ids.add(task.sessionId)

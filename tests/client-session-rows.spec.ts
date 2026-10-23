@@ -21,6 +21,20 @@ describe('hiddenSessionIds', () => {
     ])
   })
 
+  it('hides every retired main Session alongside the current one', () => {
+    const ids = hiddenSessionIds(
+      [],
+      [{ mainSessionId: 'main', retiredMainSessionIds: ['old-1', 'old-2'] }],
+      [],
+    )
+    expect([...ids].sort()).toEqual(['main', 'old-1', 'old-2'])
+  })
+
+  it('skips blank retired main Session ids', () => {
+    const ids = hiddenSessionIds([], [{ retiredMainSessionIds: ['', 'old-1'] }], [])
+    expect([...ids]).toEqual(['old-1'])
+  })
+
   it('deduplicates a Session referenced by every source', () => {
     const ids = hiddenSessionIds(
       [{ members: { leader: { sessionId: 'shared' }, member: { sessionId: 'team-only' } } }],

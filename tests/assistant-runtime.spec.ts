@@ -16,6 +16,7 @@ import type {
   AssistantInstance,
   AssistantMemory,
   AssistantSession,
+  ContextCheckpoint,
   CreateAssistantSessionInput,
   MemoryEntry,
   UpdateAssistantSessionInput,
@@ -358,10 +359,78 @@ function createHarness(
     return { memory, entry }
   })
 
+  const checkpoints = new Map<string, ContextCheckpoint>()
+  const getContextCheckpoint = vi.fn((id: string) => {
+    const checkpoint = checkpoints.get(id)
+    if (checkpoint === undefined) {
+      throw new AgentTeamError('CHECKPOINT_NOT_FOUND', `Unknown checkpoint '${id}'`)
+    }
+    return checkpoint
+  })
+  const advanceAssistantMainSession = vi.fn(async (
+    id: string,
+    mainSessionId: string,
+    retiredSessionId: string,
+  ) => {
+    if (id !== current.id) {
+      throw new AgentTeamError('ASSISTANT_INSTANCE_NOT_FOUND', `Unknown assistant instance '${id}'`)
+    }
+    const retiredIds = [...(current.retiredMainSessionIds ?? [])]
+    if (retiredSessionId !== '' && !retiredIds.includes(retiredSessionId)) retiredIds.push(retiredSessionId)
+    current = {
+      ...current,
+      mainSessionId,
+      retiredMainSessionIds: retiredIds,
+      status: 'active',
+      revision: current.revision + 1,
+      updatedAt: NOW,
+    }
+    return current
+  })
+  const consumeContextCheckpoint = vi.fn(async (id: string, targetSessionId: string) => {
+    const checkpoint = getContextCheckpoint(id)
+    if (checkpoint.status !== 'ready') {
+      throw new AgentTeamError('CHECKPOINT_NOT_READY', `Checkpoint '${id}' is ${checkpoint.status}`)
+    }
+    const next: ContextCheckpoint = {
+      ...checkpoint,
+      status: 'consumed',
+      targetSessionId,
+      consumedAt: NOW,
+    }
+    checkpoints.set(id, next)
+    return next
+  })
+  const seedCheckpoint = (overrides: Partial<ContextCheckpoint> = {}): ContextCheckpoint => {
+    const checkpoint: ContextCheckpoint = {
+      schemaVersion: 1,
+      id: 'checkpoint-1',
+      assistantId: 'instance-1',
+      sourceSessionId: 'session-main',
+      title: 'Handoff at noon',
+      note: 'continue the work',
+      capturedThroughSeq: 3,
+      facts: {
+        recentMessages: [{ role: 'user', text: 'Build the handoff' }],
+        activeTasks: [],
+        workspacePath: WORKSPACE_PATH,
+        note: 'continue the work',
+      },
+      status: 'ready',
+      createdAt: NOW,
+      ...overrides,
+    }
+    checkpoints.set(checkpoint.id, checkpoint)
+    return checkpoint
+  }
+
   const service = {
     getAssistantInstance,
     bindAssistantMainSession,
     persistAssistantArchived,
+    getContextCheckpoint,
+    advanceAssistantMainSession,
+    consumeContextCheckpoint,
     createAssistantSession,
     getAssistantSession,
     listAssistantSessions,
@@ -381,6 +450,11 @@ function createHarness(
     getAssistantInstance,
     bindAssistantMainSession,
     persistAssistantArchived,
+    getContextCheckpoint,
+    advanceAssistantMainSession,
+    consumeContextCheckpoint,
+    seedCheckpoint,
+    checkpoints,
     createAssistantSession,
     getAssistantSession,
     listAssistantSessions,
@@ -1527,6 +1601,147 @@ describe('AssistantRuntime', () => {
     expect(text).toContain('ambiguous')
     expect(text).toContain('ask the user')
     expect(text).not.toContain('SECRET WORKER TRANSCRIPT')
+  })
+
+  it('hands a checkpoint into a fresh main Session and retires the old one', async () => {
+    const h = createHarness()
+    const first = await h.runtime.ensureInstance('instance-1')
+    const checkpoint = h.seedCheckpoint({ sourceSessionId: first.sessionId })
+
+    const result = await h.runtime.handoff(checkpoint.id)
+
+    expect(result.sessionId).not.toBe(first.sessionId)
+    expect(result.checkpoint).toMatchObject({
+      id: checkpoint.id,
+      status: 'consumed',
+      targetSessionId: result.sessionId,
+    })
+    expect(h.createMock).toHaveBeenCalledTimes(2)
+    const createOptions = h.createMock.mock.calls[1]?.[0] as CreateAgentOptions
+    expect(String(createOptions.sessionId)).toBe(result.sessionId)
+    expect(createOptions.meta).toEqual({ cwd: WORKSPACE_PATH, agentPreset: 'default' })
+    expect(createOptions.agentOptions).toMatchObject({ provider: 'openai', model: 'gpt-5' })
+
+    // Exactly one durable runtime-context message reaches the fresh Session.
+    const fresh = h.handles[1]
+    expect(fresh?.followup).toHaveBeenCalledTimes(1)
+    const delivered = fresh?.followup.mock.calls[0]?.[0] as {
+      source: unknown
+      content: Array<{ type: string, text: string }>
+    }
+    expect(delivered.source).toEqual({ kind: 'runtime-context', form: 'instructions' })
+    expect(textOf(delivered)).toContain('Handoff at noon')
+    expect(textOf(delivered)).toContain('Build the handoff')
+    expect(h.attachSession).toHaveBeenCalledWith(result.sessionId)
+    expect(h.flush).toHaveBeenCalledWith(fresh?.agent.session)
+
+    // The fresh Session is configured like a normal main Session.
+    expect(toolsRegistered(fresh).sort())
+      .toEqual([...TASK_TOOL_NAMES, ...MEMORY_TOOL_NAMES].sort())
+    expect(fresh?.section).toHaveBeenCalled()
+
+    expect(h.advanceAssistantMainSession).toHaveBeenCalledWith(
+      'instance-1',
+      result.sessionId,
+      first.sessionId,
+    )
+    expect(h.current()).toMatchObject({
+      mainSessionId: result.sessionId,
+      retiredMainSessionIds: [first.sessionId],
+    })
+    expect(h.consumeContextCheckpoint).toHaveBeenCalledWith(checkpoint.id, result.sessionId)
+
+    // The new handle is owned and the old one is disposed; the old log stays.
+    expect(h.handles[0]?.dispose).toHaveBeenCalledTimes(1)
+    const reused = await h.runtime.ensureInstance('instance-1')
+    expect(reused.sessionId).toBe(result.sessionId)
+    expect(h.createMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('refuses handoff with ASSISTANT_TASKS_ACTIVE before creating an Agent', async () => {
+    const h = createHarness({ mainSessionId: 'session-main' })
+    h.seedCheckpoint()
+    h.tasks.set('task-active', {
+      schemaVersion: 1,
+      id: 'task-active',
+      assistantId: 'instance-1',
+      sessionId: 'session-worker',
+      role: 'task',
+      title: 'Busy task',
+      brief: 'Still running',
+      parentSessionId: 'session-main',
+      status: 'running',
+      createdAt: NOW,
+      updatedAt: NOW,
+    })
+
+    await expect(h.runtime.handoff('checkpoint-1'))
+      .rejects.toMatchObject({ code: 'ASSISTANT_TASKS_ACTIVE' })
+
+    expect(h.createMock).not.toHaveBeenCalled()
+    expect(h.advanceAssistantMainSession).not.toHaveBeenCalled()
+    expect(h.getContextCheckpoint('checkpoint-1').status).toBe('ready')
+  })
+
+  it('leaves the old binding, checkpoint, and handle when the fresh Session fails to start', async () => {
+    const h = createHarness()
+    const first = await h.runtime.ensureInstance('instance-1')
+    const checkpoint = h.seedCheckpoint({ sourceSessionId: first.sessionId })
+    h.createMock.mockRejectedValueOnce(new Error('agent create exploded'))
+
+    await expect(h.runtime.handoff(checkpoint.id))
+      .rejects.toMatchObject({ code: 'SESSION_CREATE_FAILED' })
+
+    expect(h.current().mainSessionId).toBe(first.sessionId)
+    expect(h.getContextCheckpoint(checkpoint.id).status).toBe('ready')
+    expect(h.advanceAssistantMainSession).not.toHaveBeenCalled()
+    expect(h.handles[0]?.dispose).not.toHaveBeenCalled()
+    const reused = await h.runtime.ensureInstance('instance-1')
+    expect(reused.sessionId).toBe(first.sessionId)
+  })
+
+  it('cannot hand off a consumed checkpoint twice', async () => {
+    const h = createHarness()
+    const first = await h.runtime.ensureInstance('instance-1')
+    const checkpoint = h.seedCheckpoint({ sourceSessionId: first.sessionId })
+    await h.runtime.handoff(checkpoint.id)
+
+    await expect(h.runtime.handoff(checkpoint.id))
+      .rejects.toMatchObject({ code: 'CHECKPOINT_NOT_READY' })
+
+    expect(h.createMock).toHaveBeenCalledTimes(2)
+    expect(h.current().mainSessionId).toBe(h.handles[1]?.agent.session.id)
+  })
+
+  it('reports unknown checkpoints and missing main Sessions distinctly', async () => {
+    const missing = createHarness()
+    await expect(missing.runtime.handoff('checkpoint-unknown'))
+      .rejects.toMatchObject({ code: 'CHECKPOINT_NOT_FOUND' })
+
+    const archived = createHarness()
+    archived.seedCheckpoint({ status: 'archived' })
+    await expect(archived.runtime.handoff('checkpoint-1'))
+      .rejects.toMatchObject({ code: 'CHECKPOINT_NOT_READY' })
+
+    const unbound = createHarness()
+    unbound.seedCheckpoint()
+    await expect(unbound.runtime.handoff('checkpoint-1'))
+      .rejects.toMatchObject({ code: 'ASSISTANT_SESSION_NOT_READY' })
+    expect(unbound.createMock).not.toHaveBeenCalled()
+  })
+
+  it('refuses handoff while the current main Session is running a turn', async () => {
+    const h = createHarness()
+    const first = await h.runtime.ensureInstance('instance-1')
+    const checkpoint = h.seedCheckpoint({ sourceSessionId: first.sessionId })
+    h.setLive(first.sessionId, h.handles[0]!.agent)
+    ;(h.handles[0]!.agent as unknown as { status: string }).status = 'running'
+
+    await expect(h.runtime.handoff(checkpoint.id))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    expect(h.createMock).toHaveBeenCalledTimes(1)
+    expect(h.current().mainSessionId).toBe(first.sessionId)
   })
 
   it('cancels and disposes owned handles and refuses later ensures', async () => {

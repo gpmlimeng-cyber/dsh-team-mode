@@ -289,6 +289,12 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       }).strict().parse(request.payload)
       return service.listAssistantCheckpoints(payload.assistantId)
     }
+    case 'assistant.checkpoint.handoff': {
+      const payload = z.object({
+        checkpointId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.handoffAssistant(payload.checkpointId)
+    }
     case 'assistant.task.list': {
       const payload = request.payload === undefined || request.payload === null
         ? undefined

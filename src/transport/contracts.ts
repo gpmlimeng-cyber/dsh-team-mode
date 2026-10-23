@@ -51,6 +51,7 @@ export const AGENT_TEAM_METHODS = [
   'assistant.memory.entry.write',
   'assistant.checkpoint.create',
   'assistant.checkpoint.list',
+  'assistant.checkpoint.handoff',
   'assistant.task.list',
   'assistant.task.interactions',
   'assistant.task.interaction.respond',
@@ -412,6 +413,10 @@ export interface AgentTeamRequestMap {
   'assistant.checkpoint.list': {
     payload: { assistantId: string }
     result: ContextCheckpoint[]
+  }
+  'assistant.checkpoint.handoff': {
+    payload: { checkpointId: string }
+    result: { checkpoint: ContextCheckpoint; sessionId: string }
   }
   'assistant.task.list': {
     payload: { assistantId?: string } | undefined
