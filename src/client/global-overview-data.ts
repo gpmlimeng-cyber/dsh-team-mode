@@ -16,7 +16,7 @@ export interface GlobalTeamItem {
   running: boolean
   /** Members waiting for user approval. */
   approval: number
-  /** Tasks still waiting on an unfinished prerequisite (status-independent). */
+  /** Open tasks waiting on an unfinished prerequisite; terminal tasks never block. */
   blocked: number
 }
 
@@ -60,6 +60,18 @@ const LIVE_TASK_STATUSES: ReadonlySet<AssistantSession['status']> = new Set([
   'needs_input',
 ])
 
+/**
+ * Task statuses that can still wait on a prerequisite. Terminal rows
+ * (completed/failed/cancelled) must never hold a team in "blocked" forever just
+ * because a failed prerequisite keeps its dependency id.
+ */
+const OPEN_TASK_STATUSES: ReadonlySet<string> = new Set([
+  'pending',
+  'assigned',
+  'running',
+  'blocked',
+])
+
 function timeOf(iso: string): number {
   const parsed = Date.parse(iso)
   return Number.isNaN(parsed) ? 0 : parsed
@@ -67,10 +79,11 @@ function timeOf(iso: string): number {
 
 /**
  * One team row. `running` is the board's own execution rule; approvals are
- * members parked on `waiting_approval`. `blocked` is dependency-derived, not a
- * status check: a pending/assigned task with an unfinished prerequisite still
- * blocks the team, while a `status: 'blocked'` row with no unfinished
- * dependency (for example a Leader-epoch retire) does not.
+ * members parked on `waiting_approval`. `blocked` counts open tasks waiting on
+ * an unfinished prerequisite: dependency-derived, not a status check, so a
+ * pending/assigned task with an unfinished prerequisite blocks the team while
+ * a terminal task or a `status: 'blocked'` row with no unfinished dependency
+ * (for example a Leader-epoch retire) does not.
  */
 function teamItem(team: TeamView): GlobalTeamItem {
   const members = Object.values(team.members)
@@ -83,7 +96,8 @@ function teamItem(team: TeamView): GlobalTeamItem {
     running: isTeamExecuting(team),
     approval: members.filter(member => member.lastRuntimeState === 'waiting_approval').length,
     blocked: Object.values(team.tasks)
-      .filter(task => unresolvedDependency(task, team.tasks) !== undefined).length,
+      .filter(task => OPEN_TASK_STATUSES.has(task.status)
+        && unresolvedDependency(task, team.tasks) !== undefined).length,
   }
 }
 
