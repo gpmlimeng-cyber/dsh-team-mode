@@ -81,16 +81,19 @@ Rules:
 
 - `members` = all current member slots.
 - `running` = `lastRuntimeState === 'running'`.
-- `waiting` = `lastRuntimeState === 'waiting_approval'`.
+- `waitingApproval` = `lastRuntimeState === 'waiting_approval'`.
+- `waitingDependency` = blocked tasks whose dependency tasks are not all completed.
 - Status text:
-  - waiting > 0: `N 人 · M 运行 · K 待审批`
+  - waitingApproval > 0: `N 人 · M 运行 · K 待审批`
+  - else if waitingDependency > 0: `N 人 · M 运行 · D 等待前置`
   - running > 0: `N 人 · M 运行`
   - else: `N 人 · 空闲`
+- Approval is the only count that gets the attention badge; dependency waiting is text-only.
 - `compareTeamSidebar`:
   - pinned first;
   - in `updated` mode: waiting desc, running desc, updatedAt desc, id asc;
   - in `name` mode: `localeCompare('zh-CN')`.
-- `recentTeamTasks`: sort tasks by `updatedAt` desc then id asc, cap at 3 by default; map status labels:
+- `recentTeamTasks`: sort tasks by `updatedAt` desc then id asc, cap at 3 by default; for a blocked task attach the first unresolved dependency as `blockedBy`; map status labels:
   `pending=待处理`, `assigned=已分配`, `running=进行中`, `blocked=已阻塞`, `completed=已完成`, `failed=失败`, `cancelled=已取消`.
 
 - [ ] **Step 1: Write the failing tests**
