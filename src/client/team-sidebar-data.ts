@@ -118,15 +118,18 @@ export function teamSidebarSummary(team: SummarySource): TeamSidebarSummary {
 
 /**
  * Approval is the only count that earns the badge; dependency waiting is text.
- * A non-active lifecycle state replaces 空闲, and a running task keeps an idle
- * member list from reading as 空闲 — the row states what the team page states.
+ * 空闲 is pushed only when nothing else describes the team: no running member,
+ * no running task, no lifecycle label, and no pending approval or dependency.
+ * A pending approval therefore always replaces 空闲 instead of sitting next to
+ * it ("1 人 · 1 待审批", never "1 人 · 空闲 · 1 待审批").
  */
 export function teamSidebarStatusText(summary: TeamSidebarSummary): string {
   const stateLabel = summary.state === undefined ? undefined : TEAM_STATE_LABELS[summary.state]
+  const attention = summary.waiting > 0 || summary.waitingDependency > 0
   const parts = [`${summary.members} 人`]
   if (summary.running > 0) parts.push(`${summary.running} 运行`)
   else if (summary.taskRunning === true) parts.push('任务执行中')
-  else if (stateLabel === undefined) parts.push('空闲')
+  else if (stateLabel === undefined && !attention) parts.push('空闲')
   if (stateLabel !== undefined) parts.push(stateLabel)
   if (summary.waiting > 0) parts.push(`${summary.waiting} 待审批`)
   else if (summary.waitingDependency > 0) parts.push(`${summary.waitingDependency} 等待前置`)

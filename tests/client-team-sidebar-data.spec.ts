@@ -155,6 +155,37 @@ describe('teamSidebarStatusText', () => {
   })
 })
 
+describe('teamSidebarStatusText · pending attention never reads 空闲', () => {
+  it('drops 空闲 for one waiting_approval member and zero running', () => {
+    const summary = teamSidebarSummary(team({ members: members({ leader: 'waiting_approval' }) }))
+    expect(summary).toMatchObject({ members: 1, running: 0, waiting: 1 })
+    const text = teamSidebarStatusText(summary)
+    expect(text).toBe('1 人 · 1 待审批')
+    expect(text).not.toContain('空闲')
+  })
+
+  it('drops 空闲 for dependency waiting even when no member or task runs', () => {
+    const summary = teamSidebarSummary(team({
+      tasks: {
+        design: task({ id: 'design', status: 'blocked' }),
+        review: task({ id: 'review', status: 'blocked', dependencyIds: ['design'] }),
+      },
+    }))
+    expect(summary).toMatchObject({ members: 0, running: 0, waiting: 0, waitingDependency: 1 })
+    const text = teamSidebarStatusText(summary)
+    expect(text).toBe('0 人 · 1 等待前置')
+    expect(text).not.toContain('空闲')
+  })
+
+  it('still reads 空闲 for an active team with nothing running', () => {
+    const summary = teamSidebarSummary(team({
+      state: 'active',
+      members: members({ leader: 'idle' }),
+    }))
+    expect(teamSidebarStatusText(summary)).toBe('1 人 · 空闲')
+  })
+})
+
 describe('teamSidebarStatusText · team state', () => {
   it('reads an error team as 异常 instead of 空闲', () => {
     expect(teamSidebarStatusText(teamSidebarSummary(team({ state: 'error' })))).toBe('0 人 · 异常')
