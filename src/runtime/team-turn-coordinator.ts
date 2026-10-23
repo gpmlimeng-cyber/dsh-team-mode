@@ -19,6 +19,8 @@ interface ActiveTurn {
 export class TeamTurnCoordinator {
   private readonly active = new Map<string, ActiveTurn>()
   private readonly chains = new Map<string, Promise<void>>()
+  /** Sessions this coordinator has ever addressed, so release works after the active turn is gone. */
+  private readonly sessions = new Map<string, string>()
 
   constructor(private readonly deps: TeamTurnDeps) {}
 
@@ -31,9 +33,17 @@ export class TeamTurnCoordinator {
     })
   }
 
+  /**
+   * Release one session's turn, then drain. When the session is no longer the
+   * active turn (turn/end raced ahead of the idle transition and an earlier
+   * release already cleared it), still drain the session's team: the target
+   * may have been `running` at the first attempt, and the idle event must be
+   * able to retry delivery instead of leaving the queue stuck.
+   */
   releaseSession(sessionId: string): Promise<void> {
     const teamId = [...this.active.entries()]
       .find(([, turn]) => turn.sessionId === sessionId)?.[0]
+      ?? this.sessions.get(sessionId)
     if (teamId === undefined) {
       return Promise.resolve()
     }
@@ -102,6 +112,7 @@ export class TeamTurnCoordinator {
       return
     }
     const sessionId = member.sessionId
+    this.sessions.set(sessionId, teamId)
     if (this.deps.sessionState(sessionId) !== 'online') {
       return
     }

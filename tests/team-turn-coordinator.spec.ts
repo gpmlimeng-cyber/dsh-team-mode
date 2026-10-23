@@ -260,6 +260,36 @@ describe('TeamTurnCoordinator', () => {
     expect(second.messages[0]?.deliveryState).toBe('delivered')
   })
 
+  it('drains the session team on release even after the active turn is gone', async () => {
+    // turn/end can race ahead of the idle transition: the first release clears
+    // the active turn while the target is still `running`, and the later idle
+    // release must still find the team and retry delivery.
+    const fake = createFake({ t1: teamWith('sL', 'sa') })
+    const team = fake.team('t1')
+    const coordinator = new TeamTurnCoordinator(fake.deps)
+    team.messages.push(
+      message({ id: 'm1', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:00.000Z' }),
+      message({ id: 'm2', teamId: 't1', slotId: 'a', createdAt: '2026-10-23T10:00:01.000Z' }),
+    )
+    fake.setSessionState('sa', 'running')
+    await coordinator.submit('t1', 'm1')
+    await coordinator.releaseSession('sL')
+    expect(fake.followups).toEqual([
+      { sessionId: 'sL', messageId: 'm1' },
+      // sa is running: m2 stays queued and no followup happened yet.
+    ])
+    expect(team.messages.find(m => m.id === 'm2')?.deliveryState).toBe('queued')
+
+    fake.setSessionState('sa', 'online')
+    // Second release for the same (now inactive) session still drains the team.
+    await coordinator.releaseSession('sL')
+    expect(fake.followups).toEqual([
+      { sessionId: 'sL', messageId: 'm1' },
+      { sessionId: 'sa', messageId: 'm2' },
+    ])
+    expect(team.messages.find(m => m.id === 'm2')?.deliveryState).toBe('delivered')
+  })
+
   it('leaves messages queued for archived or inactive teams without followup', async () => {
     const fake = createFake({ t1: { ...teamWith('sL', 'sa'), state: 'deleting' } })
     const team = fake.team('t1')

@@ -203,6 +203,17 @@ function fakeAgent() {
   return agent
 }
 
+/** A running member whose followup immediately starts a turn, so sessionState is `running` at drain time. */
+function fakeRunningAgent() {
+  const agent = fakeAgent()
+  agent.status = 'running'
+  agent.followup = vi.fn((message: { id: unknown }) => {
+    agent.session.events.push({ type: 'agent/inbox/spliced', data: { inserted: [message] } })
+    agent.status = 'running'
+  })
+  return agent
+}
+
 type RuntimeInternals = {
   owned: Map<string, {
     teamId: string
@@ -345,6 +356,42 @@ describe('team turn runtime wiring', () => {
     emitTurnEnd(emit, memberSession)
     await vi.waitFor(() => {
       expect(service.listMessages(team.id).items.find(m => m.content === 'third for leader')?.deliveryState).toBe('delivered')
+    })
+  })
+
+  it('recovers the queue when turn/end raced ahead of the idle transition', async () => {
+    const { ctx, service, store, emit } = createHarness()
+    const team = await twoMemberTeam(service, store)
+    const runtime = new TeamRuntime(ctx, config, service)
+    const leaderAgent = fakeAgent()
+    // The member reports `running` at drain time, exactly like a live agent
+    // whose turn/end event has not yet been followed by the idle transition.
+    const memberAgent = fakeRunningAgent()
+    adopt(runtime, team, team.leaderSlotId, leaderAgent)
+    const memberId = Object.keys(team.members).find(id => id !== team.leaderSlotId)!
+    adopt(runtime, team, memberId, memberAgent)
+
+    await runtime.sendUserMessage(team.id, 'start working')
+    await runtime.sendUserMessage(team.id, 'follow up with member', memberId)
+    expect(memberAgent.followup).not.toHaveBeenCalled()
+
+    // turn/end arrives while the member is still running: the release clears the
+    // active turn but cannot deliver yet (sessionState stays `running`).
+    emit('session/event', { session: { id: team.members[team.leaderSlotId]!.sessionId }, event: {
+      type: 'turn/end',
+      data: { reason: { kind: 'completed' } },
+    } })
+    await vi.waitFor(() => {
+      expect(service.listMessages(team.id).items.find(m => m.content === 'follow up with member')?.deliveryState).toBe('queued')
+    })
+    expect(memberAgent.followup).not.toHaveBeenCalled()
+
+    // The idle transition must still find the member's team and drain the queue.
+    memberAgent.status = 'idle'
+    emit('agent/status', { agent: { id: team.members[memberId]!.sessionId }, status: 'idle' })
+    await vi.waitFor(() => {
+      expect(memberAgent.followup).toHaveBeenCalledOnce()
+      expect(service.listMessages(team.id).items.find(m => m.content === 'follow up with member')?.deliveryState).toBe('delivered')
     })
   })
 
