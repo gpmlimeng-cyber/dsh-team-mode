@@ -95,19 +95,19 @@ dsh plugin --profile web add /absolute/path/to/dsh-team-mode
 
 以下项目只有方向/架构说明，没有 AgentTeams 实施计划；下次继续时先补 plan。
 
-| 项目 | 当前资料 | 状态 |
-|---|---|---|
-| Context Steward（压缩/分段/checkpoint/handoff） | `COMPETITIVE-GAPS.md` | 未开始 |
-| Group Chat Turn Engine（管理员先答/顺序/@/迟到回复） | `COMPETITIVE-GAPS.md` | 未开始 |
-| Autonomous Ops（routines/reminders/budget/park） | `COMPETITIVE-GAPS.md` + roadmap | 未开始 |
-| Memory Automation（capture/recall/tidy/journal） | `MEMORY-ARCHITECTURE.md` P2/P3 | 未开始 |
-| DSH Ecosystem Reuse（能力发现/成员策略/权限边界） | `COMPETITIVE-GAPS.md` | 未开始 |
-| Task reminders / follow-up | roadmap P2 | 未开始 |
-| 新成员有界历史注入 | roadmap / RAFT | 未开始 |
-| 成员私有 workspace | roadmap / RAFT | 未开始 |
-| F8 记忆配额硬化 | release review residual | 未开始 |
-| quality-gate findings 邮件措辞 | quality-gates review residual | 未开始 |
-| multi-host 评估 | roadmap P2 | 未开始 |
+| 项目                                                 | 当前资料                        | 状态   |
+| ---------------------------------------------------- | ------------------------------- | ------ |
+| Context Steward（压缩/分段/checkpoint/handoff）      | `COMPETITIVE-GAPS.md`           | 未开始 |
+| Group Chat Turn Engine（管理员先答/顺序/@/迟到回复） | `COMPETITIVE-GAPS.md`           | 未开始 |
+| Autonomous Ops（routines/reminders/budget/park）     | `COMPETITIVE-GAPS.md` + roadmap | 未开始 |
+| Memory Automation（capture/recall/tidy/journal）     | `MEMORY-ARCHITECTURE.md` P2/P3  | 未开始 |
+| DSH Ecosystem Reuse（能力发现/成员策略/权限边界）    | `COMPETITIVE-GAPS.md`           | 未开始 |
+| Task reminders / follow-up                           | roadmap P2                      | 未开始 |
+| 新成员有界历史注入                                   | roadmap / RAFT                  | 未开始 |
+| 成员私有 workspace                                   | roadmap / RAFT                  | 未开始 |
+| F8 记忆配额硬化                                      | release review residual         | 未开始 |
+| quality-gate findings 邮件措辞                       | quality-gates review residual   | 未开始 |
+| multi-host 评估                                      | roadmap P2                      | 未开始 |
 
 ## 规划文档索引
 
