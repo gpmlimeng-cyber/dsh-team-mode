@@ -1,7 +1,9 @@
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent, AgentHandle } from '@deepseek-ai/dsh-agent'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import { describe, expect, it, vi } from 'vitest'
+import { Readable } from 'node:stream'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,6 +20,8 @@ import type {
   AssistantMemory,
   AssistantSession,
   AssistantTemplate,
+  CheckpointFacts,
+  ContextCheckpoint,
   MemoryEntry,
   Operation,
   TeamActivity,
@@ -27,6 +31,8 @@ import type {
   TeamTask,
 } from '../src/domain/types.js'
 import { AssistantRuntime } from '../src/runtime/assistant-runtime.js'
+import { AGENT_TEAM_API_PATH } from '../src/transport/contracts.js'
+import { registerWebTransport } from '../src/transport/web.js'
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import type { AgentTeamStore } from '../src/storage/store.js'
 import { isRateLimitMessage, TeamRuntime } from '../src/runtime/team-runtime.js'
@@ -2371,6 +2377,147 @@ describe('AgentTeamService', () => {
   })
 })
 
+describe('Assistant checkpoint API', () => {
+  it('creates a ready checkpoint from the live main Session and lists it', async () => {
+    const h = createCheckpointHarness()
+    await h.store.putAssistantInstance(seedInstanceWithMain())
+    h.mainEvents.push(
+      sessionUserEvent(0, 'user-1', 'Plan the handoff'),
+      sessionAssistantEvent(1, 'assistant-1', 'Ready to hand off'),
+    )
+    await h.store.putAssistantSession(taskRow({ id: 'task-active', status: 'running', updatedAt: '2026-01-02T00:00:00.000Z' }))
+    await h.store.putAssistantSession(taskRow({ id: 'task-done', status: 'completed', updatedAt: '2026-01-03T00:00:00.000Z' }))
+
+    const checkpoint = await h.service.createAssistantCheckpoint('instance-1', '  next steps  ')
+
+    expect(checkpoint).toMatchObject({
+      schemaVersion: 1,
+      assistantId: 'instance-1',
+      sourceSessionId: 'session-main',
+      note: 'next steps',
+      status: 'ready',
+      capturedThroughSeq: 1,
+    })
+    expect(checkpoint.facts.recentMessages).toEqual([
+      { role: 'user', text: 'Plan the handoff' },
+      { role: 'assistant', text: 'Ready to hand off' },
+    ])
+    expect(checkpoint.facts.activeTasks).toEqual([
+      { id: 'task-active', title: 'Task task-active', status: 'running' },
+    ])
+    expect(checkpoint.facts.workspacePath).toBe('/tmp/dsh-team-mode-workspace')
+    expect(h.store.getContextCheckpoint(checkpoint.id)).toEqual(checkpoint)
+    expect(h.service.listAssistantCheckpoints('instance-1')).toEqual([checkpoint])
+    expect(h.service.listAssistantCheckpoints('instance-1')[0]?.note).toBe('next steps')
+  })
+
+  it('lists only the requested assistant and rejects an unknown instance', async () => {
+    const h = createCheckpointHarness()
+    await h.store.putAssistantInstance(seedInstanceWithMain())
+    await h.store.putAssistantInstance({ ...seedInstanceWithMain(), id: 'instance-2' })
+    const first = await h.service.createContextCheckpoint({
+      assistantId: 'instance-1',
+      sourceSessionId: 'session-main',
+      capturedThroughSeq: -1,
+      facts: emptyFacts(),
+      note: '',
+    })
+    const second = await h.service.createContextCheckpoint({
+      assistantId: 'instance-2',
+      sourceSessionId: 'session-other',
+      capturedThroughSeq: 3,
+      facts: emptyFacts(),
+      note: '',
+    })
+
+    expect(h.service.listAssistantCheckpoints('instance-1').map(value => value.id)).toEqual([first.id])
+    expect(h.service.listAssistantCheckpoints('instance-2').map(value => value.id)).toEqual([second.id])
+    expect(() => h.service.listAssistantCheckpoints('missing')).toThrow(
+      expect.objectContaining({ code: 'ASSISTANT_INSTANCE_NOT_FOUND' }) as never,
+    )
+  })
+
+  it('rejects a note over 4000 chars before writing any checkpoint', async () => {
+    const h = createCheckpointHarness()
+    await h.store.putAssistantInstance(seedInstanceWithMain())
+
+    await expect(h.service.createAssistantCheckpoint('instance-1', 'x'.repeat(4_001)))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(h.store.listContextCheckpoints()).toEqual([])
+  })
+
+  it('refuses to checkpoint an instance with no main Session yet', async () => {
+    const h = createCheckpointHarness()
+    await h.store.putAssistantInstance(seedInstance())
+
+    await expect(h.service.createAssistantCheckpoint('instance-1'))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST', message: expect.stringContaining('no main Session') })
+    expect(h.store.listContextCheckpoints()).toEqual([])
+  })
+
+  it('reads the durable Session log when no live Agent owns the main Session', async () => {
+    const h = createCheckpointHarness({
+      live: false,
+      storedEvents: [
+        sessionUserEvent(0, 'user-1', 'Stored question'),
+        sessionAssistantEvent(5, 'assistant-1', 'Stored answer'),
+      ],
+    })
+    await h.store.putAssistantInstance(seedInstanceWithMain())
+
+    const checkpoint = await h.service.createAssistantCheckpoint('instance-1')
+
+    expect(checkpoint.facts.recentMessages).toEqual([
+      { role: 'user', text: 'Stored question' },
+      { role: 'assistant', text: 'Stored answer' },
+    ])
+    expect(checkpoint.capturedThroughSeq).toBe(5)
+  })
+
+  it('serves create and list through the web transport', async () => {
+    const h = createCheckpointHarness()
+    await h.store.putAssistantInstance(seedInstanceWithMain())
+    h.mainEvents.push(sessionUserEvent(0, 'user-1', 'Handoff me'))
+    const routes = new Map<string, (request: IncomingMessage, response: ServerResponse) => unknown>()
+    h.ctx.provide('webServer', {
+      register(route: { path: string, handler: (request: IncomingMessage, response: ServerResponse) => unknown }) {
+        routes.set(route.path, route.handler)
+        return () => { routes.delete(route.path) }
+      },
+    } as never)
+    h.ctx.provide('connection', { requestRejection: () => undefined } as never)
+    const transport = registerWebTransport(h.ctx, config, h.service)
+    try {
+      const created = await callApi(routes, {
+        method: 'assistant.checkpoint.create',
+        payload: { assistantId: 'instance-1', note: 'web note' },
+      })
+      expect(created.status).toBe(200)
+      const createdBody = JSON.parse(created.body) as {
+        ok: boolean
+        value: ContextCheckpoint
+      }
+      expect(createdBody.ok).toBe(true)
+      expect(createdBody.value).toMatchObject({
+        assistantId: 'instance-1',
+        note: 'web note',
+        status: 'ready',
+      })
+      expect(createdBody.value.facts.recentMessages).toEqual([{ role: 'user', text: 'Handoff me' }])
+
+      const listed = await callApi(routes, {
+        method: 'assistant.checkpoint.list',
+        payload: { assistantId: 'instance-1' },
+      })
+      expect(listed.status).toBe(200)
+      const listedBody = JSON.parse(listed.body) as { ok: boolean, value: ContextCheckpoint[] }
+      expect(listedBody.value.map(value => value.id)).toEqual([createdBody.value.id])
+    } finally {
+      transport.dispose()
+    }
+  })
+})
+
 function createHarness(
   workspacePath = '/tmp/dsh-team-mode-workspace',
   configOverrides: Partial<Config> = {},
@@ -2655,11 +2802,178 @@ function assistantInput() {
   }
 }
 
+
+/**
+ * Real service and real Assistant runtime over the shared MemoryStore, with a
+ * fake live main Agent and an optional durable Session log.
+ */
+function createCheckpointHarness(options: {
+  live?: boolean
+  storedEvents?: SessionEvent[]
+} = {}): {
+  ctx: Context
+  service: AgentTeamService
+  store: MemoryStore
+  runtime: AssistantRuntime
+  mainEvents: SessionEvent[]
+} {
+  const { ctx, service, store } = createHarness()
+  const mainEvents: SessionEvent[] = []
+  const mainAgent = {
+    id: SessionId('session-main'),
+    session: {
+      id: SessionId('session-main'),
+      snapshotEvents: () => mainEvents,
+    },
+    status: 'idle',
+    followup: vi.fn(),
+    cancel: vi.fn(),
+    whenIdle: vi.fn(async () => {}),
+  } as unknown as Agent
+  const workspace = {
+    id: 'workspace-1',
+    path: '/tmp/dsh-team-mode-workspace',
+    title: 'Workspace',
+    status: async () => 'ok' as const,
+    attachSession: async () => {},
+  }
+  const runtimeCtx = {
+    logger: { warn: () => {}, info: () => {}, error: () => {}, debug: () => {} },
+    on: () => () => {},
+    agents: {
+      get: (id: SessionId) => (
+        options.live === false || String(id) !== 'session-main' ? undefined : mainAgent
+      ),
+      create: async () => { throw new Error('unexpected main Agent create') },
+      resume: async () => { throw new Error('unexpected main Agent resume') },
+    },
+    sessions: { flush: async () => {} },
+    sessionPersistence: {
+      open: async () => ({
+        read: async () => ({ events: options.storedEvents ?? [] }),
+        close: async () => {},
+      }),
+    },
+    workspaceRegistry: { get: () => workspace, list: () => [workspace] },
+    agentPresets: { mount: async () => {} },
+    permissionPresets: { set: () => {} },
+  }
+  const runtime = new AssistantRuntime(runtimeCtx as never, config, service)
+  service.attachAssistantRuntime(runtime)
+  return { ctx, service, store, runtime, mainEvents }
+}
+
+function seedInstanceWithMain(): AssistantInstance {
+  return { ...seedInstance(), mainSessionId: 'session-main', status: 'active' }
+}
+
+function sessionEvent(seq: number, type: SessionEvent['type'], data: unknown): SessionEvent {
+  return { seq, time: 1_700_000_000_000 + seq, type, data } as SessionEvent
+}
+
+function sessionUserEvent(seq: number, id: string, text: string): SessionEvent {
+  return sessionEvent(seq, 'user/message', {
+    id,
+    role: 'user',
+    source: { kind: 'user' },
+    content: [{ type: 'text', text }],
+  })
+}
+
+function sessionAssistantEvent(seq: number, id: string, text: string): SessionEvent {
+  return sessionEvent(seq, 'assistant/message', {
+    turn: seq + 1,
+    step: 1,
+    message: {
+      id,
+      role: 'assistant',
+      source: { kind: 'model', provider: 'openai', model: 'gpt-5' },
+      content: [{ type: 'text', text }],
+    },
+    stream: [],
+  })
+}
+
+function taskRow(input: {
+  id: string
+  status: AssistantSession['status']
+  updatedAt: string
+}): AssistantSession {
+  return {
+    schemaVersion: 1,
+    id: input.id,
+    assistantId: 'instance-1',
+    sessionId: `session-${input.id}`,
+    role: 'task',
+    title: `Task ${input.id}`,
+    brief: 'Do the thing',
+    parentSessionId: 'session-main',
+    status: input.status,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: input.updatedAt,
+  }
+}
+
+function emptyFacts(): CheckpointFacts {
+  return {
+    recentMessages: [],
+    activeTasks: [],
+    workspacePath: '/tmp/dsh-team-mode-workspace',
+    note: '',
+  }
+}
+
+function webResponse(): ServerResponse & { status: number, body: string } {
+  const value = {
+    status: 0,
+    body: '',
+    writeHead(status: number) {
+      value.status = status
+      return value
+    },
+    write(chunk: unknown) {
+      value.body += String(chunk)
+      return true
+    },
+    end(chunk?: unknown) {
+      if (chunk !== undefined) value.body += String(chunk)
+      return value
+    },
+    once() {
+      return value
+    },
+    on() {
+      return value
+    },
+  }
+  return value as unknown as ServerResponse & { status: number, body: string }
+}
+
+async function callApi(
+  routes: Map<string, (request: IncomingMessage, response: ServerResponse) => unknown>,
+  body: { method: string, payload: unknown },
+): Promise<{ status: number, body: string }> {
+  const handler = routes.get(AGENT_TEAM_API_PATH)
+  if (handler === undefined) throw new Error('api route not registered')
+  const request = Object.assign(
+    Readable.from([Buffer.from(JSON.stringify({ requestId: 'r1', ...body }))]),
+    {
+      method: 'POST',
+      url: AGENT_TEAM_API_PATH,
+      headers: { 'content-type': 'application/json' },
+    },
+  ) as unknown as IncomingMessage
+  const response = webResponse()
+  await handler(request, response)
+  return response
+}
+
 class MemoryStore implements AgentTeamStore {
   private assistants = new Map<string, AssistantTemplate>()
   private assistantInstances = new Map<string, AssistantInstance>()
   private assistantSessions = new Map<string, AssistantSession>()
   private assistantMemory = new Map<string, AssistantMemory>()
+  private contextCheckpoints = new Map<string, ContextCheckpoint>()
   private teams = new Map<string, TeamAggregate>()
   private messages = new Map<string, TeamMessage>()
   private activities = new Map<string, TeamActivity>()
@@ -2705,6 +3019,16 @@ class MemoryStore implements AgentTeamStore {
     update: (current: AssistantMemory) => AssistantMemory,
   ) {
     return updateMap(this.assistantMemory, assistantId, update)
+  }
+
+  getContextCheckpoint(id: string) { return this.contextCheckpoints.get(id) }
+  listContextCheckpoints() {
+    return [...this.contextCheckpoints.values()]
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
+  }
+  async putContextCheckpoint(value: ContextCheckpoint) { this.contextCheckpoints.set(value.id, value) }
+  updateContextCheckpoint(id: string, update: (current: ContextCheckpoint) => ContextCheckpoint) {
+    return updateMap(this.contextCheckpoints, id, update)
   }
 
   getAssistantSession(id: string) { return this.assistantSessions.get(id) }

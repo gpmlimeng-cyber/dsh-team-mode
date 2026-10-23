@@ -276,6 +276,19 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
         ...(payload.expectedRevision === undefined ? {} : { expectedRevision: payload.expectedRevision }),
       })
     }
+    case 'assistant.checkpoint.create': {
+      const payload = z.object({
+        assistantId: z.string().trim().min(1).max(200),
+        note: z.string().max(4000).optional(),
+      }).strict().parse(request.payload)
+      return service.createAssistantCheckpoint(payload.assistantId, payload.note)
+    }
+    case 'assistant.checkpoint.list': {
+      const payload = z.object({
+        assistantId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.listAssistantCheckpoints(payload.assistantId)
+    }
     case 'assistant.task.list': {
       const payload = request.payload === undefined || request.payload === null
         ? undefined

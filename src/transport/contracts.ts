@@ -6,6 +6,7 @@ import type {
   AssistantSession,
   AssistantTemplate,
   CloneTeamInput,
+  ContextCheckpoint,
   CreateAssistantInput,
   CreateAssistantInstanceInput,
   CreateTeamDraftInput,
@@ -48,6 +49,8 @@ export const AGENT_TEAM_METHODS = [
   'assistant.memory.get',
   'assistant.memory.write',
   'assistant.memory.entry.write',
+  'assistant.checkpoint.create',
+  'assistant.checkpoint.list',
   'assistant.task.list',
   'assistant.task.interactions',
   'assistant.task.interaction.respond',
@@ -401,6 +404,14 @@ export interface AgentTeamRequestMap {
       entry: WriteAssistantMemoryEntryInput
     }
     result: AssistantMemoryEntryWriteView
+  }
+  'assistant.checkpoint.create': {
+    payload: { assistantId: string; note?: string }
+    result: ContextCheckpoint
+  }
+  'assistant.checkpoint.list': {
+    payload: { assistantId: string }
+    result: ContextCheckpoint[]
   }
   'assistant.task.list': {
     payload: { assistantId?: string } | undefined

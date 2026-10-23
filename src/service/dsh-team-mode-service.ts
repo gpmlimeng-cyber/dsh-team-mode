@@ -10,6 +10,7 @@ import {
   addTeamMemberInputSchema,
   assistantMemoryModeSchema,
   cloneTeamInputSchema,
+  contextCheckpointSchema,
   createAssistantInstanceInputSchema,
   createAssistantSessionInputSchema,
   createTeamDraftInputSchema,
@@ -32,7 +33,9 @@ import {
   type AssistantSession,
   type AssistantSnapshot,
   type AssistantTemplate,
+  type CheckpointFacts,
   type CloneTeamInput,
+  type ContextCheckpoint,
   type CreateAssistantInput,
   type CreateAssistantInstanceInput,
   type CreateAssistantSessionInput,
@@ -54,7 +57,7 @@ import {
   type UpdateTeamGoalInput,
   type WriteAssistantMemoryEntryInput,
 } from '../domain/types.js'
-import type { AgentTeamStore } from '../storage/store.js'
+import type { AgentTeamCheckpointStore, AgentTeamStore } from '../storage/store.js'
 import type { AssistantBuilderRuntime } from '../runtime/assistant-builder-runtime.js'
 import type { AssistantEnsureResult, AssistantRuntime } from '../runtime/assistant-runtime.js'
 import { resolveMemberToolPolicy } from '../runtime/team-tools.js'
@@ -94,6 +97,12 @@ export interface MutationOptions {
 export const ASSISTANT_MEMORY_MAX_CHARS = 16_000
 
 /**
+ * One checkpoint's optional handoff note. Longer notes are rejected rather than
+ * truncated, matching the schema bound the client validates against.
+ */
+export const CHECKPOINT_NOTE_LIMIT = 4_000
+
+/**
  * Structured memory is unbounded by design only up to this many entries; past it
  * a runaway writer would keep growing the record with no reader able to show it.
  */
@@ -116,7 +125,7 @@ export interface WriteAssistantMemoryOptions {
 
 export interface AgentTeamChange {
   cursor: number
-  entityType: 'assistant' | 'assistant-instance' | 'assistant-session' | 'assistant-builder' | 'team' | 'operation' | 'conversation' | 'workspace' | 'catalog'
+  entityType: 'assistant' | 'assistant-instance' | 'assistant-session' | 'assistant-checkpoint' | 'assistant-builder' | 'team' | 'operation' | 'conversation' | 'workspace' | 'catalog'
   entityId: string
   revision: number
   kind: string
@@ -998,6 +1007,68 @@ export class AgentTeamService extends Service {
   /** Materialize the instance's main Session through the attached runtime. */
   async ensureAssistantInstance(id: string): Promise<AssistantEnsureResult> {
     return this.requireAssistantRuntime().ensureInstance(id)
+  }
+
+  /**
+   * Capture one checkpoint from the instance's current main Session. The note
+   * is trimmed and bounded here; the facts themselves are built deterministically
+   * by the runtime (no model call, no tool output).
+   */
+  async createAssistantCheckpoint(assistantId: string, note = ''): Promise<ContextCheckpoint> {
+    const id = assistantId.trim()
+    if (id === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Assistant instance id cannot be empty')
+    }
+    requireAssistantInstance(this.store, id)
+    const text = note.trim()
+    if (text.length > CHECKPOINT_NOTE_LIMIT) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Checkpoint note must be at most ${CHECKPOINT_NOTE_LIMIT} characters`,
+      )
+    }
+    return this.requireAssistantRuntime().createCheckpoint(id, text)
+  }
+
+  /** Newest-first checkpoints of one Assistant instance. */
+  listAssistantCheckpoints(assistantId: string): ContextCheckpoint[] {
+    const id = assistantId.trim()
+    if (id === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Assistant instance id cannot be empty')
+    }
+    requireAssistantInstance(this.store, id)
+    return this.checkpointStore().listContextCheckpoints()
+      .filter(checkpoint => checkpoint.assistantId === id)
+  }
+
+  /**
+   * Runtime-only hook: persist the bounded facts the runtime captured. The
+   * checkpoint is created `ready`; only a handoff consumes it.
+   */
+  async createContextCheckpoint(input: {
+    assistantId: string
+    sourceSessionId: string
+    capturedThroughSeq: number
+    facts: CheckpointFacts
+    note: string
+  }): Promise<ContextCheckpoint> {
+    const instance = requireAssistantInstance(this.store, input.assistantId)
+    const now = new Date().toISOString()
+    const checkpoint = contextCheckpointSchema.parse({
+      schemaVersion: 1,
+      id: randomUUID(),
+      assistantId: instance.id,
+      sourceSessionId: input.sourceSessionId,
+      title: `检查点 ${now}`,
+      note: input.note,
+      capturedThroughSeq: input.capturedThroughSeq,
+      facts: input.facts,
+      status: 'ready',
+      createdAt: now,
+    })
+    await this.checkpointStore().putContextCheckpoint(checkpoint)
+    this.publish('assistant-checkpoint', checkpoint.id, 0, 'assistant.checkpoint.created')
+    return checkpoint
   }
 
   /** Reattach one task's worker Session and return the Session to navigate to. */
@@ -2390,6 +2461,15 @@ export class AgentTeamService extends Service {
   private requireAssistantRuntime(): AssistantRuntime {
     if (this.assistantRuntime === undefined) throw new Error('Assistant runtime is not attached')
     return this.assistantRuntime
+  }
+
+  /**
+   * Checkpoint persistence is a superset of the base store interface: the
+   * production domain store implements it, while `AgentTeamStore` stays free of
+   * mandatory checkpoint members so older store doubles keep compiling.
+   */
+  private checkpointStore(): AgentTeamCheckpointStore {
+    return this.store as AgentTeamStore & AgentTeamCheckpointStore
   }
 }
 

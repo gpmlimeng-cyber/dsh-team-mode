@@ -20,6 +20,7 @@ import type {
   AssistantSession,
   AssistantSnapshot,
   AssistantPreview,
+  ContextCheckpoint,
   MemoryEntry,
 } from '../domain/types.js'
 import type { InteractionResponseInput, PendingInteractionView } from '../transport/contracts.js'
@@ -29,6 +30,7 @@ import {
   registerAssistantTaskTools,
   type AssistantTaskSummaryMessage,
 } from './assistant-tools.js'
+import { buildCheckpointFacts } from './checkpoint-facts.js'
 import { projectConversation } from './conversation-projector.js'
 import { TeamInteractionBridge } from './team-interaction-bridge.js'
 import type { ConversationNode } from '../transport/contracts.js'
@@ -352,6 +354,41 @@ export class AssistantRuntime {
     if (node === undefined) return undefined
     const text = node.text.replace(/\s+/g, ' ').trim().slice(0, 160)
     return text === '' ? undefined : { role: node.kind, text, time: node.time }
+  }
+
+  /**
+   * Capture one deterministic checkpoint of the instance's main Session. A
+   * live Agent owned by this runtime is read through its Session; a stopped
+   * Session is read from its durable log. No model runs and no tool result is
+   * copied; the service persists the bounded facts.
+   */
+  async createCheckpoint(assistantId: string, note: string): Promise<ContextCheckpoint> {
+    const instance = this.service.getAssistantInstance(assistantId)
+    const sourceSessionId = instance.mainSessionId
+    if (sourceSessionId === undefined) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Assistant '${instance.assistantSnapshot.name}' has no main Session yet; open it once before creating a checkpoint`,
+        { instanceId: instance.id },
+      )
+    }
+    const live = this.ctx.agents.get(SessionId(sourceSessionId))
+    const events = live === undefined
+      ? await readStoredSessionEvents(this.ctx, sourceSessionId)
+      : live.session.snapshotEvents()
+    const { facts, capturedThroughSeq } = buildCheckpointFacts({
+      events,
+      tasks: this.service.listAssistantSessions(assistantId).items,
+      workspacePath: instance.workspacePath,
+      note,
+    })
+    return this.service.createContextCheckpoint({
+      assistantId: instance.id,
+      sourceSessionId,
+      capturedThroughSeq,
+      facts,
+      note,
+    })
   }
 
   /** Pending human interactions raised by one hidden worker task. */
