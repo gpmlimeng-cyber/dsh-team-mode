@@ -2,12 +2,20 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { useEffect, useState } from 'react'
+import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamClientContext } from './client-context.js'
 import {
   AgentTeamSettingsSection,
   type WorkspaceChoice,
 } from './components.js'
 import { SidebarPortal, useSurfaceMode } from './sidebar.js'
+import { TeamMainAgentPanel } from './team-main-agent.js'
+import {
+  closeTeamPanel,
+  panelToggleAvailable,
+  toggleTeamPanel,
+  useTeamPanelOpen,
+} from './store.js'
 import { SessionRowHider } from './session-row-hider.js'
 import { AssistantSessionTitle, AssistantSessionTitleHost } from './assistant-session-title.js'
 import { TeamModeDialogs } from './team-dialogs.js'
@@ -23,11 +31,61 @@ import {
   TeamBoardView,
   keepNativeConversationTab,
 } from './team-board.js'
-import { callAgentTeam } from './api.js'
+import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import { installTeamLocale, type TeamLocaleContext } from './team-i18n.js'
+import type { TeamView } from '../transport/contracts.js'
 
 export const name = 'dsh-team-mode-client'
 export const inject = ['slots', 'workspaces', 'uiWorkspace', 'sessions', 'layout', 'locale']
+
+/** The team whose member Session is currently open, from the existing team list. */
+function useActiveTeam(sessionId: string | undefined): TeamView | undefined {
+  const [team, setTeam] = useState<TeamView>()
+  useEffect(() => {
+    if (sessionId === undefined) {
+      setTeam(undefined)
+      return
+    }
+    let live = true
+    const load = (): void => {
+      void callAgentTeam('team.list')
+        .then(value => {
+          if (!live) return
+          setTeam(value.items.find(candidate =>
+            Object.values(candidate.members).some(member => member.sessionId === sessionId)))
+        })
+        .catch(() => { if (live) setTeam(undefined) })
+    }
+    load()
+    const unsubscribe = subscribeAgentTeam(load, () => {}, load)
+    return () => {
+      live = false
+      unsubscribe()
+    }
+  }, [sessionId])
+  return team
+}
+
+/** The conversation currently on screen; the panel follows it without navigation. */
+function useConversationSessionId(): string | undefined {
+  const [sessionId, setSessionId] = useState<string>()
+  useEffect(() => {
+    const read = (): void => {
+      const element = document.querySelector<HTMLElement>('[data-conversation-session]')
+      setSessionId(element?.dataset.conversationSession)
+    }
+    read()
+    const observer = new MutationObserver(read)
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-conversation-session'],
+    })
+    return () => { observer.disconnect() }
+  }, [])
+  return sessionId
+}
 
 export function apply(ctx: AgentTeamClientContext): void {
   installTeamLocale(ctx as unknown as TeamLocaleContext)
@@ -92,10 +150,53 @@ export function apply(ctx: AgentTeamClientContext): void {
     </>
   )
 
+  const TeamPanelToggle = (): JSX.Element => {
+    const open = useTeamPanelOpen()
+    return (
+      <Button
+        type="button"
+        size="sm"
+        variant={open ? 'outline' : 'ghost'}
+        aria-pressed={open}
+        onClick={toggleTeamPanel}
+        title={open ? '收起团队面板' : '打开团队面板'}
+      >
+        团队面板
+      </Button>
+    )
+  }
+
+  const TeamPanelSessionHost = (): JSX.Element | null => {
+    const sessionId = useConversationSessionId()
+    const team = useActiveTeam(sessionId)
+    if (sessionId === undefined || team === undefined) return null
+    if (!Object.values(team.members).some(member => member.sessionId === sessionId)) return null
+    const openMember = (slotId: string): void => {
+      const member = team.members[slotId]
+      if (member !== undefined) openSession(member.sessionId)
+    }
+    return (
+      <TeamMainAgentPanel
+        team={team}
+        open
+        onClose={closeTeamPanel}
+        onOpenMember={openMember}
+        onOpenTeam={() => { openTeamPage(team.id) }}
+      />
+    )
+  }
+
+  const TeamPanelHost = (): JSX.Element | null => {
+    const mode = useSurfaceMode()
+    const open = useTeamPanelOpen()
+    if (mode !== 'team' || !open) return null
+    return <TeamPanelSessionHost />
+  }
+
   // Only expose the two team views while a team member Session is active.
   // Registration is dynamic because `conversation.view` is a global list and
   // ordinary Sessions must not grow Team Mode tabs.
-  const TeamViewTabs = ({ sessionId }: { sessionId?: string }): null => {
+  const TeamViewTabs = ({ sessionId }: { sessionId?: string }): JSX.Element | null => {
     const [teamSession, setTeamSession] = useState(false)
     const mode = useSurfaceMode()
     useEffect(() => {
@@ -136,7 +237,7 @@ export function apply(ctx: AgentTeamClientContext): void {
       register(TEAM_MANAGE_VIEW_ID, TEAM_MANAGE_VIEW_LABEL, TEAM_MANAGE_VIEW_ORDER, TeamManageView as never)
       return () => { for (const dispose of disposers) dispose() }
     }, [mode, teamSession])
-    return null
+    return panelToggleAvailable(teamSession, mode) ? <TeamPanelToggle /> : null
   }
 
   const TeamParallelOverlay = (props: Record<string, unknown>): JSX.Element | null => {
@@ -170,6 +271,13 @@ export function apply(ctx: AgentTeamClientContext): void {
     order: 20,
     label: '团队',
   }, TeamModeDialogsHost))
+
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'dsh-team-mode-panel',
+    order: 25,
+    label: '团队面板',
+  }, TeamPanelHost))
 
   // Additive sidebar group: keep the shipped WorkspaceBrowser untouched and
   // mount the “团队” section above its slot DOM anchor. This avoids replacing

@@ -1,8 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TeamMainAgentPanel } from '../src/client/team-main-agent.js'
+import {
+  panelToggleAvailable,
+  setTeamPanelOpen,
+  toggleTeamPanel,
+  useTeamPanelOpen,
+} from '../src/client/store.js'
 import type { TeamMemberSlot, TeamTask } from '../src/domain/types.js'
 import type { TeamView } from '../src/transport/contracts.js'
 
@@ -321,5 +327,80 @@ describe('TeamMainAgentPanel responsive contract', () => {
     expect(panel).toContain('var(--dsw-alias-border-l1)')
     expect(styles).toContain('var(--dsw-alias-button-primary-fill)')
     expect(panel).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+  })
+})
+
+function PanelOpenProbe(): JSX.Element {
+  return createElement('span', null, useTeamPanelOpen() ? 'open' : 'closed')
+}
+
+describe('team panel toggle store', () => {
+  beforeEach(() => {
+    setTeamPanelOpen(false)
+  })
+
+  it('toggles the panel open and closed without touching the active Session', () => {
+    expect(renderToStaticMarkup(createElement(PanelOpenProbe))).toContain('closed')
+    toggleTeamPanel()
+    expect(renderToStaticMarkup(createElement(PanelOpenProbe))).toContain('open')
+    toggleTeamPanel()
+    expect(renderToStaticMarkup(createElement(PanelOpenProbe))).toContain('closed')
+  })
+
+  it('sets the panel state explicitly', () => {
+    setTeamPanelOpen(true)
+    expect(renderToStaticMarkup(createElement(PanelOpenProbe))).toContain('open')
+    setTeamPanelOpen(false)
+    expect(renderToStaticMarkup(createElement(PanelOpenProbe))).toContain('closed')
+  })
+
+  it('offers the toggle only for a team Session in team mode', () => {
+    expect(panelToggleAvailable(true, 'team')).toBe(true)
+    expect(panelToggleAvailable(true, 'native')).toBe(false)
+    expect(panelToggleAvailable(false, 'team')).toBe(false)
+    expect(panelToggleAvailable(false, 'native')).toBe(false)
+  })
+
+  it('keeps the close path free of navigation', () => {
+    const store = readFileSync(new URL('../src/client/store.ts', import.meta.url), 'utf8')
+    expect(store).toContain('export function setTeamPanelOpen')
+    expect(store).not.toContain('openSession')
+    expect(store).not.toContain('openTeamPage')
+  })
+})
+
+describe('team panel mounting wiring', () => {
+  const source = readFileSync(new URL('../src/client/index.tsx', import.meta.url), 'utf8')
+
+  it('renders the header toggle only through the availability guard', () => {
+    expect(source).toContain('panelToggleAvailable(teamSession, mode)')
+    expect(source).toContain('aria-pressed={open}')
+    expect(source).toContain('onClick={toggleTeamPanel}')
+    expect(source).toContain('团队面板')
+  })
+
+  it('mounts the panel in team mode and leaves native mode empty', () => {
+    expect(source).toContain('const TeamPanelHost')
+    expect(source).toContain('useSurfaceMode()')
+    expect(source).toContain("mode !== 'team'")
+    expect(source).toContain('useTeamPanelOpen()')
+    expect(source).toContain('<TeamMainAgentPanel')
+  })
+
+  it('closes without replacing the main Agent conversation', () => {
+    expect(source).toContain('onClose={closeTeamPanel}')
+    expect(source).not.toContain('onClose={() => openSession')
+  })
+
+  it('derives the panel team from the active team Session via existing team.list', () => {
+    expect(source).toContain("callAgentTeam('team.list')")
+    expect(source).toContain('member.sessionId === sessionId')
+    expect(source).toContain('subscribeAgentTeam')
+    expect(source).not.toContain("callAgentTeam('team.panel")
+  })
+
+  it('registers one shell overlay for the panel', () => {
+    expect(source).toContain("id: 'dsh-team-mode-panel'")
+    expect(source).toContain("name: 'shell.overlay'")
   })
 })

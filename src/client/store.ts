@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from 'react'
+import type { SurfaceMode } from './surface-mode.js'
 
 export type TeamDialog =
   | { kind: 'create' }
@@ -7,6 +8,8 @@ export type TeamDialog =
 export interface AgentTeamUiState {
   visible: boolean
   createTeamRequest: number
+  /** Right-side Leader panel; UI-only, never persisted as business data. */
+  panelOpen: boolean
   selectedTeamId?: string | undefined
   selectedAssistantId?: string | undefined
   dialog?: TeamDialog | undefined
@@ -15,23 +18,47 @@ export interface AgentTeamUiState {
 let state: AgentTeamUiState = {
   visible: false,
   createTeamRequest: 0,
+  panelOpen: false,
 }
 const listeners = new Set<() => void>()
 
 export function openTeams(): void {
-  update({ visible: true, createTeamRequest: 0 })
+  update({ visible: true, createTeamRequest: 0, panelOpen: state.panelOpen })
 }
 
 export function openTeam(teamId: string): void {
-  update({ visible: true, createTeamRequest: 0, selectedTeamId: teamId })
+  update({ visible: true, createTeamRequest: 0, panelOpen: state.panelOpen, selectedTeamId: teamId })
 }
 
 export function openTeamCreator(): void {
-  update({ visible: true, createTeamRequest: state.createTeamRequest + 1 })
+  update({
+    visible: true,
+    createTeamRequest: state.createTeamRequest + 1,
+    panelOpen: state.panelOpen,
+  })
 }
 
 export function closeAgentTeam(): void {
-  update({ visible: false, createTeamRequest: 0 })
+  update({ visible: false, createTeamRequest: 0, panelOpen: state.panelOpen })
+}
+
+/** Open or close the Leader side panel; navigation is never part of this write. */
+export function setTeamPanelOpen(open: boolean): void {
+  update({ ...state, panelOpen: open })
+}
+
+export function toggleTeamPanel(): void {
+  update({ ...state, panelOpen: !state.panelOpen })
+}
+
+/** Close only: the active Session and its conversation stay untouched. */
+export function closeTeamPanel(): void {
+  setTeamPanelOpen(false)
+}
+
+/** Only an active team Session in team surface mode earns the header toggle. */
+export function panelToggleAvailable(teamSession: boolean, mode: SurfaceMode): boolean {
+  return teamSession && mode === 'team'
 }
 
 export function selectTeam(teamId: string): void {
@@ -58,18 +85,28 @@ export function useAgentTeamUi(): AgentTeamUiState {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 }
 
+/** Read the panel switch; its server snapshot is the live value so SSR tests can observe it. */
+export function useTeamPanelOpen(): boolean {
+  return useSyncExternalStore(subscribe, panelSnapshot, panelSnapshot)
+}
+
 function getSnapshot(): AgentTeamUiState {
   return state
 }
 
 function getServerSnapshot(): AgentTeamUiState {
-  return { visible: false, createTeamRequest: 0 }
+  return { visible: false, createTeamRequest: 0, panelOpen: state.panelOpen }
+}
+
+function panelSnapshot(): boolean {
+  return state.panelOpen
 }
 
 function update(next: AgentTeamUiState): void {
   if (
     state.visible === next.visible
     && state.createTeamRequest === next.createTeamRequest
+    && state.panelOpen === next.panelOpen
     && state.selectedTeamId === next.selectedTeamId
     && state.selectedAssistantId === next.selectedAssistantId
     && state.dialog === next.dialog
