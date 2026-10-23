@@ -21,6 +21,7 @@ import {
   TEAM_BOARD_VIEW_LABEL,
   TEAM_BOARD_VIEW_ORDER,
   TeamBoardView,
+  keepNativeConversationTab,
 } from './team-board.js'
 import { callAgentTeam } from './api.js'
 import { installTeamLocale, type TeamLocaleContext } from './team-i18n.js'
@@ -61,12 +62,17 @@ export function apply(ctx: AgentTeamClientContext): void {
     if (mode !== 'team') return null
     return <TeamModeDialogs pickWorkspace={pickWorkspace} openSession={openSession} />
   }
+  // A team's default entry is the Leader's main Session on the shipped chat
+  // tab. The 群聊/看板 views stay registered and remain an explicit tab choice.
   const openTeamPage = (teamId: string): void => {
     void callAgentTeam('team.list')
       .then(value => {
         const team = value.items.find(candidate => candidate.id === teamId)
         const leader = team === undefined ? undefined : team.members[team.leaderSlotId]
+        // A team without a resolvable Leader must not throw an unhandled
+        // rejection or navigate anywhere.
         if (leader === undefined) return
+        keepNativeConversationTab(leader.sessionId)
         openSession(leader.sessionId)
       })
       .catch(() => undefined)

@@ -222,14 +222,32 @@ function clearKnownTeam(sessionId: string): void {
   removeStorage(`${KNOWN_SESSION_KEY_PREFIX}${sessionId}`)
 }
 
-function keepTeamBoardTab(sessionId: string): void {
+/** Shell view id for the shipped chat tab. */
+const NATIVE_CONVERSATION_VIEW_ID = 'chat'
+
+/** Persist one conversation view under the shell's Session key, keeping its `draft`. */
+function keepConversationView(sessionId: string, view: string): void {
   const key = `${CONVERSATION_STORE_KEY}.${sessionId}`
   const raw = readStorageJson(key)
   const current = typeof raw === 'object' && raw !== null && !Array.isArray(raw)
     ? raw as Record<string, unknown>
     : {}
-  if (current.view === TEAM_BOARD_VIEW_ID) return
-  writeStorageJson(key, { ...current, view: TEAM_BOARD_VIEW_ID })
+  if (current.view === view) return
+  writeStorageJson(key, { ...current, view })
+}
+
+function keepTeamBoardTab(sessionId: string): void {
+  keepConversationView(sessionId, TEAM_BOARD_VIEW_ID)
+}
+
+/**
+ * Land a Session on the shipped chat tab. Team navigation calls this before
+ * opening the Leader so a remembered 群聊/看板 tab never becomes a team's
+ * default entry. The shell's stored key shape is the only assumption; storage
+ * failures leave the shell's own remembered tab untouched.
+ */
+export function keepNativeConversationTab(sessionId: string): void {
+  keepConversationView(sessionId, NATIVE_CONVERSATION_VIEW_ID)
 }
 
 function useNow(): number {
