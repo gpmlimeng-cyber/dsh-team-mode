@@ -18,9 +18,11 @@ npm 发布：未发布
 
 ```text
 95a8f4e chore: prepare 0.4.0 release readiness
+25054f9 fix: keep handoff out of the release package (final release bytes)
 ```
 
 安装/打包已验证，但未 publish、未部署、未打 0.4.0 tag。
+发布包固定为 41 files / 7.5 MiB，HANDOFF 不随包发布。
 
 ## 已完成里程碑
 
