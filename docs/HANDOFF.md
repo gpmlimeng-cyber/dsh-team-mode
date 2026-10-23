@@ -14,8 +14,13 @@ npm 发布：未发布
 外部部署：未部署
 ```
 
-最后阶段是 `release-readiness`。  
-如果 t4 已完成，最新提交应包含 release 收尾；以 `git log -1` 为准。
+最后阶段是 `release-readiness`，已收尾：
+
+```text
+95a8f4e chore: prepare 0.4.0 release readiness
+```
+
+安装/打包已验证，但未 publish、未部署、未打 0.4.0 tag。
 
 ## 已完成里程碑
 
@@ -83,6 +88,38 @@ dsh plugin --profile web add /absolute/path/to/dsh-team-mode
 - `docs/installation.md`
 - `docs/migration-0.2.1.md`
 - `README_CN.md`
+
+## 未开始规划（尚未写实现计划）
+
+以下项目只有方向/架构说明，没有 AgentTeams 实施计划；下次继续时先补 plan。
+
+| 项目 | 当前资料 | 状态 |
+|---|---|---|
+| Context Steward（压缩/分段/checkpoint/handoff） | `COMPETITIVE-GAPS.md` | 未开始 |
+| Group Chat Turn Engine（管理员先答/顺序/@/迟到回复） | `COMPETITIVE-GAPS.md` | 未开始 |
+| Autonomous Ops（routines/reminders/budget/park） | `COMPETITIVE-GAPS.md` + roadmap | 未开始 |
+| Memory Automation（capture/recall/tidy/journal） | `MEMORY-ARCHITECTURE.md` P2/P3 | 未开始 |
+| DSH Ecosystem Reuse（能力发现/成员策略/权限边界） | `COMPETITIVE-GAPS.md` | 未开始 |
+| Task reminders / follow-up | roadmap P2 | 未开始 |
+| 新成员有界历史注入 | roadmap / RAFT | 未开始 |
+| 成员私有 workspace | roadmap / RAFT | 未开始 |
+| F8 记忆配额硬化 | release review residual | 未开始 |
+| quality-gate findings 邮件措辞 | quality-gates review residual | 未开始 |
+| multi-host 评估 | roadmap P2 | 未开始 |
+
+## 规划文档索引
+
+```text
+docs/TEAM-MODE-ROADMAP.md
+docs/COMPETITIVE-GAPS.md
+docs/MEMORY-ARCHITECTURE.md
+docs/DECISIONS-IDENTITY-MEMORY.md
+docs/RAFT-ADOPTION.md
+docs/TEAM-STEWARD.md
+docs/EXECUTION-POLICY.md
+docs/HANDOFF.md
+docs/superpowers/plans/*.md
+```
 
 ## 未完成工作
 
