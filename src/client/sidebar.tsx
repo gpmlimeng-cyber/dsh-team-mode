@@ -29,6 +29,7 @@ import {
 } from './store.js'
 import {
   compareTeamSidebar,
+  recentTeamTasks,
   teamScopeCounts,
   teamSidebarStatusText,
   teamSidebarSummary,
@@ -88,6 +89,7 @@ export function SidebarTeamSection({
   const [scope, setScope] = useState<'active' | 'archived'>('active')
   const [sortMode, setSortMode] = useState<'updated' | 'name'>('updated')
   const [menuTeamId, setMenuTeamId] = useState<string>()
+  const [openTaskTeams, setOpenTaskTeams] = useState<ReadonlySet<string>>(() => new Set())
   const [error, setError] = useState<string>()
 
   const load = useCallback(async () => {
@@ -133,6 +135,16 @@ export function SidebarTeamSection({
     selectTeam(team.id)
     setActiveSessionId(undefined)
     openTeamPage(team.id)
+  }
+
+  /** Session-only expansion state; the row itself stays a navigation control. */
+  const toggleTeamTasks = (teamId: string): void => {
+    setOpenTaskTeams(current => {
+      const next = new Set(current)
+      if (next.has(teamId)) next.delete(teamId)
+      else next.add(teamId)
+      return next
+    })
   }
 
   return (
@@ -295,11 +307,28 @@ export function SidebarTeamSection({
                 && team.state !== 'active'
                 && team.state !== 'starting'
               const rowMenuOpen = menuTeamId === team.id
+              const tasksOpen = openTaskTeams.has(team.id)
+              const tasks = tasksOpen ? recentTeamTasks(team) : []
+              const taskListId = `dsh-team-mode-team-tasks-${team.id}`
               return (
                 <div key={team.id} className={css.sidebarTeamGroup}>
                   <div
                     className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamRowWrapTwoLine} ${active ? css.sidebarTeamRowWrapActive : ''} ${rowMenuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
                   >
+                    <button
+                      type="button"
+                      className={css.sidebarTeamExpand}
+                      aria-expanded={tasksOpen}
+                      aria-controls={tasksOpen ? taskListId : undefined}
+                      aria-label={tasksOpen ? `收起 ${team.name} 的最近任务` : `展开 ${team.name} 的最近任务`}
+                      title={tasksOpen ? '收起最近任务' : '展开最近任务'}
+                      onClick={() => { toggleTeamTasks(team.id) }}
+                    >
+                      <IconChevronRightOutlineRegular
+                        size={12}
+                        className={`${css.sidebarTeamExpandChevron} ${tasksOpen ? css.sidebarTeamExpandChevronOpen : ''}`}
+                      />
+                    </button>
                     <button
                       type="button"
                       className={`${css.sidebarTeamRow} ${css.sidebarTeamRowTwoLine}`}
@@ -397,6 +426,42 @@ export function SidebarTeamSection({
                       )}
                     />
                   </div>
+                  {tasksOpen && (
+                    <div
+                      id={taskListId}
+                      className={css.sidebarTeamTaskList}
+                      role="group"
+                      aria-label={`${team.name} 最近任务`}
+                      data-dsh-team-tasks
+                    >
+                      {tasks.length === 0
+                        ? <div className={css.sidebarTeamTaskEmpty}>暂无任务</div>
+                        : tasks.map(task => {
+                          const waiting = task.blockedBy === undefined
+                            ? undefined
+                            : `等待 ${task.blockedBy.title}${task.blockedBy.ownerName === undefined ? '' : ` · ${task.blockedBy.ownerName}`}`
+                          return (
+                            <button
+                              key={task.id}
+                              type="button"
+                              className={css.sidebarTeamTaskRow}
+                              data-dsh-team-task={task.id}
+                              data-dsh-team-task-status={task.status}
+                              title={task.title}
+                              onClick={() => { openTeam(team) }}
+                            >
+                              <span className={css.sidebarTeamTaskLine}>
+                                <span className={css.sidebarTeamTaskTitle}>{task.title}</span>
+                                <span className={css.sidebarTeamTaskStatus}>{task.statusLabel}</span>
+                              </span>
+                              {waiting !== undefined && (
+                                <span className={css.sidebarTeamTaskWaiting} title={waiting}>{waiting}</span>
+                              )}
+                            </button>
+                          )
+                        })}
+                    </div>
+                  )}
                 </div>
               )
             })}

@@ -8535,3 +8535,122 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
     display: inline-flex;
   }
 }
+
+/* Per-team recent-task disclosure: a sibling of the row button, never nested
+   inside it, so opening the team and expanding the list stay separate actions. */
+.sidebarTeamExpand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 24px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.sidebarTeamExpand:hover {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sidebarTeamExpand:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+
+.sidebarTeamExpandChevron {
+  transition: transform 120ms var(--ds-ease-in-out);
+}
+
+.sidebarTeamExpandChevronOpen {
+  transform: rotate(90deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebarTeamExpandChevron {
+    transition: none;
+  }
+}
+
+/* Newest three tasks, indented under the row copy. Titles ellipsize; the block
+   is navigation only and never renders a member roster. */
+.sidebarTeamTaskList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-left: 34px;
+  padding-bottom: 2px;
+}
+
+.sidebarTeamTaskRow {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  width: 100%;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebarTeamTaskRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sidebarTeamTaskRow:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+
+.sidebarTeamTaskLine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sidebarTeamTaskTitle {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarTeamTaskStatus {
+  flex: none;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 10px;
+  line-height: 15px;
+  white-space: nowrap;
+}
+
+.sidebarTeamTaskWaiting {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 10px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarTeamTaskEmpty {
+  padding: 2px 8px 2px;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 11px;
+  line-height: 16px;
+}
