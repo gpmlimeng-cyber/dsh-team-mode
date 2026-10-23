@@ -272,6 +272,50 @@ describe('globalOverviewModel', () => {
     expect(model.counts.idle).toBe(2)
   })
 
+  it('never blocks on terminal downstream tasks', () => {
+    const model = globalOverviewModel({
+      teams: [
+        team({
+          id: 'cancelled-down',
+          tasks: [
+            task('dep', 'failed'),
+            task('down', 'cancelled', { dependencyIds: ['dep'] }),
+          ],
+        }),
+        team({
+          id: 'failed-down',
+          tasks: [
+            task('dep', 'failed'),
+            task('down', 'failed', { dependencyIds: ['dep'] }),
+          ],
+        }),
+        team({
+          id: 'pending-down',
+          tasks: [
+            task('dep', 'failed'),
+            task('down', 'pending', { dependencyIds: ['dep'] }),
+          ],
+        }),
+        team({
+          id: 'assigned-down',
+          tasks: [
+            task('dep', 'failed'),
+            task('down', 'assigned', { dependencyIds: ['dep'] }),
+          ],
+        }),
+      ],
+      instances: [],
+      tasks: [],
+    })
+
+    expect(model.teams[0]).toMatchObject({ blocked: 0, running: false })
+    expect(model.teams[1]).toMatchObject({ blocked: 0, running: false })
+    expect(model.teams[2]).toMatchObject({ blocked: 1, running: false })
+    expect(model.teams[3]).toMatchObject({ blocked: 1, running: false })
+    expect(model.counts.blocked).toBe(2)
+    expect(model.counts.idle).toBe(2)
+  })
+
   it('puts only waiting approvals and needs-input tasks in attention', () => {
     const blocked = team({
       id: 'blocked-team',
