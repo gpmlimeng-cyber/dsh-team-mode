@@ -49,6 +49,7 @@ Leader 把编码任务交给 GLM，并只接收进度、测试结果和关键产
 | Raft 式协作借鉴 | [Raft 借鉴方案](./RAFT-ADOPTION.md) |
 | 竞品差距与下一步 | [竞品差距与后续路线](./COMPETITIVE-GAPS.md) |
 | 预算与模型路由 | [执行模型策略](./EXECUTION-POLICY.md) |
+| 换机器继续开发 | [交接文档](./HANDOFF.md) |
 
 ## 核心概念
 

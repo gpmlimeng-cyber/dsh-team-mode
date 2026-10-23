@@ -6,8 +6,8 @@
 
 - Node.js `22.19.0+` 或 `24.0.0+`
 - DeepSeek Harness `0.2.1-rc.2`
-- Agent Team `@limeng/dsh-team-mode` `0.3.0`
-- `pnpm` 已加入终端 `PATH`
+- Agent Team `@limeng/dsh-team-mode` `0.4.0`
+- `pnpm` 已加入终端 `PATH`（`dsh plugin` 会把安装动作转发给 pnpm）
 
 检查版本：
 
@@ -22,15 +22,30 @@ pnpm --version
 npm install -g pnpm
 ```
 
-## 从 npm 安装
+## 从本地压缩包安装（推荐）
 
-在任意目录执行：
+在仓库根目录打包，再安装到当前 Profile：
 
 ```bash
-npx @deepseek-ai/dsh plugin --profile web add @limeng/dsh-team-mode@0.3.0
+npm install
+npm run build
+npm pack --pack-destination /tmp
+npx @deepseek-ai/dsh plugin --profile web add /tmp/limeng-dsh-team-mode-0.4.0.tgz
 ```
 
-Harness 会把插件加入 `web` Profile。安装完成后启动：
+文件名中的版本号可能不同，请按 `npm pack` 的实际输出替换。`npm pack` 只生成 `.tgz`，不会发布到 Registry。
+
+## 从本地目录安装（推荐）
+
+适合持续开发：先构建，再把目录本身加入 Profile。
+
+```bash
+npm install
+npm run build
+npx @deepseek-ai/dsh plugin --profile web add /absolute/path/to/dsh-team-mode
+```
+
+桌面版也可以使用插件管理器安装本地 bundle 目录。安装后启动：
 
 ```bash
 npx @deepseek-ai/dsh web
@@ -43,6 +58,16 @@ dsh web: http://127.0.0.1:3080
 ```
 
 在浏览器打开该地址即可。
+
+## 从 npm 安装（尚未发布）
+
+`@limeng/dsh-team-mode` 目前**没有发布到 npm Registry**：`npm view @limeng/dsh-team-mode` 返回 `404`。发布之后才能使用：
+
+```bash
+npx @deepseek-ai/dsh plugin --profile web add @limeng/dsh-team-mode@0.4.0
+```
+
+在发布之前，请使用上面的本地压缩包或本地目录安装方式。
 
 ## 使用官方 npm Registry
 
@@ -58,16 +83,6 @@ npm config get registry
 ```text
 https://registry.npmjs.org/
 ```
-
-## 从本地压缩包安装
-
-拿到 `.tgz` 文件后，在文件所在目录执行：
-
-```bash
-npx @deepseek-ai/dsh plugin --profile web add ./limeng-dsh-team-mode-0.3.0.tgz
-```
-
-文件名中的版本号可能不同，请按实际文件名替换。
 
 ## 确认安装成功
 
@@ -97,6 +112,21 @@ npx @deepseek-ai/dsh plugin --profile web remove @limeng/dsh-team-mode
 该命令会从 `web` Profile 中移除插件依赖及其配置层。命令完成后重新启动 Harness，侧边栏和设置中的 Agent Team 入口将不再加载。
 
 卸载插件不会修改 DeepSeek Harness 源码，也不会删除团队 Workspace 中的文件。插件自身保存的助手模板、团队记录和 Session 引用是否继续保留，取决于 Harness Profile 数据目录是否仍存在；如需彻底清理这些数据，请先备份并自行处理对应 Profile 数据目录。
+
+## 发布前本地校验（维护者）
+
+发布动作不在本仓库的自动化范围内：CI 与本地脚本都**不会**执行 `npm publish`、部署或打标签。
+
+```bash
+npm ci
+npm run check
+npm run release:smoke
+```
+
+- `npm run check`：架构守卫 → `tsc --noEmit` → Vitest → 生产构建。
+- `npm run release:smoke`：`npm pack` 后校验必需文件、排除开发/密钥文件、扫描绝对路径与凭据，再把 tarball 安装到一个临时 `DSH_HOME` 并确认 `lib/client.js` 可解析。没有 `dsh` 命令时自动跳过安装段。
+- CI（`.github/workflows/ci.yml`）在 Node 22/24 上执行同样的检查；pack/install smoke 使用 Node 22。
+- `dsh-plugin-dev check` 的已知例外（3 个 `/client` 子路径误报、peer 范围收紧、npm/pnpm 与多语言 README 警告）记录在 [CHANGELOG](../CHANGELOG.md#known-dsh-plugin-dev-check-exceptions) 与 [0.4.0 发布复检](./RELEASE-2026-10-20.md#8-040-发布复检2026-10-23) 中。
 
 ## 下一步
 

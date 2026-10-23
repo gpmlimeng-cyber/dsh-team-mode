@@ -1,24 +1,34 @@
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { basename, dirname, resolve } from 'node:path'
+import { basename, dirname, relative, resolve } from 'node:path'
 import { transform } from 'lightningcss'
 import { defineConfig } from 'tsdown'
 
 const PACKAGE_NAME = '@limeng/dsh-team-mode'
 const CSS_PREFIX = '\0dsh-team-mode-css:'
 const CSS_SUFFIX = '.mjs'
+const PROJECT_ROOT = import.meta.dirname
+const cssFileById = new Map<string, string>()
 
 const cssModulesPlugin = {
   name: 'dsh-team-mode-css-modules',
   resolveId(source: string, importer?: string) {
     if (!source.endsWith('.module.css') || importer === undefined) return null
-    return `${CSS_PREFIX}${resolve(dirname(importer), source)}${CSS_SUFFIX}`
+    const file = resolve(dirname(importer), source)
+    // The virtual id ends up in rolldown's `//#region` comments, so keep it
+    // relative/hashed: an absolute build path would leak into the tarball.
+    const hash = createHash('sha1').update(relative(PROJECT_ROOT, file)).digest('hex').slice(0, 16)
+    const id = `${CSS_PREFIX}${hash}${CSS_SUFFIX}`
+    cssFileById.set(id, file)
+    return id
   },
   async load(id: string) {
     if (!id.startsWith(CSS_PREFIX)) return null
-    const file = id.slice(CSS_PREFIX.length, -CSS_SUFFIX.length)
+    const file = cssFileById.get(id)
+    if (file === undefined) throw new Error(`unknown CSS module id: ${id}`)
     const source = await readFile(file)
     const result = transform({
-      filename: file,
+      filename: basename(file),
       code: source,
       cssModules: { pattern: '[hash]_[local]' },
       minify: true,

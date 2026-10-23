@@ -4,6 +4,26 @@ This fork keeps Agent Team's product behaviour while moving it from
 **DSH 0.1.1-rc.2** to **DSH 0.2.1-rc.2**. Every change below is a compatibility
 substitution; no feature was dropped except where the host removed the API.
 
+This document describes the host migration and is intentionally historical. The
+current plugin release is **0.4.0**; its user-visible changes are listed in
+[CHANGELOG.md](../CHANGELOG.md). Upgrading a 0.3.0 team store to 0.4.0 needs no
+data migration: goals, memory, task quality fields, attempt tokens, message
+threads, and assistant-instance links are all optional fields, so existing
+aggregates load unchanged.
+
+## Upgrading from 0.3.0 to 0.4.0
+
+- Reinstall the plugin from a local tarball or directory (see
+  [installation.md](./installation.md)); the package name and loader row id are
+  unchanged, so the profile replaces the previous copy in place.
+- The member tool surface grows from 13 advertised tools to 24 registered names
+  (21 primary + 3 aliases). Existing calls to `team_get_task_board`,
+  `team_create_task`, and `team_update_task` keep working.
+- `toolPolicies` is optional; a plugin config without it keeps the full member
+  tool baseline.
+- Goal, memory, and quality-gate features activate per call; no team needs to be
+  recreated.
+
 ## Why the migration was necessary
 
 Three packages the 0.1.x plugin imported were retired before 0.2.x and never
@@ -97,31 +117,41 @@ scope disposal; a cold catalog read leases for the single read.
 
 ## Installation
 
-The package ships its restart-applied bundle layer, so the Desktop profile loads
-it through `dsh.profile.bundles`:
+The package ships its restart-applied bundle layer, so installing it into the
+active profile is enough:
 
 ```bash
+npm install
 npm run build
 npm pack --pack-destination /tmp
-dsh plugin --profile desktop add /tmp/limeng-dsh-team-mode-0.2.0.tgz
-# then add "@limeng/dsh-team-mode" to dsh.profile.bundles in the profile's package.json
+npx @deepseek-ai/dsh plugin --profile web add /tmp/limeng-dsh-team-mode-0.4.0.tgz
 ```
+
+For development, add the repository directory instead. If you use the Desktop
+profile, replace `web` with that profile name; the bundle layer is applied by
+`dsh plugin`.
 
 `dsh plugin` forwards to `pnpm`, so a profile with a supply-chain
 `minimumReleaseAge` policy needs `--config.minimumReleaseAge=0` for packages
-published inside the window.
+inside the window.
+
+The package is not on npm Registry yet (`npm view @limeng/dsh-team-mode`
+returns `404`); do not use the `@limeng/dsh-team-mode@0.4.0` specifier until it
+is published.
 
 ## Verification performed
 
-- `npx tsc --noEmit` — 0 errors.
-- `npx vitest run` — 108 tests pass.
+- `npm run check` — architecture guard, `tsc --noEmit`, 39 test files / 434
+  tests, production build: pass.
+- `npm run release:smoke` — `npm pack` content checks, absolute-path/secret
+  scan, and install into a throwaway `DSH_HOME`: pass.
 - `node scripts/check-architecture.mjs` — passes.
 - `npm run build` — host and client bundles build; the client bundle is a
   `window.__ModuleLoader__.load({id, factory})` script whose only externals are
   `react`, `react/jsx-runtime` and `@deepseek-ai/dsh-client-ui-primitives`.
-- Entry import against the Desktop host closure resolves every `@deepseek-ai/*`
-  import and exports `name` / `inject` / `apply` / `Config`.
-- All twelve injected service names exist in the live host.
+- Entry import against the 0.2.1-rc.2 host closure resolves every
+  `@deepseek-ai/*` import and exports `name` / `inject` / `apply` / `Config`.
+- All injected service names exist in the live host.
 
 
 ## Coexistence with the official Agent Team
