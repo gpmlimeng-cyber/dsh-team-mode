@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { TeamCard } from './teams/TeamPanel.js'
+import { GlobalOverview } from './global-overview.js'
 import { useAgentTeamData, type WorkspaceChoice } from './components.js'
 import css from './TeamManage.module.css'
 import type { TeamView } from '../transport/contracts.js'
@@ -42,8 +43,26 @@ export function TeamManageView({
     const workspace = await workspaces.create({ path })
     return { id: workspace.workspaceId, path: workspace.path, title: workspace.title }
   }
+  const openTeam = (teamId: string): void => {
+    const target = teams.find(entry => entry.id === teamId)
+    const leader = target?.members[target.leaderSlotId]
+    if (leader !== undefined) uiWorkspace?.openSession(leader.sessionId)
+  }
+
   return (
     <div className={css.page}>
+      <details className={css.overviewDisclosure}>
+        <summary className={css.overviewSummary}>全局总览</summary>
+        <div className={css.overviewBody}>
+          <GlobalOverview
+            teams={teams}
+            onOpenTeam={openTeam}
+            {...(uiWorkspace === undefined
+              ? {}
+              : { onOpenAssistant: (sessionId: string) => { uiWorkspace.openSession(sessionId) } })}
+          />
+        </div>
+      </details>
       <TeamCard
         team={team}
         catalog={catalog}
