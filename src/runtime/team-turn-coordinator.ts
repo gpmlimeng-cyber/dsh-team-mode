@@ -103,8 +103,10 @@ export class TeamTurnCoordinator {
       return
     }
     // The queue head is the only deliverable record: createdAt ASC, then id ASC.
+    // Broadcasts and system notices are not turn records — they stay on the
+    // dispatcher/recovery path — so they are skipped rather than returned on.
     const message = this.deps.listMessages(teamId)
-      .filter(candidate => candidate.deliveryState === 'queued')
+      .filter(candidate => candidate.deliveryState === 'queued' && isTurnRecord(candidate))
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))[0]
     if (message === undefined) {
       return
@@ -124,15 +126,17 @@ export class TeamTurnCoordinator {
     if (this.deps.sessionState(sessionId) !== 'online') {
       return
     }
+    if (this.deps.hasMessage(sessionId, message.id)) {
+      // Restart duplicate: the transcript already holds it, so no turn starts
+      // and the active slot is never taken. Mark delivered and keep draining.
+      await this.deps.putMessage({ ...message, deliveryState: 'delivered' })
+      await this.drainOnce(teamId)
+      return
+    }
     this.active.set(teamId, { slotId, sessionId, messageId: message.id })
     try {
-      if (this.deps.hasMessage(sessionId, message.id)) {
-        // Restart duplicate: the transcript already holds it; just mark delivered.
-        await this.deps.putMessage({ ...message, deliveryState: 'delivered' })
-      } else {
-        this.deps.followup(sessionId, message)
-        await this.deps.putMessage({ ...message, deliveryState: 'delivered' })
-      }
+      this.deps.followup(sessionId, message)
+      await this.deps.putMessage({ ...message, deliveryState: 'delivered' })
     } catch (error) {
       // A failed attempt ends the turn attempt; the message stays queued.
       if (this.active.get(teamId)?.messageId === message.id) {
@@ -141,4 +145,11 @@ export class TeamTurnCoordinator {
       this.deps.warn(`turn delivery failed for message ${message.id}; keeping it queued`, error)
     }
   }
+}
+
+/** Only single-recipient member/leader instructions are turn candidates. */
+function isTurnRecord(message: TeamMessage): boolean {
+  return (message.recipient.kind === 'leader' || message.recipient.kind === 'member')
+    && message.recipient.slotId !== undefined
+    && message.type !== 'system'
 }

@@ -106,14 +106,20 @@ function message(input: {
   slotId: string
   createdAt: string
   deliveryState?: TeamMessage['deliveryState']
+  recipient?: TeamMessage['recipient']
+  type?: TeamMessage['type']
+  sender?: TeamMessage['sender']
 }): TeamMessage {
   return {
     schemaVersion: 1,
     id: input.id,
     teamId: input.teamId,
-    sender: { kind: 'user', id: 'user' },
-    recipient: { kind: 'member', slotId: input.slotId },
-    type: 'instruction',
+    sender: input.sender ?? { kind: 'user', id: 'user' },
+    recipient: input.recipient
+      ?? (input.slotId === 'L'
+        ? { kind: 'leader', slotId: input.slotId }
+        : { kind: 'member', slotId: input.slotId }),
+    type: input.type ?? 'instruction',
     content: `content of ${input.id}`,
     attachments: [],
     readBy: [],
@@ -313,6 +319,67 @@ describe('TeamTurnCoordinator', () => {
     // The oldest record (m1) is delivered first, not m2.
     expect(fake.followups).toEqual([{ sessionId: 'sa', messageId: 'm1' }])
     expect(team.messages.find(m => m.id === 'm2')?.deliveryState).toBe('queued')
+  })
+
+  it('marks a restart duplicate delivered without holding the turn and keeps draining', async () => {
+    // F1: a hasMessage=true record is already in the transcript; marking it
+    // delivered must not take the active turn, or the next head never delivers.
+    const fake = createFake({ t1: teamWith('sL', 'sa') })
+    const team = fake.team('t1')
+    const coordinator = new TeamTurnCoordinator(fake.deps)
+    team.messages.push(
+      // Already spliced into the leader transcript (restart duplicate).
+      message({ id: 'dup', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:00.000Z' }),
+      message({ id: 'next', teamId: 't1', slotId: 'L', createdAt: '2026-10-23T10:00:01.000Z' }),
+    )
+    // Pre-seen only for the duplicate id.
+    const seen = new Map<string, Set<string>>([['sL', new Set(['dup'])]])
+    const guarded = {
+      ...fake.deps,
+      hasMessage: (sessionId: string, messageId: string) => seen.get(sessionId)?.has(messageId) ?? false,
+    }
+    const guardedCoordinator = new TeamTurnCoordinator(guarded)
+
+    expect(await guardedCoordinator.submit('t1', 'dup')).toBe('delivered')
+    // No release event: the duplicate must not have held the turn, so the
+    // real successor delivered in the same drain without any release.
+    expect(fake.followups).toEqual([{ sessionId: 'sL', messageId: 'next' }])
+    expect(team.messages.find(m => m.id === 'dup')?.deliveryState).toBe('delivered')
+    expect(team.messages.find(m => m.id === 'next')?.deliveryState).toBe('delivered')
+  })
+
+  it('skips queued broadcast and system records and delivers the next turn message', async () => {
+    // F2: broadcasts and system notices are not turn records; a queued one at
+    // the head must be skipped, not returned on, so the next turn still runs.
+    const fake = createFake({ t1: teamWith('sL', 'sa') })
+    const team = fake.team('t1')
+    const coordinator = new TeamTurnCoordinator(fake.deps)
+    team.messages.push(
+      message({
+        id: 'b1',
+        teamId: 't1',
+        slotId: '',
+        createdAt: '2026-10-23T10:00:00.000Z',
+        recipient: { kind: 'broadcast' },
+      }),
+      message({
+        id: 's1',
+        teamId: 't1',
+        slotId: 'L',
+        createdAt: '2026-10-23T10:00:01.000Z',
+        type: 'system',
+        sender: { kind: 'system', id: 'dsh-team-mode' },
+      }),
+      message({ id: 'turn1', teamId: 't1', slotId: 'a', createdAt: '2026-10-23T10:00:02.000Z' }),
+    )
+
+    await coordinator.drain('t1')
+
+    expect(fake.followups).toEqual([{ sessionId: 'sa', messageId: 'turn1' }])
+    expect(team.messages.find(m => m.id === 'turn1')?.deliveryState).toBe('delivered')
+    // The non-turn records stay on their dispatcher path, untouched.
+    expect(team.messages.find(m => m.id === 'b1')?.deliveryState).toBe('queued')
+    expect(team.messages.find(m => m.id === 's1')?.deliveryState).toBe('queued')
   })
 
   it('drains the session team on release even after the active turn is gone', async () => {
