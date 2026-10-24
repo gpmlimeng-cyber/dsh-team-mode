@@ -129,6 +129,10 @@ MemoryEntry {
 memory_journal
   操作者、时间、前后内容、原因
 
+实现取舍：不新增 memory_journal 表。日志作为可选 `journal[]` 内嵌在
+`assistant_memory` 与 `TeamAggregate.memory` 中，随记忆写入原子提交；
+没有 journal 字段的旧记录原样加载，schemaVersion 不变。
+
 memory_links（可选）
   条目关系，后续图记忆
 ```
@@ -281,6 +285,24 @@ pin 核心条目
 本阶段不实现完整上下文管家。  
 后续长群聊单独做 Session 分段、checkpoint、handoff，不混入记忆。
 
+## 自动捕获（可选）
+
+`memoryAutoCapture` 默认 `false`，显式开启后才在完成事件上写入，且只写 `proposed`：
+
+```text
+Goal 显式完成
+→ 最多 2 条 team 条目（goal:<id>、goal-results:<id>）
+   objective/acceptance + 最多 3 条已完成任务结果
+→ status=proposed, visibility=team-safe, source=auto
+
+单聊助手的 worker 任务完成
+→ 1 条 assistant 条目（task:<id>）
+   title + resultSummary
+→ status=proposed, visibility=private, source=auto
+```
+
+约束：不调用模型、不自动接受、不写 `active`、不新增工具；内容先脱敏再截断（标题 200、正文 4,000 字符），按 key 与规范化文本去重；团队侧在聚合原子写入内复查 epoch，助手侧复用记忆写入锁。捕获失败只记录日志，不影响完成事件；旧记忆容器与关闭配置下的行为完全不变。
+
 ## 落地阶段
 
 ```text
@@ -290,7 +312,8 @@ P0  结构化 MemoryEntry + Assistant/Team scope
 P1  Team memory 提案/接受、pin、journal、UI 编辑
     Goal 结束提炼团队记忆
 
-P2  recall + 主题检索 + 自动 capture
+P2  recall（已落地 query/status/limit 子串召回）+ 主题检索
+    自动 capture（已落地，默认关闭、只写 proposed）
     去重、过期、冲突整理
 
 P3  会话搜索 / FTS、图关系、自动 recall
@@ -309,10 +332,15 @@ P3  会话搜索 / FTS、图关系、自动 recall
 ## 当前差距
 
 ```text
-assistant_memory：单字符串，16k 上限，4k 注入
-team memory：无
+assistant_memory：旧版字符串（16k 上限、4k 注入）+ 结构化条目（16k、100 条）
+team memory：TeamAggregate.memory，提案/接受、key 取代、8k 预算
 goal memory：无
-recall：无
-journal / undo：无
-memory UI：无
+recall：assistant_memory_read / team_memory_list 的 query/status/limit
+        （子串匹配、有界、只读、不跨 scope）
+journal / undo：容器内可选 journal（10 条；助手 16k / 团队 8k 字符），
+        界面通过 assistant.memory.undo / team.memory.undo 精确撤销
+memory UI：助手设置记忆面板 + 团队记忆面板，含变更日志撤销
+自动 capture：可选（memoryAutoCapture 默认 false）；Goal 完成 ≤2 条团队
+        proposed、worker 完成 1 条助手 private proposed，脱敏/去重/有界
+语义召回 / FTS / 图关系：无
 ```

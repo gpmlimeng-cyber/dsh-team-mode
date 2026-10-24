@@ -32,6 +32,13 @@ export interface Config {
   /** Cancel a member that stays `running` this long (default 10 min). */
   memberIdleWatchdogMs?: number
   /**
+   * Opt-in automatic memory capture. Off by default: when true, an explicitly
+   * completed Goal records at most two proposed team entries and a completed
+   * assistant worker records one private proposed entry. Capture never accepts
+   * an entry and never calls a model.
+   */
+  memoryAutoCapture?: boolean
+  /**
    * Silence window for the disposable routine nudge. When positive, an active
    * team with open work, no active turn, no running member, and no message in
    * this window gets one Leader-addressed instruction from the 30 s tick. The
@@ -59,6 +66,7 @@ export const Config: Schema<Config> = Schema.object({
   maxTeamTasks: Schema.number().min(1).max(4096).default(256),
   maxTeamMessageBytes: Schema.number().min(1024).max(1024 * 1024).default(64 * 1024),
   memberIdleWatchdogMs: Schema.number().min(30_000).max(60 * 60 * 1000).default(10 * 60 * 1000),
+  memoryAutoCapture: Schema.boolean().default(false),
   teamRoutineIdleMs: Schema.number().min(0).max(24 * 60 * 60 * 1000).step(1).default(0),
   toolPolicies: Schema.dict(Schema.object({
     description: Schema.string().default(''),

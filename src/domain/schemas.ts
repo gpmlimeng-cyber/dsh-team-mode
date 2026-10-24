@@ -144,17 +144,63 @@ export const memoryEntrySchema = z.object({
   updatedAt: isoDate,
 }).strict()
 
+/** One audited memory mutation. `undo` is itself an audited mutation. */
+export const memoryJournalActionSchema = z.enum([
+  'create',
+  'update',
+  'archive',
+  'accept',
+  'reject',
+  'supersede',
+  'undo',
+])
+
+/**
+ * The content fields an undo restores. Provenance (`source`, `authorSlotId`)
+ * and timestamps stay with the live entry: an undo is a new revision, never a
+ * rewind of history.
+ */
+export const memoryJournalSnapshotSchema = z.object({
+  title: z.string(),
+  body: z.string(),
+  visibility: memoryVisibilitySchema,
+  status: memoryEntryStatusSchema,
+  key: nonEmpty.optional(),
+}).strict()
+
+/**
+ * One bounded journal record: what changed, who changed it, why, and the exact
+ * before/after content. `revision` is the memory container revision the change
+ * produced, so only the newest change can be undone. `redacted`/`trimmed` mark
+ * records whose snapshots are not exact; undo refuses those.
+ */
+export const memoryJournalEntrySchema = z.object({
+  id: nonEmpty,
+  scope: z.enum(['assistant', 'team']),
+  at: isoDate,
+  actor: memoryEntrySourceSchema,
+  action: memoryJournalActionSchema,
+  entryId: nonEmpty,
+  reason: z.string(),
+  before: memoryJournalSnapshotSchema.nullable(),
+  after: memoryJournalSnapshotSchema.nullable(),
+  revision: z.int().positive(),
+  redacted: z.boolean().optional(),
+  trimmed: z.boolean().optional(),
+}).strict()
+
 /**
  * Durable memory for one Assistant instance, keyed by `assistantId`. `content`
- * is the legacy shared note; `entries` adds structured, visibility-aware rows.
- * Both are optional-by-history: a row written before structured memory existed
- * carries no `entries` and loads unchanged.
+ * is the legacy shared note; `entries` adds structured, visibility-aware rows;
+ * `journal` keeps the bounded undo trail. All three are optional-by-history: a
+ * row written before a field existed carries no such field and loads unchanged.
  */
 export const assistantMemorySchema = z.object({
   schemaVersion: z.literal(1),
   assistantId: nonEmpty,
   content: z.string(),
   entries: z.array(memoryEntrySchema).optional(),
+  journal: z.array(memoryJournalEntrySchema).optional(),
   revision: z.int().positive(),
   updatedAt: isoDate,
 }).strict()
@@ -168,6 +214,7 @@ export const assistantMemorySchema = z.object({
 export const teamMemorySchema = z.object({
   revision: z.int().positive(),
   entries: z.array(memoryEntrySchema).default([]),
+  journal: z.array(memoryJournalEntrySchema).optional(),
   updatedAt: isoDate,
 }).strict()
 

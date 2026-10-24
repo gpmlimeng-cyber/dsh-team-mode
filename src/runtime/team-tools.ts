@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, RUN_CODE_NAME } from '@deepseek-ai/dsh-tools'
 import type { MemberToolPolicyConfig } from '../config.js'
 import { AgentTeamError } from '../domain/errors.js'
+import { memoryRecallFilterOf, type MemoryRecallFilter } from '../domain/memory.js'
 import type { TeamTaskKind, TeamTaskVerdict } from '../domain/types.js'
 import type {
   ClaimTaskInput,
@@ -69,7 +70,7 @@ export interface TeamToolHandlers {
   updateGoal: (input: { goal_id: string; status?: string; max_turns?: number }) => Promise<TeamGoalView>
   listGoals: () => TeamGoalView[]
   proposeMemory: (input: ProposeMemoryInput) => Promise<TeamMemoryWriteResult>
-  listMemory: () => TeamMemoryList
+  listMemory: (filter?: MemoryRecallFilter) => TeamMemoryList
   decideMemory: (input: DecideMemoryInput) => Promise<TeamMemoryWriteResult>
   listAssistants: () => TeamAssistantView[]
   describeAssistant: (assistantId: string) => TeamAssistantView
@@ -441,13 +442,26 @@ export function registerTeamTools(
 
   register(defineTool({
     name: 'team_memory_list',
-    description: 'List this team’s memory entries with status, visibility, key, author slot, and revisions. Proposed entries wait for the Leader; only active entries are loaded into team prompts. Other teams and DM Sessions never see this memory.',
-    parameters: {},
+    description: 'List this team’s memory entries with status, visibility, key, author slot, and revisions. Proposed entries wait for the Leader; only active entries are loaded into team prompts. Other teams and DM Sessions never see this memory. Read-only: query/status/limit narrow the returned entries without changing anything.',
+    parameters: {
+      query: { type: 'string', description: 'Case-insensitive text matched against entry key, title, and body.' },
+      status: {
+        type: 'string',
+        enum: ['active', 'proposed', 'superseded', 'archived'],
+        description: 'Only return entries with this status; omit for every status.',
+      },
+      limit: { type: 'number', description: 'Maximum entries to return (1-50, default 20).' },
+    },
     output: textOutput,
-    execute: async (_args, exec) => {
+    execute: async (args, exec) => {
       handlers.assertIdentity(exec.agent)
-      const memory = handlers.listMemory()
-      return { memory_revision: memory.revision, entries: memory.entries } as never
+      const memory = handlers.listMemory(memoryRecallFilterOf(args))
+      return {
+        memory_revision: memory.revision,
+        total: memory.total,
+        truncated: memory.truncated,
+        entries: memory.entries,
+      } as never
     },
   }))
 

@@ -33,7 +33,7 @@ import type {
 import { AssistantRuntime } from '../src/runtime/assistant-runtime.js'
 import { AGENT_TEAM_API_PATH } from '../src/transport/contracts.js'
 import { registerWebTransport } from '../src/transport/web.js'
-import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
+import { AgentTeamService, TEAM_MEMORY_JOURNAL_MAX_CHARS } from '../src/service/dsh-team-mode-service.js'
 import type { AgentTeamStore } from '../src/storage/store.js'
 import { isRateLimitMessage, TeamRuntime } from '../src/runtime/team-runtime.js'
 import type { TeamCommandHandler } from '../src/runtime/team-command-handler.js'
@@ -650,6 +650,136 @@ describe('AgentTeamService', () => {
     })
     expect(rejected.entry.status).toBe('archived')
     expect(rejected.memoryRevision).toBe(6)
+  })
+
+  it('journals team memory changes, undoes exact content, and enforces team scope', async () => {
+    const { service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const team = await service.createTeamDraft({
+      name: 'Journal team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const first = await service.writeUserTeamMemory(
+      team.id,
+      { title: 'Fact', body: 'One', key: 'fact' },
+      { expectedMemoryRevision: 0 },
+    )
+    let memory = store.getTeam(team.id)!.memory!
+    expect(memory.journal).toHaveLength(1)
+    expect(memory.journal![0]).toMatchObject({
+      scope: 'team',
+      actor: 'user',
+      action: 'create',
+      entryId: first.entry.id,
+      before: null,
+      revision: 1,
+    })
+
+    const edited = await service.writeUserTeamMemory(
+      team.id,
+      { id: first.entry.id, title: 'Fact', body: 'Two' },
+      { expectedMemoryRevision: 1 },
+    )
+    memory = store.getTeam(team.id)!.memory!
+    const updateRecord = memory.journal!.at(-1)!
+    expect(updateRecord).toMatchObject({ action: 'update', entryId: first.entry.id, revision: 2 })
+    expect(updateRecord.before).toMatchObject({ body: 'One' })
+    expect(updateRecord.after).toMatchObject({ body: 'Two' })
+
+    const undone = await service.undoUserTeamMemory(team.id, updateRecord.id, {
+      expectedMemoryRevision: edited.memoryRevision,
+    })
+    expect(undone.memoryRevision).toBe(3)
+    expect(undone.entry).toMatchObject({
+      id: first.entry.id,
+      body: 'One',
+      status: 'active',
+      revision: 3,
+    })
+    expect(store.getTeam(team.id)!.memory!.journal!.at(-1))
+      .toMatchObject({ action: 'undo', actor: 'user', revision: 3 })
+
+    // Only the change that produced the current revision is undoable.
+    await expect(service.undoUserTeamMemory(team.id, memory.journal![0]!.id, {
+      expectedMemoryRevision: 3,
+    })).rejects.toMatchObject({ code: 'MEMORY_UNDO_STALE' })
+
+    // Undoing a create archives the entry.
+    const second = await service.writeUserTeamMemory(
+      team.id,
+      { title: 'Other', body: 'Body' },
+      { expectedMemoryRevision: 3 },
+    )
+    const createRecord = store.getTeam(team.id)!.memory!.journal!.at(-1)!
+    const archived = await service.undoUserTeamMemory(team.id, createRecord.id, {
+      expectedMemoryRevision: second.memoryRevision,
+    })
+    expect(archived.entry).toMatchObject({ id: second.entry.id, status: 'archived' })
+
+    // A journal id from another team's container is unreachable.
+    const other = await service.createTeamDraft({
+      name: 'Other team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    await expect(service.undoUserTeamMemory(other.id, createRecord.id, {}))
+      .rejects.toMatchObject({ code: 'MEMORY_UNDO_UNAVAILABLE' })
+  })
+
+  it('bounds the team memory journal by count and characters inside the aggregate', async () => {
+    const { service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const team = await service.createTeamDraft({
+      name: 'Bounded journal team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    let revision = 0
+    const created = await service.writeUserTeamMemory(
+      team.id,
+      { title: 'Large', body: 'x'.repeat(3_000) },
+      { expectedMemoryRevision: revision },
+    )
+    revision = created.memoryRevision
+    // Updates journal both snapshots, so the character cap trims the oldest.
+    for (let index = 0; index < 3; index += 1) {
+      const edited = await service.writeUserTeamMemory(
+        team.id,
+        { id: created.entry.id, title: 'Large', body: 'y'.repeat(3_000 + index) },
+        { expectedMemoryRevision: revision },
+      )
+      revision = edited.memoryRevision
+    }
+    const memory = store.getTeam(team.id)!.memory!
+    expect(memory.journal!.length).toBeLessThan(10)
+    expect(memory.journal!.at(-1)?.action).toBe('update')
+    const journalChars = memory.journal!.reduce((sum, record) =>
+      sum + record.reason.length
+        + snapshotChars(record.before)
+        + snapshotChars(record.after), 0)
+    expect(journalChars).toBeLessThanOrEqual(TEAM_MEMORY_JOURNAL_MAX_CHARS)
+  })
+
+  it('refuses to undo a team journal record whose snapshot was redacted', async () => {
+    const { service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const team = await service.createTeamDraft({
+      name: 'Redacted journal team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const written = await service.writeUserTeamMemory(
+      team.id,
+      { title: 'Credential', body: 'token=supersecretvalue123' },
+      { expectedMemoryRevision: 0 },
+    )
+    const record = store.getTeam(team.id)!.memory!.journal!.at(-1)!
+    expect(record.redacted).toBe(true)
+    expect(JSON.stringify(record)).not.toContain('supersecretvalue123')
+    await expect(service.undoUserTeamMemory(team.id, record.id, {
+      expectedMemoryRevision: written.memoryRevision,
+    })).rejects.toMatchObject({ code: 'MEMORY_UNDO_UNAVAILABLE' })
   })
 
   it('clones team configuration into fresh members and sessions without runtime records', async () => {
@@ -1841,6 +1971,8 @@ describe('AgentTeamService', () => {
     // must keep parsing unchanged.
     await store.putAssistantMemory(assistantMemorySchema.parse(legacy))
     expect(service.getAssistantMemoryEntries(instance.id)).toEqual([])
+    // A row written before the journal existed loads with no journal either.
+    expect(service.getAssistantMemory(instance.id)?.journal).toBeUndefined()
 
     const created = await service.writeAssistantMemoryEntry(
       instance.id,
@@ -2052,6 +2184,139 @@ describe('AgentTeamService', () => {
       code: 'INVALID_REQUEST',
       message: expect.stringContaining('archive unused entries first'),
     })
+  })
+
+  it('journals assistant memory changes and undoes the exact prior content within scope', async () => {
+    const { service } = createHarness()
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Journal assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    const other = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Other assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+
+    const created = await service.writeAssistantMemoryEntry(
+      instance.id,
+      { title: 'Tone', body: 'Be terse.' },
+      { expectedRevision: 0 },
+    )
+    let memory = service.getAssistantMemory(instance.id)!
+    expect(memory.journal).toHaveLength(1)
+    expect(memory.journal![0]).toMatchObject({
+      scope: 'assistant',
+      actor: 'assistant',
+      action: 'create',
+      entryId: created.entry.id,
+      before: null,
+      revision: 1,
+    })
+    expect(memory.journal![0]!.after).toMatchObject({
+      title: 'Tone',
+      body: 'Be terse.',
+      status: 'active',
+      visibility: 'private',
+    })
+
+    const revised = await service.writeAssistantMemoryEntry(
+      instance.id,
+      { id: created.entry.id, title: 'Tone', body: 'Be very terse.' },
+      { expectedRevision: 1 },
+    )
+    memory = service.getAssistantMemory(instance.id)!
+    const updateRecord = memory.journal!.at(-1)!
+    expect(updateRecord).toMatchObject({ action: 'update', entryId: created.entry.id, revision: 2 })
+    expect(updateRecord.before).toMatchObject({ body: 'Be terse.' })
+    expect(updateRecord.after).toMatchObject({ body: 'Be very terse.' })
+
+    // The newest record restores the exact before-image as a new revision.
+    const undone = await service.undoAssistantMemory(instance.id, updateRecord.id, {
+      expectedRevision: revised.memory.revision,
+    })
+    expect(undone.entry).toMatchObject({
+      id: created.entry.id,
+      title: 'Tone',
+      body: 'Be terse.',
+      status: 'active',
+      revision: revised.entry.revision + 1,
+    })
+    expect(undone.memory.journal!.at(-1)).toMatchObject({ action: 'undo', revision: 3 })
+
+    // Older records, stale fences, and another instance's container are refused.
+    await expect(service.undoAssistantMemory(instance.id, memory.journal![0]!.id, {
+      expectedRevision: 3,
+    })).rejects.toMatchObject({ code: 'MEMORY_UNDO_STALE' })
+    await expect(service.undoAssistantMemory(instance.id, updateRecord.id, {
+      expectedRevision: 99,
+    })).rejects.toMatchObject({ code: 'MEMORY_UNDO_STALE' })
+    await expect(service.undoAssistantMemory(other.id, updateRecord.id, {}))
+      .rejects.toMatchObject({ code: 'MEMORY_UNDO_UNAVAILABLE' })
+
+    // Undoing a create archives the entry instead of deleting history.
+    const extra = await service.writeAssistantMemoryEntry(
+      instance.id,
+      { title: 'Temporary', body: 'Archive me.' },
+      { expectedRevision: 3 },
+    )
+    const createRecord = extra.memory.journal!.at(-1)!
+    const archived = await service.undoAssistantMemory(instance.id, createRecord.id, {
+      expectedRevision: extra.memory.revision,
+    })
+    expect(archived.entry).toMatchObject({ id: extra.entry.id, status: 'archived' })
+    expect(service.getAssistantMemory(instance.id)?.entries?.find(entry => entry.id === extra.entry.id))
+      .toMatchObject({ status: 'archived', body: 'Archive me.' })
+  })
+
+  it('bounds the assistant memory journal and refuses redacted snapshots', async () => {
+    const { service } = createHarness()
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Bounded journal assistant',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    let revision = 0
+    for (let index = 0; index < 12; index += 1) {
+      const written = await service.writeAssistantMemoryEntry(
+        instance.id,
+        { title: `Entry ${index}`, body: 'x' },
+        { expectedRevision: revision },
+      )
+      revision = written.memory.revision
+    }
+    const memory = service.getAssistantMemory(instance.id)!
+    // 12 writes keep the newest 10 records, and the journal char cap holds.
+    expect(memory.journal).toHaveLength(10)
+    expect(memory.journal!.at(-1)?.after?.title).toBe('Entry 11')
+    const journalChars = memory.journal!.reduce((sum, record) =>
+      sum + record.reason.length
+        + snapshotChars(record.before)
+        + snapshotChars(record.after), 0)
+    expect(journalChars).toBeLessThanOrEqual(16_000)
+
+    const secret = await service.writeAssistantMemoryEntry(
+      instance.id,
+      { title: 'Credential', body: 'api_key=supersecretvalue123' },
+      { expectedRevision: revision },
+    )
+    const record = secret.memory.journal!.at(-1)!
+    expect(record.redacted).toBe(true)
+    expect(JSON.stringify(record)).not.toContain('supersecretvalue123')
+    expect(record.after?.body).toContain('[REDACTED]')
+    await expect(service.undoAssistantMemory(instance.id, record.id, {
+      expectedRevision: secret.memory.revision,
+    })).rejects.toMatchObject({ code: 'MEMORY_UNDO_UNAVAILABLE' })
   })
 
   it('links a member to an explicit assistant instance and injects only its active team-safe memory', async () => {
@@ -2632,6 +2897,14 @@ function deferred(): { promise: Promise<void>; resolve: () => void } {
 
 function tick(): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, 0))
+}
+
+function snapshotChars(
+  snapshot: { title: string; body: string; key?: string | undefined } | null,
+): number {
+  return snapshot === null
+    ? 0
+    : snapshot.title.length + snapshot.body.length + (snapshot.key?.length ?? 0)
 }
 
 function seedInstance(): AssistantInstance {

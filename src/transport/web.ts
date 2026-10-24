@@ -274,6 +274,18 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       }).strict().parse(request.payload)
       return service.writeAssistantMemoryEntry(payload.assistantId, payload.entry as never, {
         ...(payload.expectedRevision === undefined ? {} : { expectedRevision: payload.expectedRevision }),
+        actor: 'user',
+      })
+    }
+    case 'assistant.memory.undo': {
+      const payload = z.object({
+        assistantId: z.string().trim().min(1).max(200),
+        journalId: z.string().trim().min(1).max(200),
+        expectedRevision: z.int().nonnegative().optional(),
+      }).strict().parse(request.payload)
+      return service.undoAssistantMemory(payload.assistantId, payload.journalId, {
+        ...(payload.expectedRevision === undefined ? {} : { expectedRevision: payload.expectedRevision }),
+        actor: 'user',
       })
     }
     case 'assistant.checkpoint.create': {
@@ -537,6 +549,18 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
         decision: z.enum(['accept', 'reject']),
       }).strict().parse(request.payload)
       return service.decideUserTeamMemory(payload.teamId, payload.entryId, payload.decision, {
+        ...(payload.expectedMemoryRevision === undefined
+          ? {}
+          : { expectedMemoryRevision: payload.expectedMemoryRevision }),
+      })
+    }
+    case 'team.memory.undo': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        journalId: z.string().trim().min(1).max(200),
+        expectedMemoryRevision: z.int().nonnegative().optional(),
+      }).strict().parse(request.payload)
+      return service.undoUserTeamMemory(payload.teamId, payload.journalId, {
         ...(payload.expectedMemoryRevision === undefined
           ? {}
           : { expectedMemoryRevision: payload.expectedMemoryRevision }),

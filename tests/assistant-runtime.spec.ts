@@ -283,6 +283,8 @@ function createHarness(
     return next
   })
 
+  const captureAssistantTaskMemory = vi.fn(async (_assistantId: string, _taskId: string) => true)
+
   const memories = new Map<string, AssistantMemory>()
   const getAssistantMemory = vi.fn((assistantId: string) => memories.get(assistantId))
   const writeAssistantMemory = vi.fn(async (
@@ -459,6 +461,7 @@ function createHarness(
     getAssistantSession,
     listAssistantSessions,
     updateAssistantSession,
+    captureAssistantTaskMemory,
     getAssistantMemory,
     writeAssistantMemory,
     writeAssistantMemoryEntry,
@@ -484,6 +487,7 @@ function createHarness(
     getAssistantSession,
     listAssistantSessions,
     updateAssistantSession,
+    captureAssistantTaskMemory,
     getAssistantMemory,
     writeAssistantMemory,
     writeAssistantMemoryEntry,
@@ -748,6 +752,82 @@ describe('AssistantRuntime', () => {
     })
   })
 
+  it('filters assistant memory recall by query, status, and limit without mutating it', async () => {
+    const h = createHarness()
+    h.memories.set('instance-1', {
+      schemaVersion: 1,
+      assistantId: 'instance-1',
+      content: 'Prefers tables.',
+      entries: [
+        {
+          id: 'mem-1',
+          scope: 'assistant',
+          visibility: 'private',
+          status: 'active',
+          source: 'assistant',
+          key: 'tone',
+          title: 'Tone',
+          body: 'Be terse.',
+          revision: 1,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          id: 'mem-2',
+          scope: 'assistant',
+          visibility: 'private',
+          status: 'archived',
+          source: 'assistant',
+          title: 'Retired',
+          body: 'Old tab rule.',
+          revision: 2,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+        {
+          id: 'mem-3',
+          scope: 'assistant',
+          visibility: 'team-safe',
+          status: 'active',
+          source: 'assistant',
+          title: 'Style',
+          body: 'Use tabs in code.',
+          revision: 1,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      ],
+      revision: 3,
+      updatedAt: NOW,
+    })
+    const before = JSON.stringify(h.memories.get('instance-1'))
+    await h.runtime.ensureInstance('instance-1')
+    const mainAgent = { id: SessionId(h.current().mainSessionId!) } as unknown as Agent
+    const read = h.handles[0]?.toolsRegister.mock.calls.find(
+      call => (call[0] as { name: string }).name === 'assistant_memory_read',
+    )?.[0] as unknown as {
+      parameters: { properties?: Record<string, unknown> }
+      execute: (args: Record<string, unknown>, exec: { agent: Agent }) => Promise<Record<string, unknown>>
+    }
+    expect(read.parameters.properties?.query).toBeDefined()
+    expect(read.parameters.properties?.status).toBeDefined()
+    expect(read.parameters.properties?.limit).toBeDefined()
+
+    const byQuery = await read.execute({ query: 'TABS' }, { agent: mainAgent })
+    expect((byQuery.memory as { entries: Array<{ entry_id: string }> }).entries
+      .map(entry => entry.entry_id)).toEqual(['mem-3'])
+    expect(byQuery).toMatchObject({ total: 1, truncated: false })
+
+    const byStatus = await read.execute({ status: 'archived' }, { agent: mainAgent })
+    expect((byStatus.memory as { entries: Array<{ entry_id: string }> }).entries
+      .map(entry => entry.entry_id)).toEqual(['mem-2'])
+
+    const limited = await read.execute({ limit: 1 }, { agent: mainAgent })
+    expect((limited.memory as { entries: unknown[] }).entries).toHaveLength(1)
+    expect(limited).toMatchObject({ total: 3, truncated: true })
+    expect(JSON.stringify(h.memories.get('instance-1'))).toBe(before)
+  })
+
   it('injects active structured entries into the main prompt only', async () => {
     const h = createHarness()
     h.memories.set('instance-1', {
@@ -878,6 +958,43 @@ describe('AssistantRuntime', () => {
     const waited = await h.runtime.waitTask('instance-1', task.id, 1_000)
     expect(waited).toMatchObject({ timedOut: false })
     expect(waited.task.status).toBe('completed')
+  })
+
+  it('captures completed worker memory only when memoryAutoCapture is enabled', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Memory task', brief: 'Start.' })
+    const worker = h.handles[1]
+    h.emit('agent/status', { agent: worker?.agent, status: 'running' })
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('completed')
+    // Default config leaves capture off.
+    expect(h.captureAssistantTaskMemory).not.toHaveBeenCalled()
+
+    const enabled = h.createRuntime({ memoryAutoCapture: true })
+    const second = await enabled.createTask('instance-1', { title: 'Capture me', brief: 'Start.' })
+    const secondWorker = h.handles.at(-1)
+    h.emit('agent/status', { agent: secondWorker?.agent, status: 'running' })
+    h.emit('agent/status', { agent: secondWorker?.agent, status: 'idle' })
+    await settle()
+
+    expect(h.getAssistantSession(second.id).status).toBe('completed')
+    expect(h.captureAssistantTaskMemory).toHaveBeenCalledTimes(1)
+    expect(h.captureAssistantTaskMemory).toHaveBeenCalledWith('instance-1', second.id)
+  })
+
+  it('keeps the worker completion when memory capture fails', async () => {
+    const h = createHarness()
+    h.captureAssistantTaskMemory.mockRejectedValueOnce(new Error('memory unavailable'))
+    const enabled = h.createRuntime({ memoryAutoCapture: true })
+    const task = await enabled.createTask('instance-1', { title: 'Capture fails', brief: 'Start.' })
+    const worker = h.handles.at(-1)
+    h.emit('agent/status', { agent: worker?.agent, status: 'running' })
+    h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
+    await settle()
+
+    expect(h.captureAssistantTaskMemory).toHaveBeenCalledWith('instance-1', task.id)
+    expect(h.getAssistantSession(task.id).status).toBe('completed')
   })
 
   it('marks a worker failed on a turn error and does not overwrite it on idle', async () => {

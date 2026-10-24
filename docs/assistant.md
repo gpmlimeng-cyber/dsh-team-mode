@@ -92,7 +92,11 @@ worker Session 不会出现在原生侧栏，也不会收到 `assistant_task_*` 
 每个单聊助手有一份持久记忆，由它的所有会话共享，分为两层：
 
 - 旧版短文本 `content`：`assistant_memory_read` 读取，`assistant_memory_write` 替换或追加；写入超过 16,000 字符会被拒绝，而不是截断。
-- 结构化条目 `entries`：`assistant_memory_entry_write` 新建或修改单条记忆，`assistant_memory_read` 一并返回全部条目。条目带有 `visibility`（默认 `private`）、`status`（`active` / `archived`）、`source`、可选 `key`、`title`、`body`，以及条目自身的 `revision`。
+- 结构化条目 `entries`：`assistant_memory_entry_write` 新建或修改单条记忆，`assistant_memory_read` 一并返回条目。条目带有 `visibility`（默认 `private`）、`status`（`active` / `archived`）、`source`、可选 `key`、`title`、`body`，以及条目自身的 `revision`。
+- 只读召回：`assistant_memory_read` 可用可选的 `query`（对 `key` / `title` / `body` 做不区分大小写的包含匹配）、`status`（只返回该状态）和 `limit`（1–50，默认 20）缩小返回条目；结果附带 `total` 与 `truncated`，单次返回的正文共享 8,000 字符预算。召回只读，不会修改记忆，也不会跨出本助手的容器。
+- 变更日志 `journal`：结构化条目每次新建、修改、归档都会在同一个原子写入中追加一条日志，记录 `action`、`actor`、`reason`、变更前后的内容快照，以及该次写入产生的记忆版本。日志只保留最近 10 条，助手侧总计不超过 16,000 字符（团队侧 8,000 字符），超出时丢弃最旧记录。旧版文本写入不写日志。快照会脱敏常见凭据（私钥、`sk-` / `ghp_` / `xoxb-` 等令牌、`password=` / `token:` 赋值）；被脱敏或截断的记录标记为不可撤销。
+- 撤销：界面通过 `assistant.memory.undo`（不是模型工具）撤销一条日志。日志 id 必须位于当前助手的记忆容器内，且该条日志必须正是产生当前记忆版本的那次变更，否则返回 `MEMORY_UNDO_STALE`；撤销把记录中的 before 快照精确恢复为新版本（若原是新建则归档该条目），脱敏/截断记录返回 `MEMORY_UNDO_UNAVAILABLE`。撤销本身也会追加一条 `undo` 日志。
+- 自动捕获（默认关闭）：部署配置 `memoryAutoCapture=true` 时，后台 worker 任务完成会写入 1 条 `private`、`proposed`、`source=auto` 的条目（`key=task:<taskId>`，标题来自任务标题、正文来自 `resultSummary`）。内容先脱敏再截断（标题 200、正文 4,000 字符），按 key 与规范化文本去重，复用记忆写入锁；同一任务不会重复捕获，任务未完成或捕获失败时不写入，完成状态不受影响。捕获不会自动接受任何条目，也不会调用模型。
 - 主会话和 worker 都会在系统提示中获得旧版文本；结构化条目只注入主会话，且只注入 `active` 条目（最多 20 条、每条正文截断到 200 字符）。worker 只读，不能修改记忆。
 - 旧版文本存储上限是 16,000 字符，但每次只把前 4,000 字符注入提示；结构化条目的 title+body 合计同样限制在 16,000 字符、最多 100 条，超出会拒绝写入。上限只统计未归档条目：把旧条目标记为 `archived` 即释放额度，归档内容仍保留在存储里但不再计入上限，也不再进入提示。
 
@@ -104,7 +108,8 @@ worker Session 不会出现在原生侧栏，也不会收到 `assistant_task_*` 
 
 - 旧版文本单独显示，可直接编辑或两步确认清空；结构化条目按状态分组，显示可见性（私有 / 团队可见）、状态、来源、条目标题、正文和条目 `revision`。
 - 可以新建条目、编辑已有条目、归档条目；历史（`archived` / `superseded`）内联显示，只渲染最近 20 条。
-- 面板读取 `assistant.memory.get`，写入使用当前记忆版本作为 `expected_revision`。版本过期时服务返回 `MEMORY_REVISION_CONFLICT`（旧版文本为 `ASSISTANT_REVISION_CONFLICT`），面板提示冲突并重新加载最新版本，不会覆盖他人刚写入的内容。
+- 变更日志单独列出每条记录的动作、操作者、时间与原因；对未脱敏/未截断的记录可点「撤销」，撤销会按记录恢复精确的前一版内容，新建记录则归档该条目。
+- 面板读取 `assistant.memory.get`，写入使用当前记忆版本作为 `expected_revision`。版本过期时服务返回 `MEMORY_REVISION_CONFLICT`（旧版文本为 `ASSISTANT_REVISION_CONFLICT`），面板提示冲突并重新加载最新版本，不会覆盖他人刚写入的内容。撤销使用 `assistant.memory.undo`，过期返回 `MEMORY_UNDO_STALE` 并重新加载。
 - 已归档助手仍可打开面板查看记忆，但服务层会拒绝写入。
 
 ## 当前限制
@@ -114,7 +119,7 @@ worker Session 不会出现在原生侧栏，也不会收到 `assistant_task_*` 
 - **worker 会话所有权**：worker 的 Session 如果仍然被其他生命周期持有（例如插件重载时上一个实例尚未释放），插件不再被动接管该 Agent，而是返回 `AGENT_HANDLE_OWNERSHIP_CONFLICT`（附带 `taskId`、`sessionId`），并且不会取消或销毁不属于自己的 Agent。等原持有者释放该 Session 后重试即可正常恢复；如果由 DSH 原生会话控制器持有，则只有重启 DSH Host 才能清除该所有权。
 - **审批**：worker 继承助手的默认权限；插件不提供自动审批，也没有任务级审批界面。`needs_input` 只是如实记录阻塞状态，不保证有入口解除阻塞。
 - **任务界面**：侧栏行和第二行摘要可以观察任务状态；「进阶」模式可在助手行下展开任务线程，「查看任务」可打开完整任务列表，两者都会进入隐藏 worker Session。仍没有任务详情、任务级审批、创建或取消入口，创建仍由主会话中的 `assistant_task_create` 完成。
-- **记忆编辑**：设置对话框中的记忆面板支持手动查看/编辑，但没有自动捕获或语义召回界面；记忆仍主要由助手通过工具维护。
+- **记忆编辑**：设置对话框中的记忆面板支持手动查看/编辑，并可撤销最近 10 条变更日志；自动捕获仅在 `memoryAutoCapture=true` 时把完成结果写成 `proposed`，不会自动接受；召回只有 `query` 子串匹配，没有语义召回或向量检索界面。记忆仍主要由助手通过工具维护。
 - **团队关联入口**：团队成员与单聊助手实例的关联已支持 API/服务层——创建团队、`team.addMember`、`team_spawn_agent` 可传实例 ID，更新/解除用 `team.member.setAssistantInstance`（`null` 解除）。本期没有界面选择器，也不能从助手侧反向管理关联。
 - **多 Host**：未实现多 Host 共享、只读协作或写入所有权协商；请勿让多个 Host 同时操作同一份插件数据。
 - **设置范围**：设置对话框支持显示名称、头像、模型、思考模式与权限预设；Agent Preset 与人设在创建时写入，设置对话框暂不修改这两项。Workspace 在实例创建后只读，助手模板本身仍由助手库维护。

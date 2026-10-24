@@ -878,7 +878,25 @@ export class AssistantRuntime {
     if (task.status === 'needs_input') return
     if (task.status !== 'running' && task.status !== 'queued') return
     await this.service.updateAssistantSession(taskId, { status: 'completed' })
+    await this.captureTaskMemory(task)
     await this.releaseWorker(taskId, 'completed')
+  }
+
+  /**
+   * Optional memory capture runs after completion (and before the worker is
+   * released). It is opt-in, never calls a model, and its failure must not
+   * change the task outcome.
+   */
+  private async captureTaskMemory(task: AssistantSession): Promise<void> {
+    if (this.config.memoryAutoCapture !== true) return
+    try {
+      await this.service.captureAssistantTaskMemory(task.assistantId, task.id)
+    } catch (error) {
+      this.ctx.logger.warn(
+        `dsh-team-mode: memory capture failed for task '${task.id}'`,
+        error,
+      )
+    }
   }
 
   private async markTaskFailed(taskId: string, error: unknown): Promise<void> {

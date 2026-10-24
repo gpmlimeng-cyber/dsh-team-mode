@@ -38,6 +38,7 @@ import {
   goalStatusLabel,
   hasTeamGoals,
   memberStatusLabel,
+  memoryJournalActionLabel,
   memorySourceLabel,
   memoryStatusLabel,
   memoryVisibilityLabel,
@@ -1898,6 +1899,8 @@ function memoryErrorMessage(cause: unknown): string {
     ? (cause as { code?: unknown }).code
     : undefined
   if (code === 'MEMORY_REVISION_CONFLICT') return '团队记忆已被其他操作更新，请刷新后重试。'
+  if (code === 'MEMORY_UNDO_STALE') return '团队记忆已更新，请刷新后重试撤销。'
+  if (code === 'MEMORY_UNDO_UNAVAILABLE') return '这条变更无法安全撤销（快照已脱敏、截断或会与现有键冲突）。'
   return cause instanceof Error ? cause.message : String(cause)
 }
 
@@ -1923,8 +1926,10 @@ function TeamMemorySection({
   const [draft, setDraft] = useState<{ id?: string; title: string; body: string; key: string }>()
   const [saving, setSaving] = useState(false)
   const [deciding, setDeciding] = useState<string>()
+  const [undoing, setUndoing] = useState<string>()
   const [error, setError] = useState<string>()
   const [historyOpen, setHistoryOpen] = useState(false)
+  const journal = memory?.journal ?? []
 
   async function save(): Promise<void> {
     if (draft === undefined || saving) return
@@ -1971,6 +1976,24 @@ function TeamMemorySection({
       setError(memoryErrorMessage(cause))
     } finally {
       setDeciding(undefined)
+    }
+  }
+
+  async function undo(journalId: string): Promise<void> {
+    if (undoing !== undefined || saving || deciding !== undefined) return
+    setUndoing(journalId)
+    setError(undefined)
+    try {
+      await callAgentTeam('team.memory.undo', {
+        teamId: team.id,
+        journalId,
+        expectedMemoryRevision: view.revision,
+      })
+      await onChanged()
+    } catch (cause) {
+      setError(memoryErrorMessage(cause))
+    } finally {
+      setUndoing(undefined)
     }
   }
 
@@ -2093,6 +2116,40 @@ function TeamMemorySection({
               )}
             </>
           )}
+        </div>
+      )}
+      {journal.length > 0 && (
+        <div className={css.memoryGroup}>
+          <strong className={css.memoryGroupTitle}>变更日志 · {journal.length}</strong>
+          {[...journal].reverse().map(record => {
+            const blocked = record.redacted === true || record.trimmed === true
+            return (
+              <article key={record.id} className={css.memoryEntryCard}>
+                <div className={css.memoryEntryHeader}>
+                  <strong>{record.after?.title ?? record.before?.title ?? record.entryId}</strong>
+                  <span className={css.memoryBadges}>
+                    <span className={css.memoryBadge}>{memoryJournalActionLabel(record.action)}</span>
+                    <span className={css.memoryBadge}>{memorySourceLabel(record.actor)}</span>
+                    <span className={css.memoryBadge}>{memoryTime(record.at)}</span>
+                  </span>
+                </div>
+                <div className={css.memoryEntryMeta}>
+                  <span>{record.reason}</span>
+                  <span className={css.memoryEntryActions}>
+                    <button
+                      type="button"
+                      className={css.memoryAction}
+                      disabled={blocked || saving || deciding !== undefined || undoing !== undefined}
+                      title={blocked ? '快照已脱敏或截断，无法安全撤销' : undefined}
+                      onClick={() => { void undo(record.id) }}
+                    >
+                      {undoing === record.id ? '撤销中…' : '撤销'}
+                    </button>
+                  </span>
+                </div>
+              </article>
+            )
+          })}
         </div>
       )}
       {draft !== undefined && (

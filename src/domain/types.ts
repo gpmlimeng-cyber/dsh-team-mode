@@ -21,6 +21,9 @@ import type {
   fileScopeLeaseSchema,
   memoryEntrySourceSchema,
   memoryEntryStatusSchema,
+  memoryJournalActionSchema,
+  memoryJournalEntrySchema,
+  memoryJournalSnapshotSchema,
   memoryVisibilitySchema,
   memberRuntimeStateSchema,
   operationSchema,
@@ -54,6 +57,9 @@ export type MemoryEntry = z.infer<typeof memoryEntrySchema>
 export type MemoryVisibility = z.infer<typeof memoryVisibilitySchema>
 export type MemoryEntryStatus = z.infer<typeof memoryEntryStatusSchema>
 export type MemoryEntrySource = z.infer<typeof memoryEntrySourceSchema>
+export type MemoryJournalAction = z.infer<typeof memoryJournalActionSchema>
+export type MemoryJournalSnapshot = z.infer<typeof memoryJournalSnapshotSchema>
+export type MemoryJournalEntry = z.infer<typeof memoryJournalEntrySchema>
 export type WriteAssistantMemoryEntryInput = z.infer<typeof writeAssistantMemoryEntryInputSchema>
 export type CheckpointFacts = z.infer<typeof checkpointFactsSchema>
 export type ContextCheckpoint = z.infer<typeof contextCheckpointSchema>

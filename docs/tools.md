@@ -17,7 +17,7 @@
 | `team_mode_task_list` | 查询任务板（含 owner、依赖、`attempt_id`、`goal_id`、`kind`、`verdict`、`due_at` / `remind_at` / `reminded_at`） |
 | `team_mode_inbox` | 只读成员收件箱：分派给我的任务、可认领任务、未读消息、待审批 |
 | `team_memory_propose` | 提议/写入团队记忆：成员提议待 Leader 决定，Leader 写入立即生效 |
-| `team_memory_list` | 列出团队记忆（状态、可见性、key、作者、版本）；只有 `active` 会进入提示 |
+| `team_memory_list` | 只读召回团队记忆（状态、可见性、key、作者、版本）；可用 `query` / `status` / `limit` 过滤；只有 `active` 会进入提示 |
 | `team_memory_accept` | Leader 专用：接受或拒绝一条记忆提议（`decision=accept` / `decision=reject`） |
 | `team_create_task` | 兼容别名：创建任务（`title` / `ownerSlotId` / `fileScopes`） |
 | `team_update_task` | 兼容别名：更新任务（`taskId` / `attemptId`） |
@@ -70,13 +70,16 @@
 
 ## 团队记忆（P0）
 
-- 存储：`TeamAggregate.memory`（`{ revision, entries, updatedAt }`）为可选字段，`schemaVersion` 不变；从未写过记忆的团队保持无该字段、原样加载。条目结构与助手记忆共用 `MemoryEntry`：`id`、`scope='team'`、`visibility='team-safe'`、`status`（`active` / `proposed` / `superseded` / `archived`）、`source`（`leader` / `member`）、`authorSlotId`、可选 `key`、`title`、`body`、条目 `revision` 与时间戳。
+- 存储：`TeamAggregate.memory`（`{ revision, entries, journal?, updatedAt }`）为可选字段，`schemaVersion` 不变；从未写过记忆的团队保持无该字段、原样加载。条目结构与助手记忆共用 `MemoryEntry`：`id`、`scope='team'`、`visibility='team-safe'`、`status`（`active` / `proposed` / `superseded` / `archived`）、`source`（`leader` / `member`）、`authorSlotId`、可选 `key`、`title`、`body`、条目 `revision` 与时间戳。
+- 只读召回：`team_memory_list` 支持可选的 `query`（对 `key` / `title` / `body` 做不区分大小写的包含匹配）、`status` 和 `limit`（1–50，默认 20）；结果带 `total` 与 `truncated`，单次返回正文共享 8,000 字符预算。召回只读且只读取本团队聚合，不能接受提议或写记忆。
+- 变更日志：每次写入/接受/驳回/按 key 取代都会在同一个原子聚合更新中追加 `journal` 记录（`action`、`actor`、`reason`、before/after 快照、写入后的记忆版本）。日志最多 10 条、团队侧合计 8,000 字符，超出丢弃最旧记录；快照会脱敏常见凭据，被脱敏或截断的记录不可撤销。日志藏在 `TeamAggregate.memory` 内，因此会随 `team.list` 一起返回，但长度由上述上限约束。
+- 撤销：界面通过 `team.memory.undo`（不是模型工具）撤销一条日志。日志 id 必须位于本团队记忆容器内，且必须是产生当前记忆版本的那次变更，否则返回 `MEMORY_UNDO_STALE`；撤销精确恢复 before 快照（新建则归档条目），脱敏/截断记录或会与现有 `key` 冲突时返回 `MEMORY_UNDO_UNAVAILABLE`。撤销本身也追加一条 `undo` 日志。
 - 权限：成员用 `team_memory_propose` 提交 `proposed` 提议；Leader 自己的写入直接 `active`。只有 Leader 能调用 `team_memory_accept`（`accept` 激活、`reject` 归档），成员无法决定任何提议，也无法决定自己写的提议。接受时若存在同 `key` 的 `active` 条目，旧条目转为 `superseded`，避免两条相反决定同时生效。
 - 版本栅栏：写入的 `expected_revision` 是**记忆容器**的 `revision`（`team_memory_list` 返回，尚无记忆时为 `0`），不是团队聚合的 `revision`；任务板变化不会让记忆写入失效。过期版本返回 `MEMORY_REVISION_CONFLICT`，在团队串行写入中复查，不会覆盖并发写入。
 - 注入：只有 `active`、`visibility=team-safe`、`scope=team` 的条目进入团队成员提示（与 roster 同一动态区段，每轮重读，接受后下一轮即可见），`proposed` / `superseded` / `archived` 以及任何 `private` 条目不加载；注入预算 2,000 字符。
 - 上限：只统计 `active` / `proposed` 的活条目——title+body 合计 8,000 字符、最多 100 条；`archived` 与 `superseded` 属于历史，仍保留在存储里但不计入上限、不进入提示，因此拒绝提议或按 key 取代不会永久占用额度。活条目没有删除/归档操作，达到 100 条后只能先接受或拒绝未决提议、或用同 key 条目取代现有决定。
 - 隔离：记忆按团队聚合存储，DM 会话和单聊助手从不读取团队记忆；其他团队也无法引用本团队条目。`team.reset` **保留**团队记忆（团队、成员、条目与可见性都不变）；解散团队时整个聚合被删除，记忆随之消失。
-- 助手侧 `team-safe` 记忆只在成员被显式关联到该助手实例时注入：成员提示词只加载该实例 `active`、`scope=assistant`、`team-safe` 的结构化条目（只读、有界），不加载旧版 `content`、`private`、提案或归档条目；未关联成员不加载任何助手记忆。关联入口为创建/添加成员时的 `assistantInstanceId`、`team_spawn_agent` 的 `assistant_instance_id`，以及 `team.member.setAssistantInstance`（`null` 解除）。创建团队时的校验是写入前尽力而为（团队尚不存在，无法在聚合更新中复查）；添加成员与更新关联都会在 `store.updateTeam` 的原子更新内复查，跨团队唯一性仍是每团队原子更新下的尽力而为，没有全局锁。本轮不含记忆 UI、自动捕获和上下文压缩。
+- 助手侧 `team-safe` 记忆只在成员被显式关联到该助手实例时注入：成员提示词只加载该实例 `active`、`scope=assistant`、`team-safe` 的结构化条目（只读、有界），不加载旧版 `content`、`private`、提案或归档条目；未关联成员不加载任何助手记忆。关联入口为创建/添加成员时的 `assistantInstanceId`、`team_spawn_agent` 的 `assistant_instance_id`，以及 `team.member.setAssistantInstance`（`null` 解除）。创建团队时的校验是写入前尽力而为（团队尚不存在，无法在聚合更新中复查）；添加成员与更新关联都会在 `store.updateTeam` 的原子更新内复查，跨团队唯一性仍是每团队原子更新下的尽力而为，没有全局锁。本轮不新增自动捕获和上下文压缩；记忆 UI 已提供日志撤销。
 
 ## 任务 attempt / 所有权围栏
 

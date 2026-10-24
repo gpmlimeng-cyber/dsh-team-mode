@@ -1,6 +1,7 @@
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { memoryRecallFilterOf, recallMemoryEntries } from '../domain/memory.js'
 import type { AssistantMemory, AssistantSession, MemoryEntry, WriteAssistantMemoryEntryInput } from '../domain/types.js'
 
 export interface AssistantTaskSummaryMessage {
@@ -214,12 +215,21 @@ export function registerAssistantMemoryTools(
 
   register(defineTool({
     name: 'assistant_memory_read',
-    description: 'Read this assistant’s durable memory: one bounded legacy note plus structured entries, shared by its main and worker Sessions. Returns null when no memory has been written yet. Entries carry visibility (private by default), status, key, and revisions.',
-    parameters: {},
+    description: 'Read this assistant’s durable memory: one bounded legacy note plus structured entries, shared by its main and worker Sessions. Returns null when no memory has been written yet. Entries carry visibility (private by default), status, key, and revisions. Read-only: query/status/limit narrow the returned entries without changing anything.',
+    parameters: {
+      query: { type: 'string', description: 'Case-insensitive text matched against entry key, title, and body.' },
+      status: {
+        type: 'string',
+        enum: ['active', 'proposed', 'superseded', 'archived'],
+        description: 'Only return entries with this status; omit for every status.',
+      },
+      limit: { type: 'number', description: 'Maximum entries to return (1-50, default 20).' },
+    },
     output: textOutput,
-    execute: async (_args, exec) => {
+    execute: async (args, exec) => {
       handlers.assertIdentity(exec.agent)
       const memory = handlers.readMemory()
+      const recall = recallMemoryEntries(memory?.entries ?? [], memoryRecallFilterOf(args))
       return {
         memory: memory === undefined
           ? null
@@ -228,8 +238,10 @@ export function registerAssistantMemoryTools(
             content: memory.content,
             revision: memory.revision,
             updated_at: memory.updatedAt,
-            entries: (memory.entries ?? []).map(entryView),
+            entries: recall.entries.map(entryView),
           },
+        total: recall.total,
+        truncated: recall.truncated,
       } as never
     },
   }))

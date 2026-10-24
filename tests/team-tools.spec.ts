@@ -64,7 +64,7 @@ function harness(options: { allow: string[] } | undefined = undefined): {
       revision: 1,
       entry: memoryView('mem-1', 'proposed'),
     })),
-    listMemory: vi.fn(() => ({ revision: 0, entries: [] })),
+    listMemory: vi.fn(() => ({ revision: 0, total: 0, truncated: false, entries: [] })),
     decideMemory: vi.fn(async () => ({
       revision: 2,
       entry: memoryView('mem-1', 'active'),
@@ -224,7 +224,20 @@ describe('Team Mode tool surface', () => {
     })
 
     const listed = await list.execute({}, exec)
-    expect(listed).toMatchObject({ memory_revision: 0, entries: [] })
+    expect(listed).toMatchObject({
+      memory_revision: 0,
+      total: 0,
+      truncated: false,
+      entries: [],
+    })
+    expect(handlers.listMemory).toHaveBeenCalledWith({})
+
+    await list.execute({ query: 'tabs', status: 'active', limit: 5 }, exec)
+    expect(handlers.listMemory).toHaveBeenLastCalledWith({
+      query: 'tabs',
+      status: 'active',
+      limit: 5,
+    })
 
     const accepted = await decide.execute(
       { entry_id: 'mem-1', expected_revision: 1, decision: 'reject' },

@@ -95,6 +95,20 @@ export function goalStatusLabel(status: string): string {
 /** Archived/superseded history can grow without bound; render only the newest page. */
 export const MEMORY_HISTORY_LIMIT = 20
 
+const MEMORY_ACTION_LABELS: Record<string, string> = {
+  create: '新建',
+  update: '修改',
+  archive: '归档',
+  accept: '接受',
+  reject: '驳回',
+  supersede: '替代',
+  undo: '撤销',
+}
+
+export function memoryJournalActionLabel(action: string): string {
+  return MEMORY_ACTION_LABELS[action] ?? action
+}
+
 export interface MemoryPanelView {
   revision: number
   /** Legacy free-text note; team memory never has one. */

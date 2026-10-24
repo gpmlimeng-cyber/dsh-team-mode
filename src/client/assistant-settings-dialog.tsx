@@ -9,6 +9,7 @@ import {
 } from './assistant-instances.js'
 import {
   assistantMemoryView,
+  memoryJournalActionLabel,
   memorySourceLabel,
   memoryStatusLabel,
   memoryVisibilityLabel,
@@ -24,7 +25,7 @@ import type {
   MemoryEntry,
   UpdateAssistantInstanceInput,
 } from '../domain/types.js'
-import type { CatalogView } from '../transport/contracts.js'
+import type { AssistantMemoryEntryWriteView, CatalogView } from '../transport/contracts.js'
 
 const STATUS_LABELS: Record<AssistantInstance['status'], string> = {
   idle: '空闲',
@@ -465,18 +466,32 @@ export function AssistantSettingsDialog({
   )
 }
 
-function memoryError(cause: unknown): string {
-  const code = typeof cause === 'object' && cause !== null && 'code' in cause
+function memoryErrorCode(cause: unknown): unknown {
+  return typeof cause === 'object' && cause !== null && 'code' in cause
     ? (cause as { code?: unknown }).code
     : undefined
+}
+
+function memoryError(cause: unknown): string {
+  const code = memoryErrorCode(cause)
   if (code === 'MEMORY_REVISION_CONFLICT' || code === 'ASSISTANT_REVISION_CONFLICT') {
     return '记忆已被其他操作更新，已重新加载最新版本，请重试。'
   }
+  if (code === 'MEMORY_UNDO_STALE') return '记忆已更新，已重新加载最新版本，请重试撤销。'
+  if (code === 'MEMORY_UNDO_UNAVAILABLE') return '这条变更无法安全撤销（快照已脱敏或截断）。'
   return messageOf(cause)
 }
 
 function memoryTime(value: string): string {
   return value.slice(0, 16).replace('T', ' ')
+}
+
+/**
+ * `assistant.memory.undo` returns the same `{ memory, entry }` envelope as an
+ * entry write. The panel stores the memory document, not the envelope.
+ */
+export function memoryAfterUndo(result: AssistantMemoryEntryWriteView): AssistantMemory {
+  return result.memory
 }
 
 interface MemoryDraft {
@@ -503,8 +518,10 @@ function AssistantMemorySection({ assistantId }: { assistantId: string }): JSX.E
   const [legacyEditing, setLegacyEditing] = useState(false)
   const [legacyDraft, setLegacyDraft] = useState('')
   const [confirmClear, setConfirmClear] = useState<string>()
+  const [undoing, setUndoing] = useState<string>()
   const view = useMemo(() => assistantMemoryView(memory), [memory])
   const revision = memory?.revision ?? 0
+  const journal = memory?.journal ?? []
 
   async function load(): Promise<void> {
     setLoading(true)
@@ -627,6 +644,28 @@ function AssistantMemorySection({ assistantId }: { assistantId: string }): JSX.E
       if (message.startsWith('记忆已被')) void load()
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function undo(journalId: string): Promise<void> {
+    if (busy || undoing !== undefined) return
+    setUndoing(journalId)
+    setError(undefined)
+    try {
+      const result = await callAgentTeam('assistant.memory.undo', {
+        assistantId,
+        journalId,
+        expectedRevision: revision,
+      })
+      const next = memoryAfterUndo(result)
+      setMemory(next)
+      setLegacyDraft(next.content)
+      setConfirmClear(undefined)
+    } catch (cause) {
+      setError(memoryError(cause))
+      if (memoryErrorCode(cause) === 'MEMORY_UNDO_STALE') void load()
+    } finally {
+      setUndoing(undefined)
     }
   }
 
@@ -814,6 +853,40 @@ function AssistantMemorySection({ assistantId }: { assistantId: string }): JSX.E
           {view.historyTotal > view.history.length && (
             <p className={css.memoryEmpty}>仅显示最近 {view.history.length} 条历史记录。</p>
           )}
+        </div>
+      )}
+      {journal.length > 0 && (
+        <div className={css.memoryGroup}>
+          <strong className={css.memoryGroupTitle}>变更日志 · {journal.length}</strong>
+          {[...journal].reverse().map(record => {
+            const blocked = record.redacted === true || record.trimmed === true
+            return (
+              <article key={record.id} className={css.memoryEntryCard}>
+                <div className={css.memoryEntryHeader}>
+                  <strong>{record.after?.title ?? record.before?.title ?? record.entryId}</strong>
+                  <span className={css.memoryBadges}>
+                    <span className={css.memoryBadge}>{memoryJournalActionLabel(record.action)}</span>
+                    <span className={css.memoryBadge}>{memorySourceLabel(record.actor)}</span>
+                    <span className={css.memoryBadge}>{memoryTime(record.at)}</span>
+                  </span>
+                </div>
+                <div className={css.memoryEntryMeta}>
+                  <span>{record.reason}</span>
+                  <span className={css.memoryEntryActions}>
+                    <button
+                      type="button"
+                      className={css.memoryAction}
+                      disabled={busy || undoing !== undefined || blocked}
+                      title={blocked ? '快照已脱敏或截断，无法安全撤销' : undefined}
+                      onClick={() => { void undo(record.id) }}
+                    >
+                      {undoing === record.id ? '撤销中…' : '撤销'}
+                    </button>
+                  </span>
+                </div>
+              </article>
+            )
+          })}
         </div>
       )}
       {draft !== undefined && (

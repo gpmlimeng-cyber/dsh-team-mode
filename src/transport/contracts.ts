@@ -49,6 +49,7 @@ export const AGENT_TEAM_METHODS = [
   'assistant.memory.get',
   'assistant.memory.write',
   'assistant.memory.entry.write',
+  'assistant.memory.undo',
   'assistant.checkpoint.create',
   'assistant.checkpoint.list',
   'assistant.checkpoint.handoff',
@@ -90,6 +91,7 @@ export const AGENT_TEAM_METHODS = [
   'team.archive',
   'team.memory.write',
   'team.memory.decide',
+  'team.memory.undo',
   'team.interaction.respond',
   'team.member.setPermissionPreset',
   'team.member.setReasoningEffort',
@@ -406,6 +408,14 @@ export interface AgentTeamRequestMap {
     }
     result: AssistantMemoryEntryWriteView
   }
+  'assistant.memory.undo': {
+    payload: {
+      assistantId: string
+      journalId: string
+      expectedRevision?: number
+    }
+    result: AssistantMemoryEntryWriteView
+  }
   'assistant.checkpoint.create': {
     payload: { assistantId: string; note?: string }
     result: ContextCheckpoint
@@ -509,6 +519,14 @@ export interface AgentTeamRequestMap {
       entryId: string
       expectedMemoryRevision?: number
       decision: 'accept' | 'reject'
+    }
+    result: TeamMemoryWriteView
+  }
+  'team.memory.undo': {
+    payload: {
+      teamId: string
+      journalId: string
+      expectedMemoryRevision?: number
     }
     result: TeamMemoryWriteView
   }

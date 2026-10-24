@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { createUserMessage, MessageId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { AgentTeamError } from '../domain/errors.js'
+import { recallMemoryEntries, type MemoryRecallFilter } from '../domain/memory.js'
 import { teamTaskKindSchema, teamTaskVerdictSchema } from '../domain/schemas.js'
 import {
   chargeGoalTurn,
@@ -23,11 +24,14 @@ import type {
 import type { AgentTeamService } from '../service/dsh-team-mode-service.js'
 import type { PendingInteractionView } from '../transport/contracts.js'
 import {
+  appendMemoryJournal,
   assertTeamMemoryBudget,
   liveTeamMemoryEntries,
+  memoryEntrySnapshot,
   normalizeTeamMemoryKey,
   normalizeTeamMemoryRevision,
   requireTeamMemoryRevision,
+  TEAM_MEMORY_JOURNAL_MAX_CHARS,
   TEAM_MEMORY_MAX_BODY_CHARS,
   TEAM_MEMORY_MAX_ENTRIES,
   TEAM_MEMORY_MAX_TITLE_CHARS,
@@ -274,6 +278,10 @@ export interface TeamMemoryList {
   /** Current memory-container revision; pass as expected_revision on the next write. */
   revision: number
   entries: TeamMemoryView[]
+  /** Matching entries before the limit and character budget. */
+  total: number
+  /** True when more entries match than the bounded result returned. */
+  truncated: boolean
 }
 
 export interface TeamMemoryWriteResult {
@@ -1224,13 +1232,14 @@ export class TeamCommandHandler {
    * Team memory is scoped to one aggregate: every read takes a teamId, so
    * another team's entries are unreachable and DM Sessions never read it.
    */
-  listMemory(teamId: string): TeamMemoryList {
+  listMemory(teamId: string, filter: MemoryRecallFilter = {}): TeamMemoryList {
     const team = this.service.getTeam(teamId)
+    const recall = recallMemoryEntries(team.memory?.entries ?? [], filter)
     return {
       revision: team.memory?.revision ?? 0,
-      entries: [...(team.memory?.entries ?? [])]
-        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
-        .map(entry => this.memoryView(entry)),
+      total: recall.total,
+      truncated: recall.truncated,
+      entries: recall.entries.map(entry => this.memoryView(entry)),
     }
   }
 
@@ -1307,16 +1316,46 @@ export class TeamCommandHandler {
         }
         // A Leader write is authoritative for its key: the accepted entry it
         // replaces becomes superseded instead of both staying active.
+        const superseded: Array<{ before: MemoryEntry; after: MemoryEntry }> = []
         const merged = isLeader && key !== undefined
-          ? entries.map(value => value.status === 'active' && value.key === key
-            ? { ...value, status: 'superseded' as const, revision: value.revision + 1, updatedAt: now }
-            : value)
+          ? entries.map(value => {
+            if (value.status !== 'active' || value.key !== key) return value
+            const after: MemoryEntry = {
+              ...value,
+              status: 'superseded',
+              revision: value.revision + 1,
+              updatedAt: now,
+            }
+            superseded.push({ before: value, after })
+            return after
+          })
           : entries
         const nextEntries = [...merged, entry]
         assertTeamMemoryBudget(nextEntries)
+        const revision = (current.memory?.revision ?? 0) + 1
+        let journal = appendMemoryJournal(current.memory?.journal, {
+          scope: 'team',
+          actor: isLeader ? 'leader' : 'member',
+          action: 'create',
+          entryId: entry.id,
+          reason: `${isLeader ? 'leader' : 'member'} proposed '${title}'`,
+          before: null,
+          after: memoryEntrySnapshot(entry),
+        }, revision, TEAM_MEMORY_JOURNAL_MAX_CHARS)
+        for (const change of superseded) {
+          journal = appendMemoryJournal(journal, {
+            scope: 'team',
+            actor: isLeader ? 'leader' : 'member',
+            action: 'supersede',
+            entryId: change.before.id,
+            reason: `superseded by '${title}'`,
+            before: memoryEntrySnapshot(change.before),
+            after: memoryEntrySnapshot(change.after),
+          }, revision, TEAM_MEMORY_JOURNAL_MAX_CHARS)
+        }
         return {
           ...current,
-          memory: { revision: (current.memory?.revision ?? 0) + 1, entries: nextEntries, updatedAt: now },
+          memory: { revision, entries: nextEntries, journal, updatedAt: now },
         }
       },
       'team.memory_proposed',
@@ -1382,21 +1421,41 @@ export class TeamCommandHandler {
           updatedAt: now,
         }
         entries[index] = decided
+        const revision = (current.memory?.revision ?? 0) + 1
+        let journal = appendMemoryJournal(current.memory?.journal, {
+          scope: 'team',
+          actor: 'leader',
+          action: decision,
+          entryId: decided.id,
+          reason: `leader ${decision} '${decided.title}'`,
+          before: memoryEntrySnapshot(entry),
+          after: memoryEntrySnapshot(decided),
+        }, revision, TEAM_MEMORY_JOURNAL_MAX_CHARS)
         if (decision === 'accept' && decided.key !== undefined) {
           for (let position = 0; position < entries.length; position += 1) {
             const other = entries[position]!
             if (other.id === decided.id || other.status !== 'active' || other.key !== decided.key) continue
-            entries[position] = {
+            const superseded: MemoryEntry = {
               ...other,
               status: 'superseded',
               revision: other.revision + 1,
               updatedAt: now,
             }
+            entries[position] = superseded
+            journal = appendMemoryJournal(journal, {
+              scope: 'team',
+              actor: 'leader',
+              action: 'supersede',
+              entryId: other.id,
+              reason: `superseded by '${decided.title}'`,
+              before: memoryEntrySnapshot(other),
+              after: memoryEntrySnapshot(superseded),
+            }, revision, TEAM_MEMORY_JOURNAL_MAX_CHARS)
           }
         }
         return {
           ...current,
-          memory: { revision: (current.memory?.revision ?? 0) + 1, entries, updatedAt: now },
+          memory: { revision, entries, journal, updatedAt: now },
         }
       },
       decision === 'accept' ? 'team.memory_accepted' : 'team.memory_rejected',

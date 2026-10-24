@@ -4,6 +4,7 @@ import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { isModelInvocable, isSkillName, isUserInvocable } from '@deepseek-ai/dsh-skill'
 import type { Config } from '../config.js'
 import { AgentTeamError, epochStaleError } from '../domain/errors.js'
+import { memoryDedupeKey, redactMemoryText } from '../domain/memory.js'
 import { isMcpServerName, mcpServerFromToolName } from '../domain/mcp.js'
 import {
   createAssistantInputSchema,
@@ -43,6 +44,10 @@ import {
   type CreateTeamGoalInput,
   type LinkedAssistantMemory,
   type MemoryEntry,
+  type MemoryEntrySource,
+  type MemoryJournalAction,
+  type MemoryJournalEntry,
+  type MemoryJournalSnapshot,
   type Operation,
   type Page,
   type TeamActivity,
@@ -124,9 +129,37 @@ export const TEAM_MEMORY_MAX_ENTRIES = 100
 export const TEAM_MEMORY_MAX_TITLE_CHARS = 200
 export const TEAM_MEMORY_MAX_BODY_CHARS = 4_000
 
+/**
+ * The undo trail lives inside the same memory container: no new table, no
+ * schema-version bump. Newest records win when either cap is exceeded; a
+ * snapshot that had to be redacted or truncated is not undoable.
+ */
+export const MEMORY_JOURNAL_MAX_RECORDS = 10
+export const ASSISTANT_MEMORY_JOURNAL_MAX_CHARS = 16_000
+export const TEAM_MEMORY_JOURNAL_MAX_CHARS = 8_000
+export const MEMORY_JOURNAL_REASON_MAX_CHARS = 200
+
+/** Automatic capture is deliberately small: one short entry per source unit. */
+export const MEMORY_CAPTURE_MAX_TITLE_CHARS = 200
+export const MEMORY_CAPTURE_MAX_BODY_CHARS = 4_000
+export const MEMORY_CAPTURE_MAX_TASK_RESULTS = 3
+
 export interface WriteAssistantMemoryOptions {
   /** Expected memory revision; 0 means "no memory written yet". */
   expectedRevision?: number
+  /** Journal actor for structured writes; defaults to the model (`assistant`). */
+  actor?: MemoryEntrySource
+}
+
+/** One audited mutation, appended atomically with the memory write itself. */
+export interface MemoryJournalChange {
+  scope: 'assistant' | 'team'
+  actor: MemoryEntrySource
+  action: MemoryJournalAction
+  entryId: string
+  reason: string
+  before: MemoryJournalSnapshot | null
+  after: MemoryJournalSnapshot | null
 }
 
 export interface AgentTeamChange {
@@ -935,6 +968,11 @@ export class AgentTeamService extends Service {
         assistantId: instance.id,
         content: '',
         entries: [entry],
+        journal: appendMemoryJournal(undefined, assistantJournalChange(
+          entry,
+          undefined,
+          options.actor ?? 'assistant',
+        ), 1, ASSISTANT_MEMORY_JOURNAL_MAX_CHARS),
         revision: 1,
         updatedAt: now,
       }
@@ -984,12 +1022,203 @@ export class AgentTeamService extends Service {
         )
       }
       written.entry = entry
-      return { ...value, entries: nextEntries, revision: value.revision + 1, updatedAt: now }
+      const revision = value.revision + 1
+      return {
+        ...value,
+        entries: nextEntries,
+        journal: appendMemoryJournal(
+          value.journal,
+          assistantJournalChange(entry, existing, options.actor ?? 'assistant'),
+          revision,
+          ASSISTANT_MEMORY_JOURNAL_MAX_CHARS,
+        ),
+        revision,
+        updatedAt: now,
+      }
     })
     if (written.entry === undefined) {
       throw new AgentTeamError('INVALID_REQUEST', 'Assistant memory entry write produced no entry')
     }
     return { memory, entry: written.entry }
+  }
+
+  /**
+   * Undo one journaled assistant-memory change. The journal record must live in
+   * this instance's own memory and must be the change that produced the current
+   * revision: undoing an older record would silently discard everything after
+   * it, so that is `MEMORY_UNDO_STALE`. A redacted or truncated record cannot
+   * prove its prior content and is `MEMORY_UNDO_UNAVAILABLE`. Undoing a create
+   * archives the entry; every other action restores the recorded before-image
+   * as a new entry revision.
+   */
+  async undoAssistantMemory(
+    assistantId: string,
+    journalId: string,
+    options: WriteAssistantMemoryOptions = {},
+  ): Promise<{ memory: AssistantMemory; entry: MemoryEntry }> {
+    const instance = requireAssistantInstance(this.store, assistantId)
+    return this.withMemoryWriteLock(
+      instance.id,
+      () => this.undoAssistantMemoryLocked(instance.id, journalId, options),
+    )
+  }
+
+  private async undoAssistantMemoryLocked(
+    assistantId: string,
+    journalId: string,
+    options: WriteAssistantMemoryOptions,
+  ): Promise<{ memory: AssistantMemory; entry: MemoryEntry }> {
+    const instance = requireAssistantInstance(this.store, assistantId)
+    if (instance.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${instance.id}' is archived`,
+      )
+    }
+    const id = journalId.trim()
+    if (id === '') throw new AgentTeamError('INVALID_REQUEST', 'Memory journal id is required')
+    const current = this.store.getAssistantMemory(instance.id)
+    if (current === undefined) throw undoUnavailable(id, 'no memory is stored')
+    if (
+      options.expectedRevision !== undefined
+      && options.expectedRevision !== current.revision
+    ) {
+      throw undoStale(options.expectedRevision, current.revision)
+    }
+    const now = new Date().toISOString()
+    const undone: { entry?: MemoryEntry } = {}
+    const memory = await this.store.updateAssistantMemory(instance.id, value => {
+      if (
+        options.expectedRevision !== undefined
+        && options.expectedRevision !== value.revision
+      ) {
+        throw undoStale(options.expectedRevision, value.revision)
+      }
+      const record = value.journal?.find(candidate => candidate.id === id)
+      if (record === undefined) throw undoUnavailable(id, 'unknown journal entry')
+      if (record.scope !== 'assistant') throw undoUnavailable(id, 'journal entry belongs to another scope')
+      if (record.redacted === true) throw undoUnavailable(id, 'snapshot was redacted')
+      if (record.trimmed === true) throw undoUnavailable(id, 'snapshot was truncated')
+      if (record.revision !== value.revision) throw undoStale(record.revision, value.revision)
+      const entries = [...(value.entries ?? [])]
+      const index = entries.findIndex(entry => entry.id === record.entryId)
+      if (index === -1) throw undoUnavailable(id, 'the entry no longer exists')
+      const live = entries[index]!
+      if (live.scope !== 'assistant') throw undoUnavailable(id, 'the entry belongs to another scope')
+      const entry: MemoryEntry = record.before === null
+        ? { ...live, status: 'archived', revision: live.revision + 1, updatedAt: now }
+        : restoreMemoryEntry(live, record.before, now)
+      entries[index] = entry
+      const revision = value.revision + 1
+      undone.entry = entry
+      return {
+        ...value,
+        entries,
+        journal: restampJournalRevision(
+          appendMemoryJournal(value.journal, {
+            scope: 'assistant',
+            actor: options.actor ?? 'user',
+            action: 'undo',
+            entryId: entry.id,
+            reason: `undo ${record.action} '${record.before?.title ?? record.after?.title ?? entry.title}'`,
+            before: memoryEntrySnapshot(live),
+            after: memoryEntrySnapshot(entry),
+          }, revision, ASSISTANT_MEMORY_JOURNAL_MAX_CHARS),
+          value.revision,
+          revision,
+          record.id,
+        ),
+        revision,
+        updatedAt: now,
+      }
+    })
+    if (undone.entry === undefined) {
+      throw new AgentTeamError('INVALID_REQUEST', 'Assistant memory undo produced no entry')
+    }
+    return { memory, entry: undone.entry }
+  }
+
+  /**
+   * Opt-in capture after a worker task completes. Writes exactly one `private`
+   * `proposed` entry (`task:<id>`) derived from the task title and its bounded
+   * result summary; it never activates anything, never calls a model, and is
+   * skipped when capture is off, the task is not completed, or an entry with the
+   * same key/text already exists. Capture failures are swallowed: completing a
+   * task must never fail because memory could not be written.
+   */
+  async captureAssistantTaskMemory(assistantId: string, taskId: string): Promise<boolean> {
+    if (this.config.memoryAutoCapture !== true) return false
+    try {
+      const instance = requireAssistantInstance(this.store, assistantId)
+      if (instance.status === 'archived') return false
+      const task = this.getAssistantSession(taskId.trim())
+      if (task.assistantId !== instance.id || task.status !== 'completed') return false
+      return await this.withMemoryWriteLock(
+        instance.id,
+        () => this.captureAssistantTaskMemoryLocked(instance.id, task),
+      )
+    } catch (error) {
+      this.ctx.logger.warn(
+        `dsh-team-mode: assistant task memory capture failed for '${taskId}'`,
+        error,
+      )
+      return false
+    }
+  }
+
+  private async captureAssistantTaskMemoryLocked(
+    assistantId: string,
+    task: AssistantSession,
+  ): Promise<boolean> {
+    if (this.config.memoryAutoCapture !== true) return false
+    const instance = requireAssistantInstance(this.store, assistantId)
+    if (instance.status === 'archived') return false
+    const now = new Date().toISOString()
+    const candidate = assistantTaskCaptureEntry(task, now)
+    const key = candidate.key
+    const dedupe = memoryDedupeKey(candidate)
+    const existing = this.store.getAssistantMemory(instance.id)
+    if (existing !== undefined && hasCapturedEntry(existing.entries ?? [], key, dedupe)) return false
+    if (existing === undefined) {
+      const memory: AssistantMemory = {
+        schemaVersion: 1,
+        assistantId: instance.id,
+        content: '',
+        entries: [candidate],
+        journal: appendMemoryJournal(undefined, assistantCaptureChange(candidate), 1, ASSISTANT_MEMORY_JOURNAL_MAX_CHARS),
+        revision: 1,
+        updatedAt: now,
+      }
+      await this.store.putAssistantMemory(memory)
+      return true
+    }
+    const written = { added: false }
+    await this.store.updateAssistantMemory(instance.id, value => {
+      const entries = value.entries ?? []
+      if (hasCapturedEntry(entries, key, dedupe)) return value
+      const live = entries.filter(entry => entry.status !== 'archived')
+      const nextChars = live.reduce((sum, entry) => sum + entry.title.length + entry.body.length, 0)
+        + candidate.title.length + candidate.body.length
+      if (
+        live.length >= ASSISTANT_MEMORY_MAX_ENTRIES
+        || nextChars > ASSISTANT_MEMORY_MAX_CHARS
+      ) return value
+      written.added = true
+      const revision = value.revision + 1
+      return {
+        ...value,
+        entries: [...entries, candidate],
+        journal: appendMemoryJournal(
+          value.journal,
+          assistantCaptureChange(candidate),
+          revision,
+          ASSISTANT_MEMORY_JOURNAL_MAX_CHARS,
+        ),
+        revision,
+        updatedAt: now,
+      }
+    })
+    return written.added
   }
 
   /** Run one memory write at a time per assistant instance. */
@@ -1377,7 +1606,7 @@ export class AgentTeamService extends Service {
     const input = updateTeamGoalInputSchema.parse(raw)
     const team = requireTeam(this.store, teamId)
     assertTeamMutable(team)
-    requireGoal(team, goalId)
+    const previous = requireGoal(team, goalId)
     const now = new Date().toISOString()
     const next = await this.updateRuntimeTeam(
       teamId,
@@ -1398,6 +1627,15 @@ export class AgentTeamService extends Service {
       `Goal ${goalId} updated`,
       epoch === undefined ? {} : { expectedEpoch: epoch },
     )
+    // Capture only on the transition into `completed`, and never let an
+    // optional memory write turn a successful Goal update into a failure.
+    if (
+      this.config.memoryAutoCapture === true
+      && input.status === 'completed'
+      && previous.status !== 'completed'
+    ) {
+      await this.captureTeamGoalMemory(teamId, goalId, epoch)
+    }
     return requireGoal(next, goalId)
   }
 
@@ -1504,22 +1742,44 @@ export class AgentTeamService extends Service {
             }
         if (existing === undefined) entries.push(entry)
         else entries[index] = entry
+        const revision = (current.memory?.revision ?? 0) + 1
+        let journal = current.memory?.journal
+        const action: MemoryJournalAction = existing === undefined ? 'create' : 'update'
+        journal = appendMemoryJournal(journal, {
+          scope: 'team',
+          actor: 'user',
+          action,
+          entryId: entry.id,
+          reason: `${action} '${title}'`,
+          before: existing === undefined ? null : memoryEntrySnapshot(existing),
+          after: memoryEntrySnapshot(entry),
+        }, revision, TEAM_MEMORY_JOURNAL_MAX_CHARS)
         if (key !== undefined) {
           for (let position = 0; position < entries.length; position += 1) {
             const other = entries[position]!
             if (other.id === entry.id || other.status !== 'active' || other.key !== key) continue
-            entries[position] = {
+            const superseded: MemoryEntry = {
               ...other,
               status: 'superseded',
               revision: other.revision + 1,
               updatedAt: now,
             }
+            entries[position] = superseded
+            journal = appendMemoryJournal(journal, {
+              scope: 'team',
+              actor: 'user',
+              action: 'supersede',
+              entryId: other.id,
+              reason: `superseded by '${title}'`,
+              before: memoryEntrySnapshot(other),
+              after: memoryEntrySnapshot(superseded),
+            }, revision, TEAM_MEMORY_JOURNAL_MAX_CHARS)
           }
         }
         assertTeamMemoryBudget(entries)
         return {
           ...current,
-          memory: { revision: (current.memory?.revision ?? 0) + 1, entries, updatedAt: now },
+          memory: { revision, entries, journal, updatedAt: now },
         }
       },
       'team.memory_written',
@@ -1568,33 +1828,220 @@ export class AgentTeamService extends Service {
             { entryId: id, status: entry.status },
           )
         }
-        entries[index] = {
+        const decided: MemoryEntry = {
           ...entry,
           status: decision === 'reject' ? 'archived' : 'active',
           revision: entry.revision + 1,
           updatedAt: now,
         }
-        if (decision === 'accept' && entry.key !== undefined) {
+        entries[index] = decided
+        const revision = (current.memory?.revision ?? 0) + 1
+        let journal = appendMemoryJournal(current.memory?.journal, {
+          scope: 'team',
+          actor: 'user',
+          action: decision,
+          entryId: decided.id,
+          reason: `${decision} '${decided.title}'`,
+          before: memoryEntrySnapshot(entry),
+          after: memoryEntrySnapshot(decided),
+        }, revision, TEAM_MEMORY_JOURNAL_MAX_CHARS)
+        if (decision === 'accept' && decided.key !== undefined) {
           for (let position = 0; position < entries.length; position += 1) {
             const other = entries[position]!
-            if (other.id === entry.id || other.status !== 'active' || other.key !== entry.key) continue
-            entries[position] = {
+            if (other.id === decided.id || other.status !== 'active' || other.key !== decided.key) continue
+            const superseded: MemoryEntry = {
               ...other,
               status: 'superseded',
               revision: other.revision + 1,
               updatedAt: now,
             }
+            entries[position] = superseded
+            journal = appendMemoryJournal(journal, {
+              scope: 'team',
+              actor: 'user',
+              action: 'supersede',
+              entryId: other.id,
+              reason: `superseded by '${decided.title}'`,
+              before: memoryEntrySnapshot(other),
+              after: memoryEntrySnapshot(superseded),
+            }, revision, TEAM_MEMORY_JOURNAL_MAX_CHARS)
           }
         }
         return {
           ...current,
-          memory: { revision: (current.memory?.revision ?? 0) + 1, entries, updatedAt: now },
+          memory: { revision, entries, journal, updatedAt: now },
         }
       },
       decision === 'accept' ? 'team.memory_accepted' : 'team.memory_rejected',
       `Team memory entry ${id} ${decision === 'accept' ? 'accepted' : 'rejected'}`,
     )
     return { memoryRevision: next.memory?.revision ?? 0, entry: requireTeamMemoryEntry(next, id) }
+  }
+
+  /**
+   * Undo one journaled team-memory change. The record must live inside this
+   * team's own aggregate and must be the change that produced the current
+   * memory revision; an older record is `MEMORY_UNDO_STALE`. Redacted or
+   * truncated records are `MEMORY_UNDO_UNAVAILABLE`, as is a restore that would
+   * leave two active entries with one key. Undoing a create archives the entry.
+   */
+  async undoUserTeamMemory(
+    teamId: string,
+    journalId: string,
+    options: { expectedMemoryRevision?: number } = {},
+  ): Promise<TeamMemoryWriteView> {
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    const id = journalId.trim()
+    if (id === '') throw new AgentTeamError('INVALID_REQUEST', 'Memory journal id is required')
+    const expected = normalizeTeamMemoryRevision(options.expectedMemoryRevision)
+    const now = new Date().toISOString()
+    const undone: { entryId?: string } = {}
+    const next = await this.updateRuntimeTeam(
+      teamId,
+      current => {
+        const currentRevision = current.memory?.revision ?? 0
+        if (expected !== undefined && expected !== currentRevision) {
+          throw undoStale(expected, currentRevision)
+        }
+        const record = current.memory?.journal?.find(candidate => candidate.id === id)
+        if (record === undefined) throw undoUnavailable(id, 'unknown journal entry')
+        if (record.scope !== 'team') throw undoUnavailable(id, 'journal entry belongs to another scope')
+        if (record.redacted === true) throw undoUnavailable(id, 'snapshot was redacted')
+        if (record.trimmed === true) throw undoUnavailable(id, 'snapshot was truncated')
+        if (record.revision !== currentRevision) throw undoStale(record.revision, currentRevision)
+        const entries = [...(current.memory?.entries ?? [])]
+        const index = entries.findIndex(entry => entry.id === record.entryId)
+        if (index === -1) throw undoUnavailable(id, 'the entry no longer exists')
+        const live = entries[index]!
+        if (live.scope !== 'team') throw undoUnavailable(id, 'the entry belongs to another scope')
+        const entry: MemoryEntry = record.before === null
+          ? { ...live, status: 'archived', revision: live.revision + 1, updatedAt: now }
+          : restoreMemoryEntry(live, record.before, now)
+        if (
+          entry.status === 'active'
+          && entry.key !== undefined
+          && entries.some(other => other.id !== entry.id
+            && other.status === 'active'
+            && other.key === entry.key)
+        ) {
+          throw undoUnavailable(id, 'restoring it would duplicate an active key')
+        }
+        entries[index] = entry
+        const revision = currentRevision + 1
+        undone.entryId = entry.id
+        return {
+          ...current,
+          memory: {
+            revision,
+            entries,
+            journal: restampJournalRevision(
+              appendMemoryJournal(current.memory?.journal, {
+                scope: 'team',
+                actor: 'user',
+                action: 'undo',
+                entryId: entry.id,
+                reason: `undo ${record.action} '${record.before?.title ?? record.after?.title ?? entry.title}'`,
+                before: memoryEntrySnapshot(live),
+                after: memoryEntrySnapshot(entry),
+              }, revision, TEAM_MEMORY_JOURNAL_MAX_CHARS),
+              currentRevision,
+              revision,
+              record.id,
+            ),
+            updatedAt: now,
+          },
+        }
+      },
+      'team.memory_undone',
+      `Team memory journal '${id}' undone`,
+    )
+    if (undone.entryId === undefined) {
+      throw new AgentTeamError('INVALID_REQUEST', 'Team memory undo produced no entry')
+    }
+    return {
+      memoryRevision: next.memory?.revision ?? 0,
+      entry: requireTeamMemoryEntry(next, undone.entryId),
+    }
+  }
+
+  /**
+   * Opt-in capture after an explicit Goal completion. The atomic aggregate
+   * update (the same serialized write path as every other team mutation)
+   * re-reads the Goal and appends at most two `proposed`, `team-safe`,
+   * `source=auto` entries: `goal:<id>` from objective/acceptance and
+   * `goal-results:<id>` from up to three completed task results. Entries are
+   * redacted, deduped by key and normalized text, and skipped when the entry or
+   * character budget is full. The epoch fence is re-checked inside the closure.
+   * No model is called and nothing is ever accepted; failures are swallowed.
+   */
+  async captureTeamGoalMemory(teamId: string, goalId: string, epoch?: number): Promise<boolean> {
+    if (this.config.memoryAutoCapture !== true) return false
+    const id = goalId.trim()
+    if (id === '') return false
+    const snapshot = this.store.getTeam(teamId)
+    const goal = snapshot?.goals?.[id]
+    if (snapshot === undefined || goal === undefined || goal.status !== 'completed') return false
+    // The aggregate update below always bumps the team revision and writes an
+    // activity record. Skip it entirely when every candidate is already
+    // captured or over budget; the closure re-checks under the write lock.
+    if (!acceptsTeamCaptureCandidates(
+      snapshot,
+      goalCaptureEntries(goal, snapshot.tasks, new Date().toISOString()),
+    )) return false
+    const captured = { count: 0 }
+    try {
+      await this.updateRuntimeTeam(
+        teamId,
+        current => {
+          const goal = current.goals?.[id]
+          if (goal === undefined || goal.status !== 'completed') return current
+          const now = new Date().toISOString()
+          const candidates = goalCaptureEntries(goal, current.tasks, now)
+          const entries = [...(current.memory?.entries ?? [])]
+          const knownKeys = new Set(entries.flatMap(entry => entry.key === undefined ? [] : [entry.key]))
+          const knownText = new Set(entries.map(entry => memoryDedupeKey(entry)))
+          const revision = (current.memory?.revision ?? 0) + 1
+          let journal = current.memory?.journal
+          for (const candidate of candidates) {
+            if (candidate.key === undefined) continue
+            if (knownKeys.has(candidate.key)) continue
+            const dedupe = memoryDedupeKey(candidate)
+            if (knownText.has(dedupe)) continue
+            if (liveTeamMemoryEntries(entries).length >= TEAM_MEMORY_MAX_ENTRIES) break
+            entries.push(candidate)
+            if (liveTeamMemoryChars(entries) > TEAM_MEMORY_MAX_CHARS) {
+              entries.pop()
+              break
+            }
+            knownKeys.add(candidate.key)
+            knownText.add(dedupe)
+            captured.count += 1
+            journal = appendMemoryJournal(journal, {
+              scope: 'team',
+              actor: 'auto',
+              action: 'create',
+              entryId: candidate.id,
+              reason: `captured from completed goal '${boundCapturedText(goal.title, MEMORY_CAPTURE_MAX_TITLE_CHARS)}'`,
+              before: null,
+              after: memoryEntrySnapshot(candidate),
+            }, revision, TEAM_MEMORY_JOURNAL_MAX_CHARS)
+          }
+          if (captured.count === 0) return current
+          return {
+            ...current,
+            memory: { revision, entries, journal, updatedAt: now },
+          }
+        },
+        'team.memory_captured',
+        `Goal ${id} memory captured`,
+        epoch === undefined ? {} : { expectedEpoch: epoch },
+      )
+    } catch (error) {
+      this.ctx.logger.warn(`dsh-team-mode: goal memory capture failed for '${teamId}'`, error)
+      return false
+    }
+    return captured.count > 0
   }
 
   /**
@@ -2758,6 +3205,292 @@ function appendMemory(current: string, addition: string): string {
   return `${current}\n${addition}`
 }
 
+/** The content fields an undo restores; provenance and timestamps stay live. */
+export function memoryEntrySnapshot(entry: MemoryEntry): MemoryJournalSnapshot {
+  return {
+    title: entry.title,
+    body: entry.body,
+    visibility: entry.visibility,
+    status: entry.status,
+    ...(entry.key === undefined ? {} : { key: entry.key }),
+  }
+}
+
+/**
+ * Append one audited change and keep the journal bounded: at most
+ * {@link MEMORY_JOURNAL_MAX_RECORDS} records within the scope's character
+ * budget, oldest dropped first. Snapshots are redacted and, if a single record
+ * still cannot fit, truncated with a flag so undo refuses them.
+ */
+export function appendMemoryJournal(
+  journal: readonly MemoryJournalEntry[] | undefined,
+  change: MemoryJournalChange,
+  revision: number,
+  maxChars: number,
+): MemoryJournalEntry[] {
+  const record = buildMemoryJournalEntry(change, revision, maxChars)
+  const appended = [...(journal ?? []), record]
+  let bounded = appended.length > MEMORY_JOURNAL_MAX_RECORDS
+    ? appended.slice(-MEMORY_JOURNAL_MAX_RECORDS)
+    : appended
+  while (bounded.length > 0 && memoryJournalChars(bounded) > maxChars) {
+    bounded = bounded.slice(1)
+  }
+  return bounded
+}
+
+function buildMemoryJournalEntry(
+  change: MemoryJournalChange,
+  revision: number,
+  maxChars: number,
+): MemoryJournalEntry {
+  const reason = change.reason.slice(0, MEMORY_JOURNAL_REASON_MAX_CHARS)
+  const snapshotCap = Math.max(
+    Math.floor(maxChars / 2) - MEMORY_JOURNAL_REASON_MAX_CHARS - 64,
+    64,
+  )
+  const before = change.before === null
+    ? undefined
+    : boundJournalSnapshot(change.before, snapshotCap)
+  const after = change.after === null
+    ? undefined
+    : boundJournalSnapshot(change.after, snapshotCap)
+  return {
+    id: `memj-${randomUUID()}`,
+    scope: change.scope,
+    at: new Date().toISOString(),
+    actor: change.actor,
+    action: change.action,
+    entryId: change.entryId,
+    reason,
+    before: before?.snapshot ?? null,
+    after: after?.snapshot ?? null,
+    revision,
+    ...(before?.redacted === true || after?.redacted === true ? { redacted: true } : {}),
+    ...(before?.trimmed === true || after?.trimmed === true ? { trimmed: true } : {}),
+  }
+}
+
+function boundJournalSnapshot(
+  snapshot: MemoryJournalSnapshot,
+  cap: number,
+): { snapshot: MemoryJournalSnapshot; redacted: boolean; trimmed: boolean } {
+  const title = redactMemoryText(snapshot.title)
+  const body = redactMemoryText(snapshot.body)
+  let titleText = title.text
+  let bodyText = body.text
+  const keyChars = snapshot.key?.length ?? 0
+  let trimmed = false
+  if (titleText.length + bodyText.length + keyChars > cap) {
+    trimmed = true
+    const titleCap = Math.max(Math.floor(cap / 4), 1)
+    if (titleText.length > titleCap) titleText = titleText.slice(0, titleCap)
+    const bodyCap = Math.max(cap - titleText.length - keyChars, 1)
+    if (bodyText.length > bodyCap) bodyText = bodyText.slice(0, bodyCap)
+  }
+  return {
+    snapshot: {
+      title: titleText,
+      body: bodyText,
+      visibility: snapshot.visibility,
+      status: snapshot.status,
+      ...(snapshot.key === undefined ? {} : { key: snapshot.key }),
+    },
+    redacted: title.redacted || body.redacted,
+    trimmed,
+  }
+}
+
+function memoryJournalChars(journal: readonly MemoryJournalEntry[]): number {
+  return journal.reduce((sum, record) => sum
+    + record.reason.length
+    + journalSnapshotChars(record.before)
+    + journalSnapshotChars(record.after), 0)
+}
+
+function journalSnapshotChars(snapshot: MemoryJournalSnapshot | null): number {
+  if (snapshot === null) return 0
+  return snapshot.title.length + snapshot.body.length + (snapshot.key?.length ?? 0)
+}
+
+function assistantJournalChange(
+  entry: MemoryEntry,
+  existing: MemoryEntry | undefined,
+  actor: MemoryEntrySource,
+): MemoryJournalChange {
+  const action: MemoryJournalAction = existing === undefined
+    ? 'create'
+    : entry.status === 'archived' && existing.status !== 'archived'
+      ? 'archive'
+      : 'update'
+  return {
+    scope: 'assistant',
+    actor,
+    action,
+    entryId: entry.id,
+    reason: `${action} '${entry.title}'`,
+    before: existing === undefined ? null : memoryEntrySnapshot(existing),
+    after: memoryEntrySnapshot(entry),
+  }
+}
+
+/** Redact then bound one captured text field; capture never grows unbounded. */
+function boundCapturedText(text: string, limit: number): string {
+  const redacted = redactMemoryText(text).text
+  return redacted.length <= limit ? redacted : redacted.slice(0, limit)
+}
+
+function hasCapturedEntry(
+  entries: readonly MemoryEntry[],
+  key: string | undefined,
+  dedupe: string,
+): boolean {
+  return entries.some(entry =>
+    (key !== undefined && entry.key === key) || memoryDedupeKey(entry) === dedupe)
+}
+
+function assistantTaskCaptureEntry(task: AssistantSession, now: string): MemoryEntry {
+  const summary = task.resultSummary?.trim() ?? ''
+  const rawBody = summary === '' ? `Completed task: ${task.title}` : summary
+  return {
+    id: `mem-${randomUUID()}`,
+    scope: 'assistant',
+    visibility: 'private',
+    status: 'proposed',
+    source: 'auto',
+    key: `task:${task.id}`,
+    title: boundCapturedText(task.title, MEMORY_CAPTURE_MAX_TITLE_CHARS),
+    body: boundCapturedText(rawBody, MEMORY_CAPTURE_MAX_BODY_CHARS),
+    revision: 1,
+    createdAt: now,
+    updatedAt: now,
+  }
+}
+
+function assistantCaptureChange(entry: MemoryEntry): MemoryJournalChange {
+  return {
+    scope: 'assistant',
+    actor: 'auto',
+    action: 'create',
+    entryId: entry.id,
+    reason: `captured from completed task '${entry.title}'`,
+    before: null,
+    after: memoryEntrySnapshot(entry),
+  }
+}
+
+/**
+ * Deterministic goal capture candidates. Ordered by the Goal then by completion
+ * time, so the same Goal always produces the same key/title pair.
+ */
+function goalCaptureEntries(
+  goal: TeamGoal,
+  tasks: Readonly<Record<string, TeamTask>>,
+  now: string,
+): MemoryEntry[] {
+  const base = {
+    scope: 'team' as const,
+    visibility: 'team-safe' as const,
+    status: 'proposed' as const,
+    source: 'auto' as const,
+    revision: 1,
+    createdAt: now,
+    updatedAt: now,
+  }
+  const objective = boundCapturedText(goal.objective, MEMORY_CAPTURE_MAX_BODY_CHARS)
+  const acceptance = goal.acceptance.trim() === ''
+    ? ''
+    : boundCapturedText(goal.acceptance, MEMORY_CAPTURE_MAX_BODY_CHARS)
+  const body = boundCapturedText([
+    `Objective: ${objective}`,
+    ...(acceptance === '' ? [] : [`Acceptance: ${acceptance}`]),
+  ].join('\n'), MEMORY_CAPTURE_MAX_BODY_CHARS)
+  const entries: MemoryEntry[] = [{
+    ...base,
+    id: `mem-${randomUUID()}`,
+    key: `goal:${goal.id}`,
+    title: boundCapturedText(goal.title, MEMORY_CAPTURE_MAX_TITLE_CHARS),
+    body,
+  }]
+  const results = Object.values(tasks)
+    .filter(task => task.goalId === goal.id && task.status === 'completed')
+    .map(task => ({ task, result: task.result?.trim() ?? '' }))
+    .filter(item => item.result !== '')
+    .sort((left, right) =>
+      left.task.updatedAt.localeCompare(right.task.updatedAt)
+      || left.task.id.localeCompare(right.task.id))
+    .slice(0, MEMORY_CAPTURE_MAX_TASK_RESULTS)
+  if (results.length > 0) {
+    const resultBody = boundCapturedText(results.map(({ task, result }) =>
+      `- ${boundCapturedText(task.title, 200)}: ${boundCapturedText(result, 1_000)}`).join('\n'),
+    MEMORY_CAPTURE_MAX_BODY_CHARS)
+    entries.push({
+      ...base,
+      id: `mem-${randomUUID()}`,
+      key: `goal-results:${goal.id}`,
+      title: boundCapturedText(`Results: ${goal.title}`, MEMORY_CAPTURE_MAX_TITLE_CHARS),
+      body: resultBody,
+    })
+  }
+  return entries
+}
+
+/** Restore the recorded content as a new revision; never rewinds history. */
+function restoreMemoryEntry(
+  entry: MemoryEntry,
+  before: MemoryJournalSnapshot,
+  now: string,
+): MemoryEntry {
+  const restored: MemoryEntry = {
+    ...entry,
+    title: before.title,
+    body: before.body,
+    visibility: before.visibility,
+    status: before.status,
+    revision: entry.revision + 1,
+    updatedAt: now,
+  }
+  if (before.key === undefined) delete restored.key
+  else restored.key = before.key
+  return restored
+}
+
+/**
+ * One operation can journal several entry deltas under one memory revision
+ * (goal capture does two; a keyed write adds a supersede). After one of them is
+ * undone, the surviving deltas of that revision would fail the revision fence,
+ * so re-stamp them onto the new revision. The undone record and earlier undo
+ * records keep their own revision and stay stale by design.
+ */
+function restampJournalRevision(
+  journal: readonly MemoryJournalEntry[],
+  fromRevision: number,
+  toRevision: number,
+  undoneRecordId: string,
+): MemoryJournalEntry[] {
+  return journal.map(record => record.id === undoneRecordId
+    || record.revision !== fromRevision
+    || record.action === 'undo'
+    ? record
+    : { ...record, revision: toRevision })
+}
+
+function undoStale(expected: number | undefined, actual: number): AgentTeamError {
+  return new AgentTeamError(
+    'MEMORY_UNDO_STALE',
+    `Memory revision changed to ${actual}; reload and retry the undo`,
+    { expected, actual },
+  )
+}
+
+function undoUnavailable(journalId: string, reason: string): AgentTeamError {
+  return new AgentTeamError(
+    'MEMORY_UNDO_UNAVAILABLE',
+    `Memory journal entry '${journalId}' cannot be undone: ${reason}`,
+    { journalId, reason },
+  )
+}
+
 /** A memory fence is a whole non-negative number; anything else means "unfenced". */
 export function normalizeTeamMemoryRevision(value: number | undefined): number | undefined {
   if (value === undefined || !Number.isFinite(value)) return undefined
@@ -2783,11 +3516,37 @@ export function liveTeamMemoryEntries(entries: readonly MemoryEntry[]): MemoryEn
   return entries.filter(entry => entry.status === 'active' || entry.status === 'proposed')
 }
 
-export function assertTeamMemoryBudget(entries: readonly MemoryEntry[]): void {
-  const totalChars = liveTeamMemoryEntries(entries).reduce(
+/** Characters live entries occupy; the same budget the prompt and tools honour. */
+export function liveTeamMemoryChars(entries: readonly MemoryEntry[]): number {
+  return liveTeamMemoryEntries(entries).reduce(
     (sum, entry) => sum + entry.title.length + entry.body.length,
     0,
   )
+}
+
+/** Mirrors the capture closure's accept/dedupe/budget decision without writing. */
+function acceptsTeamCaptureCandidates(
+  team: TeamAggregate,
+  candidates: readonly MemoryEntry[],
+): boolean {
+  const entries = [...(team.memory?.entries ?? [])]
+  const knownKeys = new Set(entries.flatMap(entry => entry.key === undefined ? [] : [entry.key]))
+  const knownText = new Set(entries.map(entry => memoryDedupeKey(entry)))
+  for (const candidate of candidates) {
+    if (candidate.key === undefined) continue
+    if (knownKeys.has(candidate.key)) continue
+    const dedupe = memoryDedupeKey(candidate)
+    if (knownText.has(dedupe)) continue
+    if (liveTeamMemoryEntries(entries).length >= TEAM_MEMORY_MAX_ENTRIES) return false
+    entries.push(candidate)
+    if (liveTeamMemoryChars(entries) > TEAM_MEMORY_MAX_CHARS) return false
+    return true
+  }
+  return false
+}
+
+export function assertTeamMemoryBudget(entries: readonly MemoryEntry[]): void {
+  const totalChars = liveTeamMemoryChars(entries)
   if (totalChars > TEAM_MEMORY_MAX_CHARS) {
     throw new AgentTeamError(
       'INVALID_REQUEST',

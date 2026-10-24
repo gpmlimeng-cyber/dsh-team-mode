@@ -1509,7 +1509,7 @@ export class TeamRuntime {
           updateGoal: input => this.commands.updateGoal(team.id, member.id, input, epochAtStart),
           listGoals: () => this.commands.listGoals(team.id),
           proposeMemory: input => this.commands.proposeMemory(team.id, member.id, input, epochAtStart),
-          listMemory: () => this.commands.listMemory(team.id),
+          listMemory: filter => this.commands.listMemory(team.id, filter),
           decideMemory: input => this.commands.decideMemory(team.id, member.id, input, epochAtStart),
           listAssistants: () => this.service.listAssistants().items.map(assistant => (
             this.assistantView(assistant, false)

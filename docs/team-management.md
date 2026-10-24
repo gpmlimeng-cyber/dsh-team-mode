@@ -51,10 +51,11 @@
 团队管理弹窗中的团队卡片（以及已经存在记忆的团队列表卡片）会显示「团队记忆」面板，直接读取 `TeamView.memory`，不做额外轮询：
 
 - **生效记忆**与**待确认提案**分组显示；每条显示可见性、状态、来源、可选 key、更新时间和条目版本。`archived` / `superseded` 历史折叠展示，只渲染最近 20 条，避免无界列表。
+- **变更日志**单独列出每次新建/修改/接受/驳回/按 key 取代的动作、操作者、时间与原因；未脱敏、未截断且仍是当前版本的记录可点「撤销」，通过 `team.memory.undo` 精确恢复前一版内容（新建则归档条目）。日志最多 10 条、合计 8,000 字符，随 `TeamView.memory.journal` 返回。
 - 人类用户可以直接新建或编辑条目（标题、正文、可选 key），也可以接受或驳回成员的提案。接受提案会激活条目；同 key 的已有生效条目会被标记为 `superseded`，驳回则归档提案。
-- 所有写入都携带 `expectedMemoryRevision`（团队记忆版本，不是团队聚合版本）。版本过期时返回 `MEMORY_REVISION_CONFLICT`，面板提示刷新后重试，不会覆盖并发写入。
+- 所有写入和撤销都携带 `expectedMemoryRevision`（团队记忆版本，不是团队聚合版本）。版本过期时写入返回 `MEMORY_REVISION_CONFLICT`、撤销返回 `MEMORY_UNDO_STALE`，面板提示刷新后重试，不会覆盖并发写入。
 - 团队界面只渲染 `scope=team` 且 `visibility=team-safe` 的条目。助手私有记忆、`scope=assistant` 条目以及旧版 `content` 永远不会出现在团队面板中。
-- 没有自动捕获或写入提示；团队记忆仍主要由成员工具和 Leader 写入。
+- 没有自动捕获或写入提示；团队记忆仍主要由成员工具和 Leader 写入。模型侧的 `team_memory_list` 是只读召回，可用 `query` / `status` / `limit` 过滤，不能写或接受。
 
 ## 成员工具策略（部署配置）
 

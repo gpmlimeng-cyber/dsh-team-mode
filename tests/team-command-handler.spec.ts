@@ -1451,6 +1451,48 @@ describe('TeamCommandHandler AionUi semantics', () => {
     })).rejects.toMatchObject({ code: 'MEMBER_NOT_FOUND' })
   })
 
+  it('recalls team memory by status, query, and limit, and journals supersedes', async () => {
+    const { commands, team } = harness()
+    await commands.proposeMemory(team().id, 'leader', {
+      title: 'Use tabs',
+      body: 'Tabs in review.',
+      key: 'style',
+      expected_revision: 0,
+    })
+    const replacement = await commands.proposeMemory(team().id, 'leader', {
+      title: 'Use spaces',
+      body: 'Spaces now.',
+      key: 'style',
+      expected_revision: 1,
+    })
+    expect(replacement.revision).toBe(2)
+
+    const journal = team().memory!.journal!
+    expect(journal).toHaveLength(3)
+    expect(journal[0]).toMatchObject({ action: 'create', actor: 'leader', revision: 1 })
+    expect(journal[1]).toMatchObject({
+      action: 'create',
+      entryId: replacement.entry.entry_id,
+      revision: 2,
+    })
+    expect(journal[2]).toMatchObject({ action: 'supersede', revision: 2 })
+    expect(journal[2]!.before).toMatchObject({ title: 'Use tabs', status: 'active' })
+    expect(journal[2]!.after).toMatchObject({ status: 'superseded' })
+
+    // Recall is read-only and scoped to this aggregate.
+    const active = commands.listMemory(team().id, { status: 'active' })
+    expect(active.entries.map(entry => entry.title)).toEqual(['Use spaces'])
+    expect(active).toMatchObject({ total: 1, truncated: false })
+
+    const superseded = commands.listMemory(team().id, { status: 'superseded', query: 'TABS' })
+    expect(superseded.entries.map(entry => entry.title)).toEqual(['Use tabs'])
+    expect(superseded.total).toBe(1)
+
+    const limited = commands.listMemory(team().id, { limit: 1 })
+    expect(limited.entries).toHaveLength(1)
+    expect(limited).toMatchObject({ total: 2, truncated: true })
+  })
+
   it('refuses a Leader decision on its own proposal', async () => {
     const { commands, team, mutate } = harness()
     // Seeded directly: a Leader proposal normally becomes active on write, so
@@ -1551,7 +1593,12 @@ describe('TeamCommandHandler AionUi semantics', () => {
       expected_revision: 0,
     })
     expect(commands.listMemory(team().id).entries.map(entry => entry.title)).toEqual(['A fact'])
-    expect(commands.listMemory(otherTeam().id)).toEqual({ revision: 0, entries: [] })
+    expect(commands.listMemory(otherTeam().id)).toEqual({
+      revision: 0,
+      total: 0,
+      truncated: false,
+      entries: [],
+    })
 
     // A member of team B cannot write into team A.
     await expect(commands.proposeMemory(team().id, 'a2', {
