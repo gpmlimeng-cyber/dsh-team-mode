@@ -455,7 +455,10 @@ describe('GlobalOverview layout contract', () => {
     const count = cssRule(moduleCss, 'globalOverviewCount')
     const filters = cssRule(moduleCss, 'globalOverviewFilters')
     const row = cssRule(moduleCss, 'globalOverviewRow')
-    const globalCss = moduleCss.slice(moduleCss.indexOf('Read-only global overview'))
+    const globalCss = moduleCss.slice(
+      moduleCss.indexOf('Read-only global overview'),
+      moduleCss.indexOf('/* Team mark:'),
+    )
     const narrow = globalCss.slice(globalCss.indexOf('@media (max-width: 420px)'))
 
     expect(root).toContain('min-width: 0')
