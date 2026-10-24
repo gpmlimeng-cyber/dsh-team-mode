@@ -332,32 +332,20 @@ describe('GlobalOverview navigation', () => {
     expect(overview).toContain('onOpenAssistant(sessionId)')
   })
 
-  it('mounts the workbench overlay in the shipped client entry and forwards its opener', () => {
+  it('does not register the removed full-screen workbench overlay', () => {
     const entry = source('index.tsx')
-    const components = source('components.tsx')
-    const panel = source('teams/TeamPanel.tsx')
 
-    expect(entry).toContain("id: 'dsh-team-mode-workbench'")
-    expect(entry).toContain('order: 15')
-    expect(entry).toContain('<AgentTeamOverlay pickWorkspace={pickWorkspace} openSession={openSession} />')
-    expect(components).toContain('export function AgentTeamOverlay({')
-    expect(components).toContain('<TeamPanel')
-    expect(components).toContain('openSession={openSession}')
-    expect(components).toContain('teamsLoading={teamsLoading}')
-    expect(components).toContain('正在读取团队…')
-    expect(components).toContain('团队读取失败')
-    expect(panel).toContain('openAssistantSession(sessionId, closeAgentTeam, openSession)')
-    expect(panel).toContain('{...(teamsLoading === undefined ? {} : { teamsLoading })')
-    expect(panel).toContain('{...(teamsError === undefined ? {} : { teamsError })')
+    expect(entry).not.toContain("id: 'dsh-team-mode-workbench'")
+    expect(entry).not.toContain('<AgentTeamOverlay pickWorkspace={pickWorkspace} openSession={openSession} />')
+
   })
 
-  it('keeps the overview text in the built client bundle so it cannot become dead code', () => {
+  it('does not ship the removed workbench id in the built client bundle', () => {
     const bundleUrl = new URL('../lib/client.js', import.meta.url)
     expect(existsSync(bundleUrl), 'lib/client.js is missing: run npm run build first').toBe(true)
     const bundle = readFileSync(bundleUrl, 'utf8')
 
-    expect(bundle).toContain('全局总览')
-    expect(bundle).toContain('dsh-team-mode-workbench')
+    expect(bundle).not.toContain('dsh-team-mode-workbench')
   })
 
   it('mounts only on the default workbench page and forwards the session opener', () => {

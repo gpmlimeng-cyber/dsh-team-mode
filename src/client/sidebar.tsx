@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import {
   IconArchiveOutlineRegular,
-  IconUsersOutlineRegular,
+  IconChecklistOutlineRegular,
   IconChevronRightOutlineRegular,
   IconChevronsUpDownOutlineRegular,
   IconClockOutlineRegular,
@@ -35,6 +36,8 @@ import {
   teamSidebarSummary,
 } from './team-sidebar-data.js'
 import { useTeamText } from './team-i18n.js'
+import { TEAM_AVATAR_TILE_COUNT, teamAvatarColor, teamAvatarTiles } from './team-avatar.js'
+import { AnimatedModal } from './shared.js'
 import {
   SURFACE_MODE_KEY,
   parseSurfaceMode,
@@ -197,7 +200,7 @@ export function SidebarTeamSection({
   const [scope, setScope] = useState<'active' | 'archived'>('active')
   const [sortMode, setSortMode] = useState<'updated' | 'name'>('updated')
   const [menuTeamId, setMenuTeamId] = useState<string>()
-  const [openTaskTeams, setOpenTaskTeams] = useState<ReadonlySet<string>>(() => new Set())
+  const [taskDialogTeamId, setTaskDialogTeamId] = useState<string>()
   const [error, setError] = useState<string>()
 
   const load = useCallback(async () => {
@@ -245,15 +248,10 @@ export function SidebarTeamSection({
     openTeamPage(team.id)
   }
 
-  /** Session-only expansion state; the row itself stays a navigation control. */
-  const toggleTeamTasks = (teamId: string): void => {
-    setOpenTaskTeams(current => {
-      const next = new Set(current)
-      if (next.has(teamId)) next.delete(teamId)
-      else next.add(teamId)
-      return next
-    })
-  }
+  const taskDialogTeam = teams.find(team => team.id === taskDialogTeamId)
+  const taskDialogTasks = taskDialogTeam === undefined
+    ? []
+    : recentTeamTasks(taskDialogTeam, 50)
 
   return (
     <section className={css.sidebarTeamSection} aria-label="群聊" data-dsh-team-mode-section>
@@ -415,9 +413,7 @@ export function SidebarTeamSection({
                 && team.state !== 'active'
                 && team.state !== 'starting'
               const rowMenuOpen = menuTeamId === team.id
-              const tasksOpen = openTaskTeams.has(team.id)
-              const tasks = tasksOpen ? recentTeamTasks(team) : []
-              const taskListId = `dsh-team-mode-team-tasks-${team.id}`
+              const avatarTiles = teamAvatarTiles(team.name)
               return (
                 <div key={team.id} className={css.sidebarTeamGroup}>
                   <div
@@ -425,31 +421,34 @@ export function SidebarTeamSection({
                   >
                     <button
                       type="button"
-                      className={css.sidebarTeamExpand}
-                      aria-expanded={tasksOpen}
-                      aria-controls={tasksOpen ? taskListId : undefined}
-                      aria-label={tasksOpen ? `收起 ${team.name} 的最近任务` : `展开 ${team.name} 的最近任务`}
-                      title={tasksOpen ? '收起最近任务' : '展开最近任务'}
-                      onClick={() => { toggleTeamTasks(team.id) }}
-                    >
-                      <IconChevronRightOutlineRegular
-                        size={12}
-                        className={`${css.sidebarTeamExpandChevron} ${tasksOpen ? css.sidebarTeamExpandChevronOpen : ''}`}
-                      />
-                    </button>
-                    <button
-                      type="button"
                       className={`${css.sidebarTeamRow} ${css.sidebarTeamRowTwoLine}`}
                       onClick={() => { openTeam(team) }}
                       aria-current={active ? 'page' : undefined}
                       title={`${team.name} · ${statusText}`}
                     >
-                      <span className={css.sidebarTeamAvatar} aria-hidden="true">
-                        <IconUsersOutlineRegular size={16} />
+                      <span
+                        className={css.sidebarTeamAvatar}
+                        data-team-avatar={team.id}
+                        aria-hidden="true"
+                        style={{ '--team-avatar-ink': teamAvatarColor(team.id) } as CSSProperties}
+                      >
+                        {Array.from({ length: TEAM_AVATAR_TILE_COUNT }, (_, index) => (
+                          <span
+                            key={index}
+                            className={`${css.sidebarTeamAvatarTile} ${avatarTiles[index] === undefined ? css.sidebarTeamAvatarTileEmpty : ''}`}
+                          >
+                            {avatarTiles[index] ?? ''}
+                          </span>
+                        ))}
                       </span>
                       <span className={css.sidebarTeamCopy}>
-                        <span className={css.sidebarTeamTop}>
+                        <span className={css.sidebarAssistantTop}>
                           <span className={css.sidebarTeamName}>{team.name}</span>
+                          {team.pinned === true && (
+                            <span className={css.sidebarTeamPinned} title="已置顶" aria-label="已置顶" role="img">
+                              <IconPinFillRegular size={11} />
+                            </span>
+                          )}
                           <span className={css.sidebarTeamTime}>{relativeTime(team.updatedAt)}</span>
                         </span>
                         <span className={css.sidebarTeamSubtitle} title={statusText}>{statusText}</span>
@@ -468,25 +467,6 @@ export function SidebarTeamSection({
                           ? <span className={css.sidebarTeamStateDot} aria-hidden="true" />
                           : null}
                     </button>
-                    <Tooltip label={team.pinned === true ? t('sidebar.unpin') : t('sidebar.pin')} delayMs={400}>
-                      <button
-                        type="button"
-                        className={`${css.sidebarTeamManage} ${team.pinned === true ? css.sidebarTeamManagePinned : ''}`}
-                        onClick={() => {
-                          void callAgentTeam('team.pin', {
-                            teamId: team.id,
-                            pinned: team.pinned !== true,
-                          }, team.revision).catch(cause => {
-                            setError(cause instanceof Error ? cause.message : String(cause))
-                          })
-                        }}
-                        aria-label={team.pinned === true ? `取消置顶 ${team.name}` : `置顶 ${team.name}`}
-                      >
-                        {team.pinned === true
-                          ? <IconPinFillRegular size={14} />
-                          : <IconPinOutlineRegular size={14} />}
-                      </button>
-                    </Tooltip>
                     <Menu
                       open={rowMenuOpen}
                       onClose={() => { setMenuTeamId(undefined) }}
@@ -496,6 +476,14 @@ export function SidebarTeamSection({
                       portal
                       className={css.sidebarTeamMore ?? ''}
                       items={[
+                        { id: 'tasks', label: '查看任务', icon: <IconChecklistOutlineRegular size={14} /> },
+                        {
+                          id: 'pin',
+                          label: team.pinned === true ? '取消置顶' : '置顶',
+                          icon: team.pinned === true
+                            ? <IconPinFillRegular size={14} />
+                            : <IconPinOutlineRegular size={14} />,
+                        },
                         { id: 'manage', label: t('sidebar.manage'), icon: <IconSettingsOutlineRegular /> },
                         {
                           id: 'archive',
@@ -506,7 +494,15 @@ export function SidebarTeamSection({
                       ]}
                       onSelect={id => {
                         setMenuTeamId(undefined)
-                        if (id === 'manage') openManageTeamDialog(team.id)
+                        if (id === 'tasks') setTaskDialogTeamId(team.id)
+                        else if (id === 'pin') {
+                          void callAgentTeam('team.pin', {
+                            teamId: team.id,
+                            pinned: team.pinned !== true,
+                          }, team.revision).then(() => { void load() }).catch(cause => {
+                            setError(cause instanceof Error ? cause.message : String(cause))
+                          })
+                        } else if (id === 'manage') openManageTeamDialog(team.id)
                         else if (id === 'archive') {
                           void callAgentTeam('team.archive', {
                             teamId: team.id,
@@ -534,47 +530,49 @@ export function SidebarTeamSection({
                       )}
                     />
                   </div>
-                  {tasksOpen && (
-                    <div
-                      id={taskListId}
-                      className={css.sidebarTeamTaskList}
-                      role="group"
-                      aria-label={`${team.name} 最近任务`}
-                      data-dsh-team-tasks
-                    >
-                      {tasks.length === 0
-                        ? <div className={css.sidebarTeamTaskEmpty}>暂无任务</div>
-                        : tasks.map(task => {
-                          const waiting = task.blockedBy === undefined
-                            ? undefined
-                            : `等待 ${task.blockedBy.title}${task.blockedBy.ownerName === undefined ? '' : ` · ${task.blockedBy.ownerName}`}`
-                          return (
-                            <button
-                              key={task.id}
-                              type="button"
-                              className={css.sidebarTeamTaskRow}
-                              data-dsh-team-task={task.id}
-                              data-dsh-team-task-status={task.status}
-                              title={task.title}
-                              onClick={() => { openTeam(team) }}
-                            >
-                              <span className={css.sidebarTeamTaskLine}>
-                                <span className={css.sidebarTeamTaskTitle}>{task.title}</span>
-                                <span className={css.sidebarTeamTaskStatus}>{task.statusLabel}</span>
-                              </span>
-                              {waiting !== undefined && (
-                                <span className={css.sidebarTeamTaskWaiting} title={waiting}>{waiting}</span>
-                              )}
-                            </button>
-                          )
-                        })}
-                    </div>
-                  )}
                 </div>
               )
             })}
         </div>
       )}
+      <AnimatedModal
+        open={taskDialogTeam !== undefined}
+        onClose={() => { setTaskDialogTeamId(undefined) }}
+        title={taskDialogTeam === undefined ? '团队任务' : `团队任务 · ${taskDialogTeam.name}`}
+        closeLabel="关闭"
+        className={css.teamTaskDialog ?? ''}
+      >
+        <div className={css.teamTaskDialogBody}>
+          {taskDialogTasks.length === 0
+            ? <p className={css.teamTaskDialogEmpty}>这个团队还没有任务。</p>
+            : taskDialogTasks.map(task => {
+              const waiting = task.blockedBy === undefined
+                ? undefined
+                : `等待 ${task.blockedBy.title}${task.blockedBy.ownerName === undefined ? '' : ` · ${task.blockedBy.ownerName}`}`
+              return (
+                <button
+                  key={task.id}
+                  type="button"
+                  className={css.sidebarTeamTaskRow}
+                  onClick={() => {
+                    if (taskDialogTeam !== undefined) {
+                      setTaskDialogTeamId(undefined)
+                      openTeam(taskDialogTeam)
+                    }
+                  }}
+                >
+                  <span className={css.sidebarTeamTaskLine}>
+                    <span className={css.sidebarTeamTaskTitle}>{task.title}</span>
+                    <span className={css.sidebarTeamTaskStatus}>{task.statusLabel}</span>
+                  </span>
+                  {waiting !== undefined && (
+                    <span className={css.sidebarTeamTaskWaiting} title={waiting}>{waiting}</span>
+                  )}
+                </button>
+              )
+            })}
+        </div>
+      </AnimatedModal>
     </section>
   )
 }

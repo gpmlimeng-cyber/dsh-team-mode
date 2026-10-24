@@ -823,18 +823,6 @@ export function AssistantSidebarSection({
                         </span>
                       </button>
                       <span className={css.sidebarAssistantActions}>
-                      <Tooltip label={instance.pinned === true ? '取消置顶' : '置顶'} delayMs={400}>
-                        <button
-                          type="button"
-                          className={`${css.sidebarTeamManage} ${css.sidebarAssistantPin} ${instance.pinned === true ? css.sidebarTeamManagePinned : ''}`}
-                          onClick={() => { void togglePin(instance) }}
-                          aria-label={instance.pinned === true ? `取消置顶 ${name}` : `置顶 ${name}`}
-                        >
-                          {instance.pinned === true
-                            ? <IconPinFillRegular size={14} />
-                            : <IconPinOutlineRegular size={14} />}
-                        </button>
-                      </Tooltip>
                       <Menu
                         open={menuOpen}
                         onClose={() => { setMenuOpenId(undefined) }}

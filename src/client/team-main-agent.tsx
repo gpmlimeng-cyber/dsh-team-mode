@@ -156,6 +156,22 @@ export function TeamMainAgentPanel({
       role="complementary"
       aria-label="团队运行面板"
       data-dsh-team-panel
+      style={{
+        position: 'fixed',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 'auto',
+        width: 'min(360px, 100vw)',
+        maxWidth: '100vw',
+        height: '100dvh',
+        zIndex: 60,
+        backgroundColor: 'light-dark(#ffffff, #17181a)',
+        backgroundImage: 'none',
+        backdropFilter: 'none',
+        borderInlineStart: '1px solid var(--dsw-alias-border-l1)',
+        boxShadow: 'var(--dsw-alias-shadow-l1)',
+      }}
     >
       <header className={css.mainAgentPanelHeader}>
         <div className={css.mainAgentPanelIdentity}>

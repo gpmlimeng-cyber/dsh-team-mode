@@ -74,6 +74,7 @@
   },
   "scripts": {
     "build": "tsdown",
+    "dev": "tsdown --watch",
     "clean": "tsdown --clean",
     "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
