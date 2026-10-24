@@ -157,7 +157,10 @@
 | `team.addMember` / `team.renameMember` / `team.removeMember` | 成员增删改 |
 | `team.changeLeader` | 切换 Leader：开启新团队纪元，归档旧成员 Session、阻塞进行中任务、暂停 active Goal |
 | `team.updateGoal` | 修改 Goal 状态（Leader 权限；`active` 恢复被纪元暂停的 Goal） |
-| `team.member.contextReset` | 清空单成员上下文（新 Session） |
+| `team.member.contextReset` | 清空单成员上下文（新 Session；Leader 不可用） |
+| `team.checkpoint.create` | 为当前 Leader 生成确定性检查点（可选交接说明 ≤4,000 字） |
+| `team.checkpoint.list` | 列出本团队的检查点（新→旧） |
+| `team.checkpoint.handoff` | 显式交接：给 Leader 换新 Session，保留团队/epoch/任务/Goal/记忆 |
 | `team.member.reconnect` | 重启成员 Agent，保留上下文 |
 | `team.members.reorder` | 成员顺序（Leader 固定首位） |
 | `team.pin` / `team.archive` | 置顶 / 归档 |
@@ -171,6 +174,17 @@
 | `team.interaction.respond` | 回答提问 / 审批 |
 
 任务板没有独立的 `team.task.*` 客户端 API：`TeamView` 就是团队聚合，看板直接读取其中的 `tasks`，所以新增的任务字段随聚合一起到达 UI，不需要额外传输方法。
+
+## Leader 会话交接（不是模型工具）
+
+- 交接**刻意不注册模型可见工具**：Leader 在自己的 turn 里交接自己会让该 turn 悬空，也会给模型一个“把自己退役掉”的循环诱因。它只作为用户动作走 `team.checkpoint.*` 路由 + 团队卡片 UI（Task 2 契约 D3）。
+- `checkpointFacts` 有界且可审计：`recentMessages` ≤12 条 × ≤500 字、`activeTasks` ≤20 条（`pending/assigned/running/blocked`，新→旧）、`activeGoals` ≤10 条（仅 `active`）、`recentTeamMail` ≤8 条 × ≤300 字、`workspacePath`、`note`（≤4,000，超限拒绝）。
+- 团队邮件在投影时走 `teamContext` → `team-message` 节点，因此**不会**混进 `recentMessages`；它只出现在独立、有界的 `recentTeamMail` 里（sender 显示名 + 类型 + 单行正文）。
+- 注入新会话的消息 `source` 是 `{kind:'runtime-context', form:'instructions'}`：模型可见、UI 不可见，也不会进入下一份检查点事实（不会自我累积）。消息正文不携带任何 `sessionId`。
+- 检查点存在独立的 `team_checkpoints` 表（同 Assistant 的 `context_checkpoints` 模式），不并入团队聚合、`assistant_memory` 或团队 memory；每个团队保留最近 20 条，更旧的在新检查点写入时清理。
+- 交接只改 `members[leader].sessionId` + 墓碑 + `retiredLeaderSessionIds`；`epoch`、`leaderSlotId`、任务（含 `attemptId`）、Goal、memory、leases、outbox、`memberOrder` 逐字段不变，**不是** `team.changeLeader`。
+- 栅栏：旧 Session 的工具写入带 `expectedMemberSession` → `SESSION_RETIRED`；交接写入带 `expectedRevision`（CAS）。检查点还带 `epoch` 与 `sourceSessionId`，过期即 `CHECKPOINT_STALE`。
+- 旧 Leader Session 通过 `retiredLeaderSessionIds` 加入 `hiddenSessionIds`，从原生侧栏隐藏（不删除日志）。
 
 ## 原生 Slot / UI
 

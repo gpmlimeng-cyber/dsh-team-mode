@@ -26,7 +26,9 @@ import type {
   Operation,
   TeamActivity,
   TeamAggregate,
+  TeamCheckpoint,
   TeamGoal,
+  TeamMemberSlot,
   TeamMessage,
   TeamTask,
 } from '../src/domain/types.js'
@@ -2786,6 +2788,288 @@ describe('Assistant checkpoint API', () => {
   })
 })
 
+describe('Leader Team Session handoff', () => {
+  async function activeTeam() {
+    const h = createHarness()
+    const assistant = await h.service.createAssistant(assistantInput())
+    const draft = await h.service.createTeamDraft({
+      name: 'Handoff Team',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: assistant.id, role: 'leader' },
+        { assistantId: assistant.id, role: 'member' },
+      ],
+    })
+    const leader = draft.members[draft.leaderSlotId]!
+    const peer = Object.values(draft.members).find(value => value.id !== leader.id)!
+    const goal: TeamGoal = {
+      id: 'goal-1',
+      teamId: draft.id,
+      title: 'Ship the parser',
+      objective: 'Parse the input',
+      acceptance: '',
+      mode: 'single',
+      status: 'active',
+      createdAt: '2026-10-24T00:00:00.000Z',
+      updatedAt: '2026-10-24T00:00:00.000Z',
+    }
+    const task: TeamTask = {
+      id: 'task-1',
+      title: 'Write the parser',
+      description: '',
+      status: 'assigned',
+      ownerSlotId: peer.id,
+      attemptId: 'attempt-1',
+      dependencyIds: [],
+      fileScopes: [],
+      revision: 1,
+      createdAt: '2026-10-24T00:00:00.000Z',
+      updatedAt: '2026-10-24T00:00:00.000Z',
+    }
+    const team = await h.store.updateTeam(draft.id, current => ({
+      ...current,
+      state: 'active',
+      epoch: 2,
+      goals: { [goal.id]: goal },
+      tasks: { [task.id]: task },
+      leases: {
+        'lease-1': {
+          id: 'lease-1',
+          slotId: peer.id,
+          taskId: task.id,
+          path: 'src/parser.ts',
+          acquiredAt: '2026-10-24T00:00:00.000Z',
+        },
+      },
+      memberOrder: [leader.id, peer.id],
+    }))
+    const runtime = new TeamRuntime(h.ctx, config, h.service)
+    h.service.attachRuntime(runtime)
+    const internals = runtimeInternals(runtime) as unknown as {
+      owned: Map<string, unknown>
+      ensureMemberOnline: ReturnType<typeof vi.fn>
+    }
+    const leaderAgent = fakeAgent()
+    leaderAgent.session.events.push(
+      sessionUserEvent(0, 'user-1', 'Plan the handoff') as never,
+      sessionAssistantEvent(1, 'assistant-1', 'Ready when you are') as never,
+    )
+    internals.owned.set(leader.sessionId, {
+      teamId: team.id,
+      slotId: leader.id,
+      sessionId: leader.sessionId,
+      epoch: 2,
+      handle: { agent: leaderAgent, dispose: vi.fn(async () => {}) },
+      modelSelection: { current: undefined, assembled: undefined },
+    })
+    const ensureMemberOnline = vi.fn(async (
+      _team: TeamAggregate,
+      _member: TeamMemberSlot,
+      _persisted: boolean,
+      _options?: { seed?: { source: unknown } },
+    ) => {})
+    internals.ensureMemberOnline = ensureMemberOnline
+    await h.store.putMessage({
+      schemaVersion: 1,
+      id: 'mail-1',
+      teamId: team.id,
+      sender: { kind: 'member', id: peer.id },
+      recipient: { kind: 'leader', slotId: leader.id },
+      type: 'progress',
+      content: 'Parser skeleton is in place',
+      attachments: [],
+      readBy: [],
+      deliveryState: 'delivered',
+      idempotencyKey: 'mail-1',
+      createdAt: '2026-10-24T00:00:01.000Z',
+    })
+    leaderAgent.session.events.push({
+      seq: 2,
+      time: 1_700_000_000_002,
+      type: 'user/message',
+      data: {
+        id: 'mail-1',
+        role: 'user',
+        source: { kind: 'team-message', plugin: 'dsh-team-mode' },
+        content: [{ type: 'text', text: 'Parser skeleton is in place' }],
+      },
+    } as never)
+    return { ...h, team, leader, peer, runtime, internals, ensureMemberOnline, leaderAgent }
+  }
+
+  it('captures bounded facts and hands the Leader to a fresh Session without moving anything else', async () => {
+    const h = await activeTeam()
+    const before = h.team
+
+    const checkpoint = await h.service.createTeamLeaderCheckpoint(h.team.id, '  continue the parser  ', {
+      expectedRevision: before.revision,
+    })
+
+    expect(checkpoint).toMatchObject({
+      schemaVersion: 1,
+      teamId: before.id,
+      leaderSlotId: h.leader.id,
+      epoch: 2,
+      sourceSessionId: h.leader.sessionId,
+      note: 'continue the parser',
+      status: 'ready',
+    })
+    expect(checkpoint.facts.recentMessages).toEqual([
+      { role: 'user', text: 'Plan the handoff' },
+      { role: 'assistant', text: 'Ready when you are' },
+    ])
+    // Member mail is its own bounded field, never a user message.
+    expect(checkpoint.facts.recentTeamMail).toEqual([
+      { fromName: h.peer.displayName, type: 'progress', text: 'Parser skeleton is in place' },
+    ])
+    expect(checkpoint.facts.activeTasks).toEqual([
+      { id: 'task-1', title: 'Write the parser', status: 'assigned' },
+    ])
+    expect(checkpoint.facts.activeGoals).toEqual([
+      { id: 'goal-1', title: 'Ship the parser', status: 'active' },
+    ])
+    expect(h.service.listTeamCheckpoints(before.id)).toEqual([checkpoint])
+    expect(() => h.service.getTeamCheckpoint(before.id, 'missing'))
+      .toThrow(expect.objectContaining({ code: 'CHECKPOINT_NOT_FOUND' }) as never)
+
+    const handed = await h.service.handoffTeamLeader(before.id, checkpoint.id, {
+      expectedRevision: before.revision,
+    })
+
+    const after = handed.team
+    expect(after.id).toBe(before.id)
+    expect(after.epoch).toBe(before.epoch)
+    expect(after.leaderSlotId).toBe(before.leaderSlotId)
+    expect(after.members[h.leader.id]!.sessionId).toBe(handed.sessionId)
+    expect(after.members[h.leader.id]!.sessionId).not.toBe(before.members[h.leader.id]!.sessionId)
+    // Byte-for-byte durable state: the board, attempt tokens, Goals, memory,
+    // leases, outbox and roster order are all the same request, not a new one.
+    expect(after.tasks).toEqual(before.tasks)
+    expect(after.tasks['task-1']?.attemptId).toBe('attempt-1')
+    expect(after.goals).toEqual(before.goals)
+    expect(after.memory).toEqual(before.memory)
+    expect(after.leases).toEqual(before.leases)
+    expect(after.outbox).toEqual(before.outbox)
+    expect(after.memberOrder).toEqual(before.memberOrder)
+    expect(after.members[h.peer.id]).toEqual(before.members[h.peer.id])
+    expect(after.retiredSessions[h.leader.sessionId]).toMatchObject({
+      formerSlotId: h.leader.id,
+      displayName: h.leader.displayName,
+    })
+    expect(after.retiredLeaderSessionIds).toEqual([h.leader.sessionId])
+    expect(handed.checkpoint).toMatchObject({
+      status: 'consumed',
+      targetSessionId: handed.sessionId,
+    })
+    expect(h.ensureMemberOnline).toHaveBeenCalledOnce()
+    const seed = h.ensureMemberOnline.mock.calls[0]![3]
+    expect(seed?.seed?.source).toEqual({ kind: 'runtime-context', form: 'instructions' })
+
+    // The old Session is read-only from here on; the fresh one may write.
+    await expect(h.service.updateRuntimeTeam(
+      before.id,
+      current => current,
+      'team.stale_write',
+      'stale write',
+      { expectedMemberSession: { slotId: h.leader.id, sessionId: h.leader.sessionId } },
+    )).rejects.toMatchObject({ code: 'SESSION_RETIRED' })
+    await expect(h.service.putRuntimeMessage({
+      schemaVersion: 1,
+      id: 'mail-2',
+      teamId: before.id,
+      sender: { kind: 'member', id: h.leader.id },
+      recipient: { kind: 'broadcast' },
+      type: 'progress',
+      content: 'stale delivery',
+      attachments: [],
+      readBy: [],
+      deliveryState: 'queued',
+      idempotencyKey: 'mail-2',
+      createdAt: '2026-10-24T00:00:09.000Z',
+    }, { expectedMemberSession: { slotId: h.leader.id, sessionId: h.leader.sessionId } }))
+      .rejects.toMatchObject({ code: 'SESSION_RETIRED' })
+    await h.service.updateRuntimeTeam(
+      before.id,
+      current => current,
+      'team.fresh_write',
+      'fresh write',
+      { expectedMemberSession: { slotId: h.leader.id, sessionId: handed.sessionId } },
+    )
+  })
+
+  it('fences a repeated handoff on the aggregate revision and refuses a stale checkpoint', async () => {
+    const h = await activeTeam()
+    const staleRevision = h.team.revision
+    const checkpoint = await h.service.createTeamLeaderCheckpoint(h.team.id)
+
+    const handed = await h.service.handoffTeamLeader(h.team.id, checkpoint.id, {
+      expectedRevision: staleRevision,
+    })
+    // The consumed checkpoint can never be handed off twice.
+    await expect(h.service.handoffTeamLeader(h.team.id, checkpoint.id))
+      .rejects.toMatchObject({ code: 'CHECKPOINT_NOT_READY' })
+    await expect(h.service.consumeTeamCheckpoint(h.team.id, checkpoint.id, handed.sessionId))
+      .rejects.toMatchObject({ code: 'CHECKPOINT_NOT_READY' })
+
+    // A checkpoint for the fresh Session still loses if the caller carries the
+    // pre-handoff aggregate revision: the aggregate write is a CAS.
+    const fresh = await h.service.createTeamLeaderCheckpoint(h.team.id)
+    await expect(h.service.handoffTeamLeader(h.team.id, fresh.id, {
+      expectedRevision: staleRevision,
+    })).rejects.toMatchObject({ code: 'TEAM_REVISION_CONFLICT' })
+
+    await expect(h.service.createTeamLeaderCheckpoint(h.team.id, 'x'.repeat(4_001)))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  })
+
+  it('serves the explicit handoff over the transport', async () => {
+    const h = await activeTeam()
+    const routes = new Map<string, (request: IncomingMessage, response: ServerResponse) => unknown>()
+    h.ctx.provide('webServer', {
+      register(route: { path: string, handler: (request: IncomingMessage, response: ServerResponse) => unknown }) {
+        routes.set(route.path, route.handler)
+        return () => { routes.delete(route.path) }
+      },
+    } as never)
+    h.ctx.provide('connection', { requestRejection: () => undefined } as never)
+    const transport = registerWebTransport(h.ctx, config, h.service)
+    try {
+      const created = await callApi(routes, {
+        method: 'team.checkpoint.create',
+        payload: { teamId: h.team.id, note: 'over the wire' },
+      })
+      expect(created.status).toBe(200)
+      const createdBody = JSON.parse(created.body) as { ok: boolean, value: TeamCheckpoint }
+      expect(createdBody.ok).toBe(true)
+      expect(createdBody.value).toMatchObject({ note: 'over the wire', status: 'ready' })
+
+      const listed = await callApi(routes, {
+        method: 'team.checkpoint.list',
+        payload: { teamId: h.team.id },
+      })
+      const listedBody = JSON.parse(listed.body) as { ok: boolean, value: TeamCheckpoint[] }
+      expect(listedBody.value.map(value => value.id)).toEqual([createdBody.value.id])
+
+      const handed = await callApi(routes, {
+        method: 'team.checkpoint.handoff',
+        expectedRevision: h.team.revision,
+        payload: { teamId: h.team.id, checkpointId: createdBody.value.id },
+      })
+      const handedBody = JSON.parse(handed.body) as {
+        ok: boolean
+        value: { sessionId: string; team: TeamAggregate; checkpoint: TeamCheckpoint }
+      }
+      expect(handedBody.ok).toBe(true)
+      expect(handedBody.value.team.members[h.leader.id]!.sessionId).toBe(handedBody.value.sessionId)
+      expect(handedBody.value.checkpoint.status).toBe('consumed')
+      expect(h.store.getTeamCheckpoint(createdBody.value.id)?.status).toBe('consumed')
+    } finally {
+      transport.dispose()
+    }
+  })
+})
+
+
 function createHarness(
   workspacePath = '/tmp/dsh-team-mode-workspace',
   configOverrides: Partial<Config> = {},
@@ -3227,7 +3511,7 @@ function webResponse(): ServerResponse & { status: number, body: string } {
 
 async function callApi(
   routes: Map<string, (request: IncomingMessage, response: ServerResponse) => unknown>,
-  body: { method: string, payload: unknown },
+  body: { method: string, payload: unknown, expectedRevision?: number },
 ): Promise<{ status: number, body: string }> {
   const handler = routes.get(AGENT_TEAM_API_PATH)
   if (handler === undefined) throw new Error('api route not registered')
@@ -3250,6 +3534,7 @@ class MemoryStore implements AgentTeamStore {
   private assistantSessions = new Map<string, AssistantSession>()
   private assistantMemory = new Map<string, AssistantMemory>()
   private contextCheckpoints = new Map<string, ContextCheckpoint>()
+  private teamCheckpoints = new Map<string, TeamCheckpoint>()
   private teams = new Map<string, TeamAggregate>()
   private messages = new Map<string, TeamMessage>()
   private activities = new Map<string, TeamActivity>()
@@ -3298,6 +3583,17 @@ class MemoryStore implements AgentTeamStore {
   }
 
   getContextCheckpoint(id: string) { return this.contextCheckpoints.get(id) }
+  getTeamCheckpoint(id: string) { return this.teamCheckpoints.get(id) }
+  listTeamCheckpoints(teamId: string) {
+    return [...this.teamCheckpoints.values()]
+      .filter(checkpoint => checkpoint.teamId === teamId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
+  }
+  async putTeamCheckpoint(value: TeamCheckpoint) { this.teamCheckpoints.set(value.id, value) }
+  updateTeamCheckpoint(id: string, update: (current: TeamCheckpoint) => TeamCheckpoint) {
+    return updateMap(this.teamCheckpoints, id, update)
+  }
+  async deleteTeamCheckpoint(id: string) { return this.teamCheckpoints.delete(id) }
   listContextCheckpoints() {
     return [...this.contextCheckpoints.values()]
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))

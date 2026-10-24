@@ -3,11 +3,26 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
 import { Config as ConfigSchema } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
-import type { MemoryEntry, TeamAggregate, TeamMemberSlot } from '../src/domain/types.js'
+import type { SessionEvent } from '@deepseek-ai/dsh-session'
+import type {
+  MemoryEntry,
+  TeamAggregate,
+  TeamCheckpoint,
+  TeamGoal,
+  TeamMemberSlot,
+  TeamMessage,
+  TeamTask,
+} from '../src/domain/types.js'
 import { epochOf } from '../src/domain/types.js'
 import { teamAggregateSchema } from '../src/domain/schemas.js'
-import { TeamRuntime } from '../src/runtime/team-runtime.js'
-import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
+import {
+  buildTeamCheckpointFacts,
+  teamCheckpointHandoffMessage,
+  TeamRuntime,
+} from '../src/runtime/team-runtime.js'
+import { TeamTurnCoordinator } from '../src/runtime/team-turn-coordinator.js'
+import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
+import type { AgentTeamStore } from '../src/storage/store.js'
 import {
   assignmentContent,
   requireMessageContent,
@@ -629,6 +644,561 @@ describe('team runtime support', () => {
   })
 })
 
+describe('team checkpoint facts', () => {
+  it('bounds the transcript tail, keeps relayed mail separate, and drops tool noise', () => {
+    const team = checkpointTeam()
+    const mail = memberMail({
+      id: 'mail-1',
+      content: `Report ${'very long status '.repeat(40)}`,
+    })
+    const events: SessionEvent[] = []
+    let seq = 0
+    for (let index = 0; index < 14; index += 1) {
+      events.push(userEvent(seq++, `user-${index}`, `  question   ${index}  `))
+      events.push(assistantEvent(seq++, `assistant-${index}`, `answer ${index}`))
+    }
+    events.push(userEvent(seq++, mail.id, mail.content, { kind: 'team-message', plugin: 'dsh-team-mode' }))
+    // Reasoning and tool arguments are never copied into facts.
+    events.push({
+      seq: seq++,
+      time: 1_700_000_000_000 + seq,
+      type: 'tool/call',
+      data: { callId: 'call-1', name: 'bash', arguments: 'SECRET-TOOL-ARGS' },
+    } as unknown as SessionEvent)
+    events.push({
+      seq: seq++,
+      time: 1_700_000_000_000 + seq,
+      type: 'assistant/attempt',
+      data: { turn: 99, step: 1, stream: [{ type: 'reasoning', text: 'SECRET-REASONING' }] },
+    } as unknown as SessionEvent)
+
+    const built = buildTeamCheckpointFacts({
+      events,
+      team,
+      messages: [mail],
+      tasks: [],
+      goals: [],
+      workspacePath: team.workspacePath,
+      note: '  continue  ',
+    })
+
+    expect(built.facts.recentMessages).toHaveLength(12)
+    expect(built.facts.recentMessages[0]).toEqual({ role: 'user', text: 'question 8' })
+    for (const message of built.facts.recentMessages) {
+      expect(message.text.length).toBeLessThanOrEqual(500)
+      expect(message.text).not.toContain('Report')
+      expect(message.text).not.toContain('SECRET')
+    }
+    // Member mail is a separate bounded field, never a user message.
+    expect(built.facts.recentTeamMail).toEqual([{
+      fromName: 'Coder',
+      type: 'progress',
+      text: expect.any(String),
+    }])
+    expect(built.facts.recentTeamMail[0]!.text.length).toBeLessThanOrEqual(300)
+    expect(built.facts.recentTeamMail[0]!.text.startsWith('Report')).toBe(true)
+    expect(built.capturedThroughSeq).toBe(seq - 1)
+    expect(built.facts.workspacePath).toBe(team.workspacePath)
+  })
+
+  it('lists pending-inclusive open tasks and active Goals newest first', () => {
+    const team = checkpointTeam()
+    const tasks = [
+      checkpointTask({ id: 'done', status: 'completed', updatedAt: '2026-10-01T00:00:00.000Z' }),
+      checkpointTask({ id: 'pending', status: 'pending', updatedAt: '2026-10-02T00:00:00.000Z' }),
+      checkpointTask({ id: 'running', status: 'running', updatedAt: '2026-10-04T00:00:00.000Z' }),
+      checkpointTask({ id: 'blocked', status: 'blocked', updatedAt: '2026-10-03T00:00:00.000Z' }),
+      checkpointTask({ id: 'failed', status: 'failed', updatedAt: '2026-10-05T00:00:00.000Z' }),
+    ]
+    const goals = [
+      checkpointGoal({ id: 'goal-active', status: 'active', updatedAt: '2026-10-02T00:00:00.000Z' }),
+      checkpointGoal({ id: 'goal-paused', status: 'paused', updatedAt: '2026-10-03T00:00:00.000Z' }),
+    ]
+
+    const built = buildTeamCheckpointFacts({
+      events: [],
+      team,
+      messages: [],
+      tasks,
+      goals,
+      workspacePath: team.workspacePath,
+      note: '',
+    })
+
+    expect(built.facts.recentMessages).toEqual([])
+    expect(built.capturedThroughSeq).toBe(-1)
+    expect(built.facts.activeTasks.map(task => task.id)).toEqual(['running', 'blocked', 'pending'])
+    expect(built.facts.activeTasks[0]).toEqual({ id: 'running', title: 'Task running', status: 'running' })
+    expect(built.facts.activeGoals).toEqual([{ id: 'goal-active', title: 'Goal goal-active', status: 'active' }])
+    expect(built.facts.recentTeamMail).toEqual([])
+  })
+
+  it('states the handoff source and bounds the injected text', () => {
+    const checkpoint = checkpointRecord({ note: 'pick up the parser work' })
+    const message = teamCheckpointHandoffMessage(checkpoint)
+
+    expect(message.source).toEqual({ kind: 'runtime-context', form: 'instructions' })
+    const text = message.content.map(block => block.type === 'text' ? block.text : '').join('')
+    expect(text).toContain('上下文交接')
+    expect(text).toContain('不是模型总结')
+    expect(text).toContain('pick up the parser work')
+    expect(text).toContain('进行中的 Goal')
+    expect(text).toContain('最近团队邮件')
+    expect(text).not.toContain('session-')
+  })
+})
+
+describe('Leader Team Session handoff', () => {
+  it('creates a fresh Leader Session and preserves every other durable field', async () => {
+    const h = handoffHarness()
+    const before = h.team()
+    const leader = before.members[before.leaderSlotId]!
+    const oldSessionId = leader.sessionId
+
+    const result = await h.runtime.handoffLeader(before.id, h.checkpoint.id, {
+      expectedRevision: before.revision,
+    })
+
+    // The old handle is cancelled, drained, flushed and disposed exactly once.
+    expect(h.agent.cancel).toHaveBeenCalledWith({ kind: 'user' }, { keepInbox: false })
+    expect(h.agent.whenIdle).toHaveBeenCalledOnce()
+    expect(h.flush).toHaveBeenCalledOnce()
+    expect(h.dispose).toHaveBeenCalledOnce()
+    expect(h.detachSession).toHaveBeenCalledWith(oldSessionId)
+
+    const after = h.team()
+    expect(after.members[leader.id]!.sessionId).not.toBe(oldSessionId)
+    expect(result.sessionId).toBe(after.members[leader.id]!.sessionId)
+    expect(h.ensureMemberOnline).toHaveBeenCalledOnce()
+    const seedCall = h.ensureMemberOnline.mock.calls[0]!
+    expect(seedCall[0]).toBe(after)
+    expect(seedCall[1]).toMatchObject({ id: leader.id })
+    expect(seedCall[2]).toBe(false)
+    expect(seedCall[3]?.seed?.source).toEqual({ kind: 'runtime-context', form: 'instructions' })
+
+    // The write is one aggregate update carrying the revision and Session fences.
+    expect(h.service.updateRuntimeTeam).toHaveBeenCalledOnce()
+    const options = h.service.updateRuntimeTeam.mock.calls[0]![4] as {
+      expectedRevision?: number
+      expectedMemberSession?: { slotId: string; sessionId: string }
+    }
+    expect(options).toEqual({
+      expectedRevision: before.revision,
+      expectedMemberSession: { slotId: leader.id, sessionId: oldSessionId },
+    })
+
+    // Nothing durable moved: same team, epoch, Leader, roster, board and history.
+    expect(after.id).toBe(before.id)
+    expect(after.name).toBe(before.name)
+    expect(after.workspaceId).toBe(before.workspaceId)
+    expect(after.leaderSlotId).toBe(before.leaderSlotId)
+    expect(epochOf(after)).toBe(epochOf(before))
+    expect(after.tasks).toEqual(before.tasks)
+    expect(after.tasks.assigned?.attemptId).toBe('attempt-1')
+    expect(after.goals).toEqual(before.goals)
+    expect(after.memory).toEqual(before.memory)
+    expect(after.leases).toEqual(before.leases)
+    expect(after.outbox).toEqual(before.outbox)
+    expect(after.memberOrder).toEqual(before.memberOrder)
+    for (const member of Object.values(before.members)) {
+      if (member.id === leader.id) continue
+      expect(after.members[member.id]).toEqual(member)
+    }
+
+    // The retired Session is a tombstone, never deleted or reparented.
+    expect(after.retiredSessions[oldSessionId]).toMatchObject({
+      formerSlotId: leader.id,
+      sessionId: oldSessionId,
+      displayName: leader.displayName,
+    })
+    expect(after.retiredLeaderSessionIds).toEqual([oldSessionId])
+    expect(h.service.consumeTeamCheckpoint).toHaveBeenCalledWith(
+      before.id,
+      h.checkpoint.id,
+      result.sessionId,
+    )
+    expect(result.checkpoint).toMatchObject({ status: 'consumed', targetSessionId: result.sessionId })
+  })
+
+  it('rejects a stale checkpoint and a running Leader before touching anything', async () => {
+    const stale = handoffHarness({ checkpoint: { epoch: 1 } })
+    await expect(stale.runtime.handoffLeader(stale.team().id, stale.checkpoint.id))
+      .rejects.toMatchObject({ code: 'CHECKPOINT_STALE' })
+    expect(stale.ensureMemberOnline).not.toHaveBeenCalled()
+
+    const moved = handoffHarness({ checkpoint: { sourceSessionId: 'session-other' } })
+    await expect(moved.runtime.handoffLeader(moved.team().id, moved.checkpoint.id))
+      .rejects.toMatchObject({ code: 'CHECKPOINT_STALE' })
+
+    const busy = handoffHarness({ leaderStatus: 'running' })
+    await expect(busy.runtime.handoffLeader(busy.team().id, busy.checkpoint.id))
+      .rejects.toMatchObject({ code: 'MEMBER_BUSY' })
+    expect(busy.ensureMemberOnline).not.toHaveBeenCalled()
+    expect(busy.agent.cancel).not.toHaveBeenCalled()
+    expect(busy.team().members[busy.team().leaderSlotId]!.sessionId).toBe('session-leader')
+
+    const consumed = handoffHarness({ checkpoint: { status: 'consumed' } })
+    await expect(consumed.runtime.handoffLeader(consumed.team().id, consumed.checkpoint.id))
+      .rejects.toMatchObject({ code: 'CHECKPOINT_NOT_READY' })
+
+    const draft = handoffHarness({ state: 'draft' })
+    await expect(draft.runtime.handoffLeader(draft.team().id, draft.checkpoint.id))
+      .rejects.toMatchObject({ code: 'TEAM_NOT_ACTIVE' })
+  })
+
+  it('routes queued mail to the fresh Leader Session, never the retired one', async () => {
+    const followup = vi.fn()
+    const queued = memberMail({ id: 'queued-1', deliveryState: 'queued' })
+    let leaderSessionId = 'session-old'
+    const base = checkpointTeam()
+    const coordinator = new TeamTurnCoordinator({
+      getTeam: () => ({
+        ...base,
+        members: {
+          ...base.members,
+          leader: { ...base.members.leader!, sessionId: leaderSessionId },
+        },
+      }),
+      listMessages: () => [queued],
+      putMessage: async () => {},
+      followup,
+      sessionState: () => 'online',
+      hasMessage: () => false,
+      warn: () => {},
+    })
+
+    await coordinator.drain(base.id)
+    expect(followup).toHaveBeenLastCalledWith('session-old', queued)
+
+    // A handoff rotates `members[leader].sessionId`; recipients are resolved by
+    // slot at delivery time, so the queued turn reaches the fresh Session.
+    leaderSessionId = 'session-new'
+    await coordinator.drain(base.id)
+    expect(followup).toHaveBeenLastCalledWith('session-new', queued)
+    expect(followup.mock.calls.filter(([sessionId]) => sessionId === 'session-old')).toHaveLength(1)
+  })
+
+  it('keeps the checkpoint ready and marks the member when the new Session fails to start', async () => {
+    const h = handoffHarness({ activationError: new Error('activation failed') })
+
+    await expect(h.runtime.handoffLeader(h.team().id, h.checkpoint.id))
+      .rejects.toThrow('activation failed')
+
+    const after = h.team()
+    const leader = after.members[after.leaderSlotId]!
+    expect(leader.lastRuntimeState).toBe('error')
+    expect(leader.sessionId).not.toBe('session-leader')
+    expect(after.retiredSessions['session-leader']).toBeDefined()
+    // Retry surface: the fresh Session is durable and the checkpoint can be reused.
+    expect(h.service.consumeTeamCheckpoint).not.toHaveBeenCalled()
+  })
+})
+
+const CHECKPOINT_NOW = '2026-10-24T00:00:00.000Z'
+
+function checkpointTeam(): TeamAggregate {
+  const leader = checkpointMember('leader', 'Lead', 'leader', 'session-leader')
+  const coder = checkpointMember('coder-slot', 'Coder', 'member', 'session-coder')
+  return {
+    schemaVersion: 2,
+    id: 'team-1',
+    name: 'Test Team',
+    workspaceId: 'workspace-1',
+    workspacePath: '/tmp/test-team',
+    leaderSlotId: leader.id,
+    state: 'active',
+    directMemberChat: true,
+    members: { [leader.id]: leader, [coder.id]: coder },
+    retiredSessions: {},
+    tasks: {},
+    leases: {},
+    outbox: {},
+    memberOrder: [leader.id, coder.id],
+    epoch: 2,
+    revision: 7,
+    createdAt: CHECKPOINT_NOW,
+    updatedAt: CHECKPOINT_NOW,
+  }
+}
+
+function checkpointMember(
+  id: string,
+  displayName: string,
+  role: 'leader' | 'member',
+  sessionId: string,
+): TeamMemberSlot {
+  return {
+    id,
+    assistantId: `assistant-${id}`,
+    displayName,
+    role,
+    assistantSnapshot: {
+      assistantId: `assistant-${id}`,
+      revision: 1,
+      name: displayName,
+      instructions: '',
+      provider: 'test',
+      model: 'test-model',
+      agentPresetId: 'standard',
+      permissionPresetId: 'read-only',
+      skillAllowlist: [],
+      mcpServers: [],
+    },
+    permissionPresetId: 'read-only',
+    sessionId,
+    desiredState: 'online',
+    lastRuntimeState: 'idle',
+    joinedAt: CHECKPOINT_NOW,
+  } as unknown as TeamMemberSlot
+}
+
+function checkpointTask(overrides: Partial<TeamTask> & { id: string }): TeamTask {
+  return {
+    title: `Task ${overrides.id}`,
+    description: '',
+    dependencyIds: [],
+    fileScopes: [],
+    revision: 1,
+    createdAt: CHECKPOINT_NOW,
+    updatedAt: CHECKPOINT_NOW,
+    ...overrides,
+    status: overrides.status ?? 'pending',
+  } as unknown as TeamTask
+}
+
+function checkpointGoal(overrides: Partial<TeamGoal> & { id: string }): TeamGoal {
+  return {
+    teamId: 'team-1',
+    title: `Goal ${overrides.id}`,
+    objective: 'Objective',
+    acceptance: '',
+    mode: 'single',
+    createdAt: CHECKPOINT_NOW,
+    updatedAt: CHECKPOINT_NOW,
+    ...overrides,
+    status: overrides.status ?? 'active',
+  } as unknown as TeamGoal
+}
+
+function memberMail(overrides: Partial<TeamMessage> & { id: string }): TeamMessage {
+  return {
+    schemaVersion: 1,
+    teamId: 'team-1',
+    sender: { kind: 'member', id: 'coder-slot' },
+    recipient: { kind: 'leader', slotId: 'leader' },
+    type: 'progress',
+    content: 'status',
+    attachments: [],
+    readBy: [],
+    deliveryState: 'delivered',
+    idempotencyKey: overrides.id,
+    createdAt: CHECKPOINT_NOW,
+    ...overrides,
+  } as unknown as TeamMessage
+}
+
+function checkpointRecord(overrides: Partial<TeamCheckpoint> = {}): TeamCheckpoint {
+  const built = buildTeamCheckpointFacts({
+    events: [userEvent(0, 'user-1', 'Plan the handoff')],
+    team: checkpointTeam(),
+    messages: [memberMail({ id: 'mail-1', content: 'Halfway there' })],
+    tasks: [checkpointTask({ id: 'task-1', status: 'assigned' })],
+    goals: [checkpointGoal({ id: 'goal-1' })],
+    workspacePath: '/tmp/test-team',
+    note: 'note',
+  })
+  return {
+    schemaVersion: 1,
+    id: 'checkpoint-1',
+    teamId: 'team-1',
+    leaderSlotId: 'leader',
+    epoch: 2,
+    sourceSessionId: 'session-leader',
+    title: '检查点',
+    note: 'note',
+    capturedThroughSeq: built.capturedThroughSeq,
+    facts: { ...built.facts, note: overrides.note ?? built.facts.note },
+    status: 'ready',
+    createdAt: CHECKPOINT_NOW,
+    ...overrides,
+  } as TeamCheckpoint
+}
+
+function userEvent(
+  seq: number,
+  id: string,
+  text: string,
+  source: Record<string, unknown> = { kind: 'user' },
+): SessionEvent {
+  return {
+    seq,
+    time: 1_700_000_000_000 + seq,
+    type: 'user/message',
+    data: {
+      id,
+      role: 'user',
+      source,
+      content: [{ type: 'text', text }],
+    },
+  } as unknown as SessionEvent
+}
+
+function assistantEvent(seq: number, id: string, text: string): SessionEvent {
+  return {
+    seq,
+    time: 1_700_000_000_000 + seq,
+    type: 'assistant/message',
+    data: {
+      turn: seq + 1,
+      step: 1,
+      message: {
+        id,
+        role: 'assistant',
+        source: { kind: 'model', provider: 'test', model: 'test-model' },
+        content: [{ type: 'text', text }],
+      },
+      stream: [],
+    },
+  } as unknown as SessionEvent
+}
+
+function handoffHarness(options: {
+  state?: TeamAggregate['state']
+  leaderStatus?: 'idle' | 'running'
+  activationError?: Error
+  checkpoint?: Partial<TeamCheckpoint>
+} = {}) {
+  let team: TeamAggregate = { ...checkpointTeam(), state: options.state ?? 'active' }
+  team.tasks = {
+    assigned: {
+      ...checkpointTask({ id: 'assigned', status: 'assigned' }),
+      ownerSlotId: 'coder-slot',
+      attemptId: 'attempt-1',
+    },
+  }
+  team.goals = { 'goal-1': checkpointGoal({ id: 'goal-1' }) }
+  team.memory = {
+    revision: 2,
+    entries: [{
+      id: 'entry-1',
+      scope: 'team',
+      visibility: 'team-safe',
+      status: 'active',
+      source: 'member',
+      title: 'Style',
+      body: 'Conventional commits.',
+      revision: 1,
+      createdAt: CHECKPOINT_NOW,
+      updatedAt: CHECKPOINT_NOW,
+    }],
+    updatedAt: CHECKPOINT_NOW,
+  } as unknown as TeamAggregate['memory']
+  team.leases = {
+    'lease-1': {
+      id: 'lease-1',
+      slotId: 'coder-slot',
+      taskId: 'assigned',
+      path: 'src/parser.ts',
+      acquiredAt: CHECKPOINT_NOW,
+    },
+  }
+  team.outbox = { 'msg-1': memberMail({ id: 'msg-1' }) }
+  const checkpoint = checkpointRecord({ ...(options.checkpoint ?? {}) })
+  const agent = {
+    id: 'session-leader',
+    status: options.leaderStatus ?? 'idle',
+    session: {
+      id: 'session-leader',
+      snapshotEvents: () => [] as SessionEvent[],
+    },
+    followup: vi.fn(),
+    cancel: vi.fn(),
+    whenIdle: vi.fn(async () => {}),
+  }
+  const dispose = vi.fn(async () => {})
+  const flush = vi.fn(async () => {})
+  const detachSession = vi.fn(async () => {})
+  const workspace = {
+    id: 'workspace-1',
+    path: team.workspacePath,
+    status: async () => 'ok' as const,
+    attachSession: async () => {},
+    detachSession,
+  }
+  const ctx = new Context()
+  ctx.provide('agents', { get: () => undefined } as never)
+  ctx.provide('sessions', { flush } as never)
+  ctx.provide('workspaceRegistry', {
+    get: (id: string) => id === workspace.id ? workspace : undefined,
+    list: () => [workspace],
+  } as never)
+  const lastOptions: { value?: unknown } = {}
+  const service = {
+    getTeam: () => team,
+    listMessages: () => ({ items: [memberMail({ id: 'mail-1' })], total: 1 }),
+    getTeamCheckpoint: (_teamId: string, checkpointId: string) => {
+      if (checkpointId !== checkpoint.id) {
+        throw new AgentTeamError('CHECKPOINT_NOT_FOUND', `Unknown checkpoint '${checkpointId}'`)
+      }
+      return checkpoint
+    },
+    updateRuntimeTeam: vi.fn(async (
+      _teamId: string,
+      update: (current: TeamAggregate) => TeamAggregate,
+      _kind?: string,
+      _summary?: string,
+      writeOptions?: unknown,
+    ) => {
+      lastOptions.value = writeOptions
+      team = { ...update(team), revision: team.revision + 1, updatedAt: CHECKPOINT_NOW }
+      return team
+    }),
+    consumeTeamCheckpoint: vi.fn(async (
+      _teamId: string,
+      _checkpointId: string,
+      targetSessionId: string,
+    ) => ({ ...checkpoint, status: 'consumed', targetSessionId })),
+    createTeamCheckpoint: vi.fn(),
+  } as unknown as AgentTeamService
+  const runtime = new TeamRuntime(ctx, {} as Config, service)
+  const internals = runtime as unknown as {
+    owned: Map<string, unknown>
+    ensureMemberOnline: ReturnType<typeof vi.fn>
+  }
+  internals.owned.set(team.members[team.leaderSlotId]!.sessionId, {
+    teamId: team.id,
+    slotId: team.leaderSlotId,
+    sessionId: team.members[team.leaderSlotId]!.sessionId,
+    epoch: epochOf(team),
+    handle: { agent, dispose },
+    modelSelection: { current: undefined, assembled: undefined },
+  })
+  const ensureMemberOnline = vi.fn(async (
+    _team: TeamAggregate,
+    _member: TeamMemberSlot,
+    _persisted: boolean,
+    _seedOptions?: { seed?: { source: unknown } },
+  ) => {
+    if (options.activationError !== undefined) throw options.activationError
+  })
+  internals.ensureMemberOnline = ensureMemberOnline
+  return {
+    runtime,
+    service: service as unknown as {
+      updateRuntimeTeam: ReturnType<typeof vi.fn> & { mock: { calls: unknown[][] } }
+      consumeTeamCheckpoint: ReturnType<typeof vi.fn>
+    },
+    checkpoint,
+    team: () => team,
+    agent,
+    dispose,
+    flush,
+    detachSession,
+    ensureMemberOnline,
+    lastOptions,
+  }
+}
+
 function member(id: string, displayName: string, role: 'leader' | 'member'): TeamMemberSlot {
   return {
     id,
@@ -661,4 +1231,327 @@ function memoryEntry(
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
   }
+}
+
+describe('opt-in threshold checkpoint', () => {
+  it('defaults to off with a 30 minute spacing', () => {
+    const defaults = (ConfigSchema as unknown as (value: Record<string, never>) => Config)({})
+    expect(defaults.teamCheckpointThresholdRatio).toBe(0)
+    expect(defaults.teamCheckpointMinIntervalMs).toBe(30 * 60 * 1000)
+  })
+
+  it('writes one threshold checkpoint on the tick and replaces it in place', async () => {
+    const h = thresholdHarness({ ratio: 0.8, usedTokens: 850 })
+    const before = JSON.parse(JSON.stringify(h.team()))
+
+    await h.sweep()
+    expect(h.remindDueTasks).toHaveBeenCalledOnce()
+    expect(h.runDueRoutine).not.toHaveBeenCalled()
+    expect(h.createThreshold).toHaveBeenCalledOnce()
+    const created = h.createThreshold.mock.calls[0]![0] as {
+      teamId: string
+      leaderSlotId: string
+      epoch: number
+      sourceSessionId: string
+      facts: { recentMessages: unknown[]; recentTeamMail: unknown[] }
+    }
+    expect(created).toMatchObject({
+      teamId: h.team().id,
+      leaderSlotId: h.team().leaderSlotId,
+      epoch: epochOf(h.team()),
+      sourceSessionId: h.team().members[h.team().leaderSlotId]!.sessionId,
+    })
+    expect(created.facts.recentMessages).toEqual([
+      { role: 'assistant', text: 'ok' },
+      { role: 'user', text: 'Plan the threshold' },
+    ])
+    expect(created.facts.recentTeamMail).toEqual([])
+
+    // Inside the minimum interval the same Session is not captured again.
+    await h.sweep()
+    expect(h.createThreshold).toHaveBeenCalledOnce()
+
+    // Nothing about the team moved: no aggregate write, no handoff, no new Agent.
+    expect(h.service.updateRuntimeTeam).not.toHaveBeenCalled()
+    expect(h.service.consumeTeamCheckpoint).not.toHaveBeenCalled()
+    expect(h.service.handoffTeamLeader).not.toHaveBeenCalled()
+    expect(h.service.createTeamLeaderCheckpoint).not.toHaveBeenCalled()
+    expect(h.ensureMemberOnline).not.toHaveBeenCalled()
+    expect(h.agentsCreate).not.toHaveBeenCalled()
+    expect(JSON.parse(JSON.stringify(h.team()))).toEqual(before)
+  })
+
+  it('stays silent when the ratio is off, the Agent is running, or the team is archived', async () => {
+    const off = thresholdHarness({ ratio: 0, usedTokens: 1_000 })
+    await off.sweep()
+    expect(off.createThreshold).not.toHaveBeenCalled()
+    expect(off.remindDueTasks).toHaveBeenCalledOnce()
+
+    const busy = thresholdHarness({ ratio: 0.8, usedTokens: 1_000, agentStatus: 'running' })
+    await busy.sweep()
+    expect(busy.createThreshold).not.toHaveBeenCalled()
+
+    const archived = thresholdHarness({
+      ratio: 0.8,
+      usedTokens: 1_000,
+      archivedAt: '2026-10-01T00:00:00.000Z',
+    })
+    await archived.sweep()
+    expect(archived.createThreshold).not.toHaveBeenCalled()
+
+    const draft = thresholdHarness({ ratio: 0.8, usedTokens: 1_000, state: 'draft' })
+    await draft.sweep()
+    expect(draft.createThreshold).not.toHaveBeenCalled()
+  })
+
+  it('waits for usage to reach the ratio and for a known context window', async () => {
+    const below = thresholdHarness({ ratio: 0.8, usedTokens: 700 })
+    await below.sweep()
+    expect(below.createThreshold).not.toHaveBeenCalled()
+
+    const noWindow = thresholdHarness({ ratio: 0.8, usedTokens: 1_000, contextWindow: undefined })
+    await noWindow.sweep()
+    expect(noWindow.createThreshold).not.toHaveBeenCalled()
+  })
+
+  it('writes only bounded facts and keeps member mail out of the transcript', async () => {
+    const events: SessionEvent[] = [...thresholdEvents(850, 1_000)]
+    let seq = 100
+    for (let index = 0; index < 20; index += 1) {
+      events.push(userEvent(seq++, `long-${index}`, `line ${index} `.repeat(120)))
+    }
+    const messages = Array.from({ length: 10 }, (_, index) => memberMail({
+      id: `mail-${index}`,
+      content: `report ${index} `.repeat(80),
+      createdAt: `2026-10-24T00:0${index}:00.000Z`,
+    }))
+    const h = thresholdHarness({ ratio: 0.8, usedTokens: 850, events, messages })
+
+    await h.sweep()
+
+    const record = h.checkpoints[0]!
+    expect(record.origin).toBe('threshold')
+    expect(record.note).toBe('')
+    expect(record.facts.recentMessages).toHaveLength(12)
+    expect(record.facts.recentMessages.every(message => message.text.length <= 500)).toBe(true)
+    expect(record.facts.recentMessages.some(message => message.text.includes('report'))).toBe(false)
+    expect(record.facts.recentTeamMail).toHaveLength(8)
+    expect(record.facts.recentTeamMail.every(mail => mail.text.length <= 300)).toBe(true)
+  })
+
+  it('replaces the previous threshold record of the same Session instead of appending', async () => {
+    const h = thresholdServiceHarness()
+    const base = {
+      teamId: h.team.id,
+      leaderSlotId: h.team.leaderSlotId,
+      epoch: epochOf(h.team),
+      sourceSessionId: h.team.members[h.team.leaderSlotId]!.sessionId,
+      capturedThroughSeq: 1,
+      facts: emptyTeamFacts(),
+    }
+
+    const first = await h.service.createThresholdTeamCheckpoint({ ...base, at: '2026-10-24T12:00:00.000Z' })
+    expect(first).toMatchObject({ origin: 'threshold', note: '', status: 'ready' })
+    const second = await h.service.createThresholdTeamCheckpoint({
+      ...base,
+      capturedThroughSeq: 9,
+      at: '2026-10-24T12:30:00.000Z',
+    })
+    expect(second.id).toBe(first.id)
+    expect(second.capturedThroughSeq).toBe(9)
+    expect(second.createdAt).toBe('2026-10-24T12:30:00.000Z')
+    expect(h.records()).toHaveLength(1)
+
+    // A different Session gets its own record, and a manual checkpoint is never
+    // replaced by a threshold capture.
+    const other = await h.service.createThresholdTeamCheckpoint({
+      ...base,
+      sourceSessionId: 'session-next',
+      at: '2026-10-24T13:00:00.000Z',
+    })
+    expect(other.id).not.toBe(first.id)
+    const manual = await h.service.createTeamCheckpoint({ ...base, note: 'keep me' })
+    expect(manual.origin).toBe('manual')
+    await h.service.createThresholdTeamCheckpoint({ ...base, at: '2026-10-24T13:30:00.000Z' })
+    expect(h.records()).toHaveLength(3)
+    expect(h.service.getTeamCheckpoint(h.team.id, manual.id)).toMatchObject({
+      origin: 'manual',
+      note: 'keep me',
+    })
+  })
+})
+
+function emptyTeamFacts() {
+  return buildTeamCheckpointFacts({
+    events: [],
+    team: checkpointTeam(),
+    messages: [],
+    tasks: [],
+    goals: [],
+    workspacePath: '/tmp/test-team',
+    note: '',
+  }).facts
+}
+
+function thresholdEvents(usedTokens: number, contextWindow: number | undefined): SessionEvent[] {
+  return [
+    {
+      seq: 0,
+      time: 1_700_000_000_000,
+      type: 'request/context',
+      data: contextWindow === undefined ? {} : { contextWindow },
+    } as unknown as SessionEvent,
+    {
+      seq: 1,
+      time: 1_700_000_000_001,
+      type: 'assistant/message',
+      data: {
+        turn: 1,
+        step: 1,
+        message: {
+          id: 'assistant-1',
+          role: 'assistant',
+          source: { kind: 'model', provider: 'test', model: 'test-model' },
+          content: [{ type: 'text', text: 'ok' }],
+        },
+        usage: { inputTokens: usedTokens, outputTokens: 0 },
+        stream: [],
+      },
+    } as unknown as SessionEvent,
+    userEvent(2, 'user-1', 'Plan the threshold'),
+  ]
+}
+
+function thresholdHarness(options: {
+  ratio: number
+  usedTokens: number
+  contextWindow?: number | undefined
+  agentStatus?: 'idle' | 'running'
+  state?: TeamAggregate['state']
+  archivedAt?: string
+  events?: SessionEvent[]
+  messages?: TeamMessage[]
+}) {
+  const base = checkpointTeam()
+  const team: TeamAggregate = {
+    ...base,
+    ...(options.state === undefined ? {} : { state: options.state }),
+    ...(options.archivedAt === undefined ? {} : { archivedAt: options.archivedAt }),
+  }
+  const leader = team.members[team.leaderSlotId]!
+  const checkpoints: TeamCheckpoint[] = []
+  const contextWindow = 'contextWindow' in options
+    ? options.contextWindow
+    : 1_000
+  const events = options.events ?? thresholdEvents(options.usedTokens, contextWindow)
+  const messages = options.messages ?? []
+  const createThreshold = vi.fn(async (input: {
+    teamId: string
+    leaderSlotId: string
+    epoch: number
+    sourceSessionId: string
+    capturedThroughSeq: number
+    facts: unknown
+    at: string
+  }) => {
+    const record = {
+      schemaVersion: 1,
+      id: `checkpoint-${checkpoints.length + 1}`,
+      teamId: input.teamId,
+      leaderSlotId: input.leaderSlotId,
+      epoch: input.epoch,
+      sourceSessionId: input.sourceSessionId,
+      title: `检查点 ${input.at}`,
+      note: '',
+      capturedThroughSeq: input.capturedThroughSeq,
+      facts: input.facts,
+      origin: 'threshold',
+      status: 'ready',
+      createdAt: input.at,
+    } as unknown as TeamCheckpoint
+    checkpoints.push(record)
+    return record
+  })
+  const agentsCreate = vi.fn()
+  const ctx = new Context()
+  ctx.provide('agents', { get: () => undefined, create: agentsCreate } as never)
+  const service = {
+    listTeams: () => ({ items: [team], total: 1 }),
+    getTeam: () => team,
+    listMessages: () => ({ items: messages, total: messages.length }),
+    listTeamCheckpoints: () => [...checkpoints],
+    createThresholdTeamCheckpoint: createThreshold,
+    updateRuntimeTeam: vi.fn(),
+    consumeTeamCheckpoint: vi.fn(),
+    handoffTeamLeader: vi.fn(),
+    createTeamLeaderCheckpoint: vi.fn(),
+  } as unknown as AgentTeamService
+  const runtime = new TeamRuntime(ctx, {
+    teamCheckpointThresholdRatio: options.ratio,
+    teamCheckpointMinIntervalMs: 30 * 60 * 1000,
+  } as Config, service)
+  const internals = runtime as unknown as {
+    owned: Map<string, unknown>
+    commands: unknown
+    ensureMemberOnline: ReturnType<typeof vi.fn>
+    sweepTaskReminders: () => Promise<void>
+  }
+  const agent = {
+    id: leader.sessionId,
+    status: options.agentStatus ?? 'idle',
+    session: { id: leader.sessionId, snapshotEvents: () => events },
+    followup: vi.fn(),
+    cancel: vi.fn(),
+    whenIdle: vi.fn(async () => {}),
+  }
+  internals.owned.set(leader.sessionId, {
+    teamId: team.id,
+    slotId: leader.id,
+    sessionId: leader.sessionId,
+    epoch: epochOf(team),
+    handle: { agent, dispose: vi.fn(async () => {}) },
+    modelSelection: { current: undefined, assembled: undefined },
+  })
+  const remindDueTasks = vi.fn(async (teamId: string) => ({ teamId, remindedTaskIds: [] }))
+  const runDueRoutine = vi.fn(async (teamId: string) => ({ teamId, nudged: false }))
+  internals.commands = { remindDueTasks, runDueRoutine }
+  const ensureMemberOnline = vi.fn()
+  internals.ensureMemberOnline = ensureMemberOnline
+  return {
+    runtime,
+    service,
+    team: () => team,
+    checkpoints,
+    createThreshold,
+    agentsCreate,
+    remindDueTasks,
+    runDueRoutine,
+    ensureMemberOnline,
+    sweep: () => internals.sweepTaskReminders(),
+  }
+}
+
+function thresholdServiceHarness() {
+  const team = checkpointTeam()
+  const records = new Map<string, TeamCheckpoint>()
+  const store = {
+    getTeam: (id: string) => id === team.id ? team : undefined,
+    getTeamCheckpoint: (id: string) => records.get(id),
+    listTeamCheckpoints: (teamId: string) => [...records.values()]
+      .filter(checkpoint => checkpoint.teamId === teamId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt)
+        || left.id.localeCompare(right.id)),
+    putTeamCheckpoint: async (value: TeamCheckpoint) => { records.set(value.id, value) },
+    updateTeamCheckpoint: async (
+      id: string,
+      update: (current: TeamCheckpoint) => TeamCheckpoint,
+    ) => {
+      const next = update(records.get(id)!)
+      records.set(id, next)
+      return next
+    },
+    deleteTeamCheckpoint: async (id: string) => records.delete(id),
+  } as unknown as AgentTeamStore
+  const service = new AgentTeamService(new Context(), {} as Config, store)
+  return { service, team, records: () => [...records.values()] }
 }

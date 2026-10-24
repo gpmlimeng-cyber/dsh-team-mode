@@ -22,8 +22,12 @@ export async function callAgentTeam<M extends AgentTeamMethod>(
   const [payload, expectedRevision] = args
   const controller = new AbortController()
   // A Leader change archives every Session and activates the successor: it can
-  // take as long as a reset, so it gets the same budget.
-  const timeoutMs = method === 'team.reset' || method === 'team.dissolve' || method === 'team.changeLeader'
+  // take as long as a reset, so it gets the same budget. A Leader handoff
+  // activates one fresh Session and is bounded by the same wait.
+  const timeoutMs = method === 'team.reset'
+    || method === 'team.dissolve'
+    || method === 'team.changeLeader'
+    || method === 'team.checkpoint.handoff'
     ? 60_000
     : 10_000
   const timeout = setTimeout(() => { controller.abort() }, timeoutMs)

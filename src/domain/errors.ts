@@ -15,6 +15,8 @@ export type AgentTeamErrorCode =
   | 'ASSISTANT_SESSION_NOT_READY'
   | 'CHECKPOINT_NOT_FOUND'
   | 'CHECKPOINT_NOT_READY'
+  | 'CHECKPOINT_STALE'
+  | 'SESSION_RETIRED'
   | 'ASSISTANT_WORKER_LIMIT'
   | 'TEAM_NOT_FOUND'
   | 'TEAM_INVALID_LEADER'
@@ -73,5 +75,19 @@ export function epochStaleError(teamId: string, epoch: number, expectedEpoch: nu
     `Team epoch changed to ${epoch}; this Session belongs to epoch ${expectedEpoch} and is read-only. `
       + 'Wait for the Leader to re-dispatch or ask the user to reopen the team.',
     { teamId, epoch, expectedEpoch },
+  )
+}
+
+/**
+ * One message for every retired-Session rejection. A context handoff replaces
+ * the Session without changing the epoch, so this is the only fence that tells
+ * a write already in flight that the member moved on; a retry in the old
+ * Session cannot succeed.
+ */
+export function sessionRetiredError(teamId: string, slotId: string, sessionId: string): AgentTeamError {
+  return new AgentTeamError(
+    'SESSION_RETIRED',
+    `This Session was retired by a context handoff and is read-only; continue in the new Session.`,
+    { teamId, slotId, sessionId },
   )
 }

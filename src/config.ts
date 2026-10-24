@@ -46,6 +46,15 @@ export interface Config {
    */
   teamRoutineIdleMs?: number
   /**
+   * Opt-in automatic Leader checkpoint. 0 (the default) keeps it off. When
+   * positive, the 30 s tick writes one `threshold` checkpoint once the Leader
+   * Session's last observed context usage reaches this fraction of its window.
+   * It only backs up context: it never hands off and never changes the team.
+   */
+  teamCheckpointThresholdRatio?: number
+  /** Minimum spacing between two threshold checkpoints (default 30 min). */
+  teamCheckpointMinIntervalMs?: number
+  /**
    * Deployment-declared member tool policies by id. Empty by default: every
    * member keeps the full baseline tool surface.
    */
@@ -68,6 +77,12 @@ export const Config: Schema<Config> = Schema.object({
   memberIdleWatchdogMs: Schema.number().min(30_000).max(60 * 60 * 1000).default(10 * 60 * 1000),
   memoryAutoCapture: Schema.boolean().default(false),
   teamRoutineIdleMs: Schema.number().min(0).max(24 * 60 * 60 * 1000).step(1).default(0),
+  teamCheckpointThresholdRatio: Schema.number().min(0).max(1).default(0),
+  teamCheckpointMinIntervalMs: Schema.number()
+    .min(60 * 1000)
+    .max(24 * 60 * 60 * 1000)
+    .step(1)
+    .default(30 * 60 * 1000),
   toolPolicies: Schema.dict(Schema.object({
     description: Schema.string().default(''),
     allow: Schema.array(Schema.string()).required(),

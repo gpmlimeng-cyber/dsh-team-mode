@@ -8,6 +8,7 @@ import type {
   AssistantSession,
   CreateAssistantInstanceInput,
   MemoryEntry,
+  TeamCheckpoint,
   TeamGoal,
   UpdateAssistantInstanceInput,
   UpdateTeamGoalInput,
@@ -131,6 +132,25 @@ describe('Agent Team transport contracts', () => {
     expectTypeOf<TeamMemoryWriteView['entry']>().toEqualTypeOf<MemoryEntry>()
   })
 
+  it('types the explicit Leader checkpoint routes', () => {
+    expect(AGENT_TEAM_METHODS).toContain('team.checkpoint.create')
+    expect(AGENT_TEAM_METHODS).toContain('team.checkpoint.list')
+    expect(AGENT_TEAM_METHODS).toContain('team.checkpoint.handoff')
+    expectTypeOf<AgentTeamPayload<'team.checkpoint.create'>>()
+      .toEqualTypeOf<{ teamId: string; note?: string }>()
+    expectTypeOf<AgentTeamResult<'team.checkpoint.create'>>().toEqualTypeOf<TeamCheckpoint>()
+    expectTypeOf<AgentTeamPayload<'team.checkpoint.list'>>()
+      .toEqualTypeOf<{ teamId: string }>()
+    expectTypeOf<AgentTeamResult<'team.checkpoint.list'>>().toEqualTypeOf<TeamCheckpoint[]>()
+    expectTypeOf<AgentTeamPayload<'team.checkpoint.handoff'>>()
+      .toEqualTypeOf<{ teamId: string; checkpointId: string }>()
+    expectTypeOf<AgentTeamResult<'team.checkpoint.handoff'>>().toEqualTypeOf<{
+      team: TeamView
+      checkpoint: TeamCheckpoint
+      sessionId: string
+    }>()
+  })
+
   it('maps the Leader Goal status write used to resume a paused Goal', () => {
     expect(AGENT_TEAM_METHODS).toContain('team.updateGoal')
     expectTypeOf<AgentTeamPayload<'team.updateGoal'>>().toEqualTypeOf<{
@@ -248,5 +268,82 @@ describe('assistant.memory.undo wire shape', () => {
       expectedRevision: 2,
       actor: 'user',
     })
+  })
+})
+
+describe('team.checkpoint.handoff wire shape', () => {
+  it('dispatches the explicit handoff with the aggregate revision fence', async () => {
+    const routes = new Map<string, (req: IncomingMessage, res: ServerResponse) => unknown>()
+    const ctx = {
+      webServer: {
+        register(route: { path: string; handler: (req: IncomingMessage, res: ServerResponse) => unknown }) {
+          routes.set(route.path, route.handler)
+          return () => { routes.delete(route.path) }
+        },
+      },
+      connection: { requestRejection: () => undefined },
+      logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+    } as never
+    const checkpoint: TeamCheckpoint = {
+      schemaVersion: 1,
+      id: 'checkpoint-1',
+      teamId: 'team-1',
+      leaderSlotId: 'leader',
+      epoch: 2,
+      sourceSessionId: 'session-old',
+      targetSessionId: 'session-new',
+      title: '检查点 2026-10-24',
+      note: 'keep going',
+      capturedThroughSeq: 4,
+      facts: {
+        recentMessages: [{ role: 'user', text: 'Continue' }],
+        activeTasks: [{ id: 'task-1', title: 'Ship it', status: 'assigned' }],
+        activeGoals: [{ id: 'goal-1', title: 'Release', status: 'active' }],
+        recentTeamMail: [{ fromName: 'Coder', type: 'progress', text: 'Halfway' }],
+        workspacePath: '/tmp/team',
+        note: 'keep going',
+      },
+      status: 'consumed',
+      createdAt: '2026-10-24T00:00:00.000Z',
+      consumedAt: '2026-10-24T00:00:01.000Z',
+    }
+    const team = { id: 'team-1', revision: 9 } as TeamView
+    const handoffTeamLeader = vi.fn(async () => ({
+      team,
+      checkpoint,
+      sessionId: 'session-new',
+    }))
+    const service = {
+      subscribe: () => () => {},
+      handoffTeamLeader,
+    } as unknown as AgentTeamService
+    registerWebTransport(
+      ctx,
+      { maxRequestBytes: 1024, sseHeartbeatMs: 60_000 } as Config,
+      service,
+    )
+    const handler = routes.get(AGENT_TEAM_API_PATH)!
+    const outgoing = response()
+    await handler(request(JSON.stringify({
+      requestId: 'r1',
+      method: 'team.checkpoint.handoff',
+      expectedRevision: 9,
+      payload: { teamId: 'team-1', checkpointId: 'checkpoint-1' },
+    })), outgoing)
+
+    const body = JSON.parse(outgoing.body) as {
+      ok: boolean
+      value: { sessionId: string; checkpoint: TeamCheckpoint }
+    }
+    expect(body.ok).toBe(true)
+    expect(body.value.sessionId).toBe('session-new')
+    expect(body.value.checkpoint.facts.activeGoals).toEqual([
+      { id: 'goal-1', title: 'Release', status: 'active' },
+    ])
+    expect(handoffTeamLeader).toHaveBeenCalledWith(
+      'team-1',
+      'checkpoint-1',
+      { expectedRevision: 9 },
+    )
   })
 })

@@ -53,6 +53,16 @@ import {
 type InternalTaskStatus = 'pending' | 'assigned' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled'
 export type AionTaskStatus = 'pending' | 'in_progress' | 'completed' | 'deleted'
 
+/**
+ * Caller identity fences for every member-authored write. `epoch` catches a
+ * stale leadership generation; `memberSession` catches a Session retired by a
+ * context handoff or reset, which leaves the epoch unchanged.
+ */
+export interface TeamWriteFence {
+  epoch?: number
+  memberSession?: { slotId: string; sessionId: string }
+}
+
 export interface TeamCommandPort {
   deliverMessage: (teamId: string, messageId: string) => Promise<boolean>
   followup: (sessionId: string, message: UserMessage) => void
@@ -467,7 +477,7 @@ export class TeamCommandHandler {
     teamId: string,
     creatorSlotId: string,
     input: CreateTaskInput,
-    epoch?: number,
+    fence?: TeamWriteFence,
   ): Promise<{
     taskId: string
     status: string
@@ -574,7 +584,7 @@ export class TeamCommandHandler {
       },
       'team.task_created',
       `Task ${title} created`,
-      this.epochOption(epoch),
+      this.writeOptions(fence),
     )
     const created = {
       taskId,
@@ -595,7 +605,7 @@ export class TeamCommandHandler {
     teamId: string,
     callerSlotId: string,
     input: UpdateTaskInput,
-    epoch?: number,
+    fence?: TeamWriteFence,
   ): Promise<{
     taskId: string
     status: string
@@ -830,7 +840,7 @@ export class TeamCommandHandler {
       },
       'team.task_updated',
       `Task ${task.title} entered ${nextStatus}`,
-      this.epochOption(epoch),
+      this.writeOptions(fence),
     )
     let delivered = true
     for (const notification of notifications) {
@@ -857,7 +867,7 @@ export class TeamCommandHandler {
     teamId: string,
     callerSlotId: string,
     input: ClaimTaskInput,
-    epoch?: number,
+    fence?: TeamWriteFence,
   ): Promise<ClaimTaskResult> {
     const team = this.service.getTeam(teamId)
     this.requireMember(team, callerSlotId)
@@ -945,7 +955,7 @@ export class TeamCommandHandler {
       },
       'team.task_claimed',
       `Task ${snapshot.title} claimed by ${team.members[callerSlotId]?.displayName ?? callerSlotId}`,
-      this.epochOption(epoch),
+      this.writeOptions(fence),
     )
     // The closure either threw or wrote exactly these values.
     return { taskId, status: 'assigned', owner: callerSlotId, attemptId }
@@ -1128,7 +1138,7 @@ export class TeamCommandHandler {
     teamId: string,
     creatorSlotId: string,
     input: CreateGoalInput,
-    epoch?: number,
+    fence?: TeamWriteFence,
   ): Promise<TeamGoalView> {
     const team = this.service.getTeam(teamId)
     this.assertLeader(team, creatorSlotId, 'create goals')
@@ -1138,12 +1148,12 @@ export class TeamCommandHandler {
       objective: requireShortText(input.objective ?? '', 'Goal objective', 2_000),
       ...(input.acceptance === undefined ? {} : { acceptance: input.acceptance }),
       ...(input.mode === undefined ? {} : { mode: input.mode }),
-    }, epoch)
+    }, this.writeOptions(fence))
     // Budget fields live on the optional Goal extension, so they are written
     // through the same aggregate closure instead of the legacy create input.
     const withBudget = maxTurns === undefined
       ? goal
-      : await this.updateGoalBudget(teamId, goal.id, maxTurns, epoch)
+      : await this.updateGoalBudget(teamId, goal.id, maxTurns, fence)
     return this.goalView(this.service.getTeam(teamId), withBudget)
   }
 
@@ -1157,7 +1167,7 @@ export class TeamCommandHandler {
     teamId: string,
     callerSlotId: string,
     input: UpdateGoalInput,
-    epoch?: number,
+    fence?: TeamWriteFence,
   ): Promise<TeamGoalView> {
     const team = this.service.getTeam(teamId)
     this.assertLeader(team, callerSlotId, 'update goals')
@@ -1171,11 +1181,11 @@ export class TeamCommandHandler {
     if (status !== undefined && status !== '') {
       await this.service.updateGoal(teamId, goalId, {
         status: normalizeGoalStatus(status),
-      }, epoch)
+      }, this.writeOptions(fence))
     }
     const goal = maxTurns === undefined
       ? requireGoal(this.service.getTeam(teamId), goalId)
-      : await this.updateGoalBudget(teamId, goalId, maxTurns, epoch)
+      : await this.updateGoalBudget(teamId, goalId, maxTurns, fence)
     return this.goalView(this.service.getTeam(teamId), goal)
   }
 
@@ -1184,7 +1194,7 @@ export class TeamCommandHandler {
     teamId: string,
     goalId: string,
     maxTurns: number,
-    epoch?: number,
+    fence?: TeamWriteFence,
   ): Promise<TeamGoal> {
     const now = new Date().toISOString()
     await this.service.updateRuntimeTeam(
@@ -1198,7 +1208,7 @@ export class TeamCommandHandler {
       },
       'team.goal_budget_updated',
       `Goal ${goalId} budget set to ${maxTurns} turns`,
-      this.epochOption(epoch),
+      this.writeOptions(fence),
     )
     return requireGoal(this.service.getTeam(teamId), goalId)
   }
@@ -1271,7 +1281,7 @@ export class TeamCommandHandler {
     teamId: string,
     proposerSlotId: string,
     input: ProposeMemoryInput,
-    epoch?: number,
+    fence?: TeamWriteFence,
   ): Promise<TeamMemoryWriteResult> {
     const team = this.service.getTeam(teamId)
     this.requireMember(team, proposerSlotId)
@@ -1360,7 +1370,7 @@ export class TeamCommandHandler {
       },
       'team.memory_proposed',
       `Team memory entry '${title}' submitted`,
-      this.epochOption(epoch),
+      this.writeOptions(fence),
     )
     return {
       revision: next.memory?.revision ?? 0,
@@ -1378,7 +1388,7 @@ export class TeamCommandHandler {
     teamId: string,
     callerSlotId: string,
     input: DecideMemoryInput,
-    epoch?: number,
+    fence?: TeamWriteFence,
   ): Promise<TeamMemoryWriteResult> {
     const team = this.service.getTeam(teamId)
     this.assertLeader(team, callerSlotId, 'accept or reject team memory proposals')
@@ -1460,7 +1470,7 @@ export class TeamCommandHandler {
       },
       decision === 'accept' ? 'team.memory_accepted' : 'team.memory_rejected',
       `Team memory entry ${entryId} ${decision === 'accept' ? 'accepted' : 'rejected'}`,
-      this.epochOption(epoch),
+      this.writeOptions(fence),
     )
     return {
       revision: next.memory?.revision ?? 0,
@@ -1644,7 +1654,7 @@ export class TeamCommandHandler {
     teamId: string,
     senderSlotId: string,
     input: SendMessageInput,
-    epoch?: number,
+    fence?: TeamWriteFence,
   ): Promise<SendMessageResult> {
     const team = this.service.getTeam(teamId)
     this.requireMember(team, senderSlotId)
@@ -1686,7 +1696,7 @@ export class TeamCommandHandler {
     const attachments = normalizeFiles(input.files)
     const links = this.normalizeMessageLinks(team, input)
     if (to.trim() === '*') {
-      return this.sendBroadcast(team, senderSlotId, content, type, summary, attachments, links, epoch)
+      return this.sendBroadcast(team, senderSlotId, content, type, summary, attachments, links, fence)
     }
     const recipientSlotId = this.resolveMemberSlotId(team, to)
     if (recipientSlotId === senderSlotId) {
@@ -1702,7 +1712,7 @@ export class TeamCommandHandler {
     return this.sendMemberMessage(teamId, senderSlotId, recipientSlotId, content, type, {
       ...(summary === undefined || summary.length === 0 ? {} : { summary }),
       ...(attachments.length === 0 ? {} : { attachments }),
-      ...(epoch === undefined ? {} : { expectedEpoch: epoch }),
+      ...(fence === undefined ? {} : { fence }),
       links,
     })
   }
@@ -1740,9 +1750,9 @@ export class TeamCommandHandler {
     summary: string | undefined,
     attachments: TeamMessage['attachments'],
     links: MessageLinks = {},
-    epoch?: number,
+    fence?: TeamWriteFence,
   ): Promise<SendMessageResult> {
-    const options = this.epochOption(epoch)
+    const options = this.writeOptions(fence)
     const id = `dsh-team-mode:${randomUUID()}`
     const record = createTeamMessage({
       id,
@@ -1789,11 +1799,11 @@ export class TeamCommandHandler {
       summary?: string
       attachments?: TeamMessage['attachments']
       links?: MessageLinks
-      /** Epoch of the caller session; a stale one must not deliver into the new epoch. */
-      expectedEpoch?: number
+      /** Caller Session fences; a stale one must not deliver into the new Session. */
+      fence?: TeamWriteFence
     } = {},
   ): Promise<SendMessageResult> {
-    const epochOptions = this.epochOption(options.expectedEpoch)
+    const epochOptions = this.writeOptions(options.fence)
     const team = this.service.getTeam(teamId)
     const sender = team.members[senderSlotId]
     const recipient = team.members[recipientSlotId]
@@ -2008,9 +2018,15 @@ export class TeamCommandHandler {
     }
   }
 
-  /** The epoch fence options for one member write; absent means unfenced. */
-  private epochOption(epoch: number | undefined): { expectedEpoch?: number } {
-    return epoch === undefined ? {} : { expectedEpoch: epoch }
+  /** The write fences for one member write; absent means unfenced. */
+  private writeOptions(fence: TeamWriteFence | undefined): {
+    expectedEpoch?: number
+    expectedMemberSession?: { slotId: string; sessionId: string }
+  } {
+    return {
+      ...(fence?.epoch === undefined ? {} : { expectedEpoch: fence.epoch }),
+      ...(fence?.memberSession === undefined ? {} : { expectedMemberSession: fence.memberSession }),
+    }
   }
 
   private requireMember(team: TeamAggregate, slotId: string): TeamMemberSlot {

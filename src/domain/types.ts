@@ -30,6 +30,8 @@ import type {
   retiredMemberSessionSchema,
   teamActivitySchema,
   teamAggregateSchema,
+  teamCheckpointFactsSchema,
+  teamCheckpointSchema,
   teamGoalModeSchema,
   teamGoalSchema,
   teamGoalStatusSchema,
@@ -64,6 +66,8 @@ export type WriteAssistantMemoryEntryInput = z.infer<typeof writeAssistantMemory
 export type CheckpointFacts = z.infer<typeof checkpointFactsSchema>
 export type ContextCheckpoint = z.infer<typeof contextCheckpointSchema>
 export type ContextCheckpointStatus = z.infer<typeof contextCheckpointStatusSchema>
+export type TeamCheckpointFacts = z.infer<typeof teamCheckpointFactsSchema>
+export type TeamCheckpoint = z.infer<typeof teamCheckpointSchema>
 export type AssistantSession = z.infer<typeof assistantSessionSchema>
 /** Last visible message in an assistant's main Session, for sidebar preview. */
 export interface AssistantPreview {

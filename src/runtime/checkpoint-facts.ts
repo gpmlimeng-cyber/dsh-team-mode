@@ -113,3 +113,35 @@ function checkpointHandoffText(checkpoint: ContextCheckpoint): string {
   ]
   return `${lines.join('\n')}\n`
 }
+
+export interface ThresholdCheckpointInput {
+  /** Last observed Leader usage; absent before the first model turn. */
+  usage: { usedTokens: number; contextWindow?: number } | undefined
+  /** Configured ratio, 0..1. 0 disables the feature entirely. */
+  ratio: number
+  /** Minimum spacing between two threshold checkpoints. */
+  minIntervalMs: number
+  /** `createdAt` of the newest threshold checkpoint of the same (team, Session). */
+  lastThresholdAt?: string
+  now: string
+}
+
+/**
+ * The whole opt-in decision, as a pure function: off by default, and otherwise
+ * a single yes/no for "this tick may write one threshold checkpoint". Every
+ * condition must hold, in this order: the feature is enabled, the Leader has a
+ * known context window, usage reached the ratio, and no threshold checkpoint
+ * was written for this Session inside the interval. Nothing here reads a team,
+ * a Session, or a clock beyond the injected `now`.
+ */
+export function thresholdCheckpointDue(input: ThresholdCheckpointInput): boolean {
+  if (!(input.ratio > 0)) return false
+  const contextWindow = input.usage?.contextWindow
+  if (contextWindow === undefined || contextWindow <= 0) return false
+  if ((input.usage?.usedTokens ?? 0) / contextWindow < input.ratio) return false
+  if (input.lastThresholdAt === undefined) return true
+  const last = Date.parse(input.lastThresholdAt)
+  const now = Date.parse(input.now)
+  if (!Number.isFinite(last) || !Number.isFinite(now)) return false
+  return now - last >= input.minIntervalMs
+}

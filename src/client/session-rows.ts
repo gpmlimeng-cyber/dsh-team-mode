@@ -1,6 +1,8 @@
 /** Minimal structural shapes for the three sources the row hider unions. */
 export interface TeamSessionSource {
   members: Record<string, { sessionId: string }>
+  /** Leader Sessions retired by an explicit handoff; kept hidden but never deleted. */
+  retiredLeaderSessionIds?: readonly string[] | undefined
 }
 
 export interface AssistantInstanceSessionSource {
@@ -28,6 +30,9 @@ export function hiddenSessionIds(
   for (const team of teams) {
     for (const member of Object.values(team.members)) {
       if (member.sessionId !== '') ids.add(member.sessionId)
+    }
+    for (const retired of team.retiredLeaderSessionIds ?? []) {
+      if (retired !== '') ids.add(retired)
     }
   }
   for (const instance of instances) {

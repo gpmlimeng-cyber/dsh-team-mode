@@ -3,7 +3,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { isModelInvocable, isSkillName, isUserInvocable } from '@deepseek-ai/dsh-skill'
 import type { Config } from '../config.js'
-import { AgentTeamError, epochStaleError } from '../domain/errors.js'
+import { AgentTeamError, epochStaleError, sessionRetiredError } from '../domain/errors.js'
 import { memoryDedupeKey, redactMemoryText } from '../domain/memory.js'
 import { isMcpServerName, mcpServerFromToolName } from '../domain/mcp.js'
 import {
@@ -17,6 +17,7 @@ import {
   createTeamDraftInputSchema,
   createTeamGoalInputSchema,
   memberAssistantInstanceLinkSchema,
+  teamCheckpointSchema,
   updateAssistantInputSchema,
   updateAssistantInstanceInputSchema,
   updateAssistantSessionInputSchema,
@@ -52,6 +53,8 @@ import {
   type Page,
   type TeamActivity,
   type TeamAggregate,
+  type TeamCheckpoint,
+  type TeamCheckpointFacts,
   type TeamGoal,
   type TeamMemberSlot,
   type TeamMessage,
@@ -62,7 +65,11 @@ import {
   type UpdateTeamGoalInput,
   type WriteAssistantMemoryEntryInput,
 } from '../domain/types.js'
-import type { AgentTeamCheckpointStore, AgentTeamStore } from '../storage/store.js'
+import type {
+  AgentTeamCheckpointStore,
+  AgentTeamLeaderCheckpointStore,
+  AgentTeamStore,
+} from '../storage/store.js'
 import type { AssistantBuilderRuntime } from '../runtime/assistant-builder-runtime.js'
 import type { AssistantEnsureResult, AssistantRuntime } from '../runtime/assistant-runtime.js'
 import { resolveMemberToolPolicy } from '../runtime/team-tools.js'
@@ -95,6 +102,18 @@ export interface MutationOptions {
 }
 
 /**
+ * Fences for one runtime write. `expectedEpoch` rejects a write authored under a
+ * previous leadership generation; `expectedMemberSession` rejects a write whose
+ * Session has since been retired by a context handoff or reset, which the epoch
+ * never changes. Both are re-checked inside the store's serialized write chain.
+ */
+export interface RuntimeWriteOptions {
+  expectedRevision?: number
+  expectedEpoch?: number
+  expectedMemberSession?: { slotId: string; sessionId: string }
+}
+
+/**
  * Durable memory is a single string per Assistant instance. Writes over the
  * budget are rejected instead of truncated: silently dropping durable context
  * is worse than an explicit retry with a shorter note.
@@ -106,6 +125,13 @@ export const ASSISTANT_MEMORY_MAX_CHARS = 16_000
  * truncated, matching the schema bound the client validates against.
  */
 export const CHECKPOINT_NOTE_LIMIT = 4_000
+
+/**
+ * How many Leader checkpoints one team keeps. Older records can never be handed
+ * off (their Session is gone or superseded), so they are pruned on create
+ * instead of accumulating forever.
+ */
+export const TEAM_CHECKPOINT_LIMIT = 20
 
 /**
  * How many retired main Sessions one instance remembers for sidebar hiding.
@@ -1409,6 +1435,211 @@ export class AgentTeamService extends Service {
     return this.requireAssistantRuntime().handoff(id)
   }
 
+  /**
+   * Capture one checkpoint of the current Leader Session. The note is trimmed
+   * and bounded here; the runtime builds the facts deterministically.
+   */
+  async createTeamLeaderCheckpoint(
+    teamId: string,
+    note = '',
+    options: MutationOptions = {},
+  ): Promise<TeamCheckpoint> {
+    const id = teamId.trim()
+    if (id === '') throw new AgentTeamError('INVALID_REQUEST', 'Team id cannot be empty')
+    requireTeam(this.store, id)
+    const text = note.trim()
+    if (text.length > CHECKPOINT_NOTE_LIMIT) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Checkpoint note must be at most ${CHECKPOINT_NOTE_LIMIT} characters`,
+      )
+    }
+    return this.requireRuntime().createLeaderCheckpoint(id, text, options)
+  }
+
+  /** Newest-first Leader checkpoints of one team. */
+  listTeamCheckpoints(teamId: string): TeamCheckpoint[] {
+    const team = requireTeam(this.store, teamId.trim())
+    return this.teamCheckpointStore().listTeamCheckpoints(team.id)
+  }
+
+  /** Read one checkpoint of one team; an unknown id is CHECKPOINT_NOT_FOUND. */
+  getTeamCheckpoint(teamId: string, checkpointId: string): TeamCheckpoint {
+    const team = requireTeam(this.store, teamId.trim())
+    const id = checkpointId.trim()
+    if (id === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Checkpoint id cannot be empty')
+    }
+    const checkpoint = this.teamCheckpointStore().getTeamCheckpoint(id)
+    if (checkpoint === undefined || checkpoint.teamId !== team.id) {
+      throw new AgentTeamError('CHECKPOINT_NOT_FOUND', `Unknown checkpoint '${id}'`)
+    }
+    return checkpoint
+  }
+
+  /**
+   * Runtime-only hook: persist one bounded Leader checkpoint and prune the
+   * oldest records so the table stays bounded per team.
+   */
+  async createTeamCheckpoint(input: {
+    teamId: string
+    leaderSlotId: string
+    epoch: number
+    sourceSessionId: string
+    capturedThroughSeq: number
+    facts: TeamCheckpointFacts
+    note: string
+    expectedRevision?: number
+  }): Promise<TeamCheckpoint> {
+    const team = requireTeam(this.store, input.teamId)
+    if (input.expectedRevision !== undefined && input.expectedRevision !== team.revision) {
+      throw new AgentTeamError(
+        'TEAM_REVISION_CONFLICT',
+        `team revision conflict: expected ${input.expectedRevision}, current ${team.revision}`,
+        { expected: input.expectedRevision, actual: team.revision },
+      )
+    }
+    const now = new Date().toISOString()
+    const checkpoint = teamCheckpointSchema.parse({
+      schemaVersion: 1,
+      id: randomUUID(),
+      teamId: team.id,
+      leaderSlotId: input.leaderSlotId,
+      epoch: input.epoch,
+      sourceSessionId: input.sourceSessionId,
+      title: `检查点 ${now}`,
+      note: input.note,
+      capturedThroughSeq: input.capturedThroughSeq,
+      facts: input.facts,
+      origin: 'manual',
+      status: 'ready',
+      createdAt: now,
+    })
+    await this.persistTeamCheckpoint(checkpoint)
+    return checkpoint
+  }
+
+  /**
+   * Runtime-only hook for the opt-in context-pressure checkpoint. It never
+   * touches the aggregate: the record is `origin: 'threshold'` and a second
+   * capture for the same (team, Leader Session) replaces the previous one in
+   * place, so sustained pressure cannot grow the table or produce a history
+   * nobody reads. Manual checkpoints are never replaced.
+   */
+  async createThresholdTeamCheckpoint(input: {
+    teamId: string
+    leaderSlotId: string
+    epoch: number
+    sourceSessionId: string
+    capturedThroughSeq: number
+    facts: TeamCheckpointFacts
+    at: string
+  }): Promise<TeamCheckpoint> {
+    const team = requireTeam(this.store, input.teamId)
+    const store = this.teamCheckpointStore()
+    const existing = store.listTeamCheckpoints(team.id).find(checkpoint => (
+      checkpoint.origin === 'threshold'
+      && checkpoint.sourceSessionId === input.sourceSessionId
+      && checkpoint.status === 'ready'
+    ))
+    const next = existing === undefined
+      ? teamCheckpointSchema.parse({
+        schemaVersion: 1,
+        id: randomUUID(),
+        teamId: team.id,
+        leaderSlotId: input.leaderSlotId,
+        epoch: input.epoch,
+        sourceSessionId: input.sourceSessionId,
+        title: `检查点 ${input.at}`,
+        note: '',
+        capturedThroughSeq: input.capturedThroughSeq,
+        facts: input.facts,
+        origin: 'threshold',
+        status: 'ready',
+        createdAt: input.at,
+      })
+      : await store.updateTeamCheckpoint(existing.id, value => ({
+        ...value,
+        leaderSlotId: input.leaderSlotId,
+        epoch: input.epoch,
+        capturedThroughSeq: input.capturedThroughSeq,
+        facts: input.facts,
+        note: '',
+        title: `检查点 ${input.at}`,
+        createdAt: input.at,
+      }))
+    if (existing === undefined) await this.persistTeamCheckpoint(next)
+    else this.publish('team', team.id, team.revision, 'team.checkpoint.created')
+    return next
+  }
+
+  /**
+   * One durable checkpoint write plus the per-team bound. Kept private so a
+   * manual and a threshold checkpoint cannot drift apart on pruning.
+   */
+  private async persistTeamCheckpoint(checkpoint: TeamCheckpoint): Promise<void> {
+    const store = this.teamCheckpointStore()
+    await store.putTeamCheckpoint(checkpoint)
+    for (const stale of store.listTeamCheckpoints(checkpoint.teamId).slice(TEAM_CHECKPOINT_LIMIT)) {
+      await store.deleteTeamCheckpoint(stale.id)
+    }
+    this.publish('team', checkpoint.teamId, this.getTeam(checkpoint.teamId).revision, 'team.checkpoint.created')
+  }
+
+  /**
+   * Runtime-only hook: mark a checkpoint consumed by the handoff that used it.
+   * A checkpoint that is no longer `ready` cannot be consumed twice.
+   */
+  async consumeTeamCheckpoint(
+    teamId: string,
+    checkpointId: string,
+    targetSessionId: string,
+  ): Promise<TeamCheckpoint> {
+    const current = this.getTeamCheckpoint(teamId, checkpointId)
+    if (current.status !== 'ready') {
+      throw new AgentTeamError(
+        'CHECKPOINT_NOT_READY',
+        `Checkpoint '${current.id}' is ${current.status}`,
+        { checkpointId: current.id, status: current.status },
+      )
+    }
+    const sessionId = targetSessionId.trim()
+    const now = new Date().toISOString()
+    const next = await this.teamCheckpointStore().updateTeamCheckpoint(current.id, value => {
+      if (value.status !== 'ready') {
+        throw new AgentTeamError(
+          'CHECKPOINT_NOT_READY',
+          `Checkpoint '${value.id}' is ${value.status}`,
+          { checkpointId: value.id, status: value.status },
+        )
+      }
+      return { ...value, status: 'consumed', targetSessionId: sessionId, consumedAt: now }
+    })
+    this.publish('team', next.teamId, this.getTeam(next.teamId).revision, 'team.checkpoint.consumed')
+    return next
+  }
+
+  /**
+   * Hand the Leader role to a fresh Session of the same member: the explicit
+   * user action. The epoch, Leader slot, tasks, Goals, memory and Workspace are
+   * untouched; only the Leader's `sessionId` (and its tombstone) changes.
+   */
+  async handoffTeamLeader(
+    teamId: string,
+    checkpointId: string,
+    options: MutationOptions = {},
+  ): Promise<{ team: TeamAggregate; checkpoint: TeamCheckpoint; sessionId: string }> {
+    const id = teamId.trim()
+    if (id === '') throw new AgentTeamError('INVALID_REQUEST', 'Team id cannot be empty')
+    requireTeam(this.store, id)
+    const checkpoint = checkpointId.trim()
+    if (checkpoint === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Checkpoint id cannot be empty')
+    }
+    const result = await this.requireRuntime().handoffLeader(id, checkpoint, options)
+    return { team: this.getTeam(id), ...result }
+  }
+
   /** Reattach one task's worker Session and return the Session to navigate to. */
   async openAssistantTask(taskId: string): Promise<{ task: AssistantSession; sessionId: string }> {
     return this.requireAssistantRuntime().openTask(taskId)
@@ -1571,7 +1802,11 @@ export class AgentTeamService extends Service {
     return { items, total: items.length }
   }
 
-  async createGoal(teamId: string, raw: CreateTeamGoalInput, epoch?: number): Promise<TeamGoal> {
+  async createGoal(
+    teamId: string,
+    raw: CreateTeamGoalInput,
+    options: RuntimeWriteOptions = {},
+  ): Promise<TeamGoal> {
     const input = createTeamGoalInputSchema.parse(raw)
     const team = requireTeam(this.store, teamId)
     assertTeamMutable(team)
@@ -1592,7 +1827,7 @@ export class AgentTeamService extends Service {
       current => ({ ...current, goals: { ...current.goals, [goal.id]: goal } }),
       'team.goal_created',
       `Goal ${goal.title} created`,
-      epoch === undefined ? {} : { expectedEpoch: epoch },
+      options,
     )
     return goal
   }
@@ -1601,7 +1836,7 @@ export class AgentTeamService extends Service {
     teamId: string,
     goalId: string,
     raw: UpdateTeamGoalInput,
-    epoch?: number,
+    options: RuntimeWriteOptions = {},
   ): Promise<TeamGoal> {
     const input = updateTeamGoalInputSchema.parse(raw)
     const team = requireTeam(this.store, teamId)
@@ -1625,7 +1860,7 @@ export class AgentTeamService extends Service {
       },
       'team.goal_updated',
       `Goal ${goalId} updated`,
-      epoch === undefined ? {} : { expectedEpoch: epoch },
+      options,
     )
     // Capture only on the transition into `completed`, and never let an
     // optional memory write turn a successful Goal update into a failure.
@@ -1634,7 +1869,7 @@ export class AgentTeamService extends Service {
       && input.status === 'completed'
       && previous.status !== 'completed'
     ) {
-      await this.captureTeamGoalMemory(teamId, goalId, epoch)
+      await this.captureTeamGoalMemory(teamId, goalId, options.expectedEpoch)
     }
     return requireGoal(next, goalId)
   }
@@ -2747,20 +2982,22 @@ export class AgentTeamService extends Service {
   }
 
   /**
-   * One atomic aggregate write plus its activity/publish. `expectedEpoch` is
-   * the last fence for a Session that was already waiting inside a tool handler
-   * when a Leader change committed: the closure runs in the store's serialized
-   * write chain, so a stale epoch is detected before anything is written.
+   * One atomic aggregate write plus its activity/publish. The fences run in the
+   * store's serialized write chain, so a Session that was already waiting inside
+   * a tool handler when a Leader change (epoch) or a context handoff (Session)
+   * committed is rejected before anything is written.
    */
   async updateRuntimeTeam(
     teamId: string,
     update: (team: TeamAggregate) => TeamAggregate,
     kind: string,
     summary: string,
-    options: { expectedEpoch?: number } = {},
+    options: RuntimeWriteOptions = {},
   ): Promise<TeamAggregate> {
     const next = await this.store.updateTeam(teamId, current => {
+      assertRevision('team', current.revision, options.expectedRevision)
       requireEpoch(current, options.expectedEpoch)
+      requireMemberSession(current, options.expectedMemberSession)
       const candidate = update(current)
       return {
         ...candidate,
@@ -2775,16 +3012,17 @@ export class AgentTeamService extends Service {
 
   /**
    * Write one durable message. Messages live outside the aggregate, so the
-   * epoch is checked here instead of inside `updateRuntimeTeam`; without it a
-   * handler that started before a Leader change could still deliver mail into
-   * the new epoch.
+   * fences are checked here instead of inside `updateRuntimeTeam`; without them
+   * a handler that started before a Leader change or a handoff could still
+   * deliver mail under the superseded Session.
    */
   async putRuntimeMessage(
     message: TeamMessage,
-    options: { expectedEpoch?: number } = {},
+    options: RuntimeWriteOptions = {},
   ): Promise<void> {
     const team = requireTeam(this.store, message.teamId)
     requireEpoch(team, options.expectedEpoch)
+    requireMemberSession(team, options.expectedMemberSession)
     await this.store.putMessage(message)
     this.publish('team', team.id, team.revision, 'team.message')
   }
@@ -3026,6 +3264,11 @@ export class AgentTeamService extends Service {
    */
   private checkpointStore(): AgentTeamCheckpointStore {
     return this.store as AgentTeamStore & AgentTeamCheckpointStore
+  }
+
+  /** Leader checkpoints use the same superset pattern as Assistant checkpoints. */
+  private teamCheckpointStore(): AgentTeamLeaderCheckpointStore {
+    return this.store as AgentTeamStore & AgentTeamLeaderCheckpointStore
   }
 }
 
@@ -3615,6 +3858,21 @@ function requireEpoch(team: TeamAggregate, expected?: number): void {
   const epoch = epochOf(team)
   if (epoch === expected) return
   throw epochStaleError(team.id, epoch, expected)
+}
+
+/**
+ * Reject a write authored by a Session that is no longer the member's Session.
+ * The epoch does not change on a context handoff or a member reset, so this is
+ * the only fence that closes the in-flight-write window those create.
+ */
+function requireMemberSession(
+  team: TeamAggregate,
+  expected?: { slotId: string; sessionId: string },
+): void {
+  if (expected === undefined) return
+  const member = team.members[expected.slotId]
+  if (member !== undefined && member.sessionId === expected.sessionId) return
+  throw sessionRetiredError(team.id, expected.slotId, expected.sessionId)
 }
 
 function assertTeamMutable(team: TeamAggregate): void {

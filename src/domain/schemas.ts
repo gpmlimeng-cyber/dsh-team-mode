@@ -281,6 +281,60 @@ export const contextCheckpointSchema = z.object({
   consumedAt: isoDate.optional(),
 }).strict()
 
+/**
+ * Facts of one Leader Team Session checkpoint: the Assistant facts plus the two
+ * things only a team has — active Goals and relayed member mail. Team mail is
+ * kept in its own bounded field, never copied into `recentMessages`, so a
+ * member report can never be misread as a user instruction after the handoff.
+ */
+export const teamCheckpointFactsSchema = checkpointFactsSchema.extend({
+  /** Active Goals, newest first, <= 10. */
+  activeGoals: z.array(z.object({
+    id: nonEmpty,
+    title: nonEmpty,
+    status: nonEmpty,
+  }).strict()).max(10),
+  /** Recent member mail, oldest first, <= 8; each text is one bounded line. */
+  recentTeamMail: z.array(z.object({
+    fromName: nonEmpty,
+    type: nonEmpty,
+    text: z.string().max(300),
+  }).strict()).max(8),
+}).strict()
+
+/**
+ * One durable Leader handoff artifact. Team checkpoints live in their own table
+ * (never in `assistant_memory` or the team aggregate) because their facts are
+ * large and only a handoff reads them.
+ */
+export const teamCheckpointSchema = z.object({
+  schemaVersion: z.literal(1),
+  id: nonEmpty,
+  teamId: nonEmpty,
+  /** Leader slot at capture time; a handoff target is always the current Leader. */
+  leaderSlotId: nonEmpty,
+  /** Epoch at capture time; a mismatch with the live epoch means the checkpoint is stale. */
+  epoch: z.int().positive(),
+  sourceSessionId: nonEmpty,
+  /** Leader Session created by the handoff; absent until the checkpoint is consumed. */
+  targetSessionId: nonEmpty.optional(),
+  title: nonEmpty,
+  /** User-supplied handoff note, <= 4000 chars. */
+  note: z.string().max(4000),
+  /** Seq of the last source-session event read; -1 for an empty session. */
+  capturedThroughSeq: z.int(),
+  facts: teamCheckpointFactsSchema,
+  /**
+   * `manual` = the user generated it (handoff source); `threshold` = the opt-in
+   * context-pressure backup. Optional on purpose: a record written before the
+   * threshold feature existed carries no field and reads as `manual`.
+   */
+  origin: z.enum(['manual', 'threshold']).optional(),
+  status: contextCheckpointStatusSchema.default('ready'),
+  createdAt: isoDate,
+  consumedAt: isoDate.optional(),
+}).strict()
+
 export const memberRuntimeStateSchema = z.enum([
   'offline',
   'starting',
@@ -509,6 +563,13 @@ export const teamAggregateSchema = z.object({
   archivedAt: isoDate.optional(),
   /** Stable member order for the capsule bar; Leader remains first (v2). */
   memberOrder: z.array(nonEmpty).optional(),
+  /**
+   * Leader Sessions retired by an explicit context handoff, newest last. Same
+   * precedent as `retiredMainSessionIds`: optional, no schema-version bump, and
+   * readers treat absent as `[]`. Kept separate from `retiredSessions` so the
+   * client hides only handoff-retired Sessions, never epoch-change tombstones.
+   */
+  retiredLeaderSessionIds: z.array(nonEmpty).max(100).optional(),
   /**
    * Leadership generation (`epochOf` = this ?? 1). Optional on purpose: no
    * schema-version bump, no migration, and every v1/v2 record opens unchanged

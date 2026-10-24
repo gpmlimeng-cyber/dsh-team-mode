@@ -491,6 +491,26 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       }).strict().parse(request.payload)
       return service.contextResetMember(payload.teamId, payload.slotId, options)
     }
+    case 'team.checkpoint.create': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        note: z.string().max(4000).optional(),
+      }).strict().parse(request.payload)
+      return service.createTeamLeaderCheckpoint(payload.teamId, payload.note, options)
+    }
+    case 'team.checkpoint.list': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.listTeamCheckpoints(payload.teamId)
+    }
+    case 'team.checkpoint.handoff': {
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        checkpointId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.handoffTeamLeader(payload.teamId, payload.checkpointId, options)
+    }
     case 'team.member.reconnect': {
       const payload = z.object({
         teamId: z.string().trim().min(1).max(200),

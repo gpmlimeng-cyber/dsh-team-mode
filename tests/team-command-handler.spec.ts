@@ -118,12 +118,19 @@ function harness() {
       update: (current: TeamAggregate) => TeamAggregate,
       _kind?: string,
       _summary?: string,
-      options?: { expectedEpoch?: number },
+      options?: {
+        expectedEpoch?: number
+        expectedMemberSession?: { slotId: string; sessionId: string }
+      },
     ) => {
       const current = requireAggregate(teamId)
-      // Model the real service's serialized epoch fence.
+      // Model the real service's serialized epoch and Session fences.
       if (options?.expectedEpoch !== undefined && (current.epoch ?? 1) !== options.expectedEpoch) {
         throw new AgentTeamError('EPOCH_STALE', `Team epoch changed to ${current.epoch ?? 1}`)
+      }
+      const expected = options?.expectedMemberSession
+      if (expected !== undefined && current.members[expected.slotId]?.sessionId !== expected.sessionId) {
+        throw new AgentTeamError('SESSION_RETIRED', 'This Session was retired by a context handoff')
       }
       const next = update(current)
       if (next.id === other.id) other = next
@@ -1764,7 +1771,7 @@ describe('Team Epoch writes and Goal status', () => {
       task_id: taskId,
       status: 'completed',
       attempt_id: 'attempt-1',
-    }, 1)).rejects.toMatchObject({ code: 'EPOCH_STALE' })
+    }, { epoch: 1 })).rejects.toMatchObject({ code: 'EPOCH_STALE' })
     expect(team().tasks[taskId]).toMatchObject({ status: 'running', revision: 1 })
 
     // The same write under the current epoch is accepted.
@@ -1772,7 +1779,51 @@ describe('Team Epoch writes and Goal status', () => {
       task_id: taskId,
       status: 'completed',
       attempt_id: 'attempt-1',
-    }, 2)
+    }, { epoch: 2 })
+    expect(team().tasks[taskId]?.status).toBe('completed')
+  })
+
+  it('rejects a member write from a Session a handoff has retired', async () => {
+    const { commands, team, mutate } = harness()
+    const taskId = 'task-retired'
+    mutate({
+      ...team(),
+      tasks: {
+        [taskId]: {
+          id: taskId,
+          title: 'Retired work',
+          description: '',
+          status: 'running',
+          ownerSlotId: 'a',
+          attemptId: 'attempt-1',
+          dependencyIds: [],
+          fileScopes: [],
+          revision: 1,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      },
+    })
+    const retired = team().members.a!.sessionId
+    // A handoff rotates the Session without changing the epoch.
+    mutate({
+      ...team(),
+      members: { ...team().members, a: { ...team().members.a!, sessionId: 'session-a-fresh' } },
+    })
+
+    await expect(commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: 'attempt-1',
+    }, { memberSession: { slotId: 'a', sessionId: retired } }))
+      .rejects.toMatchObject({ code: 'SESSION_RETIRED' })
+    expect(team().tasks[taskId]).toMatchObject({ status: 'running', revision: 1 })
+
+    await commands.updateTask(team().id, 'a', {
+      task_id: taskId,
+      status: 'completed',
+      attempt_id: 'attempt-1',
+    }, { memberSession: { slotId: 'a', sessionId: 'session-a-fresh' } })
     expect(team().tasks[taskId]?.status).toBe('completed')
   })
 })

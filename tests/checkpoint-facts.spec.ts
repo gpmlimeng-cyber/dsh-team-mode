@@ -2,7 +2,11 @@ import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { describe, expect, it } from 'vitest'
 import { checkpointFactsSchema, contextCheckpointSchema } from '../src/domain/schemas.js'
 import type { AssistantSession } from '../src/domain/types.js'
-import { buildCheckpointFacts, checkpointHandoffMessage } from '../src/runtime/checkpoint-facts.js'
+import {
+  buildCheckpointFacts,
+  checkpointHandoffMessage,
+  thresholdCheckpointDue,
+} from '../src/runtime/checkpoint-facts.js'
 
 function event(seq: number, type: SessionEvent['type'], data: unknown): SessionEvent {
   return { seq, time: 1_700_000_000_000 + seq, type, data } as SessionEvent
@@ -211,5 +215,62 @@ describe('checkpointHandoffMessage', () => {
     expect(text).toContain('Done with the schema')
     expect(text).toContain('Write tests')
     expect(text).toContain('/tmp/workspace')
+  })
+})
+
+describe('thresholdCheckpointDue', () => {
+  const NOW = '2026-10-24T12:00:00.000Z'
+  const HALF_HOUR_AGO = '2026-10-24T11:30:00.000Z'
+  const TWENTY_NINE_MIN_AGO = '2026-10-24T11:31:00.000Z'
+  const THIRTY_ONE_MIN_AGO = '2026-10-24T11:29:00.000Z'
+
+  it('is off at ratio 0 even when the window is full', () => {
+    expect(thresholdCheckpointDue({
+      usage: { usedTokens: 4_000, contextWindow: 4_000 },
+      ratio: 0,
+      minIntervalMs: 30 * 60 * 1000,
+      now: NOW,
+    })).toBe(false)
+  })
+
+  it('needs a known positive context window', () => {
+    const base = { ratio: 0.8, minIntervalMs: 30 * 60 * 1000, now: NOW }
+    expect(thresholdCheckpointDue({ ...base, usage: undefined })).toBe(false)
+    expect(thresholdCheckpointDue({ ...base, usage: { usedTokens: 900 } })).toBe(false)
+    expect(thresholdCheckpointDue({ ...base, usage: { usedTokens: 900, contextWindow: 0 } })).toBe(false)
+  })
+
+  it('triggers at or above the ratio and stays silent below it', () => {
+    const base = { ratio: 0.8, minIntervalMs: 30 * 60 * 1000, now: NOW }
+    expect(thresholdCheckpointDue({ ...base, usage: { usedTokens: 799, contextWindow: 1_000 } })).toBe(false)
+    expect(thresholdCheckpointDue({ ...base, usage: { usedTokens: 800, contextWindow: 1_000 } })).toBe(true)
+    expect(thresholdCheckpointDue({ ...base, usage: { usedTokens: 990, contextWindow: 1_000 } })).toBe(true)
+  })
+
+  it('honours the minimum interval between two threshold checkpoints', () => {
+    const base = {
+      usage: { usedTokens: 900, contextWindow: 1_000 },
+      ratio: 0.8,
+      minIntervalMs: 30 * 60 * 1000,
+      now: NOW,
+    }
+    expect(thresholdCheckpointDue({ ...base, lastThresholdAt: TWENTY_NINE_MIN_AGO })).toBe(false)
+    expect(thresholdCheckpointDue({ ...base, lastThresholdAt: HALF_HOUR_AGO })).toBe(true)
+    expect(thresholdCheckpointDue({ ...base, lastThresholdAt: THIRTY_ONE_MIN_AGO })).toBe(true)
+  })
+
+  it('treats an unparseable timestamp as not due instead of firing', () => {
+    const base = {
+      usage: { usedTokens: 900, contextWindow: 1_000 },
+      ratio: 0.8,
+      minIntervalMs: 30 * 60 * 1000,
+      now: NOW,
+    }
+    expect(thresholdCheckpointDue({ ...base, lastThresholdAt: 'yesterday' })).toBe(false)
+    expect(thresholdCheckpointDue({
+      ...base,
+      lastThresholdAt: HALF_HOUR_AGO,
+      now: 'not-a-date',
+    })).toBe(false)
   })
 })

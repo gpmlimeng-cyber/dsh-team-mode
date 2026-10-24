@@ -2,6 +2,7 @@ import type {
   AssistantMemory,
   MemoryEntry,
   TeamAggregate,
+  TeamCheckpoint,
   TeamGoal,
   TeamMemory,
   TeamTask,
@@ -37,6 +38,27 @@ export function memberStatusLabel(status: string): string {
 
 export function taskStatusLabel(status: string): string {
   return TASK_STATE_LABELS[status] ?? status
+}
+
+export const TEAM_CHECKPOINT_STATUS_LABELS: Readonly<Record<string, string>> = {
+  ready: '可交接',
+  consumed: '已交接',
+  archived: '已归档',
+}
+
+export function teamCheckpointStatusLabel(status: string): string {
+  return TEAM_CHECKPOINT_STATUS_LABELS[status] ?? status
+}
+
+/** One bounded line of fact counts, shown under a Leader checkpoint row. */
+export function teamCheckpointSummary(checkpoint: TeamCheckpoint): string {
+  const { facts } = checkpoint
+  return [
+    `${facts.recentMessages.length} 条消息`,
+    `${facts.activeTasks.length} 个任务`,
+    `${facts.activeGoals.length} 个 Goal`,
+    `${facts.recentTeamMail.length} 封邮件`,
+  ].join(' · ')
 }
 
 export const MEMORY_VISIBILITY_LABELS: Readonly<Record<string, string>> = {

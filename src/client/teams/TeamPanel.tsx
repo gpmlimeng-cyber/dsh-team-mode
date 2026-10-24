@@ -21,9 +21,10 @@ import type {
   TeamView,
   TeamWorkbenchView,
 } from '../../transport/contracts.js'
-import type { MemoryEntry, TeamTask } from '../../domain/types.js'
+import type { MemoryEntry, TeamCheckpoint, TeamTask } from '../../domain/types.js'
 import { epochOf } from '../../domain/types.js'
 import { callAgentTeam, subscribeAgentTeamConversation } from '../api.js'
+import { checkpointNoteError } from '../assistant-checkpoint.js'
 import { AssistantPanel } from '../assistants/AssistantPanel.js'
 import css from '../AgentTeam.module.css'
 import { GlobalOverview, openAssistantSession } from '../global-overview.js'
@@ -44,6 +45,8 @@ import {
   memoryVisibilityLabel,
   TASK_STATE_LABELS,
   taskDependencyView,
+  teamCheckpointStatusLabel,
+  teamCheckpointSummary,
   teamGoalGroups,
   teamMemoryView,
 } from '../labels.js'
@@ -892,6 +895,13 @@ export function TeamCard({
   const [memberToRemove, setMemberToRemove] = useState<{ slotId: string; displayName: string }>()
   const [leaderTarget, setLeaderTarget] = useState<{ slotId: string; displayName: string }>()
   const [contextTarget, setContextTarget] = useState<{ slotId: string; displayName: string }>()
+  const [checkpointOpen, setCheckpointOpen] = useState(false)
+  const [checkpointNote, setCheckpointNote] = useState('')
+  const [checkpointBusy, setCheckpointBusy] = useState(false)
+  const [checkpointError, setCheckpointError] = useState<string>()
+  const [checkpoints, setCheckpoints] = useState<TeamCheckpoint[]>([])
+  /** Checkpoint armed for the second click; a handoff never runs on one click. */
+  const [checkpointArmed, setCheckpointArmed] = useState<string>()
   const [renaming, setRenaming] = useState<{ slotId: string; draft: string }>()
   const [renameBusy, setRenameBusy] = useState(false)
   const [goalFilter, setGoalFilter] = useState<string>(GOAL_FILTER_ALL)
@@ -998,6 +1008,63 @@ export function TeamCard({
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setBusy(false)
+    }
+  }
+
+  async function loadCheckpoints(): Promise<void> {
+    try {
+      setCheckpoints(await callAgentTeam('team.checkpoint.list', { teamId: team.id }))
+    } catch (cause) {
+      setCheckpointError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  async function createCheckpoint(): Promise<void> {
+    const invalid = checkpointNoteError(checkpointNote)
+    if (invalid !== undefined) {
+      setCheckpointError(invalid)
+      return
+    }
+    setCheckpointBusy(true)
+    try {
+      const created = await callAgentTeam(
+        'team.checkpoint.create',
+        { teamId: team.id, note: checkpointNote.trim() },
+        team.revision,
+      )
+      setCheckpoints(previous => [created, ...previous.filter(item => item.id !== created.id)])
+      setCheckpointNote('')
+      setCheckpointError(undefined)
+    } catch (cause) {
+      setCheckpointError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setCheckpointBusy(false)
+    }
+  }
+
+  async function handoffLeader(checkpointId: string): Promise<void> {
+    if (checkpointArmed !== checkpointId) {
+      setCheckpointArmed(checkpointId)
+      setCheckpointError(undefined)
+      return
+    }
+    setCheckpointBusy(true)
+    try {
+      const view = await callAgentTeam(
+        'team.checkpoint.handoff',
+        { teamId: team.id, checkpointId },
+        team.revision,
+      )
+      setCheckpointOpen(false)
+      setCheckpointArmed(undefined)
+      setCheckpointError(undefined)
+      await onChanged()
+      // The retired Session is history; land the human in the fresh Leader Session.
+      onOpenSession?.(view.sessionId)
+    } catch (cause) {
+      setCheckpointError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setCheckpointBusy(false)
     }
   }
 
@@ -1237,6 +1304,23 @@ export function TeamCard({
                     onClick={() => { setContextTarget({ slotId: member.id, displayName: member.displayName }) }}
                   >
                     {t('member.resetContext')}
+                  </button>
+                )}
+                {member.role === 'leader' && (
+                  <button
+                    type="button"
+                    className={css.memberRoleAction}
+                    disabled={busy || renameBusy || team.state === 'draft'}
+                    title="为 Leader 换一段新会话，保留团队、任务、Goal 与团队记忆"
+                    onClick={() => {
+                      setError(undefined)
+                      setCheckpointError(undefined)
+                      setCheckpointArmed(undefined)
+                      setCheckpointOpen(true)
+                      void loadCheckpoints()
+                    }}
+                  >
+                    交接新会话
                   </button>
                 )}
                 {member.role === 'leader'
@@ -1528,6 +1612,82 @@ export function TeamCard({
             <p>{t('leaderChange.body')}</p>
           </div>
           {error && <div role="alert" className={css.inlineError}>{error}</div>}
+        </div>
+      </AnimatedModal>
+      <AnimatedModal
+        open={checkpointOpen}
+        onClose={() => {
+          if (checkpointBusy) return
+          setCheckpointOpen(false)
+          setCheckpointArmed(undefined)
+          setCheckpointError(undefined)
+        }}
+        title="交接 Leader 新会话"
+        closeLabel="关闭"
+        description="为当前 Leader 换一段全新的 Team Session：团队、成员、Leader、epoch、任务与 attempt、Goal、团队记忆和 Workspace 都保持不变，旧 Session 只退役不删除。"
+        className={css.teamResetDialog ?? ''}
+        footer={(
+          <>
+            <Button
+              variant="outline"
+              disabled={checkpointBusy}
+              onClick={() => {
+                setCheckpointOpen(false)
+                setCheckpointArmed(undefined)
+                setCheckpointError(undefined)
+              }}
+            >
+              取消
+            </Button>
+            <Button
+              variant="primary"
+              disabled={checkpointBusy || checkpointNoteError(checkpointNote) !== undefined}
+              onClick={() => { void createCheckpoint() }}
+            >
+              {checkpointBusy ? '生成中…' : '生成检查点'}
+            </Button>
+          </>
+        )}
+      >
+        <div className={css.teamResetConfirm}>
+          <div>
+            <strong>交接说明（可选，最多 4000 字）</strong>
+            <textarea
+              className={css.input}
+              value={checkpointNote}
+              maxLength={4000}
+              rows={3}
+              placeholder="告诉接手的新会话要接着做什么"
+              onChange={event => { setCheckpointNote(event.target.value) }}
+            />
+            <p>检查点只包含确定性事实：近期可见消息、进行中的任务与 Goal、成员邮件。不会调用模型生成总结。</p>
+            {checkpoints.length === 0
+              ? <p className={css.muted}>还没有检查点。先生成一个，再确认交接。</p>
+              : (
+                <div className={css.taskList}>
+                  <strong className={css.taskTitle}>可交接的检查点</strong>
+                  {checkpoints.map(checkpoint => (
+                    <div key={checkpoint.id} className={css.memberRow}>
+                      <span>
+                        {checkpoint.title} · {teamCheckpointStatusLabel(checkpoint.status)}
+                        <span className={css.muted}> · {teamCheckpointSummary(checkpoint)}</span>
+                      </span>
+                      <button
+                        type="button"
+                        className={css.memberRoleAction}
+                        disabled={checkpointBusy || checkpoint.status !== 'ready'}
+                        onClick={() => { void handoffLeader(checkpoint.id) }}
+                      >
+                        {checkpoint.status !== 'ready'
+                          ? teamCheckpointStatusLabel(checkpoint.status)
+                          : checkpointArmed === checkpoint.id ? '确认交接' : '交接新会话'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+          </div>
+          {checkpointError && <div role="alert" className={css.inlineError}>{checkpointError}</div>}
         </div>
       </AnimatedModal>
       <AnimatedModal

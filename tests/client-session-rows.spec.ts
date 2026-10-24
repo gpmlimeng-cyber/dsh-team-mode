@@ -35,6 +35,22 @@ describe('hiddenSessionIds', () => {
     expect([...ids]).toEqual(['old-1'])
   })
 
+  it('hides Leader Sessions retired by an explicit handoff', () => {
+    const ids = hiddenSessionIds(
+      [
+        {
+          members: { leader: { sessionId: 'team-leader' } },
+          retiredLeaderSessionIds: ['old-leader', ''],
+        },
+        { members: { leader: { sessionId: 'other-leader' } }, retiredLeaderSessionIds: ['old-leader'] },
+      ],
+      [],
+      [],
+    )
+    // Blank entries are skipped and cross-team duplicates collapse to one row.
+    expect([...ids].sort()).toEqual(['old-leader', 'other-leader', 'team-leader'])
+  })
+
   it('deduplicates a Session referenced by every source', () => {
     const ids = hiddenSessionIds(
       [{ members: { leader: { sessionId: 'shared' }, member: { sessionId: 'team-only' } } }],

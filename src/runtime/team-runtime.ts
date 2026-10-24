@@ -7,7 +7,7 @@ import {
   type AgentHandle,
   type ModelSelectionRef,
 } from '@deepseek-ai/dsh-agent'
-import { createUserMessage, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, ReasoningEffortId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { isModelInvocable, isUserInvocable } from '@deepseek-ai/dsh-skill'
@@ -19,6 +19,8 @@ import { epochOf } from '../domain/types.js'
 import type {
   AssistantTemplate,
   TeamAggregate,
+  TeamCheckpoint,
+  TeamCheckpointFacts,
   TeamGoal,
   TeamMemberSlot,
   TeamMessage,
@@ -30,6 +32,7 @@ import type {
   MemberConversationView,
   TeamWorkbenchView,
 } from '../transport/contracts.js'
+import { thresholdCheckpointDue } from './checkpoint-facts.js'
 import { projectContextUsage, projectConversation } from './conversation-projector.js'
 import { registerScopedSkillProvider } from './scoped-skills.js'
 import { readStoredSessionEvents } from './session-log.js'
@@ -78,6 +81,13 @@ interface OwnedAgent {
  * process alive; dispose clears it.
  */
 const TASK_REMINDER_TICK_MS = 30_000
+
+/**
+ * Spacing between two threshold checkpoints when the deployment sets a ratio
+ * but leaves the interval unset. The config schema applies the same default;
+ * this copy keeps a hand-built `Config` (tests, embedders) on the same policy.
+ */
+const TEAM_CHECKPOINT_MIN_INTERVAL_MS = 30 * 60 * 1000
 
 export class TeamRuntime {
   private readonly owned = new Map<string, OwnedAgent>()
@@ -230,6 +240,204 @@ export class TeamRuntime {
   }
 
   /**
+   * Capture one deterministic checkpoint of the Leader's current Session. The
+   * facts come from the live handle (or the durable log after a restart); no
+   * model runs and nothing is written to any Session. Only a handoff consumes
+   * the record.
+   */
+  createLeaderCheckpoint(
+    teamId: string,
+    note = '',
+    options: { expectedRevision?: number } = {},
+  ): Promise<TeamCheckpoint> {
+    return this.exclusive(teamId, async () => {
+      const team = this.service.getTeam(teamId)
+      if (team.state !== 'active' && team.state !== 'error') {
+        throw new AgentTeamError(
+          'TEAM_NOT_ACTIVE',
+          `Cannot checkpoint the Leader while team is '${team.state}'`,
+        )
+      }
+      const member = team.members[team.leaderSlotId]
+      if (member === undefined) {
+        throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown Leader slot '${team.leaderSlotId}'`)
+      }
+      const owned = this.owned.get(member.sessionId)
+      const events = owned === undefined
+        ? await readStoredSessionEvents(this.ctx, member.sessionId)
+        : owned.handle.agent.session.snapshotEvents()
+      const built = buildTeamCheckpointFacts({
+        events,
+        team,
+        messages: this.service.listMessages(teamId).items,
+        tasks: Object.values(team.tasks),
+        goals: Object.values(team.goals ?? {}),
+        workspacePath: team.workspacePath,
+        note,
+      })
+      return this.service.createTeamCheckpoint({
+        teamId,
+        leaderSlotId: member.id,
+        epoch: epochOf(team),
+        sourceSessionId: member.sessionId,
+        facts: built.facts,
+        capturedThroughSeq: built.capturedThroughSeq,
+        note,
+        ...(options.expectedRevision === undefined
+          ? {}
+          : { expectedRevision: options.expectedRevision }),
+      })
+    })
+  }
+
+  /**
+   * Hand the Leader role to a fresh Session of the same member. The old handle
+   * is disposed, exactly one aggregate write swaps the Leader's `sessionId`
+   * (tombstoning the old one), and the new Session's first turn is the
+   * checkpoint facts. The epoch, Leader slot, task board (including attempt
+   * tokens), Goals, memory, leases, outbox and member order are not touched:
+   * this is a resume of the same leadership generation, not a Leader change.
+   */
+  handoffLeader(
+    teamId: string,
+    checkpointId: string,
+    options: { expectedRevision?: number } = {},
+  ): Promise<{ checkpoint: TeamCheckpoint; sessionId: string }> {
+    return this.exclusive(teamId, async () => {
+      const team = this.service.getTeam(teamId)
+      if (team.state !== 'active' && team.state !== 'error') {
+        throw new AgentTeamError(
+          'TEAM_NOT_ACTIVE',
+          `Cannot hand off the Leader while team is '${team.state}'`,
+        )
+      }
+      const checkpoint = this.service.getTeamCheckpoint(teamId, checkpointId)
+      if (checkpoint.status !== 'ready') {
+        throw new AgentTeamError(
+          'CHECKPOINT_NOT_READY',
+          `Checkpoint '${checkpoint.id}' is ${checkpoint.status}`,
+          { checkpointId: checkpoint.id, status: checkpoint.status },
+        )
+      }
+      const member = team.members[team.leaderSlotId]
+      if (member === undefined) {
+        throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown Leader slot '${team.leaderSlotId}'`)
+      }
+      const oldSessionId = member.sessionId
+      if (
+        checkpoint.leaderSlotId !== member.id
+        || checkpoint.epoch !== epochOf(team)
+        || checkpoint.sourceSessionId !== oldSessionId
+      ) {
+        throw new AgentTeamError(
+          'CHECKPOINT_STALE',
+          'The checkpoint was captured from another Leader Session; create a new one',
+          {
+            checkpointId: checkpoint.id,
+            leaderSlotId: member.id,
+            sourceSessionId: checkpoint.sourceSessionId,
+            epoch: checkpoint.epoch,
+          },
+        )
+      }
+      const owned = this.owned.get(oldSessionId)
+      if (owned !== undefined && owned.handle.agent.status === 'running') {
+        throw new AgentTeamError(
+          'MEMBER_BUSY',
+          `Leader '${member.displayName}' is still running; wait for the turn to finish`,
+          { slotId: member.id, sessionId: oldSessionId },
+        )
+      }
+      if (owned === undefined && this.ctx.agents.get(SessionId(oldSessionId)) !== undefined) {
+        throw new AgentTeamError(
+          'AGENT_HANDLE_OWNERSHIP_CONFLICT',
+          `Session '${oldSessionId}' is live without this plugin's AgentHandle`,
+        )
+      }
+      if (owned !== undefined) {
+        owned.handle.agent.cancel({ kind: 'user' }, { keepInbox: false })
+        await owned.handle.agent.whenIdle()
+        try {
+          await this.ctx.sessions.flush(owned.handle.agent.session)
+        } catch (error) {
+          this.ctx.logger.warn(`dsh-team-mode: handoff flush failed for ${oldSessionId}`, error)
+        }
+        this.owned.delete(oldSessionId)
+        this.interactions.forget(oldSessionId)
+        await owned.handle.dispose()
+      }
+      const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(team.workspaceId))
+      if (workspace !== undefined) {
+        try {
+          await workspace.detachSession(SessionId(oldSessionId))
+        } catch (error) {
+          this.ctx.logger.warn(`dsh-team-mode: handoff workspace detach failed for ${oldSessionId}`, error)
+        }
+      }
+      const nextSessionId = `session-${randomUUID()}`
+      const retiredAt = new Date().toISOString()
+      const next = await this.service.updateRuntimeTeam(
+        teamId,
+        current => ({
+          ...current,
+          members: mapMembers(current, currentMember => currentMember.id === member.id
+            ? {
+              ...currentMember,
+              sessionId: nextSessionId,
+              desiredState: 'online',
+              lastRuntimeState: 'starting',
+            }
+            : currentMember),
+          retiredSessions: {
+            ...current.retiredSessions,
+            [oldSessionId]: {
+              formerSlotId: member.id,
+              sessionId: oldSessionId,
+              displayName: member.displayName,
+              removedAt: retiredAt,
+            },
+          },
+          retiredLeaderSessionIds: appendRetiredSession(
+            current.retiredLeaderSessionIds,
+            oldSessionId,
+          ),
+        }),
+        'team.leader_handoff',
+        `Leader ${member.displayName} received a fresh Session`,
+        {
+          ...(options.expectedRevision === undefined ? {} : { expectedRevision: options.expectedRevision }),
+          expectedMemberSession: { slotId: member.id, sessionId: oldSessionId },
+        },
+      )
+      const fresh = next.members[member.id]
+      if (fresh === undefined) {
+        throw new AgentTeamError('MEMBER_NOT_FOUND', `Leader '${member.id}' disappeared during handoff`)
+      }
+      try {
+        await this.ensureMemberOnline(next, fresh, false, { seed: teamCheckpointHandoffMessage(checkpoint) })
+      } catch (error) {
+        // Retire-then-activate: the aggregate already points at the fresh
+        // Session, so recovery is explicit (`team.member.reconnect` reuses it)
+        // and the checkpoint stays `ready` for a retry.
+        await this.service.updateRuntimeTeam(
+          teamId,
+          current => ({
+            ...current,
+            members: mapMembers(current, currentMember => currentMember.id === member.id
+              ? { ...currentMember, lastRuntimeState: 'error' }
+              : currentMember),
+          }),
+          'team.leader_handoff_failed',
+          error instanceof Error ? error.message : String(error),
+        ).catch(() => undefined)
+        throw error
+      }
+      const consumed = await this.service.consumeTeamCheckpoint(teamId, checkpoint.id, nextSessionId)
+      return { checkpoint: consumed, sessionId: nextSessionId }
+    })
+  }
+
+  /**
    * Replace one member's Session with a fresh one. The team, task board,
    * workspace, leader, and every other member stay untouched. The old Session
    * is retired and detached; its durable log is left to DSH persistence.
@@ -296,6 +504,7 @@ export class TeamRuntime {
         }),
         'team.member_context_cleared',
         `Member ${member.displayName} received a fresh context`,
+        { expectedMemberSession: { slotId: member.id, sessionId: oldSessionId } },
       )
       const ready = next.members[slotId]
       if (ready === undefined) {
@@ -1114,6 +1323,7 @@ export class TeamRuntime {
     const now = new Date().toISOString()
     // A zero/absent window keeps the routine off; the reminder sweep still runs.
     const routineIdleMs = this.config.teamRoutineIdleMs ?? 0
+    const thresholdRatio = this.config.teamCheckpointThresholdRatio ?? 0
     const sweep = (async () => {
       for (const team of this.service.listTeams().items) {
         if (this.closing) return
@@ -1122,6 +1332,13 @@ export class TeamRuntime {
           await this.commands.remindDueTasks(team.id, now)
         } catch (error) {
           this.ctx.logger.warn(`dsh-team-mode: task reminder sweep failed for team ${team.id}`, error)
+        }
+        if (thresholdRatio > 0) {
+          try {
+            await this.checkpointIfDue(team.id, now)
+          } catch (error) {
+            this.ctx.logger.warn(`dsh-team-mode: threshold checkpoint failed for team ${team.id}`, error)
+          }
         }
         if (routineIdleMs > 0) {
           try {
@@ -1140,6 +1357,53 @@ export class TeamRuntime {
     } finally {
       if (this.reminderSweep === sweep) this.reminderSweep = undefined
     }
+  }
+
+  /**
+   * Opt-in context-pressure backup for the Leader Session. It only writes one
+   * disposable checkpoint row: no Session write, no aggregate write, no handoff,
+   * no Leader/epoch change. A half-finished turn is skipped, because its usage
+   * is neither the turn's final cost nor a stable window to judge.
+   */
+  private async checkpointIfDue(teamId: string, now: string): Promise<void> {
+    const ratio = this.config.teamCheckpointThresholdRatio ?? 0
+    if (!(ratio > 0)) return
+    const team = this.service.getTeam(teamId)
+    if (team.state !== 'active' || team.archivedAt !== undefined) return
+    const member = team.members[team.leaderSlotId]
+    if (member === undefined) return
+    const owned = this.owned.get(member.sessionId)
+    if (owned === undefined || owned.handle.agent.status === 'running') return
+    const events = owned.handle.agent.session.snapshotEvents()
+    const lastThresholdAt = this.service.listTeamCheckpoints(team.id)
+      .find(checkpoint => checkpoint.origin === 'threshold'
+        && checkpoint.sourceSessionId === member.sessionId)?.createdAt
+    const due = thresholdCheckpointDue({
+      usage: projectContextUsage(events),
+      ratio,
+      minIntervalMs: this.config.teamCheckpointMinIntervalMs ?? TEAM_CHECKPOINT_MIN_INTERVAL_MS,
+      ...(lastThresholdAt === undefined ? {} : { lastThresholdAt }),
+      now,
+    })
+    if (!due) return
+    const built = buildTeamCheckpointFacts({
+      events,
+      team,
+      messages: this.service.listMessages(team.id).items,
+      tasks: Object.values(team.tasks),
+      goals: Object.values(team.goals ?? {}),
+      workspacePath: team.workspacePath,
+      note: '',
+    })
+    await this.service.createThresholdTeamCheckpoint({
+      teamId: team.id,
+      leaderSlotId: member.id,
+      epoch: epochOf(team),
+      sourceSessionId: member.sessionId,
+      capturedThroughSeq: built.capturedThroughSeq,
+      facts: built.facts,
+      at: now,
+    })
   }
 
   private publishOwnedConversation(sessionId: string): void {
@@ -1394,6 +1658,7 @@ export class TeamRuntime {
     team: TeamAggregate,
     member: TeamMemberSlot,
     persisted: boolean,
+    options: { seed?: UserMessage } = {},
   ): Promise<void> {
     const prior = this.owned.get(member.sessionId)
     if (prior !== undefined) return
@@ -1413,6 +1678,14 @@ export class TeamRuntime {
     }
 
     const epochAtStart = epochOf(this.service.getTeam(team.id))
+    // Layer 2 of the write fence: the caller's epoch and Session travel with
+    // every member-authored write, so one already in flight when a Leader
+    // change or a context handoff commits is rejected instead of landing in
+    // the new generation.
+    const writeFence = {
+      epoch: epochAtStart,
+      memberSession: { slotId: member.id, sessionId: member.sessionId },
+    }
     // The Leader always keeps the full surface. A member resolves its declared
     // policy id before any Agent exists, so a policy removed from deployment
     // config fails the activation closed instead of silently widening back to
@@ -1493,24 +1766,24 @@ export class TeamRuntime {
           },
           members: () => this.commands.members(team.id),
           readMessages: (limit, filter) => this.commands.readMessages(team.id, member.id, limit, filter),
-          sendMessage: input => this.commands.sendMessage(team.id, member.id, input, epochAtStart),
+          sendMessage: input => this.commands.sendMessage(team.id, member.id, input, writeFence),
           interruptAgent: (slotId, message) => this.commands.interruptAgent(
             team.id,
             member.id,
             slotId,
             message,
           ),
-          createTask: input => this.commands.createTask(team.id, member.id, input, epochAtStart),
-          updateTask: input => this.commands.updateTask(team.id, member.id, input, epochAtStart),
-          claimTask: input => this.commands.claimTask(team.id, member.id, input, epochAtStart),
+          createTask: input => this.commands.createTask(team.id, member.id, input, writeFence),
+          updateTask: input => this.commands.updateTask(team.id, member.id, input, writeFence),
+          claimTask: input => this.commands.claimTask(team.id, member.id, input, writeFence),
           inbox: input => this.commands.inbox(team.id, member.id, input),
           listTasks: limit => this.commands.listTasks(team.id, limit),
-          createGoal: input => this.commands.createGoal(team.id, member.id, input, epochAtStart),
-          updateGoal: input => this.commands.updateGoal(team.id, member.id, input, epochAtStart),
+          createGoal: input => this.commands.createGoal(team.id, member.id, input, writeFence),
+          updateGoal: input => this.commands.updateGoal(team.id, member.id, input, writeFence),
           listGoals: () => this.commands.listGoals(team.id),
-          proposeMemory: input => this.commands.proposeMemory(team.id, member.id, input, epochAtStart),
+          proposeMemory: input => this.commands.proposeMemory(team.id, member.id, input, writeFence),
           listMemory: filter => this.commands.listMemory(team.id, filter),
-          decideMemory: input => this.commands.decideMemory(team.id, member.id, input, epochAtStart),
+          decideMemory: input => this.commands.decideMemory(team.id, member.id, input, writeFence),
           listAssistants: () => this.service.listAssistants().items.map(assistant => (
             this.assistantView(assistant, false)
           )),
@@ -1708,6 +1981,10 @@ export class TeamRuntime {
       })
       this.activating.delete(member.sessionId)
       await this.setMemberRuntimeState(team.id, member.id, handle.agent.status)
+      // A handoff seed is queued after the handle is owned and registered, so
+      // it is the first turn of the fresh Session and any mail queued for the
+      // slot is delivered behind it.
+      if (options.seed !== undefined) handle.agent.followup(options.seed)
     } catch (error) {
       this.activating.delete(member.sessionId)
       const causeMessage = error instanceof Error ? error.message : String(error)
@@ -1919,6 +2196,160 @@ function mapMembers(
   map: (member: TeamMemberSlot) => TeamMemberSlot,
 ): TeamAggregate['members'] {
   return Object.fromEntries(Object.entries(team.members).map(([id, member]) => [id, map(member)]))
+}
+
+/** Most retired Leader Sessions one team remembers for sidebar hiding. */
+const RETIRED_LEADER_SESSION_LIMIT = 100
+/** Visible nodes read from the Leader Session before the checkpoint window is cut. */
+const CHECKPOINT_PROJECTION_LIMIT = 80
+/** Longest transcript tail one checkpoint may copy. */
+const CHECKPOINT_MESSAGE_LIMIT = 12
+/** Longest text kept per copied message. */
+const CHECKPOINT_MESSAGE_TEXT_LIMIT = 500
+/** Most Leader mail one checkpoint may copy. */
+const CHECKPOINT_MAIL_LIMIT = 8
+/** Longest text kept per copied mail. */
+const CHECKPOINT_MAIL_TEXT_LIMIT = 300
+/** Most active Goals one checkpoint may list. */
+const CHECKPOINT_GOAL_LIMIT = 10
+/** Most open tasks one checkpoint may list. */
+const CHECKPOINT_TASK_LIMIT = 20
+
+/**
+ * Open work the new Leader inherits. Deliberately wider than
+ * `OPEN_TASK_STATUSES` above (which is about who may still hold an attempt):
+ * a `pending` task is not running anywhere but the new Leader still has to know
+ * about it, so it belongs in the checkpoint.
+ */
+const CHECKPOINT_OPEN_TASK_STATUSES: ReadonlySet<TeamTask['status']> = new Set([
+  'pending',
+  'assigned',
+  'running',
+  'blocked',
+])
+
+export interface TeamCheckpointFactsInput {
+  events: readonly SessionEvent[]
+  team: Pick<TeamAggregate, 'leaderSlotId' | 'members' | 'retiredSessions'>
+  messages: readonly TeamMessage[]
+  tasks: readonly TeamTask[]
+  goals: readonly TeamGoal[]
+  workspacePath: string
+  note: string
+}
+
+/**
+ * Build the bounded, deterministic facts of one Leader checkpoint. No model
+ * runs and no tool result or reasoning text is copied. Team mail reaches
+ * `projectConversation` as `team-message` nodes and is therefore excluded from
+ * `recentMessages`; it is copied separately into `recentTeamMail`, so member
+ * reports can never be mistaken for user instructions after the handoff.
+ */
+export function buildTeamCheckpointFacts(input: TeamCheckpointFactsInput): {
+  facts: TeamCheckpointFacts
+  capturedThroughSeq: number
+} {
+  const projection = projectConversation(input.events, CHECKPOINT_PROJECTION_LIMIT, {
+    team: input.team,
+    messages: input.messages,
+  })
+  const recentMessages = projection.nodes
+    .flatMap(node => {
+      if (node.kind !== 'user' && node.kind !== 'assistant') return []
+      const text = node.text.replace(/\s+/g, ' ').trim().slice(0, CHECKPOINT_MESSAGE_TEXT_LIMIT)
+      return text === '' ? [] : [{ role: node.kind, text }]
+    })
+    .slice(-CHECKPOINT_MESSAGE_LIMIT)
+  const activeTasks = [...input.tasks]
+    .filter(task => CHECKPOINT_OPEN_TASK_STATUSES.has(task.status))
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id))
+    .slice(0, CHECKPOINT_TASK_LIMIT)
+    .map(task => ({ id: task.id, title: task.title, status: task.status }))
+  const activeGoals = [...input.goals]
+    .filter(goal => goal.status === 'active')
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id))
+    .slice(0, CHECKPOINT_GOAL_LIMIT)
+    .map(goal => ({ id: goal.id, title: goal.title, status: goal.status }))
+  const recentTeamMail = input.messages
+    .filter(message => message.sender.kind === 'member')
+    .slice(-CHECKPOINT_MAIL_LIMIT)
+    .map(message => ({
+      fromName: input.team.members[message.sender.id]?.displayName
+        ?? Object.values(input.team.retiredSessions)
+          .find(session => session.formerSlotId === message.sender.id)?.displayName
+        ?? '已移出成员',
+      type: message.type,
+      text: message.content.replace(/\s+/g, ' ').trim().slice(0, CHECKPOINT_MAIL_TEXT_LIMIT),
+    }))
+
+  return {
+    facts: {
+      recentMessages,
+      activeTasks,
+      activeGoals,
+      recentTeamMail,
+      workspacePath: input.workspacePath,
+      note: input.note,
+    },
+    capturedThroughSeq: projection.throughSeq,
+  }
+}
+
+/**
+ * The single durable context message a handed-off Leader Session receives. It
+ * is a real `user/message` whose `runtime-context` source keeps it out of the
+ * visible conversation while staying model-visible in the Session log.
+ */
+export function teamCheckpointHandoffMessage(checkpoint: TeamCheckpoint): UserMessage {
+  return createUserMessage({
+    content: [{ type: 'text', text: teamCheckpointHandoffText(checkpoint) }],
+    source: { kind: 'runtime-context', form: 'instructions' },
+  })
+}
+
+function teamCheckpointHandoffText(checkpoint: TeamCheckpoint): string {
+  const { facts } = checkpoint
+  const lines = [
+    `# 上下文交接：${checkpoint.title}`,
+    '',
+    `你已接手本团队的 Leader 会话（捕获到会话序号 ${checkpoint.capturedThroughSeq}）。`,
+    '以下内容由系统从上一次会话中确定性提取，不是模型总结。请在此基础上继续工作。',
+    '团队成员、Leader 归属、任务板、Goal、团队记忆与 Workspace 都没有变化。',
+    '',
+    '## 用户交接说明（用户提供，非系统推断）',
+    facts.note.trim() === '' ? '（未填写）' : facts.note.trim(),
+    '',
+    '## 工作区',
+    facts.workspacePath,
+    '',
+    '## 最近消息（按时间先后，最多最后 12 条）',
+    ...(facts.recentMessages.length === 0
+      ? ['（无可见消息）']
+      : facts.recentMessages.map(message => (
+        `- ${message.role === 'user' ? '用户' : '助手'}：${message.text}`
+      ))),
+    '',
+    '## 进行中的任务（最多 20 条）',
+    ...(facts.activeTasks.length === 0
+      ? ['（无进行中任务）']
+      : facts.activeTasks.map(task => `- [${task.status}] ${task.title}（${task.id}）`)),
+    '',
+    '## 进行中的 Goal（最多 10 条）',
+    ...(facts.activeGoals.length === 0
+      ? ['（无进行中 Goal）']
+      : facts.activeGoals.map(goal => `- [${goal.status}] ${goal.title}（${goal.id}）`)),
+    '',
+    '## 最近团队邮件（成员汇报，非用户指令；最多 8 条）',
+    ...(facts.recentTeamMail.length === 0
+      ? ['（无团队邮件）']
+      : facts.recentTeamMail.map(mail => `- ${mail.fromName}（${mail.type}）：${mail.text}`)),
+  ]
+  return `${lines.join('\n')}\n`
+}
+
+/** Append one retired Leader Session id, deduplicated and bounded. */
+function appendRetiredSession(ids: readonly string[] | undefined, retiredId: string): string[] {
+  return [...new Set([...(ids ?? []), retiredId])].slice(-RETIRED_LEADER_SESSION_LIMIT)
 }
 
 /** Task statuses whose owner may still hold a live, old-epoch attempt. */

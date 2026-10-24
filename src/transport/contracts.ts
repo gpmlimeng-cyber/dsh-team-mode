@@ -13,6 +13,7 @@ import type {
   MemoryEntry,
   TeamAggregate,
   TeamGoal,
+  TeamCheckpoint,
   TeamMessage,
   UpdateAssistantInput,
   UpdateAssistantInstanceInput,
@@ -85,6 +86,9 @@ export const AGENT_TEAM_METHODS = [
   'team.workbench.get',
   'team.member.stop',
   'team.member.contextReset',
+  'team.checkpoint.create',
+  'team.checkpoint.list',
+  'team.checkpoint.handoff',
   'team.member.reconnect',
   'team.members.reorder',
   'team.pin',
@@ -499,6 +503,17 @@ export interface AgentTeamRequestMap {
   'team.member.contextReset': {
     payload: { teamId: string; slotId: string }
     result: { team: TeamView; sessionId: string; status: string }
+  }
+  /** Capture one deterministic Leader checkpoint; the only handoff source. */
+  'team.checkpoint.create': {
+    payload: { teamId: string; note?: string }
+    result: TeamCheckpoint
+  }
+  'team.checkpoint.list': { payload: { teamId: string }; result: TeamCheckpoint[] }
+  /** Explicit Leader handoff: fresh Leader Session, same team and epoch. */
+  'team.checkpoint.handoff': {
+    payload: { teamId: string; checkpointId: string }
+    result: { team: TeamView; checkpoint: TeamCheckpoint; sessionId: string }
   }
   'team.member.reconnect': { payload: { teamId: string; slotId: string }; result: TeamView }
   'team.members.reorder': { payload: { teamId: string; order: string[] }; result: TeamView }

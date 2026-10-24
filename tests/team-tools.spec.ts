@@ -679,6 +679,17 @@ describe('Team Mode tool surface', () => {
   })
 })
 
+describe('Leader handoff authority', () => {
+  it('never exposes a model-facing handoff tool', () => {
+    const { tools } = harness()
+    // A Leader handing off its own turn would leave that turn dangling, so the
+    // handoff is a user action over the transport, not a tool. This guards the
+    // surface against a future accidental registration.
+    expect([...tools.keys()].some(name => /handoff/i.test(name))).toBe(false)
+    expect(TEAM_TOOL_NAMES.some(name => /handoff/i.test(name))).toBe(false)
+  })
+})
+
 describe('member tool policies', () => {
   it('keeps the member tool baseline at exactly 24 names', () => {
     expect(TEAM_TOOL_NAMES).toHaveLength(24)
