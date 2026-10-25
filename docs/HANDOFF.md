@@ -23,6 +23,8 @@ npm 发布：未发布
 c0df2c9 feat: add autonomous ops budgets and idle routine
 1cd606a feat: add memory recall, journal, undo, and opt-in capture
 bd17535 feat: add team session handoff and threshold checkpoints
+311e677 docs: audit DSH ecosystem reuse seams
+853aed3 feat: add operator roster and attention center
 ```
 
 安装/打包已验证，但未 publish、未部署、未打 0.4.0 tag。
@@ -226,7 +228,8 @@ mimo 在本机出现过 TRANSPORT 断连；release 团队已回退 deepseek。
 3. Task reminders + Autonomous Ops Phase 2 已完成
 4. Memory Automation 已完成 recall/journal/undo/opt-in capture
 5. Context Steward 团队 handoff + 阈值 checkpoint 已完成
-6. 下一步：DSH 生态复用 / 剩余 fence 加固
+6. UI Phase 1 已完成：Sidebar 名册 + Attention Center
+7. 下一步：真机 UI 验收 / UI Phase 2 / DSH 生态实现
 ```
 
 不要先做多 Host、云部署或外部 npm publish。
