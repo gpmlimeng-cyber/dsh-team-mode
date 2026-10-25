@@ -1,4 +1,7 @@
 import type { AssistantInstance, AssistantSession } from '../domain/types.js'
+import type { AssistantInstanceView } from '../transport/contracts.js'
+import { isAssistantUnread } from './assistant-read-state.js'
+import { assistantInstanceStatusLabel } from './labels.js'
 
 const MINUTE = 60_000
 const HOUR = 3_600_000
@@ -10,10 +13,18 @@ export const ASSISTANT_AVATAR_MAX_DATA_URL_LENGTH = 400_000
 
 export type AssistantRowStatus = 'needs_input' | 'running' | 'queued' | 'none'
 
+/**
+ * What a row actually reads. An instance that failed or is still waking up
+ * outranks its task activity: a broken assistant is never 空闲.
+ */
+export type AssistantRowState = AssistantRowStatus | 'error' | 'starting'
+
 export interface AssistantRowActivity {
   status: AssistantRowStatus
   /** Number of tasks in the state that determines the row. */
   count: number
+  /** Lifecycle status when known; omitted values read from task activity only. */
+  instanceStatus?: AssistantInstance['status']
 }
 
 const ASSISTANT_TASK_STATUS_LABELS: Record<AssistantSession['status'], string> = {
@@ -111,7 +122,9 @@ export function assistantRowActivity(
   tasks: readonly Pick<AssistantSession, 'assistantId' | 'status'>[],
   instance: Pick<AssistantInstance, 'id' | 'status'>,
 ): AssistantRowActivity {
-  if (instance.status === 'archived') return { status: 'none', count: 0 }
+  if (instance.status === 'archived') {
+    return { status: 'none', count: 0, instanceStatus: instance.status }
+  }
   let needsInput = 0
   let running = 0
   let queued = 0
@@ -121,26 +134,110 @@ export function assistantRowActivity(
     else if (task.status === 'running') running += 1
     else if (task.status === 'queued') queued += 1
   }
-  if (needsInput > 0) return { status: 'needs_input', count: needsInput }
-  if (running > 0) return { status: 'running', count: running }
-  if (queued > 0) return { status: 'queued', count: queued }
-  return { status: 'none', count: 0 }
+  const instanceStatus = instance.status
+  if (needsInput > 0) return { status: 'needs_input', count: needsInput, instanceStatus }
+  if (running > 0) return { status: 'running', count: running, instanceStatus }
+  if (queued > 0) return { status: 'queued', count: queued, instanceStatus }
+  return { status: 'none', count: 0, instanceStatus }
 }
 
-/** Compact second-line preview for an Assistant row. */
+/**
+ * The row's effective state. Error and startup come from the instance, so a
+ * failed or waking assistant never borrows the quiet 空闲 word from an empty
+ * task list — and its dot/tone can follow the same single decision.
+ */
+export function assistantRowState(activity: AssistantRowActivity): AssistantRowState {
+  if (activity.instanceStatus === 'error') return 'error'
+  if (activity.instanceStatus === 'starting') return 'starting'
+  return activity.status
+}
+
+/** Compact second-line preview for an Assistant row; words come from labels.ts. */
 export function assistantRowStatusText(activity: AssistantRowActivity): string {
-  if (activity.status === 'needs_input') return '待你处理'
-  if (activity.status === 'running') return '思考中'
-  if (activity.status === 'queued') return '排队中'
-  return '空闲'
+  switch (assistantRowState(activity)) {
+    case 'error': return assistantInstanceStatusLabel('error')
+    case 'starting': return assistantInstanceStatusLabel('starting')
+    case 'needs_input': return '待你处理'
+    case 'running': return '思考中'
+    case 'queued': return '排队中'
+    case 'none': return assistantInstanceStatusLabel('idle')
+  }
 }
 
 /** Accessible title for the Assistant status dot; the preview omits counts. */
 export function assistantRowStatusTitle(activity: AssistantRowActivity): string {
-  if (activity.status === 'needs_input') return `${activity.count} 个任务待你处理`
-  if (activity.status === 'running') return `${activity.count} 个任务正在思考`
-  if (activity.status === 'queued') return `${activity.count} 个任务排队中`
-  return '空闲'
+  const state = assistantRowState(activity)
+  if (state === 'error' || state === 'starting') {
+    const head = state === 'error'
+      ? assistantInstanceStatusLabel('error')
+      : assistantInstanceStatusLabel('starting')
+    return activity.count === 0 ? head : `${head} · ${activity.count} 个任务未结束`
+  }
+  if (state === 'needs_input') return `${activity.count} 个任务待你处理`
+  if (state === 'running') return `${activity.count} 个任务正在思考`
+  if (state === 'queued') return `${activity.count} 个任务排队中`
+  return assistantInstanceStatusLabel('idle')
+}
+
+/** One pending decision: the Assistant and the task waiting on the user. */
+export interface AssistantPendingDecision {
+  instance: AssistantInstanceView
+  task: AssistantSession
+}
+
+/**
+ * Every decision waiting in the workspace, independent of the sidebar search:
+ * a query narrows the ordinary row list, never the 待你处理 block or its count.
+ * Archived instances and archived tasks never contribute.
+ */
+export function assistantPendingDecisions(
+  instances: readonly AssistantInstanceView[],
+  tasks: readonly AssistantSession[],
+): AssistantPendingDecision[] {
+  const pending: AssistantPendingDecision[] = []
+  for (const instance of instances) {
+    if (instance.status === 'archived' || instance.archivedAt !== undefined) continue
+    for (const task of assistantThreadTasks(tasks, instance)) {
+      if (task.status !== 'needs_input' || task.archivedAt !== undefined) continue
+      pending.push({ instance, task })
+    }
+  }
+  return pending
+}
+
+export interface AssistantSidebarSummary {
+  /** Assistants with a task waiting for the user. */
+  waiting: number
+  /** Assistants thinking on a task. */
+  working: number
+  /** Assistants with queued work only. */
+  queued: number
+  unread: number
+}
+
+/**
+ * Sidebar counts over every listed Assistant. There is no query parameter on
+ * purpose: the summary describes the workspace, so typing in the search box can
+ * never hide a pending decision from it.
+ */
+export function assistantSidebarSummary(
+  instances: readonly AssistantInstanceView[],
+  tasks: readonly AssistantSession[],
+  readState: Readonly<Record<string, number>>,
+): AssistantSidebarSummary {
+  let waiting = 0
+  let working = 0
+  let queued = 0
+  let unread = 0
+  for (const instance of instances) {
+    if (instance.status === 'archived' || instance.archivedAt !== undefined) continue
+    const activity = assistantRowActivity(tasks, instance)
+    if (activity.status === 'needs_input') waiting += 1
+    else if (activity.status === 'running') working += 1
+    else if (activity.status === 'queued') queued += 1
+    if (isAssistantUnread(instance, readState)) unread += 1
+  }
+  return { waiting, working, queued, unread }
 }
 
 /** Human label for one worker task status. */

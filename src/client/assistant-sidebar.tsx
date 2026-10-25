@@ -38,9 +38,12 @@ import { AssistantTaskDialog } from './assistant-task-dialog.js'
 import {
   assistantAvatarSource,
   assistantInstanceName,
+  assistantPendingDecisions,
   assistantRowActivity,
+  assistantRowState,
   assistantRowStatusText,
   assistantRowStatusTitle,
+  assistantSidebarSummary,
   assistantTaskStatusLabel,
   assistantThreadTasks,
   relativeAssistantTime,
@@ -163,6 +166,7 @@ export function AssistantSidebarSection({
   const [checkpointDialogOpen, setCheckpointDialogOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [listError, setListError] = useState<string>()
+  const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string>()
   const [threadError, setThreadError] = useState<{ assistantId: string; message: string }>()
 
@@ -183,6 +187,10 @@ export function AssistantSidebarSection({
       setListError(undefined)
     } catch (cause) {
       setListError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      // Only the first settled list decides between 正在加载助手… and a real
+      // empty state: an unanswered request is not an empty workspace.
+      setLoaded(true)
     }
   }, [])
 
@@ -198,17 +206,13 @@ export function AssistantSidebarSection({
     [instances, query],
   )
 
+  // Decisions are workspace-wide: the search box narrows the ordinary row list
+  // below, never this block or its count.
   const allPending = useMemo(
-    () => instances.flatMap(instance => assistantThreadTasks(tasks, instance)
-      .filter(task => task.status === 'needs_input')
-      .map(task => ({ instance, task }))),
-    [tasks, instances],
+    () => assistantPendingDecisions(instances, tasks),
+    [instances, tasks],
   )
-
-  const attentionItems = useMemo(
-    () => allPending.filter(item => visible.some(instance => instance.id === item.instance.id)),
-    [allPending, visible],
-  )
+  const attentionItems = allPending
 
   useEffect(() => {
     let cancelled = false
@@ -229,20 +233,10 @@ export function AssistantSidebarSection({
     return () => { cancelled = true }
   }, [attentionItems])
 
-  const attentionSummary = useMemo(() => {
-    let waiting = 0
-    let working = 0
-    let queued = 0
-    let unread = 0
-    for (const instance of visible) {
-      const activity = assistantRowActivity(tasks, instance)
-      if (activity.status === 'needs_input') waiting += 1
-      else if (activity.status === 'running') working += 1
-      else if (activity.status === 'queued') queued += 1
-      if (isAssistantUnread(instance, readState)) unread += 1
-    }
-    return { waiting, working, queued, unread }
-  }, [tasks, visible, readState])
+  const attentionSummary = useMemo(
+    () => assistantSidebarSummary(instances, tasks, readState),
+    [instances, tasks, readState],
+  )
 
   useEffect(() => {
     if (knownWaitingRef.current === undefined) {
@@ -654,37 +648,61 @@ export function AssistantSidebarSection({
       )}
       {expanded && (
         <div id="dsh-team-mode-assistant-list" className={css.sidebarTeamList}>
-          {message !== undefined && <div className={css.sidebarTeamError} role="alert">{message}</div>}
-          {visible.length === 0
-            ? query.trim() !== ''
-              ? <div className={css.sidebarTeamEmpty}>没有匹配的助手</div>
-              : (
-                <div className={css.sidebarAssistantEmpty}>
-                  <div className={css.sidebarTeamEmpty}>还没有助手</div>
-                  <button
-                    type="button"
-                    className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
-                    onClick={openCreate}
-                    aria-label="新建单聊助手"
-                  >
-                    <span className={css.sidebarTeamSlot} aria-hidden="true">
-                      <IconPlusOutlineRegular size={16} />
-                    </span>
-                    <span className={css.sidebarTeamEmptyTitle}>新建助手</span>
-                  </button>
-                </div>
-                )
-            : visible.map(instance => {
+          {message !== undefined && (
+            <div className={css.sidebarTeamError} role="alert">
+              <span>{instances.length === 0 ? `助手数据加载失败：${message}` : message}</span>
+              {instances.length === 0 && (
+                <button
+                  type="button"
+                  className={css.sidebarTeamRetry}
+                  onClick={() => { void load() }}
+                >
+                  重试
+                </button>
+              )}
+            </div>
+          )}
+          {!loaded
+            ? (
+              <div className={css.sidebarTeamEmpty} role="status" data-dsh-assistant-loading>
+                正在加载助手…
+              </div>
+              )
+            : visible.length === 0
+              ? message !== undefined && instances.length === 0
+                ? null
+                : query.trim() !== ''
+                  ? <div className={css.sidebarTeamEmpty}>没有匹配的助手</div>
+                  : (
+                    <div className={css.sidebarAssistantEmpty}>
+                      <div className={css.sidebarTeamEmpty}>还没有助手</div>
+                      <button
+                        type="button"
+                        className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
+                        onClick={openCreate}
+                        aria-label="新建单聊助手"
+                      >
+                        <span className={css.sidebarTeamSlot} aria-hidden="true">
+                          <IconPlusOutlineRegular size={16} />
+                        </span>
+                        <span className={css.sidebarTeamEmptyTitle}>新建助手</span>
+                      </button>
+                    </div>
+                    )
+              : visible.map(instance => {
                 const name = assistantInstanceName(instance)
                 const opening = openingId === instance.id
                 const active = selectedAssistantId === instance.id
                 const menuOpen = menuOpenId === instance.id
                 const activity = assistantRowActivity(tasks, instance)
+                const state = assistantRowState(activity)
                 const statusText = assistantRowStatusText(activity)
                 const statusTitle = assistantRowStatusTitle(activity)
                 const previewText = instance.preview?.text.trim() ?? ''
                 const hasPreview = previewText !== ''
-                const activeStatus = activity.status !== 'none'
+                // An error/starting instance owns the second line: its preview is
+                // not more important than "this assistant is broken".
+                const activeStatus = state !== 'none'
                 const unread = isAssistantUnread(instance, readState)
                 const secondLine = activeStatus ? statusText : hasPreview ? previewText : statusText
                 const secondLineTitle = activeStatus
@@ -692,18 +710,26 @@ export function AssistantSidebarSection({
                   : hasPreview
                     ? `${instance.preview?.role === 'user' ? '你' : '助手'}：${previewText}`
                     : statusTitle
-                const dotClass = activity.status === 'needs_input'
+                const dotClass = state === 'needs_input'
                   ? css.sidebarAssistantDotWaiting
-                  : activity.status === 'running'
+                  : state === 'running'
                     ? css.sidebarAssistantDotRunning
-                    : css.sidebarAssistantDotQueued
-                const statusClass = activity.status === 'needs_input'
+                    : state === 'error'
+                      ? css.sidebarAssistantDotError
+                      : state === 'starting'
+                        ? css.sidebarAssistantDotStarting
+                        : css.sidebarAssistantDotQueued
+                const statusClass = state === 'needs_input'
                   ? css.sidebarAssistantStatusWaiting
-                  : activity.status === 'running'
+                  : state === 'running'
                     ? css.sidebarAssistantStatusRunning
-                    : activity.status === 'queued'
-                      ? css.sidebarAssistantStatusQueued
-                      : css.sidebarAssistantStatusIdle
+                    : state === 'error'
+                      ? css.sidebarAssistantStatusError
+                      : state === 'starting'
+                        ? css.sidebarAssistantStatusStarting
+                        : state === 'queued'
+                          ? css.sidebarAssistantStatusQueued
+                          : css.sidebarAssistantStatusIdle
                 // Advanced mode only: the persisted disclosure is read lazily so
                 // simple mode never touches thread storage at all.
                 const threadTasks = mode === 'advanced'
@@ -769,10 +795,10 @@ export function AssistantSidebarSection({
                             size={34}
                             className={css.sidebarAssistantAvatarShape ?? ''}
                           />
-                          {activity.status !== 'none' && (
+                          {state !== 'none' && (
                             <span
-                              className={`${css.sidebarAssistantDot} ${dotClass} ${activity.status === 'needs_input' ? css.sidebarAssistantWaitingBadge : ''}`}
-                              data-dsh-assistant-status={activity.status}
+                              className={`${css.sidebarAssistantDot} ${dotClass} ${state === 'needs_input' ? css.sidebarAssistantWaitingBadge : ''}`}
+                              data-dsh-assistant-status={state}
                               title={statusTitle}
                               aria-label={statusTitle}
                               role="img"
@@ -813,11 +839,15 @@ export function AssistantSidebarSection({
                           <span
                             className={`${css.sidebarAssistantStatus} ${activeStatus ? statusClass : css.sidebarAssistantPreview}`}
                             title={secondLineTitle}
-                            data-dsh-assistant-status-text={activity.status}
-                            role={activity.status === 'needs_input' || activity.status === 'running' ? 'status' : undefined}
-                            aria-label={activity.status === 'needs_input' || activity.status === 'running' ? statusTitle : undefined}
+                            data-dsh-assistant-status-text={state}
+                            role={state === 'needs_input' || state === 'running' || state === 'error' || state === 'starting'
+                              ? 'status'
+                              : undefined}
+                            aria-label={state === 'needs_input' || state === 'running' || state === 'error' || state === 'starting'
+                              ? statusTitle
+                              : undefined}
                           >
-                            {activity.status === 'running' && <AssistantWorkingDots />}
+                            {state === 'running' && <AssistantWorkingDots />}
                             {secondLine}
                           </span>
                         </span>

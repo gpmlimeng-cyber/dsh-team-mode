@@ -59,6 +59,7 @@ function team(overrides: {
   members?: TeamMemberSlot[]
   tasks?: TeamTask[]
   archivedAt?: string
+  state?: TeamView['state']
 } = {}): TeamView {
   const id = overrides.id ?? 'team-1'
   return {
@@ -68,7 +69,7 @@ function team(overrides: {
     workspaceId: `workspace-${id}`,
     workspacePath: `/tmp/${id}`,
     leaderSlotId: overrides.leaderSlotId ?? 'leader',
-    state: 'active',
+    state: overrides.state ?? 'active',
     directMemberChat: false,
     members: Object.fromEntries((overrides.members ?? [member('leader', { role: 'leader' })]).map(entry => [entry.id, entry])),
     retiredSessions: {},
@@ -89,6 +90,7 @@ function instance(overrides: {
   status?: AssistantInstanceView['status']
   mainSessionId?: string
   archivedAt?: string
+  preview?: AssistantInstanceView['preview']
 } = {}): AssistantInstanceView {
   const id = overrides.id ?? 'assistant-1'
   return {
@@ -114,6 +116,7 @@ function instance(overrides: {
     revision: 1,
     createdAt: ISO,
     updatedAt: ISO,
+    ...(overrides.preview === undefined ? {} : { preview: overrides.preview }),
     ...(overrides.mainSessionId === undefined ? {} : { mainSessionId: overrides.mainSessionId }),
     ...(overrides.archivedAt === undefined ? {} : { archivedAt: overrides.archivedAt }),
   }
@@ -149,6 +152,7 @@ function render(options: {
   error?: string
   teamsLoading?: boolean
   teamsError?: string
+  readState?: Readonly<Record<string, number>>
   onFilterChange?: (filter: GlobalFilter) => void
   onOpenTeam?: (teamId: string) => void
   onOpenAssistant?: (sessionId: string) => void
@@ -162,6 +166,7 @@ function render(options: {
     ...(options.error === undefined ? {} : { error: options.error }),
     ...(options.teamsLoading === undefined ? {} : { teamsLoading: options.teamsLoading }),
     ...(options.teamsError === undefined ? {} : { teamsError: options.teamsError }),
+    ...(options.readState === undefined ? {} : { readState: options.readState }),
     ...(options.onFilterChange === undefined ? {} : { onFilterChange: options.onFilterChange }),
     onOpenTeam: options.onOpenTeam ?? (() => undefined),
     ...(options.onOpenAssistant === undefined ? {} : { onOpenAssistant: options.onOpenAssistant }),
@@ -240,9 +245,11 @@ describe('GlobalOverview summary and attention', () => {
     const summary = text(region(html, 'summary'))
 
     expect(text(html)).toContain('3 个团队 · 3 个助手')
-    expect(summary).toContain('2 运行中')
+    expect(summary).toContain('2 有活动')
     expect(summary).toContain('2 需要你')
-    expect(summary).toContain('2 阻塞')
+    expect(summary).toContain('2 等待前置')
+    expect(summary).toContain('0 异常')
+    expect(summary).toContain('0 未读')
     expect(summary).toContain('2 空闲')
     expect(html).not.toContain('undefined')
   })
@@ -272,9 +279,9 @@ describe('GlobalOverview summary and attention', () => {
 
     expect(teams).toContain('研发团队')
     expect(teams).toContain('Leader 阿Leader · 2 名成员')
-    expect(teams).toContain('运行中 · 1 个待审批 · 1 个阻塞')
+    expect(teams).toContain('有活动 · 1 个待审批 · 1 个等待前置')
     expect(teams).toContain('阻塞团队')
-    expect(teams).toContain('1 个阻塞')
+    expect(teams).toContain('1 个等待前置')
     expect(assistants).toContain('论文助手')
     expect(assistants).toContain('deepseek-reasoner · 1 个任务')
     expect(assistants).toContain('待输入助手')
@@ -404,7 +411,7 @@ describe('GlobalOverview filters', () => {
     expect(text(html)).toContain('当前筛选下没有团队或助手')
     expect(region(html, 'filter-empty')).toContain('查看全部')
     expect(html).not.toContain('data-overview-region="teams"')
-    expect(text(region(html, 'summary'))).toContain('0 运行中')
+    expect(text(region(html, 'summary'))).toContain('0 有活动')
     expect(text(region(html, 'summary'))).toContain('2 空闲')
   })
 
@@ -432,17 +439,142 @@ describe('GlobalOverview filters', () => {
     const loading = render({ teamsLoading: true, instances: [idleAssistant] })
     expect(text(loading)).toContain('正在加载团队和助手…')
     expect(text(loading)).not.toContain('个团队')
-    expect(text(loading)).not.toContain('0 运行中')
+    expect(text(loading)).not.toContain('0 有活动')
 
     const stale = render({ ...populated, teamsLoading: true })
     expect(text(stale)).not.toContain('3 个团队')
-    expect(text(stale)).not.toContain('2 运行中')
+    expect(text(stale)).not.toContain('2 有活动')
 
     const failed = render({ teamsError: 'team.list 超时' })
     expect(failed).toContain('role="alert"')
     expect(text(failed)).toContain('团队数据加载失败：team.list 超时')
     expect(text(failed)).not.toContain('个团队')
-    expect(text(failed)).not.toContain('0 运行中')
+    expect(text(failed)).not.toContain('0 有活动')
+  })
+})
+
+describe('GlobalOverview attention center', () => {
+  const blockedApprovalTeam = team({
+    id: 'team-approve',
+    name: '审批团队',
+    members: [member('leader', { role: 'leader', lastRuntimeState: 'waiting_approval' })],
+    tasks: [task('dep', 'running'), task('held', 'pending', { dependencyIds: ['dep'] })],
+  })
+  const errorTeam = team({ id: 'team-error', name: '异常团队', state: 'error' })
+  const failedAssistant = instance({ id: 'assistant-failed', name: '异常助手', status: 'error' })
+  const unreadAssistant = instance({
+    id: 'assistant-unread',
+    name: '未读助手',
+    preview: { role: 'assistant', text: '结果已生成', time: Date.parse(ISO) },
+  })
+
+  it('renders one row per entity and lists the state categories it holds as words', () => {
+    const html = render({
+      teams: [blockedApprovalTeam],
+      instances: [],
+      tasks: [],
+    })
+    const attention = region(html, 'attention')
+
+    expect(attention).toContain('data-attention-team-id="team-approve"')
+    expect(attention.match(/data-attention-team-id=/g)?.length).toBe(1)
+    expect(html).toContain('data-attention-categories="approval,blocked"')
+    expect(text(attention)).toContain('1 个待审批')
+    expect(text(attention)).toContain('等待前置')
+    expect(text(attention)).not.toContain('个等待前置')
+  })
+
+  it('keeps states out of the decision list and counts them as entities', () => {
+    const html = render({
+      teams: [blockedTeam, errorTeam],
+      instances: [failedAssistant, unreadAssistant],
+      tasks: [],
+      readState: { 'assistant-unread': 0 },
+    })
+    const attention = text(region(html, 'attention'))
+    const summary = text(region(html, 'summary'))
+
+    expect(attention).toContain('当前没有需要你处理的事项')
+    expect(attention).not.toContain('异常团队')
+    expect(attention).not.toContain('异常助手')
+    expect(attention).not.toContain('未读助手')
+    expect(summary).toContain('1 等待前置')
+    expect(summary).toContain('2 异常')
+    expect(summary).toContain('1 未读')
+    expect(summary).toContain('0 需要你')
+  })
+
+  it('renders a failed assistant as 异常 instead of 空闲', () => {
+    const html = render({ teams: [], instances: [failedAssistant], tasks: [] })
+    const assistants = text(region(html, 'assistants'))
+
+    expect(assistants).toContain('异常助手')
+    expect(assistants).toContain('异常')
+    expect(assistants).not.toContain('空闲')
+    expect(text(region(html, 'summary'))).not.toContain('1 空闲')
+  })
+
+  it('narrows rows with the state filters and marks the active one', () => {
+    const html = render({
+      teams: [blockedTeam, errorTeam],
+      instances: [failedAssistant, unreadAssistant],
+      tasks: [],
+      filter: 'error',
+      readState: { 'assistant-unread': 0 },
+      onFilterChange: () => undefined,
+    })
+
+    for (const label of ['全部', '需要你', '有活动', '等待前置', '异常', '未读', '空闲']) {
+      expect(html).toContain(`>${label}</button>`)
+    }
+    expect(html).toMatch(/aria-pressed="true"[^>]*>异常<\/button>/)
+    expect(text(region(html, 'teams'))).toContain('异常团队')
+    expect(text(region(html, 'teams'))).not.toContain('阻塞团队')
+    expect(text(region(html, 'assistants'))).toContain('异常助手')
+    expect(text(region(html, 'assistants'))).not.toContain('未读助手')
+  })
+
+  it('never hides a pending approval behind a state filter', () => {
+    for (const filter of ['blocked', 'error', 'unread', 'running', 'idle', 'attention', 'all'] as const) {
+      const html = render({ ...populated, filter })
+      const attention = text(region(html, 'attention'))
+      expect(attention).toContain('研发团队')
+      expect(attention).toContain('待输入助手')
+      expect(attention).toContain('1 个待审批')
+      expect(attention).toContain('1 个待输入')
+    }
+  })
+
+  it('explains the activity count so it cannot be read as the member count', () => {
+    const html = render(populated)
+    expect(html).toMatch(/data-count="running"[^>]*title="有活动[^"]*审批[^"]*"/)
+    expect(html).toMatch(/data-count="attention"[^>]*title="需要你[^"]*"/)
+  })
+})
+
+describe('GlobalOverview startup', () => {
+  const startingTeam = team({ id: 'team-starting', name: '启动团队', state: 'starting' })
+  const wakingMemberTeam = team({
+    id: 'team-waking',
+    name: '唤醒团队',
+    members: [member('waker', { lastRuntimeState: 'starting' })],
+  })
+
+  it('shows 启动中 and never 空闲 for a starting team or a waking member', () => {
+    for (const fixture of [startingTeam, wakingMemberTeam]) {
+      const html = render({ teams: [fixture], instances: [], tasks: [] })
+      expect(text(region(html, 'teams'))).toContain('启动中')
+      expect(text(region(html, 'teams'))).not.toContain('空闲')
+    }
+    expect(text(region(render({ teams: [startingTeam], instances: [], tasks: [] }), 'summary')))
+      .toContain('0 空闲')
+  })
+
+  it('drops a starting team from the idle filter instead of listing it there', () => {
+    const html = render({ teams: [startingTeam], instances: [], tasks: [], filter: 'idle' })
+
+    expect(region(html, 'filter-empty')).toContain('当前筛选下没有团队或助手')
+    expect(html).not.toContain('data-team-id="team-starting"')
   })
 })
 

@@ -3655,6 +3655,15 @@ textarea.input {
   background: var(--dsw-alias-label-quaternary);
 }
 
+/* A failed instance is an error state, never a quiet idle dot. */
+.sidebarAssistantDotError {
+  background: var(--dsw-alias-state-error-primary);
+}
+
+.sidebarAssistantDotStarting {
+  background: var(--dsw-alias-state-business-primary);
+}
+
 .sidebarAssistantCopy {
   gap: 1px;
 }
@@ -3704,6 +3713,15 @@ textarea.input {
 
 .sidebarAssistantStatusQueued {
   color: var(--dsw-alias-label-secondary);
+}
+
+.sidebarAssistantStatusError {
+  color: var(--dsw-alias-state-error-primary);
+  font-weight: 500;
+}
+
+.sidebarAssistantStatusStarting {
+  color: var(--dsw-alias-state-business-primary);
 }
 
 .sidebarAssistantStatusIdle {
@@ -8696,6 +8714,147 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   line-height: 16px;
 }
 
+/* Bot roster: one navigation row per member under its team row. Names ellipsize
+   inside the 320px drawer, so no child may claim a fixed width. */
+.sidebarRosterList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding-left: 24px;
+  padding-bottom: 2px;
+}
+
+.sidebarRosterEmpty {
+  padding: 2px 8px 2px;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.sidebarRosterRow {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  width: 100%;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebarRosterRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sidebarRosterRow[aria-current='page'] {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.sidebarRosterRow:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+
+.sidebarRosterCopy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.sidebarRosterTop {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sidebarRosterName {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarRosterRole {
+  flex: none;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+/* One attention mark, never a number: the row knows *that* this bot waits, not
+   how many questions sit behind it. */
+.sidebarRosterBadge {
+  flex: none;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 14%, transparent);
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 14px;
+  text-align: center;
+}
+
+.sidebarRosterBadgeError {
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 14%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.sidebarRosterSubtitle {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Inline retry on a load failure; the error line stays readable as one block. */
+.sidebarTeamRetry {
+  margin-inline-start: 6px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.sidebarTeamRetry:hover {
+  color: var(--dsw-alias-label-primary);
+}
+
+.sidebarTeamRetry:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
+}
+
+@media (max-width: 420px) {
+  .sidebarRosterList {
+    padding-left: 18px;
+  }
+}
+
 /* The 320px phone drawer is too narrow for name, time and badge on one line:
    the badge is the attention mark, so the relative time yields first. */
 @media (max-width: 420px) {
@@ -8994,6 +9153,22 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   color: var(--dsw-alias-label-tertiary);
   font-size: 10px;
   line-height: 16px;
+}
+
+.mainAgentMemberStatus {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.mainAgentMemberStatus[data-state='waiting_approval'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.mainAgentMemberStatus[data-state='error'] {
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .mainAgentModel {

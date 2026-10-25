@@ -1,11 +1,24 @@
 import type { TeamTask } from '../domain/types.js'
 import type { TeamView } from '../transport/contracts.js'
+import { isAssistantAvatarDataUrl } from './assistant-instances.js'
+import { memberStatusLabel, taskStatusLabel } from './labels.js'
+import { taskWaitsOnDependency, teamPanelView, unresolvedDependency } from './team-main-agent-data.js'
+
+/**
+ * The dependency rule lives next to the member projection it feeds and is
+ * re-exported here so the sidebar and the overview keep one import site.
+ */
+export { OPEN_TASK_STATUSES, taskWaitsOnDependency, unresolvedDependency } from './team-main-agent-data.js'
 
 export interface TeamSidebarSummary {
   members: number
   running: number
   waiting: number
-  /** Blocked tasks that still wait on an unfinished prerequisite. */
+  /** Errored members; the row says 异常 instead of 空闲. Absent when zero. */
+  error?: number
+  /** Members still waking up; the row says 启动中 instead of 空闲. Absent when zero. */
+  starting?: number
+  /** Open tasks that still wait on an unfinished prerequisite. */
   waitingDependency: number
   /** Lifecycle state; absent when the caller only supplies member counts. */
   state?: TeamView['state']
@@ -37,18 +50,6 @@ export interface TeamScopeCounts {
 type SummarySource = Pick<TeamView, 'members'> & Partial<Pick<TeamView, 'tasks' | 'state'>>
 type TaskSource = Pick<TeamView, 'tasks'> & Partial<Pick<TeamView, 'members'>>
 
-/** `in_progress` also reads through, so legacy board rows stay labeled. */
-const TASK_STATUS_LABELS: Readonly<Record<string, string>> = {
-  pending: '待处理',
-  assigned: '已分配',
-  running: '进行中',
-  in_progress: '进行中',
-  blocked: '已阻塞',
-  completed: '已完成',
-  failed: '失败',
-  cancelled: '已取消',
-}
-
 /**
  * Mirrors `teamStateView` in team-board.tsx so a sidebar row never disagrees
  * with the team page. `active` is deliberately absent: an active team reads
@@ -70,43 +71,21 @@ function taskTitle(title: string): string {
   return title.trim() === '' ? UNTITLED_TASK : title
 }
 
-/**
- * The task this one still waits for. Mirrors `clearDownstreamBlockers`: only a
- * completed prerequisite leaves `dependencyIds`, so a failed or cancelled
- * prerequisite still holds the downstream task.
- *
- * An id with no task in this TeamView is not reachable: it was deleted or never
- * belonged here, so the sidebar cannot name it and does not count it as a wait.
- * Skipping it (rather than returning early) keeps a later reachable
- * prerequisite visible behind a stale id.
- *
- * Exported because the global overview's "blocked" count must use the same
- * dependency rule instead of trusting `status === 'blocked'`.
- */
-export function unresolvedDependency(
-  task: Pick<TeamTask, 'dependencyIds'>,
-  tasks: Readonly<Record<string, TeamTask>>,
-): TeamTask | undefined {
-  for (const id of task.dependencyIds) {
-    const dependency = tasks[id]
-    if (dependency === undefined) continue
-    if (dependency.status !== 'completed') return dependency
-  }
-  return undefined
-}
-
 export function teamSidebarSummary(team: SummarySource): TeamSidebarSummary {
   const tasks = team.tasks ?? {}
   let running = 0
   let waiting = 0
+  let error = 0
+  let starting = 0
   for (const member of Object.values(team.members)) {
     if (member.lastRuntimeState === 'running') running += 1
     else if (member.lastRuntimeState === 'waiting_approval') waiting += 1
+    else if (member.lastRuntimeState === 'error') error += 1
+    else if (member.lastRuntimeState === 'starting') starting += 1
   }
   let waitingDependency = 0
   for (const task of Object.values(tasks)) {
-    if (task.status !== 'blocked') continue
-    if (unresolvedDependency(task, tasks) !== undefined) waitingDependency += 1
+    if (taskWaitsOnDependency(task, tasks)) waitingDependency += 1
   }
   const taskRunning = Object.values(tasks).some(task => task.status === 'running')
   return {
@@ -114,6 +93,8 @@ export function teamSidebarSummary(team: SummarySource): TeamSidebarSummary {
     running,
     waiting,
     waitingDependency,
+    ...(error > 0 ? { error } : {}),
+    ...(starting > 0 ? { starting } : {}),
     ...(team.state === undefined ? {} : { state: team.state }),
     ...(taskRunning ? { taskRunning: true } : {}),
   }
@@ -122,20 +103,30 @@ export function teamSidebarSummary(team: SummarySource): TeamSidebarSummary {
 /**
  * Approval is the only count that earns the badge; dependency waiting is text.
  * 空闲 is pushed only when nothing else describes the team: no running member,
- * no running task, no lifecycle label, and no pending approval or dependency.
- * A pending approval therefore always replaces 空闲 instead of sitting next to
- * it ("1 人 · 1 待审批", never "1 人 · 空闲 · 1 待审批").
+ * no running task, no lifecycle label, no waking member, and no pending
+ * approval, dependency or error. A pending fact therefore always replaces 空闲
+ * instead of sitting next to it ("1 人 · 1 待审批", never "1 人 · 空闲 · 1 待审批").
+ *
+ * 异常 is one word: a member error appends it only when the lifecycle label has
+ * not already said it, so an error team never reads "异常 · 异常".
  */
 export function teamSidebarStatusText(summary: TeamSidebarSummary): string {
   const stateLabel = summary.state === undefined ? undefined : TEAM_STATE_LABELS[summary.state]
-  const attention = summary.waiting > 0 || summary.waitingDependency > 0
+  const errorMembers = summary.error ?? 0
+  const startingMembers = summary.starting ?? 0
+  const attention = summary.waiting > 0 || summary.waitingDependency > 0 || errorMembers > 0
   const parts = [`${summary.members} 人`]
   if (summary.running > 0) parts.push(`${summary.running} 运行`)
   else if (summary.taskRunning === true) parts.push('任务执行中')
+  // The lifecycle label already says 启动中 for state='starting'; the member
+  // word is only the stand-in when no label speaks, so the row never reads
+  // "启动中 · 启动中".
+  else if (startingMembers > 0 && stateLabel === undefined) parts.push('启动中')
   else if (stateLabel === undefined && !attention) parts.push('空闲')
   if (stateLabel !== undefined) parts.push(stateLabel)
   if (summary.waiting > 0) parts.push(`${summary.waiting} 待审批`)
   else if (summary.waitingDependency > 0) parts.push(`${summary.waitingDependency} 等待前置`)
+  if (errorMembers > 0 && summary.state !== 'error') parts.push('异常')
   return parts.join(' · ')
 }
 
@@ -168,7 +159,9 @@ export function recentTeamTasks(team: TaskSource, limit = RECENT_TASK_LIMIT): Te
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id))
     .slice(0, limit)
     .map(task => {
-      const dependency = task.status === 'blocked' ? unresolvedDependency(task, team.tasks) : undefined
+      const dependency = taskWaitsOnDependency(task, team.tasks)
+        ? unresolvedDependency(task, team.tasks)
+        : undefined
       const ownerName = dependency?.ownerSlotId === undefined
         ? undefined
         : members[dependency.ownerSlotId]?.displayName
@@ -176,7 +169,7 @@ export function recentTeamTasks(team: TaskSource, limit = RECENT_TASK_LIMIT): Te
         id: task.id,
         title: taskTitle(task.title),
         status: task.status,
-        statusLabel: TASK_STATUS_LABELS[task.status] ?? task.status,
+        statusLabel: taskStatusLabel(task.status),
         updatedAt: task.updatedAt,
         ...(dependency === undefined
           ? {}
@@ -189,4 +182,84 @@ export function recentTeamTasks(team: TaskSource, limit = RECENT_TASK_LIMIT): Te
             }),
       }
     })
+}
+
+export type TeamRosterTone = 'running' | 'waiting' | 'error' | 'starting' | 'idle' | 'offline'
+
+/**
+ * One bot row in the sidebar roster. Every field is read from the member
+ * projection the Leader panel already uses, so the sidebar cannot invent a
+ * second status vocabulary or a second member order.
+ */
+export interface TeamRosterRow {
+  teamId: string
+  slotId: string
+  sessionId: string
+  name: string
+  role: 'leader' | 'member'
+  /** Bounded inline avatar only; anything else falls back to the initial. */
+  avatar?: string
+  runtimeState: string
+  statusLabel: string
+  tone: TeamRosterTone
+  /** Running task first, then the newest assigned one; never a placeholder. */
+  currentTask?: { id: string; title: string }
+  /** At most one mark; an approval wait outranks a runtime error. */
+  attention?: 'approval' | 'error'
+  /** The member's last startup failure, shown only while the row reads 异常. */
+  errorText?: string
+}
+
+function rosterTone(state: string): TeamRosterTone {
+  switch (state) {
+    case 'running': return 'running'
+    case 'waiting_approval': return 'waiting'
+    case 'error': return 'error'
+    case 'starting': return 'starting'
+    case 'offline': return 'offline'
+    default: return 'idle'
+  }
+}
+
+function rosterAttention(state: string): 'approval' | 'error' | undefined {
+  if (state === 'waiting_approval') return 'approval'
+  if (state === 'error') return 'error'
+  return undefined
+}
+
+/**
+ * The sidebar roster: one row per member, read from `team.list` alone — no
+ * extra request, no `team.workbench.get`, no fake counts. The approval mark is
+ * a fact about this member ("parked on a decision"), so it carries no number.
+ */
+export function teamRosterRows(team: TeamView): TeamRosterRow[] {
+  const rows: TeamRosterRow[] = []
+  for (const member of teamPanelView(team).members) {
+    const slot = team.members[member.id]
+    if (slot === undefined) continue
+    const avatar = slot.assistantSnapshot.avatar
+    const attention = rosterAttention(member.state)
+    rows.push({
+      teamId: team.id,
+      slotId: member.id,
+      sessionId: slot.sessionId,
+      name: member.name,
+      role: member.role,
+      ...(avatar !== undefined && isAssistantAvatarDataUrl(avatar) ? { avatar } : {}),
+      runtimeState: member.state,
+      statusLabel: memberStatusLabel(member.state),
+      tone: rosterTone(member.state),
+      ...(member.currentTask === undefined ? {} : { currentTask: member.currentTask }),
+      ...(attention === undefined ? {} : { attention }),
+      ...(member.state === 'error' && slot.lastError !== undefined ? { errorText: slot.lastError } : {}),
+    })
+  }
+  return rows
+}
+
+/** Second line of a roster row: the status word, plus what the bot holds now. */
+export function rosterSubtitle(row: Pick<TeamRosterRow, 'statusLabel' | 'currentTask'>): string {
+  return row.currentTask === undefined
+    ? row.statusLabel
+    : `${row.statusLabel} · ${row.currentTask.title}`
 }

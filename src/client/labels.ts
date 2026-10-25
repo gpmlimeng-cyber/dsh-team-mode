@@ -9,13 +9,50 @@ import type {
 } from '../domain/types.js'
 import { summarizeTaskProgress } from './task-progress.js'
 
+/**
+ * The one task-status table. `in_progress` stays for legacy rows; every other
+ * status the board can hold is here too, so surfaces that index the table
+ * directly (activity rows, the team board) print Chinese instead of raw ids.
+ */
 export const TASK_STATE_LABELS: Readonly<Record<string, string>> = {
   pending: '待处理',
   assigned: '已分配',
+  running: '进行中',
   in_progress: '进行中',
+  blocked: '已阻塞',
   completed: '已完成',
   failed: '失败',
   cancelled: '已取消',
+}
+
+/** One status word per Assistant instance status; no surface keeps its own copy. */
+export const ASSISTANT_INSTANCE_STATUS_LABELS: Readonly<Record<string, string>> = {
+  idle: '空闲',
+  starting: '唤醒中',
+  active: '运行中',
+  error: '异常',
+  archived: '已归档',
+}
+
+export function assistantInstanceStatusLabel(status: string): string {
+  return ASSISTANT_INSTANCE_STATUS_LABELS[status] ?? status
+}
+
+/**
+ * Attention categories. Counts are entities, never interactions: `approval`
+ * counts members parked on a decision and `assistant_input` counts tasks waiting
+ * for one, but both are reported as one entity each in the overview.
+ */
+export const ATTENTION_CATEGORY_LABELS: Readonly<Record<string, string>> = {
+  approval: '待审批',
+  assistant_input: '待输入',
+  blocked: '等待前置',
+  error: '异常',
+  unread: '未读',
+}
+
+export function attentionCategoryLabel(category: string): string {
+  return ATTENTION_CATEGORY_LABELS[category] ?? category
 }
 
 export const PERMISSION_LABELS: Readonly<Record<string, string>> = {

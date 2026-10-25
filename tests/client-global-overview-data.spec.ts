@@ -56,6 +56,8 @@ function team(overrides: {
   tasks?: TeamTask[]
   updatedAt?: string
   archivedAt?: string
+  state?: TeamView['state']
+  warmup?: TeamView['warmup']
 } = {}): TeamView {
   const id = overrides.id ?? 'team-1'
   return {
@@ -65,7 +67,7 @@ function team(overrides: {
     workspaceId: `workspace-${id}`,
     workspacePath: `/tmp/${id}`,
     leaderSlotId: overrides.leaderSlotId ?? 'leader',
-    state: 'active',
+    state: overrides.state ?? 'active',
     directMemberChat: false,
     members: Object.fromEntries((overrides.members ?? []).map(entry => [entry.id, entry])),
     retiredSessions: {},
@@ -76,6 +78,7 @@ function team(overrides: {
     createdAt: ISO,
     updatedAt: overrides.updatedAt ?? ISO,
     ...(overrides.archivedAt === undefined ? {} : { archivedAt: overrides.archivedAt }),
+    ...(overrides.warmup === undefined ? {} : { warmup: overrides.warmup }),
   }
 }
 
@@ -87,6 +90,7 @@ function instance(overrides: {
   mainSessionId?: string
   updatedAt?: string
   archivedAt?: string
+  preview?: AssistantInstanceView['preview']
 } = {}): AssistantInstanceView {
   const id = overrides.id ?? 'assistant-1'
   return {
@@ -112,6 +116,7 @@ function instance(overrides: {
     revision: 1,
     createdAt: ISO,
     updatedAt: overrides.updatedAt ?? ISO,
+    ...(overrides.preview === undefined ? {} : { preview: overrides.preview }),
     ...(overrides.mainSessionId === undefined ? {} : { mainSessionId: overrides.mainSessionId }),
     ...(overrides.archivedAt === undefined ? {} : { archivedAt: overrides.archivedAt }),
   }
@@ -159,6 +164,8 @@ describe('globalOverviewModel', () => {
       running: 0,
       attention: 0,
       blocked: 0,
+      error: 0,
+      unread: 0,
       idle: 0,
     })
     for (const value of Object.values(model.counts)) {
@@ -231,6 +238,8 @@ describe('globalOverviewModel', () => {
       running: 2,
       attention: 2,
       blocked: 1,
+      error: 0,
+      unread: 0,
       idle: 1,
     })
   })
@@ -428,6 +437,8 @@ describe('globalOverviewModel', () => {
       running: 2,
       attention: 2,
       blocked: 2,
+      error: 0,
+      unread: 0,
       idle: 2,
     })
 
@@ -500,5 +511,149 @@ describe('globalOverviewModel', () => {
     expect(model.assistants[0]).not.toHaveProperty('mainSessionId')
     expect(model.assistants[0]?.mainSessionId).toBeUndefined()
     expect(model.assistants[1]?.mainSessionId).toBe('session-main')
+  })
+})
+
+const PREVIEW_AT = Date.parse(ISO)
+
+describe('globalOverviewModel · attention categories', () => {
+  it('lists one row per entity carrying every category it holds', () => {
+    const busy = team({
+      id: 'team-busy',
+      state: 'error',
+      members: [
+        member('leader', { role: 'leader', lastRuntimeState: 'waiting_approval' }),
+        member('broken', { lastRuntimeState: 'error' }),
+      ],
+      tasks: [task('dep', 'running'), task('held', 'pending', { dependencyIds: ['dep'] })],
+    })
+    const model = globalOverviewModel({ teams: [busy], instances: [], tasks: [] })
+
+    expect(model.teams[0]?.categories).toEqual(['approval', 'blocked', 'error'])
+    expect(model.attention.map(tag)).toEqual(['team:team-busy'])
+    // One entity, three facts: each count is the entity, never the interaction.
+    expect(model.counts).toMatchObject({ attention: 1, blocked: 1, error: 1, idle: 0 })
+  })
+
+  it('keeps states out of the decision list', () => {
+    const model = globalOverviewModel({
+      teams: [
+        team({ id: 'blocked', tasks: [task('dep', 'running'), task('held', 'assigned', { dependencyIds: ['dep'] })] }),
+        team({ id: 'error-state', state: 'delete_blocked' }),
+        team({ id: 'member-error', members: [member('bad', { lastRuntimeState: 'error' })] }),
+        team({ id: 'warmup-error', warmup: { phase: 'error', startedAt: ISO } }),
+      ],
+      instances: [instance({ id: 'assistant-error', status: 'error' })],
+      tasks: [],
+    })
+
+    expect(model.attention).toEqual([])
+    expect(model.counts).toMatchObject({ attention: 0, blocked: 1, error: 4, idle: 0 })
+    expect(model.teams.map(item => item.error)).toEqual([false, true, true, true])
+    expect(model.assistants[0]?.categories).toEqual(['error'])
+  })
+
+  it('never counts an errored idle assistant as idle', () => {
+    const model = globalOverviewModel({
+      teams: [],
+      instances: [instance({ id: 'broken', status: 'error' }), instance({ id: 'fine' })],
+      tasks: [],
+    })
+    expect(model.counts).toMatchObject({ assistants: 2, error: 1, idle: 1 })
+    expect(filterGlobalOverview(model, 'idle').assistants.map(item => item.id)).toEqual(['fine'])
+    expect(filterGlobalOverview(model, 'error').assistants.map(item => item.id)).toEqual(['broken'])
+  })
+
+  it('marks an assistant unread only when the preview is newer than the read mark', () => {
+    const preview = { role: 'assistant' as const, text: '结果已生成', time: PREVIEW_AT }
+    const unread = instance({ id: 'unread', preview })
+    const read = instance({ id: 'read', preview })
+
+    const model = globalOverviewModel({
+      teams: [],
+      instances: [unread, read],
+      tasks: [],
+      readState: { unread: PREVIEW_AT - 1000, read: PREVIEW_AT },
+    })
+
+    expect(model.assistants[0]).toMatchObject({ id: 'unread', unread: true, categories: ['unread'] })
+    expect(model.assistants[1]).toMatchObject({ id: 'read', unread: false, categories: [] })
+    expect(model.counts.unread).toBe(1)
+  })
+
+  it('counts an approval team with unread-free tasks once in attention, not once per fact', () => {
+    const model = globalOverviewModel({
+      teams: [team({ id: 'approve', members: [member('a', { lastRuntimeState: 'waiting_approval' })] })],
+      instances: [instance({ id: 'needs' })],
+      tasks: [assistantTask('n1', 'needs_input', { assistantId: 'needs' })],
+    })
+    expect(model.counts.attention).toBe(2)
+    expect(new Set(model.attention.map(tag)).size).toBe(model.attention.length)
+  })
+
+  it('filters blocked, error, and unread rows without touching attention or counts', () => {
+    const preview = { role: 'assistant' as const, text: '新消息', time: PREVIEW_AT }
+    const model = globalOverviewModel({
+      teams: [
+        team({ id: 'held', tasks: [task('dep', 'running'), task('down', 'pending', { dependencyIds: ['dep'] })] }),
+        team({ id: 'approve', members: [member('a', { lastRuntimeState: 'waiting_approval' })] }),
+        team({ id: 'broken', state: 'error' }),
+      ],
+      instances: [instance({ id: 'unread', preview })],
+      tasks: [],
+      readState: { unread: 0 },
+    })
+
+    expect(filterGlobalOverview(model, 'blocked').teams.map(item => item.id)).toEqual(['held'])
+    expect(filterGlobalOverview(model, 'error').teams.map(item => item.id)).toEqual(['broken'])
+    expect(filterGlobalOverview(model, 'unread').assistants.map(item => item.id)).toEqual(['unread'])
+    expect(filterGlobalOverview(model, 'blocked').attention.map(tag)).toEqual(['team:approve'])
+    for (const filter of ['blocked', 'error', 'unread', 'attention', 'running', 'idle', 'all'] as const) {
+      expect(filterGlobalOverview(model, filter).counts).toEqual(model.counts)
+      expect(filterGlobalOverview(model, filter).attention).toEqual(model.attention)
+    }
+  })
+
+  it('keeps archived entities out of every category', () => {
+    const preview = { role: 'assistant' as const, text: '旧消息', time: PREVIEW_AT }
+    const model = globalOverviewModel({
+      teams: [team({ id: 'gone', state: 'error', archivedAt: '2026-01-02T00:00:00.000Z' })],
+      instances: [instance({ id: 'gone', status: 'error', archivedAt: '2026-01-02T00:00:00.000Z', preview })],
+      tasks: [],
+      readState: {},
+    })
+    expect(model.counts).toMatchObject({ error: 0, unread: 0, idle: 0 })
+  })
+})
+
+describe('startup is activity, never idle', () => {
+  it('marks a starting team by state or by a waking member and keeps it out of idle', () => {
+    const stateOnly = team({ id: 'state-starting', state: 'starting' })
+    const wakingMember = team({ id: 'member-starting', members: [member('a', { lastRuntimeState: 'starting' })] })
+    const idle = team({ id: 'really-idle' })
+
+    const model = globalOverviewModel({ teams: [stateOnly, wakingMember, idle], instances: [], tasks: [] })
+
+    expect(model.teams.map(item => item.starting)).toEqual([true, true, false])
+    expect(model.counts.idle).toBe(1)
+    // Starting is not executing yet: the activity count stays about execution.
+    expect(model.counts.running).toBe(0)
+    expect(filterGlobalOverview(model, 'idle').teams.map(item => item.id)).toEqual(['really-idle'])
+  })
+
+  it('never turns startup into a decision', () => {
+    const model = globalOverviewModel({
+      teams: [
+        team({ id: 'state-starting', state: 'starting' }),
+        team({ id: 'member-starting', members: [member('a', { lastRuntimeState: 'starting' })] }),
+      ],
+      instances: [],
+      tasks: [],
+    })
+
+    expect(model.attention).toEqual([])
+    expect(model.teams[0]?.categories).toEqual([])
+    expect(model.teams[1]?.categories).toEqual([])
+    expect(model.counts).toMatchObject({ attention: 0, error: 0, blocked: 0, idle: 0 })
   })
 })

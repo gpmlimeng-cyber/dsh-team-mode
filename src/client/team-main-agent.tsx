@@ -51,7 +51,7 @@ function Progress({ view }: { view: PanelView }): JSX.Element {
   const segments = [
     { id: 'completed', label: '已完成', count: view.completed, tone: css.mainAgentProgressComplete },
     { id: 'running', label: '进行中', count: view.running, tone: css.mainAgentProgressRunning },
-    { id: 'waiting', label: '等待', count: view.waiting, tone: css.mainAgentProgressWaiting },
+    { id: 'waiting', label: '等待前置', count: view.waiting, tone: css.mainAgentProgressWaiting },
     { id: 'error', label: '异常', count: view.error, tone: css.mainAgentProgressError },
   ]
   return (
@@ -107,6 +107,14 @@ function MemberRow({
           {member.name}
         </button>
         <span className={css.mainAgentRole}>{ROLE_LABELS[member.role]}</span>
+        <span
+          className={css.mainAgentMemberStatus}
+          data-dsh-member-state={member.state}
+          data-state={member.state}
+          title={member.statusLabel}
+        >
+          {member.statusLabel}
+        </span>
         <span className={css.mainAgentModel} title={member.model}>{member.model}</span>
         <span className={css.mainAgentMemberProgress} aria-label={`已完成 ${member.completed} / 共 ${member.total}`}>
           {member.completed}/{member.total}
@@ -166,7 +174,7 @@ export function TeamMainAgentPanel({
         maxWidth: '100vw',
         height: '100dvh',
         zIndex: 60,
-        backgroundColor: 'light-dark(#ffffff, #17181a)',
+        backgroundColor: 'var(--dsw-alias-bg-layer-1)',
         backgroundImage: 'none',
         backdropFilter: 'none',
         borderInlineStart: '1px solid var(--dsw-alias-border-l1)',

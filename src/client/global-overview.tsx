@@ -8,23 +8,33 @@ import {
   globalOverviewModel,
   type GlobalAssistantItem,
   type GlobalFilter,
+  type GlobalOverviewItem,
   type GlobalOverviewModel,
   type GlobalTeamItem,
 } from './global-overview-data.js'
+import { assistantInstanceStatusLabel, attentionCategoryLabel } from './labels.js'
+import { assistantReadState } from './assistant-read-state.js'
 
 const FILTERS: ReadonlyArray<{ value: GlobalFilter; label: string }> = [
   { value: 'all', label: '全部' },
-  { value: 'attention', label: '需要我' },
-  { value: 'running', label: '运行中' },
+  { value: 'attention', label: '需要你' },
+  { value: 'running', label: '有活动' },
+  { value: 'blocked', label: '等待前置' },
+  { value: 'error', label: '异常' },
+  { value: 'unread', label: '未读' },
   { value: 'idle', label: '空闲' },
 ]
 
-const ASSISTANT_STATUS_LABELS: Record<AssistantInstanceView['status'], string> = {
-  idle: '空闲',
-  starting: '唤醒中',
-  active: '运行中',
-  error: '异常',
-  archived: '已归档',
+/** One short explanation per count, so a number never reads as another number. */
+const STAT_TITLES: Readonly<Record<keyof GlobalOverviewModel['counts'], string>> = {
+  teams: '非归档团队数',
+  assistants: '非归档助手数',
+  running: '有活动：运行中的成员或任务，含停在审批的成员',
+  attention: '需要你：待审批的成员 + 待输入的助手任务',
+  blocked: '等待前置：未结束、仍被前置任务挡住的任务所在实体',
+  error: '异常：团队、成员、启动或助手实例',
+  unread: '未读：有未读消息的助手',
+  idle: '空闲：既没有活动也没有待处理',
 }
 
 export interface GlobalOverviewProps {
@@ -45,6 +55,8 @@ export interface GlobalOverviewPanelProps {
   readonly filter: GlobalFilter
   readonly loading?: boolean | undefined
   readonly error?: string | undefined
+  /** Assistant read-at snapshot; absent means nothing is known to be read. */
+  readonly readState?: Readonly<Record<string, number>> | undefined
   readonly teamsLoading?: boolean | undefined
   readonly teamsError?: string | undefined
   readonly onFilterChange?: ((filter: GlobalFilter) => void) | undefined
@@ -70,10 +82,26 @@ export function openAssistantSession(
   openSession(sessionId)
 }
 
+/** Categories that are states, not decisions: shown as words, never as counts. */
+function categoryNotes(item: GlobalOverviewItem): string {
+  return item.categories
+    .filter(category => category === 'blocked' || category === 'error' || category === 'unread')
+    .map(category => attentionCategoryLabel(category))
+    .join(' · ')
+}
+
+/**
+ * The decision units this entity holds. Non-decision categories follow as words:
+ * an entity appears once, with every reason it is here.
+ */
 function attentionMeta(item: GlobalTeamItem | GlobalAssistantItem): string {
-  if (item.kind === 'team') return `${item.approval} 个待审批`
-  const base = `${item.needsInput} 个待输入`
-  return item.mainSessionId === undefined ? `${base} · 未创建主会话` : base
+  const decision = item.kind === 'team'
+    ? `${item.approval} 个待审批`
+    : item.mainSessionId === undefined
+      ? `${item.needsInput} 个待输入 · 未创建主会话`
+      : `${item.needsInput} 个待输入`
+  const notes = categoryNotes(item)
+  return notes === '' ? decision : `${decision} · ${notes}`
 }
 
 /** A row is inert when there is no target Session or no host navigation face. */
@@ -93,34 +121,57 @@ function assistantUnavailableTitle(
   return undefined
 }
 
+/**
+ * 有活动, not 运行中: the team-level flag includes a member parked on approval,
+ * while the sidebar's `N 运行` counts running members only. Two facts, two words.
+ */
 function teamState(item: GlobalTeamItem): string {
   const parts: string[] = []
-  if (item.running) parts.push('运行中')
+  if (item.running) parts.push('有活动')
+  // Startup is its own word here, exactly as the sidebar row and the roster say
+  // it; it is also why a starting team is never in the 空闲 count or filter.
+  if (item.starting) parts.push('启动中')
   if (item.approval > 0) parts.push(`${item.approval} 个待审批`)
-  if (item.blocked > 0) parts.push(`${item.blocked} 个阻塞`)
+  if (item.blocked > 0) parts.push(`${item.blocked} 个等待前置`)
+  if (item.error) parts.push('异常')
   return parts.length === 0 ? '空闲' : parts.join(' · ')
 }
 
+/** A failed instance reads 异常 before any activity word it might still carry. */
 function assistantState(item: GlobalAssistantItem): string {
-  const status = item.running ? '运行中' : ASSISTANT_STATUS_LABELS[item.status]
-  return item.needsInput > 0 ? `${status} · ${item.needsInput} 个待输入` : status
+  const parts: string[] = [
+    item.error
+      ? '异常'
+      : item.running
+        ? '有活动'
+        : assistantInstanceStatusLabel(item.status),
+  ]
+  if (item.needsInput > 0) parts.push(`${item.needsInput} 个待输入`)
+  if (item.unread) parts.push('未读')
+  return parts.join(' · ')
 }
 
 function Summary({ model }: { model: GlobalOverviewModel }): JSX.Element {
+  const stats: ReadonlyArray<{ key: keyof GlobalOverviewModel['counts']; label: string }> = [
+    { key: 'running', label: '有活动' },
+    { key: 'attention', label: '需要你' },
+    { key: 'blocked', label: '等待前置' },
+    { key: 'error', label: '异常' },
+    { key: 'unread', label: '未读' },
+    { key: 'idle', label: '空闲' },
+  ]
   return (
     <div className={css.globalOverviewStats} data-overview-region="summary">
-      <span className={css.globalOverviewStat} data-count="running">
-        <strong>{model.counts.running}</strong> 运行中
-      </span>
-      <span className={css.globalOverviewStat} data-count="attention">
-        <strong>{model.counts.attention}</strong> 需要你
-      </span>
-      <span className={css.globalOverviewStat} data-count="blocked">
-        <strong>{model.counts.blocked}</strong> 阻塞
-      </span>
-      <span className={css.globalOverviewStat} data-count="idle">
-        <strong>{model.counts.idle}</strong> 空闲
-      </span>
+      {stats.map(stat => (
+        <span
+          key={stat.key}
+          className={css.globalOverviewStat}
+          data-count={stat.key}
+          title={STAT_TITLES[stat.key]}
+        >
+          <strong>{model.counts[stat.key]}</strong> {stat.label}
+        </span>
+      ))}
     </div>
   )
 }
@@ -150,6 +201,7 @@ function Attention({
                     type="button"
                     className={css.globalOverviewAttentionRow}
                     data-attention-team-id={item.id}
+                    data-attention-categories={item.categories.join(',')}
                     onClick={() => { onOpenTeam(item.id) }}
                   >
                     <span className={css.globalOverviewAttentionName}>{item.name}</span>
@@ -163,6 +215,7 @@ function Attention({
                     type="button"
                     className={css.globalOverviewAttentionRow}
                     data-attention-assistant-id={item.id}
+                    data-attention-categories={item.categories.join(',')}
                     disabled={assistantDisabled(item, onOpenAssistant)}
                     title={assistantUnavailableTitle(item, onOpenAssistant)}
                     onClick={() => {
@@ -268,6 +321,7 @@ export function GlobalOverviewPanel({
   filter,
   loading = false,
   error,
+  readState,
   teamsLoading,
   teamsError,
   onFilterChange,
@@ -281,7 +335,7 @@ export function GlobalOverviewPanel({
     return <StatusCard tone="error" message={error} />
   }
 
-  const model = globalOverviewModel({ teams, instances, tasks })
+  const model = globalOverviewModel({ teams, instances, tasks, ...(readState === undefined ? {} : { readState }) })
   const visible = filterGlobalOverview(model, filter)
   const nothingAtAll = model.teams.length === 0 && model.assistants.length === 0
   const nothingVisible = visible.teams.length === 0 && visible.assistants.length === 0
@@ -381,6 +435,9 @@ export function GlobalOverview({
   const [tasks, setTasks] = useState<AssistantSession[]>()
   const [error, setError] = useState<string>()
   const [filter, setFilter] = useState<GlobalFilter>('all')
+  // Presentation state, read on each render: the overview never owns a second
+  // copy of the read markers and never asks the host for them.
+  const readSnapshot = assistantReadState()
 
   const load = useCallback(async (): Promise<void> => {
     try {
@@ -411,6 +468,7 @@ export function GlobalOverview({
       instances={instances ?? []}
       tasks={tasks ?? []}
       filter={filter}
+      readState={readSnapshot}
       {...(teamsLoading === undefined ? {} : { teamsLoading })}
       {...(teamsError === undefined ? {} : { teamsError })}
       loading={error === undefined && (instances === undefined || tasks === undefined)}

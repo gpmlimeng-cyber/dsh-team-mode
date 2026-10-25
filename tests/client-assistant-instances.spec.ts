@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { AssistantInstance, AssistantSession } from '../src/domain/types.js'
+import type { AssistantInstanceView } from '../src/transport/contracts.js'
+import { assistantInstanceStatusLabel } from '../src/client/labels.js'
 import {
   ASSISTANT_AVATAR_MAX_DATA_URL_LENGTH,
   ASSISTANT_AVATAR_MAX_FILE_BYTES,
@@ -11,8 +13,10 @@ import {
   assistantInstanceName,
   assistantNameForSession,
   assistantRowActivity,
+  assistantRowState,
   assistantRowStatusText,
   assistantRowStatusTitle,
+  assistantSidebarSummary,
   assistantTaskStatusLabel,
   assistantTasksFor,
   assistantThreadTasks,
@@ -85,7 +89,7 @@ describe('assistantRowActivity', () => {
       task('assistant-a', 'needs_input'),
       task('assistant-a', 'needs_input', 'assistant-a-needs-2'),
       task('assistant-a', 'running'),
-    ], idle)).toEqual({ status: 'needs_input', count: 2 })
+    ], idle)).toEqual({ status: 'needs_input', count: 2, instanceStatus: 'idle' })
   })
 
   it('reports running when no task needs input', () => {
@@ -94,7 +98,7 @@ describe('assistantRowActivity', () => {
       task('assistant-a', 'running'),
       task('assistant-a', 'running', 'assistant-a-running-2'),
       task('assistant-b', 'needs_input'),
-    ], idle)).toEqual({ status: 'running', count: 2 })
+    ], idle)).toEqual({ status: 'running', count: 2, instanceStatus: 'idle' })
   })
 
   it('reports queued only when nothing is running', () => {
@@ -102,7 +106,7 @@ describe('assistantRowActivity', () => {
       task('assistant-a', 'queued'),
       task('assistant-a', 'queued', 'assistant-a-queued-2'),
       task('assistant-a', 'completed'),
-    ], idle)).toEqual({ status: 'queued', count: 2 })
+    ], idle)).toEqual({ status: 'queued', count: 2, instanceStatus: 'idle' })
   })
 
   it('ignores terminal tasks and other assistants', () => {
@@ -111,18 +115,102 @@ describe('assistantRowActivity', () => {
       task('assistant-a', 'failed'),
       task('assistant-a', 'cancelled'),
       task('assistant-b', 'running'),
-    ], idle)).toEqual({ status: 'none', count: 0 })
+    ], idle)).toEqual({ status: 'none', count: 0, instanceStatus: 'idle' })
   })
 
   it('reads an archived instance as idle even with stale active rows', () => {
     expect(assistantRowActivity(
       [task('assistant-a', 'needs_input')],
       instance('assistant-a', 'A', '2026-01-01T00:00:00Z', { status: 'archived' }),
-    )).toEqual({ status: 'none', count: 0 })
+    )).toEqual({ status: 'none', count: 0, instanceStatus: 'archived' })
   })
 
   it('returns none for an empty task list', () => {
-    expect(assistantRowActivity([], idle)).toEqual({ status: 'none', count: 0 })
+    expect(assistantRowActivity([], idle)).toEqual({ status: 'none', count: 0, instanceStatus: 'idle' })
+  })
+})
+
+describe('assistantRowState', () => {
+  const iso = '2026-01-01T00:00:00Z'
+
+  it('reads a failed instance as 异常 instead of 空闲', () => {
+    const activity = assistantRowActivity([], instance('assistant-a', 'A', iso, { status: 'error' }))
+
+    expect(assistantRowState(activity)).toBe('error')
+    expect(assistantRowStatusText(activity)).toBe('异常')
+    expect(assistantRowStatusTitle(activity)).toBe('异常')
+  })
+
+  it('keeps 异常 on top of stale task activity', () => {
+    const activity = assistantRowActivity(
+      [task('assistant-a', 'running')],
+      instance('assistant-a', 'A', iso, { status: 'error' }),
+    )
+
+    expect(activity.status).toBe('running')
+    expect(assistantRowState(activity)).toBe('error')
+    expect(assistantRowStatusText(activity)).toBe('异常')
+    expect(assistantRowStatusTitle(activity)).toBe('异常 · 1 个任务未结束')
+  })
+
+  it('never reads a waking instance as idle', () => {
+    const activity = assistantRowActivity([], instance('assistant-a', 'A', iso, { status: 'starting' }))
+
+    expect(assistantRowState(activity)).toBe('starting')
+    expect(assistantRowStatusText(activity)).toBe('唤醒中')
+    expect(assistantRowStatusTitle(activity)).toBe('唤醒中')
+  })
+
+  it('takes every instance word from the shared labels', () => {
+    expect(assistantRowStatusText({ status: 'none', count: 0, instanceStatus: 'error' }))
+      .toBe(assistantInstanceStatusLabel('error'))
+    expect(assistantRowStatusText({ status: 'none', count: 0, instanceStatus: 'starting' }))
+      .toBe(assistantInstanceStatusLabel('starting'))
+    expect(assistantRowStatusText({ status: 'none', count: 0, instanceStatus: 'idle' }))
+      .toBe(assistantInstanceStatusLabel('idle'))
+    expect(assistantRowStatusText({ status: 'none', count: 0 })).toBe('空闲')
+  })
+
+  it('keeps task-only states independent of the instance status', () => {
+    expect(assistantRowState({ status: 'needs_input', count: 2, instanceStatus: 'active' })).toBe('needs_input')
+    expect(assistantRowState({ status: 'queued', count: 1, instanceStatus: 'idle' })).toBe('queued')
+    expect(assistantRowState({ status: 'none', count: 0, instanceStatus: 'active' })).toBe('none')
+  })
+})
+
+describe('assistantSidebarSummary', () => {
+  const iso = '2026-01-01T00:00:00Z'
+
+  it('counts every listed assistant once and skips archived ones', () => {
+    const instances: AssistantInstanceView[] = [
+      {
+        ...instance('a', 'A', iso),
+        preview: { role: 'assistant', text: '结果', time: 200 },
+      },
+      instance('b', 'B', iso),
+      instance('c', 'C', iso, { status: 'archived' }),
+    ]
+    const tasks = [
+      task('a', 'needs_input'),
+      task('b', 'running'),
+      task('b', 'queued', 'b-queued'),
+      task('c', 'needs_input'),
+    ]
+
+    expect(assistantSidebarSummary(instances, tasks, { a: 100 }))
+      .toEqual({ waiting: 1, working: 1, queued: 0, unread: 1 })
+  })
+
+  it('reads unread from the read markers only', () => {
+    const instances: AssistantInstanceView[] = [{
+      ...instance('a', 'A', iso),
+      preview: { role: 'assistant', text: '结果', time: 200 },
+    }]
+
+    // A missing marker is read-at-preview; only an older marker means unread.
+    expect(assistantSidebarSummary(instances, [], {}).unread).toBe(0)
+    expect(assistantSidebarSummary(instances, [], { a: 100 }).unread).toBe(1)
+    expect(assistantSidebarSummary(instances, [], { a: 200 }).unread).toBe(0)
   })
 })
 

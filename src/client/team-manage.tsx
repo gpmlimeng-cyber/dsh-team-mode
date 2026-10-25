@@ -29,7 +29,7 @@ export function TeamManageView({
     create: (input: { path: string }) => Promise<{ workspaceId: string, path: string, title: string }>
   }
 }): JSX.Element | null {
-  const { teams, catalog, assistants, load } = useAgentTeamData(true)
+  const { teams, catalog, assistants, teamsLoading, teamsError, load } = useAgentTeamData(true)
   useEffect(() => {
     document.body.dataset.teamManage = 'true'
     return () => { delete document.body.dataset.teamManage }
@@ -56,6 +56,8 @@ export function TeamManageView({
         <div className={css.overviewBody}>
           <GlobalOverview
             teams={teams}
+            teamsLoading={teamsLoading}
+            {...(teamsError === undefined ? {} : { teamsError })}
             onOpenTeam={openTeam}
             {...(uiWorkspace === undefined
               ? {}

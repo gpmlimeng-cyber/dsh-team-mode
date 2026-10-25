@@ -1,5 +1,6 @@
 import type { TeamTask } from '../domain/types.js'
 import type { TeamView } from '../transport/contracts.js'
+import { memberStatusLabel, taskStatusLabel } from './labels.js'
 
 /** One task chip in a member row: short title plus a Chinese status label. */
 export interface PanelTaskChip {
@@ -15,6 +16,8 @@ export interface PanelMember {
   role: 'leader' | 'member'
   model: string
   state: string
+  /** Same word the sidebar roster shows for this member state. */
+  statusLabel: string
   currentTask?: { id: string; title: string }
   completed: number
   total: number
@@ -37,9 +40,15 @@ export interface PanelView {
   taskTotal: number
   completed: number
   running: number
+  /** Open tasks held by an unfinished prerequisite (same rule as the sidebar). */
   waiting: number
   error: number
   approval: number
+  /**
+   * Tasks parked on `status: 'blocked'`, whatever holds them. Kept only so
+   * `blockerText` can explain a wait whose dependency is unreachable; it is not
+   * a second wait count and no progress line presents it.
+   */
   blocked: number
   firstBlocker?: PanelBlocker
   members: PanelMember[]
@@ -48,25 +57,25 @@ export interface PanelView {
 const CHIP_LIMIT = 3
 const UNTITLED_TASK = '未命名任务'
 
-const TASK_STATUS_LABELS: Readonly<Record<string, string>> = {
-  pending: '待处理',
-  assigned: '已分配',
-  running: '进行中',
-  in_progress: '进行中',
-  blocked: '已阻塞',
-  completed: '已完成',
-  failed: '失败',
-  cancelled: '已取消',
-}
-
 type TasksById = Readonly<Record<string, TeamTask>>
+
+/**
+ * Task statuses that can still wait on a prerequisite. Terminal rows
+ * (completed/failed/cancelled) never hold a team in "waiting": a failed
+ * prerequisite keeps its dependency id, and the downstream task was abandoned.
+ *
+ * One definition for the panel, the sidebar and the overview; `team-sidebar-data`
+ * re-exports it so both the sidebar and the overview keep importing one symbol.
+ */
+export const OPEN_TASK_STATUSES: ReadonlySet<string> = new Set([
+  'pending',
+  'assigned',
+  'running',
+  'blocked',
+])
 
 function taskTitle(title: string): string {
   return title.trim() === '' ? UNTITLED_TASK : title
-}
-
-function statusLabel(status: string): string {
-  return TASK_STATUS_LABELS[status] ?? status
 }
 
 function byUpdatedDesc(left: TeamTask, right: TeamTask): number {
@@ -82,15 +91,31 @@ function byChipOrder(left: TeamTask, right: TeamTask): number {
 /**
  * The prerequisite still holding a task. Missing ids are skipped (the task was
  * deleted or belongs to another team), so a stale id cannot hide a later real
- * dependency. Mirrors the sidebar's rule: only `completed` releases a task.
+ * dependency. Only `completed` releases a task.
  */
-function unresolvedDependency(task: Pick<TeamTask, 'dependencyIds'>, tasks: TasksById): TeamTask | undefined {
+export function unresolvedDependency(
+  task: Pick<TeamTask, 'dependencyIds'>,
+  tasks: Readonly<Record<string, TeamTask>>,
+): TeamTask | undefined {
   for (const id of task.dependencyIds) {
     const dependency = tasks[id]
     if (dependency === undefined) continue
     if (dependency.status !== 'completed') return dependency
   }
   return undefined
+}
+
+/**
+ * One rule for "waiting on a prerequisite", shared by the count and the task
+ * rows: an unfinished task whose first reachable prerequisite is not completed.
+ * A pending/assigned task qualifies too — otherwise a team that only queued
+ * work reads as 空闲.
+ */
+export function taskWaitsOnDependency(
+  task: Pick<TeamTask, 'status' | 'dependencyIds'>,
+  tasks: Readonly<Record<string, TeamTask>>,
+): boolean {
+  return OPEN_TASK_STATUSES.has(task.status) && unresolvedDependency(task, tasks) !== undefined
 }
 
 function orderedMembers(team: TeamView): TeamView['members'][string][] {
@@ -112,7 +137,7 @@ function panelMember(member: TeamView['members'][string], tasks: readonly TeamTa
     id: task.id,
     title: taskTitle(task.title),
     status: task.status,
-    statusLabel: statusLabel(task.status),
+    statusLabel: taskStatusLabel(task.status),
   }))
 
   return {
@@ -121,6 +146,7 @@ function panelMember(member: TeamView['members'][string], tasks: readonly TeamTa
     role: member.role,
     model: member.assistantSnapshot.model,
     state: member.lastRuntimeState,
+    statusLabel: memberStatusLabel(member.lastRuntimeState),
     completed,
     // Cancelled tasks stay in the denominator: the member was assigned the work
     // and only `completed` counts toward progress.
@@ -138,10 +164,10 @@ export function teamPanelView(team: TeamView): PanelView {
   const members = orderedMembers(team)
 
   let completed = 0
-  let waiting = 0
   let error = 0
   let blocked = 0
   const runningTasks: TeamTask[] = []
+  const waiting = tasks.filter(task => taskWaitsOnDependency(task, tasksById)).length
   for (const task of tasks) {
     switch (task.status) {
       case 'completed':
@@ -156,10 +182,6 @@ export function teamPanelView(team: TeamView): PanelView {
         break
       case 'running':
         runningTasks.push(task)
-        break
-      case 'pending':
-      case 'assigned':
-        if (unresolvedDependency(task, tasksById) !== undefined) waiting += 1
         break
       default:
         break
@@ -207,12 +229,16 @@ export function teamPanelView(team: TeamView): PanelView {
   }
 }
 
-/** One text line for the panel progress region; zero counts stay explicit. */
+/**
+ * One text line for the panel progress region; zero counts stay explicit. The
+ * blocked-by-a-prerequisite word is 等待前置 here exactly as in the sidebar and
+ * the overview, and the status-blocked set is explained by `blockerText`, never
+ * as a second count on this line.
+ */
 export function panelProgressText(view: PanelView): string {
   const parts = [`已完成 ${view.completed}/${view.taskTotal}`]
   if (view.running > 0) parts.push(`进行中 ${view.running}`)
-  if (view.waiting > 0) parts.push(`等待 ${view.waiting}`)
-  if (view.blocked > 0) parts.push(`阻塞 ${view.blocked}`)
+  if (view.waiting > 0) parts.push(`等待前置 ${view.waiting}`)
   if (view.error > 0) parts.push(`异常 ${view.error}`)
   return parts.join(' · ')
 }

@@ -209,8 +209,11 @@ describe('TeamMainAgentPanel progress', () => {
 
     expect(visible).toContain('已完成 2')
     expect(visible).toContain('进行中 1')
-    expect(visible).toContain('等待 1')
+    // One wait rule: the blocked task held by a running prerequisite and the
+    // pending task held by that blocked one both wait.
+    expect(visible).toContain('等待前置 2')
     expect(visible).toContain('异常 2')
+    expect(visible).not.toContain('阻塞 1')
     expect(html).toContain('role="progressbar"')
   })
 
@@ -218,7 +221,7 @@ describe('TeamMainAgentPanel progress', () => {
     const visible = text(render({ team: team() }))
     expect(visible).toContain('已完成 0')
     expect(visible).toContain('进行中 0')
-    expect(visible).toContain('等待 0')
+    expect(visible).toContain('等待前置 0')
     expect(visible).toContain('异常 0')
   })
 })
@@ -241,7 +244,9 @@ describe('TeamMainAgentPanel blockers and approvals', () => {
 
     expect(visible).toContain('1 个阻塞任务等待重新派发')
     expect(visible).not.toContain('暂无阻塞')
-    expect(visible).toContain('阻塞 1')
+    // blockerText explains the unreachable wait; no progress line counts it.
+    expect(visible).not.toContain('阻塞 1')
+    expect(visible).toContain('等待前置 0')
   })
 
   it('states no blockers when nothing is blocked', () => {

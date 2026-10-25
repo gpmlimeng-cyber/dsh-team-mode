@@ -1,20 +1,26 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import type { TeamTask } from '../src/domain/types.js'
+import type { TeamMemberSlot, TeamTask } from '../src/domain/types.js'
 import type { TeamView } from '../src/transport/contracts.js'
 import {
   compareTeamSidebar,
   recentTeamTasks,
+  rosterSubtitle,
+  taskWaitsOnDependency,
+  teamRosterRows,
   teamScopeCounts,
   teamSidebarStatusText,
   teamSidebarSummary,
 } from '../src/client/team-sidebar-data.js'
+import { teamPanelView } from '../src/client/team-main-agent-data.js'
+import { globalOverviewModel } from '../src/client/global-overview-data.js'
+import { isTeamExecuting } from '../src/client/team-status.js'
 
 const NOW = '2026-01-01T00:00:00.000Z'
 
 type SidebarFixture = Partial<Pick<
   TeamView,
-  'members' | 'tasks' | 'pinned' | 'updatedAt' | 'id' | 'name' | 'archivedAt' | 'state'
+  'members' | 'tasks' | 'pinned' | 'updatedAt' | 'id' | 'name' | 'archivedAt' | 'state' | 'memberOrder'
 >>
 
 function team(overrides: SidebarFixture = {}): TeamView {
@@ -70,7 +76,7 @@ describe('teamSidebarSummary', () => {
         d: 'error',
       }),
     }))
-    expect(summary).toEqual({ members: 5, running: 2, waiting: 1, waitingDependency: 0 })
+    expect(summary).toEqual({ members: 5, running: 2, waiting: 1, waitingDependency: 0, error: 1 })
   })
 
   it('counts blocked tasks whose prerequisites are not completed', () => {
@@ -115,11 +121,45 @@ describe('teamSidebarSummary', () => {
     expect(recentTeamTasks(fixture).find(item => item.id === 'review')?.blockedBy).toBeUndefined()
   })
 
-  it('ignores tasks that carry dependencies but are not blocked', () => {
+  it('counts queued work held by a prerequisite, not only blocked rows', () => {
+    // One rule for every surface: an open task whose prerequisite is unfinished
+    // waits, whatever its own status. A pending-only team must not read 空闲.
     const summary = teamSidebarSummary(team({
       tasks: {
         impl: task({ id: 'impl', status: 'running' }),
         pending: task({ id: 'pending', status: 'pending', dependencyIds: ['impl'] }),
+        queued: task({ id: 'queued', status: 'assigned', dependencyIds: ['impl'] }),
+      },
+    }))
+    expect(summary.waitingDependency).toBe(2)
+    expect(teamSidebarStatusText(summary)).toBe('0 人 · 任务执行中 · 2 等待前置')
+  })
+
+  it('counts a running task that still declares an unfinished prerequisite', () => {
+    const summary = teamSidebarSummary(team({
+      tasks: {
+        impl: task({ id: 'impl', status: 'running' }),
+        review: task({ id: 'review', status: 'running', dependencyIds: ['impl'] }),
+      },
+    }))
+    // The prerequisite itself has no dependency; only the held task waits.
+    expect(summary.waitingDependency).toBe(1)
+  })
+
+  it('exposes that one rule for the sidebar count, task rows and the overview', () => {
+    const tasks = { impl: task({ id: 'impl', status: 'running' }) }
+    expect(taskWaitsOnDependency(task({ id: 'q', status: 'pending', dependencyIds: ['impl'] }), tasks)).toBe(true)
+    expect(taskWaitsOnDependency(task({ id: 'q', status: 'failed', dependencyIds: ['impl'] }), tasks)).toBe(false)
+    expect(taskWaitsOnDependency(task({ id: 'q', status: 'pending' }), tasks)).toBe(false)
+  })
+
+  it('never counts a terminal task as waiting, even with a dependency id', () => {
+    const summary = teamSidebarSummary(team({
+      tasks: {
+        impl: task({ id: 'impl', status: 'running' }),
+        failed: task({ id: 'failed', status: 'failed', dependencyIds: ['impl'] }),
+        cancelled: task({ id: 'cancelled', status: 'cancelled', dependencyIds: ['impl'] }),
+        done: task({ id: 'done', status: 'completed', dependencyIds: ['impl'] }),
       },
     }))
     expect(summary.waitingDependency).toBe(0)
@@ -155,6 +195,64 @@ describe('teamSidebarStatusText', () => {
   })
 })
 
+describe('teamSidebarSummary · member failures and startup', () => {
+  it('counts an errored member and never lets the row read 空闲', () => {
+    const summary = teamSidebarSummary(team({ members: members({ only: 'error' }) }))
+
+    expect(summary).toMatchObject({ members: 1, running: 0, waiting: 0, error: 1 })
+    expect(teamSidebarStatusText(summary)).toBe('1 人 · 异常')
+  })
+
+  it('says 异常 once when the team itself is in error', () => {
+    const summary = teamSidebarSummary(team({ state: 'error', members: members({ only: 'error' }) }))
+    const text = teamSidebarStatusText(summary)
+
+    expect(text).toBe('1 人 · 异常')
+    expect(text.match(/异常/g)).toHaveLength(1)
+  })
+
+  it('reads a waking member as 启动中 instead of 空闲', () => {
+    // Decision: a starting member is transient activity, not leisure, so the
+    // row says 启动中; the roster still names the member state per row.
+    const summary = teamSidebarSummary(team({ members: members({ only: 'starting' }) }))
+
+    expect(summary).toMatchObject({ members: 1, starting: 1 })
+    expect(teamSidebarStatusText(summary)).toBe('1 人 · 启动中')
+    expect(teamSidebarStatusText(summary)).not.toContain('空闲')
+  })
+
+  it('keeps 空闲 when every member is idle or offline', () => {
+    const summary = teamSidebarSummary(team({ members: members({ a: 'idle', b: 'offline' }) }))
+
+    expect(summary).not.toHaveProperty('error')
+    expect(summary).not.toHaveProperty('starting')
+    expect(teamSidebarStatusText(summary)).toBe('2 人 · 空闲')
+  })
+
+  it('puts the error word after approvals and never beside 空闲', () => {
+    const summary = teamSidebarSummary(team({ members: members({ a: 'waiting_approval', b: 'error' }) }))
+
+    expect(teamSidebarStatusText(summary)).toBe('2 人 · 1 待审批 · 异常')
+  })
+
+  it('agrees with the roster and the overview on the same errored member', () => {
+    const fixture = team({
+      id: 'team-error',
+      members: { only: slot('only', { lastRuntimeState: 'error', lastError: '启动超时' }) },
+    })
+
+    expect(teamRosterRows(fixture)[0]).toMatchObject({
+      statusLabel: '异常',
+      tone: 'error',
+      attention: 'error',
+    })
+    const overview = globalOverviewModel({ teams: [fixture], instances: [], tasks: [] })
+    expect(overview.counts.error).toBe(1)
+    expect(overview.counts.idle).toBe(0)
+    expect(teamSidebarStatusText(teamSidebarSummary(fixture))).toBe('1 人 · 异常')
+  })
+})
+
 describe('teamSidebarStatusText · pending attention never reads 空闲', () => {
   it('drops 空闲 for one waiting_approval member and zero running', () => {
     const summary = teamSidebarSummary(team({ members: members({ leader: 'waiting_approval' }) }))
@@ -183,6 +281,83 @@ describe('teamSidebarStatusText · pending attention never reads 空闲', () => 
       members: members({ leader: 'idle' }),
     }))
     expect(teamSidebarStatusText(summary)).toBe('1 人 · 空闲')
+  })
+})
+
+describe('teamSidebarStatusText · 启动中 is one word', () => {
+  it('does not repeat the lifecycle 启动中 with a waking member', () => {
+    const summary = teamSidebarSummary(team({
+      state: 'starting',
+      members: members({ only: 'starting' }),
+    }))
+    const text = teamSidebarStatusText(summary)
+
+    expect(text).toBe('1 人 · 启动中')
+    expect(text.match(/启动中/g)).toHaveLength(1)
+  })
+
+  it('keeps a single 启动中 word next to approvals and errors', () => {
+    const approving = teamSidebarSummary(team({
+      state: 'starting',
+      members: members({ a: 'starting', b: 'waiting_approval' }),
+    }))
+    expect(teamSidebarStatusText(approving)).toBe('2 人 · 启动中 · 1 待审批')
+    expect(teamSidebarStatusText(approving).match(/启动中/g)).toHaveLength(1)
+
+    const errored = teamSidebarSummary(team({
+      state: 'starting',
+      members: members({ a: 'starting', b: 'error' }),
+    }))
+    expect(teamSidebarStatusText(errored)).toBe('2 人 · 启动中 · 异常')
+    expect(teamSidebarStatusText(errored).match(/启动中/g)).toHaveLength(1)
+  })
+
+  it('still reads the member word when no lifecycle label speaks', () => {
+    const summary = teamSidebarSummary(team({ members: members({ only: 'starting' }) }))
+    expect(teamSidebarStatusText(summary)).toBe('1 人 · 启动中')
+  })
+
+  it('still reads 启动中 for a starting team without members', () => {
+    expect(teamSidebarStatusText(teamSidebarSummary(team({ state: 'starting' })))).toBe('0 人 · 启动中')
+  })
+})
+
+describe('startup is not idle on any surface', () => {
+  const startingTeam = team({
+    id: 'team-starting',
+    name: '启动团队',
+    state: 'starting',
+    members: { only: slot('only', { lastRuntimeState: 'starting' }) },
+  })
+  const wakingMemberTeam = team({
+    id: 'team-waking',
+    name: '唤醒团队',
+    members: { only: slot('only', { lastRuntimeState: 'starting' }) },
+  })
+
+  it.each([
+    ['a starting team', () => startingTeam, '1 人 · 启动中'],
+    ['a team whose member is waking', () => wakingMemberTeam, '1 人 · 启动中'],
+  ] as const)('agrees on %s', (_label, build, expected) => {
+    const fixture = build()
+    const text = teamSidebarStatusText(teamSidebarSummary(fixture))
+    const roster = teamRosterRows(fixture)
+    const overview = globalOverviewModel({ teams: [fixture], instances: [], tasks: [] })
+
+    expect(text).toBe(expected)
+    expect(text).not.toContain('空闲')
+    expect(roster[0]).toMatchObject({ statusLabel: '启动中', tone: 'starting' })
+    expect(overview.teams[0]).toMatchObject({ starting: true, running: false })
+    expect(overview.counts.idle).toBe(0)
+  })
+
+  it('keeps a starting team out of the idle filter and the decision list', () => {
+    const overview = globalOverviewModel({ teams: [startingTeam], instances: [], tasks: [] })
+
+    expect(overview.teams[0]?.categories).toEqual([])
+    expect(overview.attention).toEqual([])
+    expect(overview.counts.idle).toBe(0)
+    expect(overview.counts.attention).toBe(0)
   })
 })
 
@@ -387,5 +562,333 @@ describe('sidebar narrow-width CSS', () => {
     expect(narrow.some(block => (
       /\.sidebarTeamRowWrapTwoLine\s+\.sidebarTeamTime\s*\{[^}]*display:\s*none/.test(block)
     ))).toBe(true)
+  })
+})
+
+const AVATAR = 'data:image/png;base64,iVBORw0KGgo='
+
+/** A full member slot; the roster reads the same fields the panel does. */
+function slot(id: string, overrides: Partial<TeamMemberSlot> = {}): TeamMemberSlot {
+  return {
+    id,
+    assistantId: `assistant-${id}`,
+    displayName: id,
+    role: 'member',
+    assistantSnapshot: {
+      assistantId: `assistant-${id}`,
+      revision: 1,
+      name: id,
+      instructions: '',
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      agentPresetId: 'default',
+      permissionPresetId: 'default',
+      skillAllowlist: [],
+      mcpServers: [],
+      prompts: [],
+    },
+    permissionPresetId: 'default',
+    sessionId: `session-${id}`,
+    desiredState: 'online',
+    lastRuntimeState: 'idle',
+    joinedAt: NOW,
+    ...overrides,
+  } as TeamMemberSlot
+}
+
+describe('teamRosterRows', () => {
+  it('returns one row per member and nothing at all for an empty team', () => {
+    expect(teamRosterRows(team())).toEqual([])
+  })
+
+  it('reads avatar, name, role, session and status from the member slot', () => {
+    const fixture = team({
+      members: {
+        leader: slot('leader', {
+          displayName: '队长',
+          role: 'leader',
+          sessionId: 'session-leader',
+          assistantSnapshot: { ...slot('leader').assistantSnapshot, avatar: AVATAR },
+          lastRuntimeState: 'running',
+        }),
+      },
+    })
+    expect(teamRosterRows(fixture)).toEqual([{
+      teamId: 'team-1',
+      slotId: 'leader',
+      sessionId: 'session-leader',
+      name: '队长',
+      role: 'leader',
+      avatar: AVATAR,
+      runtimeState: 'running',
+      statusLabel: '运行中',
+      tone: 'running',
+    }])
+  })
+
+  it('keeps the projection order: memberOrder, then joinedAt, then id', () => {
+    const fixture = team({
+      memberOrder: ['b', 'a'],
+      members: {
+        a: slot('a', { joinedAt: '2026-01-01T00:00:00.000Z' }),
+        b: slot('b', { joinedAt: '2026-01-03T00:00:00.000Z' }),
+        c: slot('c', { joinedAt: '2026-01-02T00:00:00.000Z' }),
+      },
+    })
+    expect(teamRosterRows(fixture).map(row => row.slotId)).toEqual(['b', 'a', 'c'])
+  })
+
+  it.each([
+    ['running', '运行中', 'running'],
+    ['waiting_approval', '等待审批', 'waiting'],
+    ['error', '异常', 'error'],
+    ['starting', '启动中', 'starting'],
+    ['idle', '空闲', 'idle'],
+    ['offline', '离线', 'offline'],
+  ] as const)('labels %s as %s with tone %s', (state, statusLabel, tone) => {
+    const row = teamRosterRows(team({ members: { a: slot('a', { lastRuntimeState: state }) } }))[0]
+    expect(row).toMatchObject({ statusLabel, tone, runtimeState: state })
+  })
+
+  it('shows the running task, otherwise the newest assigned one', () => {
+    const fixture = team({
+      members: { a: slot('a', { lastRuntimeState: 'running' }) },
+      tasks: {
+        older: task({ id: 'older', title: '旧运行', status: 'running', ownerSlotId: 'a', updatedAt: '2026-01-01T00:00:00.000Z' }),
+        newer: task({ id: 'newer', title: '新运行', status: 'running', ownerSlotId: 'a', updatedAt: '2026-01-02T00:00:00.000Z' }),
+        assigned: task({ id: 'assigned', title: '已分配', status: 'assigned', ownerSlotId: 'a', updatedAt: '2026-01-03T00:00:00.000Z' }),
+      },
+    })
+    expect(teamRosterRows(fixture)[0]?.currentTask).toEqual({ id: 'newer', title: '新运行' })
+  })
+
+  it('falls back to the newest assigned task when nothing runs', () => {
+    const fixture = team({
+      members: { a: slot('a') },
+      tasks: {
+        one: task({ id: 'one', title: '先分配', status: 'assigned', ownerSlotId: 'a', updatedAt: '2026-01-01T00:00:00.000Z' }),
+        two: task({ id: 'two', title: '后分配', status: 'assigned', ownerSlotId: 'a', updatedAt: '2026-01-02T00:00:00.000Z' }),
+      },
+    })
+    expect(teamRosterRows(fixture)[0]?.currentTask).toEqual({ id: 'two', title: '后分配' })
+  })
+
+  it('never invents a task for a member without one', () => {
+    const fixture = team({
+      members: { a: slot('a') },
+      tasks: { other: task({ id: 'other', ownerSlotId: 'b' }) },
+    })
+    expect(teamRosterRows(fixture)[0]?.currentTask).toBeUndefined()
+  })
+
+  it('names a blank task title instead of rendering empty space', () => {
+    const fixture = team({
+      members: { a: slot('a', { lastRuntimeState: 'running' }) },
+      tasks: { blank: task({ id: 'blank', title: '   ', status: 'running', ownerSlotId: 'a' }) },
+    })
+    expect(teamRosterRows(fixture)[0]?.currentTask).toEqual({ id: 'blank', title: '未命名任务' })
+  })
+
+  it('accepts only a bounded inline avatar', () => {
+    const valid = team({
+      members: { a: slot('a', { assistantSnapshot: { ...slot('a').assistantSnapshot, avatar: AVATAR } }) },
+    })
+    const invalid = team({
+      members: { a: slot('a', { assistantSnapshot: { ...slot('a').assistantSnapshot, avatar: 'https://example.test/x.png' } }) },
+    })
+    expect(teamRosterRows(valid)[0]?.avatar).toBe(AVATAR)
+    expect(teamRosterRows(invalid)[0]?.avatar).toBeUndefined()
+  })
+
+  it('marks one approval wait without a count', () => {
+    const fixture = team({ members: { a: slot('a', { lastRuntimeState: 'waiting_approval' }) } })
+    const row = teamRosterRows(fixture)[0]
+    expect(row?.attention).toBe('approval')
+    expect(row).not.toHaveProperty('approvalCount')
+  })
+
+  it('marks a runtime error and carries its last error text', () => {
+    const fixture = team({
+      members: { a: slot('a', { lastRuntimeState: 'error', lastError: '启动超时' }) },
+    })
+    expect(teamRosterRows(fixture)[0]).toMatchObject({
+      attention: 'error',
+      tone: 'error',
+      statusLabel: '异常',
+      errorText: '启动超时',
+    })
+  })
+
+  it('keeps error text on the error tone only', () => {
+    const fixture = team({
+      members: {
+        ok: slot('ok', { lastRuntimeState: 'waiting_approval', lastError: '旧错误' }),
+        bare: slot('bare', { lastRuntimeState: 'error' }),
+      },
+    })
+    const rows = teamRosterRows(fixture)
+    expect(rows[0]?.attention).toBe('approval')
+    expect(rows[0]).not.toHaveProperty('errorText')
+    expect(rows[1]).toMatchObject({ attention: 'error' })
+    expect(rows[1]).not.toHaveProperty('errorText')
+  })
+
+  it('survives an unknown runtime state without inventing a label', () => {
+    const fixture = team({ members: { a: slot('a', { lastRuntimeState: 'paused' as never }) } })
+    expect(teamRosterRows(fixture)[0]).toMatchObject({ statusLabel: 'paused', tone: 'idle' })
+  })
+
+  it('reads the same member fields as the Leader panel projection', () => {
+    const fixture = team({
+      members: { a: slot('a', { lastRuntimeState: 'running' }), b: slot('b') },
+      tasks: { work: task({ id: 'work', title: '实现', status: 'running', ownerSlotId: 'a' }) },
+    })
+    const panel = teamPanelView(fixture)
+    const rows = teamRosterRows(fixture)
+    expect(rows.map(row => ({
+      id: row.slotId,
+      name: row.name,
+      role: row.role,
+      state: row.runtimeState,
+      currentTask: row.currentTask,
+    }))).toEqual(panel.members.map(member => ({
+      id: member.id,
+      name: member.name,
+      role: member.role,
+      state: member.state,
+      currentTask: member.currentTask,
+    })))
+  })
+
+  it('builds the subtitle from the status word and the current task', () => {
+    expect(rosterSubtitle({ statusLabel: '空闲' })).toBe('空闲')
+    expect(rosterSubtitle({ statusLabel: '运行中', currentTask: { id: 't', title: '实现登录' } }))
+      .toBe('运行中 · 实现登录')
+  })
+})
+
+describe('sidebar counts agree with the other team surfaces', () => {
+  const fixture = team({
+    members: {
+      leader: slot('leader', { lastRuntimeState: 'waiting_approval' }),
+      a: slot('a', { lastRuntimeState: 'running' }),
+      b: slot('b', { lastRuntimeState: 'idle' }),
+    },
+    tasks: {
+      impl: task({ id: 'impl', status: 'running', ownerSlotId: 'a' }),
+      queued: task({ id: 'queued', status: 'pending', dependencyIds: ['impl'] }),
+      done: task({ id: 'done', status: 'completed' }),
+    },
+  })
+
+  it('counts the same approvals as the global overview', () => {
+    const summary = teamSidebarSummary(fixture)
+    const overview = globalOverviewModel({ teams: [fixture], instances: [], tasks: [] })
+    expect(summary.waiting).toBe(1)
+    expect(overview.teams[0]?.approval).toBe(summary.waiting)
+  })
+
+  it('counts the same dependency waits as the global overview', () => {
+    const summary = teamSidebarSummary(fixture)
+    const overview = globalOverviewModel({ teams: [fixture], instances: [], tasks: [] })
+    expect(summary.waitingDependency).toBe(1)
+    expect(overview.teams[0]?.blocked).toBe(summary.waitingDependency)
+  })
+
+  it('keeps 运行 for members that are actually running, unlike the team-level "has activity" rule', () => {
+    // F1: one word, one meaning. The sidebar number excludes an approval wait;
+    // the team-level flag is a different question ("does anything need me?") and
+    // is documented with its own label.
+    const summary = teamSidebarSummary(fixture)
+    expect(summary.running).toBe(1)
+    expect(isTeamExecuting(fixture)).toBe(true)
+    expect(teamSidebarStatusText(summary)).toBe('3 人 · 1 运行 · 1 待审批')
+  })
+})
+
+describe('roster CSS and sidebar structure', () => {
+  const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+  const sidebar = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
+
+  const ALLOWED_TOKENS = new Set([
+    '--dsw-alias-label-primary',
+    '--dsw-alias-label-secondary',
+    '--dsw-alias-label-tertiary',
+    '--dsw-alias-label-quaternary',
+    '--dsw-alias-bg-layer-1',
+    '--dsw-alias-bg-layer-2',
+    '--dsw-alias-border-l1',
+    '--dsw-alias-border-l2',
+    '--dsw-alias-interactive-bg-hover',
+    '--dsw-alias-interactive-bg-active',
+    '--dsw-alias-state-success-primary',
+    '--dsw-alias-state-warn-primary',
+    '--dsw-alias-state-error-primary',
+    '--dsw-alias-state-business-primary',
+    '--dsw-radius-xs',
+    '--dsw-radius-sm',
+    '--dsw-radius-md',
+    '--dsw-focus-ring-width',
+    '--dsw-focus-ring-color',
+  ])
+
+  function rosterCss(): string {
+    const start = css.indexOf('/* Bot roster:')
+    const end = css.indexOf('/* The 320px phone drawer', start)
+    expect(start).toBeGreaterThan(-1)
+    expect(end).toBeGreaterThan(start)
+    return css.slice(start, end)
+  }
+
+  it('uses only whitelisted semantic tokens', () => {
+    const tokens = [...rosterCss().matchAll(/var\((--dsw-[a-z0-9-]+)/g)].map(match => match[1]!)
+    expect(tokens.length).toBeGreaterThan(0)
+    expect(tokens.filter(token => !ALLOWED_TOKENS.has(token))).toEqual([])
+    expect(rosterCss()).not.toContain('--dsw-alias-text-')
+  })
+
+  it('lets the roster row shrink into a 320px drawer', () => {
+    const row = /\.sidebarRosterRow\s*\{([^}]*)\}/.exec(rosterCss())?.[1] ?? ''
+    expect(row).toContain('min-width: 0')
+    expect(row).toContain('width: 100%')
+    expect(rosterCss()).not.toMatch(/min-width:\s*(?:1[3-9]\d|[2-9]\d\d)px/)
+  })
+
+  it('tightens the roster indent on a phone viewport', () => {
+    const narrow = css.slice(css.indexOf('@media (max-width: 420px)'))
+    expect(narrow).toMatch(/\.sidebarRosterList\s*\{[^}]*padding-left:\s*18px/)
+  })
+
+  it('keeps the roster as a sibling of the team row button, never nested in it', () => {
+    // A button cannot contain the disclosure or another row: the roster block
+    // and the toggle are siblings inside the team group.
+    expect(sidebar).toMatch(/\{rosterOpen && \(\n\s*<div\n\s*id=\{rosterId\}/)
+    expect(sidebar).toMatch(/aria-expanded=\{rosterOpen\}\n\s*aria-controls=\{rosterOpen \? rosterId : undefined\}/)
+  })
+
+  it('navigates from a roster row with the existing openSession callback', () => {
+    expect(sidebar).toContain("import { MemberAvatar } from './member-avatar.js'")
+    expect(sidebar).toContain('onClick={() => { openRosterMember(team, row) }}')
+    expect(sidebar).toContain('openSession(row.sessionId)')
+  })
+
+  it('draws an explicit loading and load-failure state instead of an empty roster', () => {
+    expect(sidebar).toContain('正在加载团队…')
+    expect(sidebar).toContain('role="status"')
+    expect(sidebar).toContain('团队数据加载失败：')
+    expect(sidebar).toContain('setLoaded(true)')
+  })
+
+  it('reads only the already-loaded team list, with no new request', () => {
+    const data = readFileSync(new URL('../src/client/team-sidebar-data.ts', import.meta.url), 'utf8')
+    expect(data).not.toContain('callAgentTeam')
+    expect(data).not.toContain('subscribeAgentTeam')
+    expect(data).not.toContain("from './api.js'")
+  })
+
+  it('shows the status word and the attention mark in every row', () => {
+    expect(sidebar).toContain('{rosterSubtitle(row)}')
+    expect(sidebar).toContain("row.attention === 'error' ? '异常' : '待审批'")
+    expect(sidebar).toContain("row.tone === 'running'")
   })
 })
