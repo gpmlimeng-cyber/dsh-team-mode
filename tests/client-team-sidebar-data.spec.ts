@@ -1,7 +1,35 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+// The primitives bundle ships without its own runtime dependencies in this
+// checkout; the guards below only need the element shape, not the styling.
+vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
+  const { createElement: h } = await import('react')
+  const passthrough = (props: { children?: unknown }) => (props.children ?? null) as never
+  const api: Record<string, unknown> = {
+    Button: (props: Record<string, unknown>) => h('button', null, props.children as never),
+    Input: (props: Record<string, unknown>) => h('input', { placeholder: props.placeholder as string }),
+    Tooltip: passthrough,
+    Menu: () => null,
+    Tag: passthrough,
+  }
+  // Icons are irrelevant here; unknown names resolve to a null component. The
+  // module must never look thenable, or `await import()` never settles.
+  return new Proxy(api, {
+    get: (target, key) => {
+      if (typeof key !== 'string' || key === 'then' || key === '__esModule') return undefined
+      if (!(key in target)) target[key] = () => null
+      return target[key]
+    },
+  })
+})
+
 import type { TeamMemberSlot, TeamTask } from '../src/domain/types.js'
-import type { TeamView } from '../src/transport/contracts.js'
+import type { CatalogView, TeamView } from '../src/transport/contracts.js'
+import { callAgentTeam } from '../src/client/api.js'
+import { TeamForm } from '../src/client/teams/TeamPanel.js'
 import {
   compareTeamSidebar,
   recentTeamTasks,
@@ -890,5 +918,129 @@ describe('roster CSS and sidebar structure', () => {
     expect(sidebar).toContain('{rosterSubtitle(row)}')
     expect(sidebar).toContain("row.attention === 'error' ? '异常' : '待审批'")
     expect(sidebar).toContain("row.tone === 'running'")
+  })
+})
+
+describe('read requests are shared across one mount', () => {
+  const respond = (value: unknown) => ({ ok: true, value })
+  const stubFetch = (fail = 0) => {
+    const calls: string[] = []
+    let remainingFailures = fail
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => {
+      const request = JSON.parse(init.body) as { method: string }
+      calls.push(request.method)
+      if (remainingFailures > 0) {
+        remainingFailures -= 1
+        return { json: async () => ({ ok: false, error: { code: 'boom', message: 'boom' } }) }
+      }
+      return { json: async () => respond({ items: [], total: 0 }) }
+    }))
+    return calls
+  }
+
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('shares one team.list between the hosts that mount together', async () => {
+    const calls = stubFetch()
+    await Promise.all([
+      callAgentTeam('team.list'),
+      callAgentTeam('team.list'),
+      callAgentTeam('team.list'),
+    ])
+    expect(calls).toEqual(['team.list'])
+  })
+
+  it('pulls again once the shared request settled instead of caching it', async () => {
+    const calls = stubFetch()
+    await callAgentTeam('team.list')
+    await callAgentTeam('team.list')
+    expect(calls).toEqual(['team.list', 'team.list'])
+  })
+
+  it('keeps different payloads and mutations out of the shared slot', async () => {
+    const calls = stubFetch()
+    await Promise.all([
+      callAgentTeam('team.get', { id: 'team-a' }),
+      callAgentTeam('team.get', { id: 'team-b' }),
+      callAgentTeam('team.get', { id: 'team-a' }),
+      callAgentTeam('team.pin', { teamId: 'team-a', pinned: true }, 1),
+      callAgentTeam('team.pin', { teamId: 'team-a', pinned: true }, 1),
+    ])
+    expect(calls.filter(method => method === 'team.get')).toHaveLength(2)
+    expect(calls.filter(method => method === 'team.pin')).toHaveLength(2)
+  })
+
+  it('retries after a failed shared read', async () => {
+    const calls = stubFetch(1)
+    await expect(callAgentTeam('team.list')).rejects.toThrow('boom')
+    await callAgentTeam('team.list')
+    expect(calls).toEqual(['team.list', 'team.list'])
+  })
+
+  it('awaits the catalog instead of firing it and forgetting', () => {
+    const source = readFileSync(new URL('../src/client/components.tsx', import.meta.url), 'utf8')
+    // Fire-and-forget for the batch, but its own settle state drives the UI.
+    expect(source).toContain("void callAgentTeam('catalog.get')")
+    expect(source).toContain('setCatalogLoading(true)')
+    expect(source).toContain('setCatalogLoading(false)')
+    // A change-event burst folds into one reload instead of one per event.
+    expect(source).toContain('TEAM_RELOAD_DEBOUNCE_MS')
+    // The first connection open is not a recovery: it must not re-read.
+    expect(source).toContain('TEAM_RESYNC_SETTLE_MS')
+    expect(source).toContain('if (resync && Date.now() - lastLoadAt.current < TEAM_RESYNC_SETTLE_MS) return')
+    expect(source).toContain('if (running !== undefined) return running')
+  })
+})
+
+describe('创建默认成员 waits for the catalog', () => {
+  const catalogReady = {
+    providers: [{ id: 'xiaomi', name: 'Xiaomi' }],
+    models: { xiaomi: [{ id: 'mimo', name: 'MiMo' }] },
+    agentPresets: [{ id: 'standard', name: 'Standard' }],
+    permissionPresets: [{ value: 'workspace-write', name: 'Workspace write' }],
+    workspaces: [],
+  } as unknown as CatalogView
+
+  const renderForm = (overrides: { catalog?: CatalogView, catalogLoading?: boolean }) => renderToStaticMarkup(
+    createElement(TeamForm, {
+      catalog: overrides.catalog,
+      ...(overrides.catalogLoading === undefined ? {} : { catalogLoading: overrides.catalogLoading }),
+      assistants: [],
+      pickWorkspace: async () => null,
+      onAssistantsChanged: async () => undefined,
+      onCancel: () => undefined,
+      onCreated: async () => undefined,
+    }),
+  )
+
+  it('shows the loading state before the catalog resolves', () => {
+    const html = renderForm({ catalogLoading: true })
+    expect(html).toContain('正在读取模型与成员模板…')
+    expect(html).toContain('data-dsh-team-catalog-loading')
+    // The false terminal error and the premature create action are both absent.
+    expect(html).not.toContain('当前没有可用的 Provider')
+    expect(html).not.toContain('>创建默认成员<')
+    expect(html).not.toContain('还没有成员模板。')
+  })
+
+  it('offers the create action only after the catalog settled', () => {
+    const html = renderForm({ catalogLoading: false })
+    expect(html).toContain('还没有成员模板。')
+    expect(html).toContain('创建默认成员')
+    expect(html).not.toContain('正在读取模型与成员模板…')
+  })
+
+  it('keeps the create action enabled when the catalog has a provider', () => {
+    const html = renderForm({ catalog: catalogReady, catalogLoading: false })
+    expect(html).toContain('创建默认成员')
+    expect(html).not.toMatch(/disabled=""[^>]*>创建默认成员/)
+  })
+
+  it('never reports a missing provider while the catalog is in flight', () => {
+    const panel = readFileSync(new URL('../src/client/teams/TeamPanel.tsx', import.meta.url), 'utf8')
+    expect(panel).toContain('if (catalogLoading === true) return')
+    // A catalog that never resolved is a load problem, not an empty provider list.
+    expect(panel).toContain('还没有读取到模型目录，请稍后重试。')
+    expect(panel).toContain("当前没有可用的 Provider")
   })
 })

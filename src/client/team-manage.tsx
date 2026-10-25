@@ -1,4 +1,6 @@
 import { useEffect } from 'react'
+import { navigationErrorMessage, openSessionInCatalog, teamLeaderSessionId } from './api.js'
+import { reportNavigationError } from './store.js'
 import { TeamCard } from './teams/TeamPanel.js'
 import { GlobalOverview } from './global-overview.js'
 import { useAgentTeamData, type WorkspaceChoice } from './components.js'
@@ -43,10 +45,26 @@ export function TeamManageView({
     const workspace = await workspaces.create({ path })
     return { id: workspace.workspaceId, path: workspace.path, title: workspace.title }
   }
+  // Every team entry here is a Session navigation: an unresolvable Leader or a
+  // refused Session is reported, never a click that silently does nothing.
+  const openSession = (sessionId: string): void => {
+    if (uiWorkspace === undefined) {
+      reportNavigationError('无法打开该会话：当前环境不提供会话导航')
+      return
+    }
+    void openSessionInCatalog(sessionId, { open: id => { uiWorkspace.openSession(id) } }).then(
+      () => { reportNavigationError(undefined) },
+      cause => { reportNavigationError(navigationErrorMessage(cause)) },
+    )
+  }
   const openTeam = (teamId: string): void => {
     const target = teams.find(entry => entry.id === teamId)
-    const leader = target?.members[target.leaderSlotId]
-    if (leader !== undefined) uiWorkspace?.openSession(leader.sessionId)
+    const sessionId = target === undefined ? undefined : teamLeaderSessionId(target)
+    if (sessionId === undefined) {
+      reportNavigationError('无法打开该团队：还没有可用的 Leader 会话')
+      return
+    }
+    openSession(sessionId)
   }
 
   return (
@@ -59,9 +77,7 @@ export function TeamManageView({
             teamsLoading={teamsLoading}
             {...(teamsError === undefined ? {} : { teamsError })}
             onOpenTeam={openTeam}
-            {...(uiWorkspace === undefined
-              ? {}
-              : { onOpenAssistant: (sessionId: string) => { uiWorkspace.openSession(sessionId) } })}
+            onOpenAssistant={openSession}
           />
         </div>
       </details>
@@ -72,9 +88,7 @@ export function TeamManageView({
         pickWorkspace={pickWorkspace}
         onChanged={load}
         onCloned={async () => { await load() }}
-        {...(uiWorkspace === undefined
-          ? {}
-          : { onOpenSession: (sessionId: string) => { uiWorkspace.openSession(sessionId) } })}
+        onOpenSession={openSession}
         compact
       />
     </div>

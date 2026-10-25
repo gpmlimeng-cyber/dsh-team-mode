@@ -129,13 +129,7 @@ const en: Record<string, string> = {
 export const TEAM_ZH = zh
 export const TEAM_EN = en
 
-let translate: Translate | undefined
 let service: TeamLocaleService | undefined
-
-function fallback(key: string, vars?: Readonly<Record<string, string | number>>): string {
-  const table = typeof navigator !== 'undefined' && navigator.language.toLowerCase().startsWith('zh') ? zh : en
-  return interpolate(table[key] ?? zh[key] ?? key, vars)
-}
 
 function interpolate(text: string, vars?: Readonly<Record<string, string | number>>): string {
   if (vars === undefined) return text
@@ -153,18 +147,20 @@ export function installTeamLocale(ctx: TeamLocaleContext): void {
   if (next === undefined) return
   service = next
   next.register('team', { zh, en })
-  translate = next.bind('team')
 }
 
+/**
+ * The team surface ships Chinese copy end to end: every hardcoded label, menu,
+ * dialog and hint is Chinese. Resolving one key at a time from the shell locale
+ * is what half-translated it — `Manage team` and `Reconnect` sitting next to
+ * 置顶 and 归档 — so the namespace resolves Chinese and the `en` table stays as
+ * the source for a future full pass instead of an always-partial result.
+ */
 export function teamText(
   key: string,
   vars?: Readonly<Record<string, string | number>>,
 ): string {
-  try {
-    return translate === undefined ? fallback(key, vars) : interpolate(translate(key), vars)
-  } catch {
-    return fallback(key, vars)
-  }
+  return interpolate(zh[key] ?? key, vars)
 }
 
 /** Translate and re-render the calling component when the locale changes. */

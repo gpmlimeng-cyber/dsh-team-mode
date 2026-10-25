@@ -22,7 +22,7 @@ export function TeamModeDialogs({
   const [manageTab, setManageTab] = useState<'members' | 'activity'>('members')
   useEffect(() => { setManageTab('members') }, [dialog])
   const active = dialog !== undefined
-  const { catalog, assistants, teams, loading, error, load } = useAgentTeamData(true, active)
+  const { catalog, assistants, teams, loading, error, catalogLoading, load } = useAgentTeamData(true, active)
   const team = useMemo(
     () => (dialog?.kind === 'manage' ? teams.find(entry => entry.id === dialog.teamId) : undefined),
     [dialog, teams],
@@ -116,6 +116,7 @@ export function TeamModeDialogs({
       {error !== undefined && <div className={css.teamDialogError} role="alert">{error}</div>}
       <TeamForm
         catalog={catalog}
+        catalogLoading={catalogLoading}
         assistants={assistants}
         pickWorkspace={pickWorkspace}
         onAssistantsChanged={load}

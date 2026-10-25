@@ -26,6 +26,7 @@ import { MemberAvatar } from './member-avatar.js'
 import {
   openCreateTeamDialog,
   openManageTeamDialog,
+  reportNavigationError,
   selectTeam,
   useAgentTeamUi,
 } from './store.js'
@@ -220,7 +221,7 @@ export function SidebarTeamSection({
   openSession: (sessionId: string) => void
   openTeamPage: (teamId: string) => void
 }): JSX.Element {
-  const { selectedTeamId } = useAgentTeamUi()
+  const { selectedTeamId, navigationError } = useAgentTeamUi()
   const t = useTeamText()
   const [teams, setTeams] = useState<TeamView[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -447,6 +448,18 @@ export function SidebarTeamSection({
                   重试
                 </button>
               )}
+            </div>
+          )}
+          {navigationError !== undefined && (
+            <div className={css.sidebarTeamError} role="alert" data-dsh-team-navigation-error>
+              <span>{navigationError}</span>
+              <button
+                type="button"
+                className={css.sidebarTeamRetry}
+                onClick={() => { reportNavigationError(undefined) }}
+              >
+                关闭
+              </button>
             </div>
           )}
           {scopeCounts.archived > 0 && (

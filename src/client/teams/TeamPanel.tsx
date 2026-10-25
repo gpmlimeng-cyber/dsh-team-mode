@@ -2403,6 +2403,7 @@ function assistantGlyph(assistant: AssistantView): string {
 
 export function TeamForm({
   catalog,
+  catalogLoading,
   assistants,
   pickWorkspace,
   onAssistantsChanged,
@@ -2410,6 +2411,8 @@ export function TeamForm({
   onCreated,
 }: {
   catalog: CatalogView | undefined
+  /** The catalog is still in flight: never report a missing provider before it settles. */
+  catalogLoading?: boolean | undefined
   assistants: AssistantView[]
   pickWorkspace: () => Promise<WorkspaceChoice | null>
   onAssistantsChanged: () => Promise<void>
@@ -2428,6 +2431,7 @@ export function TeamForm({
   const [pickingWorkspace, setPickingWorkspace] = useState(false)
   const [creatingAssistant, setCreatingAssistant] = useState(false)
   const [error, setError] = useState<string>()
+  const t = useTeamText()
   const workspaces = useMemo(() => {
     if (pickedWorkspace === undefined || catalogWorkspaces.some(workspace => workspace.id === pickedWorkspace.id)) {
       return catalogWorkspaces
@@ -2447,12 +2451,18 @@ export function TeamForm({
   }, [assistants, query])
 
   async function createDefaultAssistant(): Promise<void> {
-    const provider = catalog?.providers.find(entry => (catalog.models[entry.id]?.length ?? 0) > 0)
-    const model = provider === undefined ? undefined : catalog?.models[provider.id]?.[0]
-    const preset = catalog?.agentPresets.find(entry => entry.id === 'standard' && entry.broken === undefined)
-      ?? catalog?.agentPresets.find(entry => entry.broken === undefined)
-    const permission = catalog?.permissionPresets.find(entry => entry.value === 'workspace-write')
-      ?? catalog?.permissionPresets[0]
+    // A click that lands before the catalog resolves is not an empty catalog.
+    if (catalogLoading === true) return
+    if (catalog === undefined) {
+      setError('还没有读取到模型目录，请稍后重试。')
+      return
+    }
+    const provider = catalog.providers.find(entry => (catalog.models[entry.id]?.length ?? 0) > 0)
+    const model = provider === undefined ? undefined : catalog.models[provider.id]?.[0]
+    const preset = catalog.agentPresets.find(entry => entry.id === 'standard' && entry.broken === undefined)
+      ?? catalog.agentPresets.find(entry => entry.broken === undefined)
+    const permission = catalog.permissionPresets.find(entry => entry.value === 'workspace-write')
+      ?? catalog.permissionPresets[0]
     if (provider === undefined || model === undefined || preset === undefined || permission === undefined) {
       setError('当前没有可用的 Provider、模型、Agent Preset 或权限预设，无法创建默认成员。')
       return
@@ -2595,19 +2605,30 @@ export function TeamForm({
             ))}
             {filteredAssistants.length === 0 && (
               assistants.length === 0
-                ? <div className={css.assistantEmpty}>
-                    <strong>还没有成员模板。</strong>
-                    <span>用当前默认模型创建一个通用成员，或到“设置 → 团队”管理模板。</span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      disabled={creatingAssistant}
-                      onClick={() => { void createDefaultAssistant() }}
-                    >
-                      {creatingAssistant ? '创建中…' : '创建默认成员'}
-                    </Button>
-                  </div>
+                ? (
+                    catalogLoading === true
+                      ? (
+                          <div className={css.assistantEmpty} role="status" data-dsh-team-catalog-loading>
+                            <strong>正在读取模型与成员模板…</strong>
+                            <span>模型、Agent Preset 与权限预设就绪后即可一键创建成员模板。</span>
+                          </div>
+                        )
+                      : (
+                          <div className={css.assistantEmpty}>
+                            <strong>还没有成员模板。</strong>
+                            <span>用当前默认模型创建一个通用成员，或到“设置 → 团队”管理模板。</span>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              type="button"
+                              disabled={creatingAssistant}
+                              onClick={() => { void createDefaultAssistant() }}
+                            >
+                              {creatingAssistant ? '创建中…' : '创建默认成员'}
+                            </Button>
+                          </div>
+                        )
+                  )
                 : <Empty text="未找到结果" />
             )}
           </div>
@@ -2639,17 +2660,24 @@ export function TeamForm({
                         {assistant === undefined ? '?' : assistantGlyph(assistant)}
                       </span>
                       <span className={css.selectedMemberName}>{assistant?.name ?? '助手'}</span>
-                      <Tooltip label={leader ? '当前 Leader' : '设为 Leader'} side="top">
-                        <button
-                          type="button"
-                          className={`${css.leaderButton} ${leader ? css.leaderButtonActive : ''}`}
-                          aria-pressed={leader}
-                          aria-label={leader ? '当前 Leader' : '设为 Leader'}
-                          onClick={() => { setLeaderKey(member.key) }}
-                        >
-                          <LeaderMark size={15} filled={leader} />
-                        </button>
-                      </Tooltip>
+                      {/* Same pattern as the team card: a visible label is the
+                          accessible name, so the control never reads differently
+                          from what is on screen. */}
+                      {leader
+                        ? (
+                            <span className={`${css.memberRole} ${css.memberRoleLeader}`}>
+                              {t('member.setLeader')}
+                            </span>
+                          )
+                        : (
+                            <button
+                              type="button"
+                              className={`${css.memberRole} ${css.memberRoleAction}`}
+                              onClick={() => { setLeaderKey(member.key) }}
+                            >
+                              {t('member.setLeader')}
+                            </button>
+                          )}
                       <Tooltip label="移除成员" side="top">
                         <button
                           type="button"

@@ -282,9 +282,9 @@ describe('live registered team view', () => {
     expect(markup).toContain('未归入目标 · 1')
     expect(markup).toContain('等待依赖')
     expect(markup).toContain('阻塞 1 项后续任务')
-    // Node has no zh locale, so the i18n fallback renders the English tag; the
+    // The team namespace resolves Chinese regardless of the shell locale; the
     // point is that the epoch is visible and the Session id never is.
-    expect(markup).toContain('Epoch 2')
+    expect(markup).toContain('纪元 2')
     expect(markup).not.toContain('session-live')
   })
 })

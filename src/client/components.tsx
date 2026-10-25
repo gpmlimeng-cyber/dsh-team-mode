@@ -22,6 +22,10 @@ import type {
 
 export type { WorkspaceChoice } from './types.js'
 
+/** Trailing window that folds a change-event burst into one reload. */
+const TEAM_RELOAD_DEBOUNCE_MS = 120
+/** A connection open this soon after a load is the first one, not a recovery. */
+const TEAM_RESYNC_SETTLE_MS = 1_500
 const floatingLauncherStorageKey = 'dsh-team-mode:floating-launcher-position'
 const floatingLauncherMargin = 8
 const floatingLauncherWidth = 42
@@ -305,6 +309,7 @@ export function useAgentTeamData(includeTeams: boolean, active = true): {
   teams: TeamView[]
   loading: boolean
   error: string | undefined
+  catalogLoading: boolean
   teamsLoading: boolean
   teamsError: string | undefined
   load: () => Promise<void>
@@ -315,51 +320,89 @@ export function useAgentTeamData(includeTeams: boolean, active = true): {
   const [teamsLoaded, setTeamsLoaded] = useState(false)
   const [teamsError, setTeamsError] = useState<string>()
   const [loading, setLoading] = useState(false)
+  const [catalogLoading, setCatalogLoading] = useState(true)
   const [error, setError] = useState<string>()
+  const inFlight = useRef<Promise<void>>()
+  const lastLoadAt = useRef(0)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(undefined)
-    try {
-      void callAgentTeam('catalog.get')
-        .then(value => { setCatalog(value) })
-        .catch(cause => {
-          const message = cause instanceof Error ? cause.message : String(cause)
-          setError(current => current === undefined ? message : `${current}；${message}`)
-        })
-      const coreRequests = [
-        callAgentTeam('assistant.list').then(value => { setAssistants(value.items) }),
-        includeTeams
-          ? callAgentTeam('team.list')
-              .then(value => {
-                setTeams(value.items)
-                setTeamsError(undefined)
-              })
-              .catch((cause: unknown) => {
-                const message = cause instanceof Error ? cause.message : String(cause)
-                setTeamsError(message)
-                throw cause
-              })
-              .finally(() => { setTeamsLoaded(true) })
-          : Promise.resolve().then(() => {
-            setTeams([])
-            setTeamsLoaded(true)
-          }),
-      ]
-      const results = await Promise.allSettled(coreRequests)
-      const failures = results
-        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
-        .map(result => result.reason instanceof Error ? result.reason.message : String(result.reason))
-      if (failures.length > 0) setError(failures.join('；'))
-    } finally {
-      setLoading(false)
-    }
+  const load = useCallback((): Promise<void> => {
+    // One load per hook at a time: a change-event burst must not multiply reads.
+    const running = inFlight.current
+    if (running !== undefined) return running
+    lastLoadAt.current = Date.now()
+    const request = (async (): Promise<void> => {
+      setLoading(true)
+      setError(undefined)
+      try {
+        // The catalog stays fire-and-forget for the batch (its own resolution
+        // publishes `catalogLoading`), so a slow catalog never delays the Team
+        // list the sidebar draws from.
+        setCatalogLoading(true)
+        void callAgentTeam('catalog.get')
+          .then(value => { setCatalog(value) })
+          .catch((cause: unknown) => {
+            const message = cause instanceof Error ? cause.message : String(cause)
+            setError(current => current === undefined ? message : `${current}；${message}`)
+          })
+          .finally(() => { setCatalogLoading(false) })
+        const coreRequests = [
+          callAgentTeam('assistant.list').then(value => { setAssistants(value.items) }),
+          includeTeams
+            ? callAgentTeam('team.list')
+                .then(value => {
+                  setTeams(value.items)
+                  setTeamsError(undefined)
+                })
+                .catch((cause: unknown) => {
+                  const message = cause instanceof Error ? cause.message : String(cause)
+                  setTeamsError(message)
+                  throw cause
+                })
+                .finally(() => { setTeamsLoaded(true) })
+            : Promise.resolve().then(() => {
+              setTeams([])
+              setTeamsLoaded(true)
+            }),
+        ]
+        const results = await Promise.allSettled(coreRequests)
+        const failures = results
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .map(result => result.reason instanceof Error ? result.reason.message : String(result.reason))
+        if (failures.length > 0) setError(failures.join('；'))
+      } finally {
+        setLoading(false)
+      }
+    })()
+    inFlight.current = request
+    void request.finally(() => {
+      if (inFlight.current === request) inFlight.current = undefined
+    })
+    return request
   }, [includeTeams])
 
   useEffect(() => {
     if (!active) return
     void load()
-    return subscribeAgentTeam(() => { void load() }, () => { setError('事件连接已断开，正在等待重连') }, () => { void load() })
+    // Trailing debounce: the startup change/resync burst collapses into one reload.
+    // The first connection open is not a recovery — the load above already covers
+    // it, so a resync inside that window must not double the read.
+    // Coalescing throttle, not a trailing debounce: a steady stream of change
+    // events must never starve the reload that a just-settled mutation awaits.
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const schedule = (resync = false): void => {
+      if (resync && Date.now() - lastLoadAt.current < TEAM_RESYNC_SETTLE_MS) return
+      if (timer !== undefined) return
+      timer = setTimeout(() => { timer = undefined; void load() }, TEAM_RELOAD_DEBOUNCE_MS)
+    }
+    const unsubscribe = subscribeAgentTeam(
+      () => { schedule() },
+      () => { setError('事件连接已断开，正在等待重连') },
+      () => { schedule(true) },
+    )
+    return () => {
+      if (timer !== undefined) clearTimeout(timer)
+      unsubscribe()
+    }
   }, [active, load])
 
   return {
@@ -368,6 +411,7 @@ export function useAgentTeamData(includeTeams: boolean, active = true): {
     teams,
     loading,
     error,
+    catalogLoading,
     teamsLoading: !teamsLoaded,
     teamsError,
     load,

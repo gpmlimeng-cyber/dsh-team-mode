@@ -13,6 +13,7 @@ import { TeamMainAgentPanel } from './team-main-agent.js'
 import {
   closeTeamPanel,
   panelToggleAvailable,
+  reportNavigationError,
   toggleTeamPanel,
   useTeamPanelOpen,
 } from './store.js'
@@ -31,7 +32,13 @@ import {
   TeamBoardView,
   keepNativeConversationTab,
 } from './team-board.js'
-import { callAgentTeam, subscribeAgentTeam } from './api.js'
+import {
+  callAgentTeam,
+  navigationErrorMessage,
+  openSessionInCatalog,
+  subscribeAgentTeam,
+  teamLeaderSessionId,
+} from './api.js'
 import { installTeamLocale, type TeamLocaleContext } from './team-i18n.js'
 import type { TeamView } from '../transport/contracts.js'
 
@@ -100,10 +107,26 @@ export function apply(ctx: AgentTeamClientContext): void {
     { name: 'settings.section', id: 'dsh-team-mode', order: 40, label: '团队' },
     AgentTeamSettingsSection,
   ))
+  // The shell's Session controller only opens Sessions its client catalog has
+  // pulled. Team and Assistant Sessions are created on the Host, so a page that
+  // was already open does not know the id yet and `openSession` throws
+  // `sessions.retain: unknown session`. Pull the catalog once and retry; any
+  // remaining failure is shown instead of swallowed.
+  const sessions = (ctx as unknown as {
+    sessions?: { refresh?: () => Promise<unknown> }
+  }).sessions
   const openSession = (sessionId: string): void => {
     // Navigation only. The right sidebar follows the shell's remembered user
     // state; Team Mode must not force it open or select a tab.
-    ctx.uiWorkspace.openSession(sessionId as never)
+    void openSessionInCatalog(sessionId, {
+      open: id => { ctx.uiWorkspace.openSession(id as never) },
+      ...(typeof sessions?.refresh === 'function'
+        ? { refresh: () => sessions.refresh!() }
+        : {}),
+    }).then(
+      () => { reportNavigationError(undefined) },
+      cause => { reportNavigationError(navigationErrorMessage(cause)) },
+    )
   }
   const pickWorkspace = async (): Promise<WorkspaceChoice | null> => {
     const path = await ctx.uiWorkspace.pickDirectory()
@@ -122,18 +145,22 @@ export function apply(ctx: AgentTeamClientContext): void {
   }
   // A team's default entry is the Leader's main Session on the shipped chat
   // tab. The 群聊/看板 views stay registered and remain an explicit tab choice.
+  // `team.get` is the authoritative Leader: the row's cached aggregate can be a
+  // revision behind a Leader change, and an unresolvable Leader is an error the
+  // user must see rather than a click that does nothing.
   const openTeamPage = (teamId: string): void => {
-    void callAgentTeam('team.list')
-      .then(value => {
-        const team = value.items.find(candidate => candidate.id === teamId)
-        const leader = team === undefined ? undefined : team.members[team.leaderSlotId]
-        // A team without a resolvable Leader must not throw an unhandled
-        // rejection or navigate anywhere.
-        if (leader === undefined) return
-        keepNativeConversationTab(leader.sessionId)
-        openSession(leader.sessionId)
-      })
-      .catch(() => undefined)
+    void callAgentTeam('team.get', { id: teamId }).then(
+      value => {
+        const sessionId = teamLeaderSessionId(value)
+        if (sessionId === undefined) {
+          reportNavigationError('无法打开该团队：还没有可用的 Leader 会话')
+          return
+        }
+        keepNativeConversationTab(sessionId)
+        openSession(sessionId)
+      },
+      cause => { reportNavigationError(navigationErrorMessage(cause)) },
+    )
   }
   const openNativeLanding = (): void => { ctx.uiWorkspace.startSession() }
   const SidebarTeamHost = (): JSX.Element => (

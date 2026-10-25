@@ -13,13 +13,52 @@ import {
   type WorkspaceUploadView,
 } from '../transport/contracts.js'
 
-export async function callAgentTeam<M extends AgentTeamMethod>(
+/**
+ * Read-only methods whose identical concurrent requests are shared.
+ *
+ * A page mount mounts several team hosts (sidebar, row hider, dialogs, overlays)
+ * and each pulls the same read on its first render; sharing the in-flight request
+ * keeps one mount at one Host read instead of a burst, without caching a
+ * response, so a later read can never see stale data.
+ */
+const SHARED_READ_METHODS = new Set<AgentTeamMethod>([
+  'catalog.get',
+  'team.list',
+  'team.get',
+  'assistant.list',
+  'assistant.instance.list',
+  'assistant.task.list',
+])
+
+const sharedReads = new Map<string, Promise<unknown>>()
+
+export function callAgentTeam<M extends AgentTeamMethod>(
   method: M,
   ...args: AgentTeamPayload<M> extends undefined
     ? [payload?: undefined, expectedRevision?: number]
     : [payload: AgentTeamPayload<M>, expectedRevision?: number]
 ): Promise<AgentTeamResult<M>> {
   const [payload, expectedRevision] = args
+  if (expectedRevision !== undefined || !SHARED_READ_METHODS.has(method)) {
+    return requestAgentTeam<M>(method, payload, expectedRevision)
+  }
+  const key = `${method}:${payload === undefined ? '' : JSON.stringify(payload)}`
+  const running = sharedReads.get(key)
+  if (running !== undefined) return running as Promise<AgentTeamResult<M>>
+  const shared = requestAgentTeam<M>(method, payload, expectedRevision)
+    .finally(() => {
+      // Only the owner clears the entry: a settled response is never reused.
+      if (sharedReads.get(key) === shared) sharedReads.delete(key)
+    })
+  sharedReads.set(key, shared)
+  return shared
+}
+
+async function requestAgentTeam<M extends AgentTeamMethod>(
+  method: M,
+  payload: AgentTeamPayload<M> | undefined,
+  expectedRevision: number | undefined,
+): Promise<AgentTeamResult<M>> {
   const controller = new AbortController()
   // A Leader change archives every Session and activates the successor: it can
   // take as long as a reset, so it gets the same budget. A Leader handoff
@@ -56,6 +95,58 @@ export async function callAgentTeam<M extends AgentTeamMethod>(
   } finally {
     clearTimeout(timeout)
   }
+}
+
+/**
+ * Whether the shell's Session controller refused an id it has not pulled yet.
+ *
+ * `sessions.retain` raises `sessions.retain: unknown session <id>`; the client
+ * plugin bundle cannot share the controller's error class, so the message is the
+ * only stable signal.
+ */
+export function isUnknownSessionError(cause: unknown): boolean {
+  return cause instanceof Error && cause.message.includes('unknown session')
+}
+
+/** The words a failed navigation is reported in; a shell refusal keeps its text. */
+export function navigationErrorMessage(cause: unknown): string {
+  if (isUnknownSessionError(cause)) return '无法打开该会话：会话尚未同步到本地，请重新加载页面后再试'
+  const message = cause instanceof Error ? cause.message : String(cause)
+  return `无法打开该会话：${message}`
+}
+
+/** The Leader Slot's Session, or undefined while a team has no resolvable Leader. */
+export function teamLeaderSessionId(
+  team: { members: Record<string, { sessionId: string }>; leaderSlotId: string },
+): string | undefined {
+  const leader = team.members[team.leaderSlotId]
+  return leader === undefined || leader.sessionId === '' ? undefined : leader.sessionId
+}
+
+export interface SessionOpenDeps {
+  open: (sessionId: string) => void
+  /** Re-pull the client Session catalog; absent when the shell exposes no refresh. */
+  refresh?: (() => Promise<unknown>) | undefined
+}
+
+/**
+ * Open a Session through the shell's workspace controller.
+ *
+ * Team and Assistant Sessions are created on the Host, so a page that has been
+ * open since before that creation does not know the id yet and `openSession`
+ * throws instead of navigating. Pull the catalog once and retry; a second
+ * failure is returned to the caller so it can be shown, never swallowed.
+ */
+export async function openSessionInCatalog(sessionId: string, deps: SessionOpenDeps): Promise<void> {
+  const refresh = deps.refresh
+  try {
+    deps.open(sessionId)
+    return
+  } catch (cause) {
+    if (refresh === undefined || !isUnknownSessionError(cause)) throw cause
+  }
+  await refresh()
+  deps.open(sessionId)
 }
 
 export async function uploadAgentTeamFile(teamId: string, file: File): Promise<WorkspaceUploadView> {

@@ -31,17 +31,23 @@ describe('openTeamPage', () => {
   const body = functionBody(index, 'const openTeamPage = (teamId: string): void => {')
 
   it('opens the Leader main Session', () => {
-    expect(body).toContain('team.members[team.leaderSlotId]')
-    expect(body).toContain('openSession(leader.sessionId)')
-    expect(body.indexOf('keepNativeConversationTab(leader.sessionId)'))
-      .toBeLessThan(body.indexOf('openSession(leader.sessionId)'))
+    // `team.get` is the authoritative Leader: the row's cached aggregate can be
+    // a revision behind a Leader change.
+    expect(body).toContain("callAgentTeam('team.get', { id: teamId })")
+    expect(body).toContain('teamLeaderSessionId(value)')
+    expect(body).toContain('openSession(sessionId)')
+    expect(body.indexOf('keepNativeConversationTab(sessionId)'))
+      .toBeLessThan(body.indexOf('openSession(sessionId)'))
   })
 
-  it('fails safely when the Leader cannot be resolved', () => {
-    expect(body).toContain('if (leader === undefined) return')
-    expect(body).toContain('.catch(() => undefined)')
-    expect(body.indexOf('if (leader === undefined) return'))
-      .toBeLessThan(body.indexOf('openSession(leader.sessionId)'))
+  it('fails visibly when the Leader cannot be resolved', () => {
+    // F2: an unresolvable Leader used to `return`, so the click did nothing and
+    // the swallowed `.catch(() => undefined)` hid a refused navigation.
+    expect(body).toContain('reportNavigationError(\'无法打开该团队')
+    expect(body).not.toContain('.catch(() => undefined)')
+    expect(body.indexOf('if (sessionId === undefined)'))
+      .toBeLessThan(body.indexOf('openSession(sessionId)'))
+    expect(body).toContain('reportNavigationError(navigationErrorMessage(cause))')
   })
 
   it('never selects the parallel view while opening a team', () => {
@@ -72,7 +78,7 @@ describe('native conversation default', () => {
     expect(board).toContain('export function keepNativeConversationTab(sessionId: string): void {')
     expect(board).toContain('keepConversationView(sessionId, NATIVE_CONVERSATION_VIEW_ID)')
     expect(index).toContain('keepNativeConversationTab,')
-    expect(index).toContain('keepNativeConversationTab(leader.sessionId)')
+    expect(index).toContain('keepNativeConversationTab(sessionId)')
   })
 })
 

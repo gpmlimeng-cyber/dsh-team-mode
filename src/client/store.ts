@@ -13,6 +13,8 @@ export interface AgentTeamUiState {
   selectedTeamId?: string | undefined
   selectedAssistantId?: string | undefined
   dialog?: TeamDialog | undefined
+  /** Last failed team/member row navigation; a click never fails silently. */
+  navigationError?: string | undefined
 }
 
 let state: AgentTeamUiState = {
@@ -81,6 +83,12 @@ export function closeTeamDialog(): void {
   update({ ...state, dialog: undefined })
 }
 
+/** Report or clear the team/member row navigation failure shown in the sidebar. */
+export function reportNavigationError(message: string | undefined): void {
+  if (state.navigationError === message) return
+  update({ ...state, navigationError: message })
+}
+
 export function useAgentTeamUi(): AgentTeamUiState {
   return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 }
@@ -110,6 +118,7 @@ function update(next: AgentTeamUiState): void {
     && state.selectedTeamId === next.selectedTeamId
     && state.selectedAssistantId === next.selectedAssistantId
     && state.dialog === next.dialog
+    && state.navigationError === next.navigationError
   ) return
   state = next
   for (const listener of listeners) listener()

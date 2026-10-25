@@ -680,7 +680,6 @@ export function AssistantSidebarSection({
                         type="button"
                         className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
                         onClick={openCreate}
-                        aria-label="新建单聊助手"
                       >
                         <span className={css.sidebarTeamSlot} aria-hidden="true">
                           <IconPlusOutlineRegular size={16} />
