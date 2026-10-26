@@ -3150,6 +3150,14 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   display: block;
   margin: 0;
   padding: 0;
+  /* Pinned outside the assistant section, so it must inherit the same
+     typography as a normal row. */
+  font-size: 14px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.stewardHost:empty {
+  display: none;
 }
 
 /* The coordinator's crown: the same mark the team Leader uses, in the accent
