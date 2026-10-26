@@ -94,12 +94,14 @@ describe('sidebar surface switch', () => {
   const sidebar = readClientSource('sidebar.tsx')
   const index = readClientSource('index.tsx')
 
-  it('always renders one compact DSH/BOT switch', () => {
+  it('always renders one DSH/BOT control as a brand-shaped dropdown', () => {
     expect(sidebar).toContain('data-dsh-surface-switch')
-    expect(sidebar).toContain('DSH')
-    expect(sidebar).toContain('BOT')
-    expect(sidebar).toContain("aria-pressed={mode === 'native'}")
-    expect(sidebar).toContain("aria-pressed={mode === 'team'}")
+    expect(sidebar).toContain("label: 'DSH'")
+    expect(sidebar).toContain("label: 'BOT'")
+    // The trigger is a popover button, not two pressed toggles.
+    expect(sidebar).toContain('aria-haspopup="listbox"')
+    expect(sidebar).toContain('role="option"')
+    expect(sidebar).toContain('aria-selected={mode === option.value}')
     const switchAt = sidebar.indexOf('<SurfaceModeSwitch')
     const gateAt = sidebar.indexOf("{mode === 'team' && (")
     expect(switchAt).toBeGreaterThan(-1)
@@ -172,9 +174,11 @@ describe('surface switch styling', () => {
   )
 
   it('uses semantic DSH tokens and a visible focus ring', () => {
-    expect(styles).toContain('.surfaceModeSwitch')
-    expect(styles).toContain('.surfaceModeButtonActive')
-    expect(styles).toMatch(/\.surfaceModeButton:focus-visible/)
+    expect(styles).toContain('.brandModeTrigger')
+    expect(styles).toContain('.brandModeItemActive')
+    expect(styles).toMatch(/\.brandModeTrigger:focus-visible/)
+    // The trigger carries no background or border of its own.
+    expect(styles).toContain('background: transparent;')
     expect(styles).toContain('var(--dsw-alias-border-l1)')
     expect(styles).toContain('var(--dsw-alias-label-primary)')
   })

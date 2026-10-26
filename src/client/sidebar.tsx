@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import {
@@ -125,7 +125,11 @@ export function useSurfaceMode(): SurfaceMode {
   return useSyncExternalStore(subscribeSurfaceMode, getSurfaceMode, () => 'team' as const)
 }
 
-/** Compact always-visible switch; DSH mode must still be able to return to BOT. */
+/**
+ * Brand-shaped mode control: the current surface is plain text with a caret, so
+ * the brand row reads as one wordmark rather than as a form control. Choosing a
+ * mode happens in a small popover list.
+ */
 function SurfaceModeSwitch({
   mode,
   onChange,
@@ -133,28 +137,75 @@ function SurfaceModeSwitch({
   mode: SurfaceMode
   onChange: (mode: SurfaceMode) => void
 }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (event: MouseEvent): void => {
+      if (root.current !== null && !root.current.contains(event.target as Node)) setOpen(false)
+    }
+    const escape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [open])
+
+  const options = [
+    { value: 'native' as const, label: 'DSH', hint: 'DSH 原生界面' },
+    { value: 'team' as const, label: 'BOT', hint: 'BOT 团队模式' },
+  ]
+  const current = options.find(option => option.value === mode) ?? options[0]!
+
   return (
-    <div className={css.surfaceModeSwitch} role="group" aria-label="DSH / BOT" data-dsh-surface-switch>
+    <div className={css.brandMode} data-dsh-surface-switch ref={root}>
       <button
         type="button"
-        className={`${css.surfaceModeButton} ${mode === 'native' ? css.surfaceModeButtonActive : ''}`}
-        aria-pressed={mode === 'native'}
-        data-dsh-surface-mode="native"
-        title="DSH 原生界面"
-        onClick={() => { onChange('native') }}
+        className={css.brandModeTrigger}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`界面模式：${current.label}`}
+        data-dsh-surface-mode={mode}
+        onClick={() => { setOpen(value => !value) }}
       >
-        DSH
+        <span className={css.brandModeLabel}>{current.label}</span>
+        <svg className={css.brandModeCaret} viewBox="0 0 12 12" aria-hidden="true">
+          <path
+            d="M3 4.75 6 7.5l3-2.75"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.4"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
       </button>
-      <button
-        type="button"
-        className={`${css.surfaceModeButton} ${mode === 'team' ? css.surfaceModeButtonActive : ''}`}
-        aria-pressed={mode === 'team'}
-        data-dsh-surface-mode="team"
-        title="BOT 团队模式"
-        onClick={() => { onChange('team') }}
-      >
-        BOT
-      </button>
+      {open && (
+        <div className={css.brandModeMenu} role="listbox" aria-label="界面模式">
+          {options.map(option => (
+            <button
+              key={option.value}
+              type="button"
+              role="option"
+              aria-selected={mode === option.value}
+              title={option.hint}
+              className={`${css.brandModeItem} ${mode === option.value ? css.brandModeItemActive : ''}`}
+              onClick={() => {
+                onChange(option.value)
+                setOpen(false)
+              }}
+            >
+              <span className={css.brandModeItemLabel}>{option.label}</span>
+              <span className={css.brandModeItemHint}>{option.hint}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

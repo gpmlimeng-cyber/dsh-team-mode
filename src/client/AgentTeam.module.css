@@ -3003,15 +3003,7 @@ textarea.input {
   min-width: 0;
 }
 
-.sidebarBrandHost .surfaceModeSwitch {
-  flex: 0 0 auto;
-  margin: 0;
-  align-self: center;
-}
-
-/* BOT footer: 新会话 and 自动化任务 as icon actions, modelled on the shipped
-   market entry they sit next to. */
-/* BOT footer: the account row stretches over the free space and these actions
+.sidebarBrandHost /* BOT footer: the account row stretches over the free space and these actions
    keep their intrinsic size at the right edge, modelled on the shipped market
    entry. */
 .botFooterHost {
@@ -3059,78 +3051,104 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   display: none;
 }
 
-/* Compact, always-visible DSH/BOT switch. It must stay usable in DSH mode,
-   which is the only plugin UI left on the sidebar in that mode. */
-.surfaceModeSwitch {
-  box-sizing: border-box;
+.brandMode {
+  position: relative;
   display: inline-flex;
-  flex: 0 0 auto;
   align-items: center;
-  gap: 2px;
-  height: 26px;
-  margin: 0;
-  padding: 2px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2);
 }
 
-/* Two steady states, one raised pill: the selected mode reads as a physical
-   key rather than as coloured text. Motion is a 120ms colour rise only. */
-.surfaceModeButton {
+/* No background, no border: the control has to read as the brand wordmark. */
+.brandModeTrigger {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
-  min-width: 46px;
-  height: 20px;
-  padding: 0 10px;
-  border: 1px solid transparent;
+  gap: 4px;
+  padding: 2px 2px 2px 0;
+  border: none;
   border-radius: 6px;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-primary);
   font: inherit;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
   line-height: 20px;
   cursor: pointer;
-  transition:
-    color 120ms ease,
-    background-color 120ms ease,
-    border-color 120ms ease,
-    box-shadow 120ms ease;
+  transition: opacity 120ms ease;
 }
 
-.surfaceModeButton:hover {
+.brandModeTrigger:hover {
+  opacity: 0.72;
+}
+
+.brandModeCaret {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.brandModeTrigger:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 2px;
+}
+
+.brandModeMenu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 168px;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+}
+
+.brandModeItem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.brandModeItem:hover {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
 
-/* Tactile press: half a pixel, not a bounce. */
-.surfaceModeButton:active {
-  transform: translateY(0.5px);
-}
-
-.surfaceModeButtonActive,
-.surfaceModeButtonActive:hover {
-  border-color: var(--dsw-alias-border-l2);
-  background: var(--dsw-alias-bg-layer-1);
+.brandModeItemActive {
   color: var(--dsw-alias-label-primary);
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
 }
 
-.surfaceModeButton:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: 1px;
+.brandModeItemActive .brandModeItemLabel {
+  font-weight: 600;
+}
+
+.brandModeItemLabel {
+  font-size: 12px;
+  letter-spacing: 0.09em;
+}
+
+.brandModeItemHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .surfaceModeButton {
+  .brandModeTrigger {
     transition: none;
-  }
-
-  .surfaceModeButton:active {
-    transform: none;
   }
 }
 
