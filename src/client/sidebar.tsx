@@ -1183,6 +1183,8 @@ export function SidebarPortal({
     let observer: MutationObserver | undefined
     let resize: ResizeObserver | undefined
     let observedContainer: HTMLElement | undefined
+    let brandResize: ResizeObserver | undefined
+    let observedLogoRow: HTMLElement | undefined
 
     const anchorElement = (): HTMLElement | null => (
       document.querySelector('[data-slot="sidebar.workspaces"]') as HTMLElement | null
@@ -1198,6 +1200,16 @@ export function SidebarPortal({
     const ensureBrand = (): void => {
       const logoRow = document.querySelector<HTMLElement>('[class*="_logoRow"]')
       if (logoRow === null) return
+      // The sidebar opens as a narrow rail on mobile and widens to a drawer.
+      // The brand row's own width changes without a window resize, so observe
+      // it directly; otherwise the fixed mode switch keeps the collapsed
+      // 3px width and disappears from the open drawer.
+      if (brandResize === undefined) brandResize = new ResizeObserver(() => { schedule() })
+      if (observedLogoRow !== logoRow) {
+        brandResize.disconnect()
+        brandResize.observe(logoRow)
+        observedLogoRow = logoRow
+      }
       const brand = logoRow.querySelector<HTMLElement>('[class*="_brand"]')
       if (brand !== null) brand.style.display = 'none'
       // The shipped brand row is React-owned: a node inserted into it is removed
@@ -1366,6 +1378,7 @@ export function SidebarPortal({
     return () => {
       observer?.disconnect()
       resize?.disconnect()
+      brandResize?.disconnect()
       window.removeEventListener('resize', schedule)
       scrollRoot?.removeAttribute('data-dsh-team-scroll')
       if (nativeList !== undefined && nativeListStyle !== undefined) {

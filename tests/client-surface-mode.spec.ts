@@ -116,6 +116,9 @@ describe('sidebar surface switch', () => {
     expect(sidebar).toContain('ensureBrand')
     // The row itself survives; only the original brand button is hidden.
     expect(sidebar).toContain('brand.style.display')
+    // The rail is narrow on mobile and widens into the drawer without a
+    // window resize; the brand row itself must be observed.
+    expect(sidebar).toContain('brandResize.observe(logoRow)')
   })
 
   it('renders the pinned coordinator with the real assistant row', () => {
