@@ -82,6 +82,9 @@ export default defineConfig([
         'react-dom',
         '@deepseek-ai/dsh-client-ui-primitives',
       ],
+      // The mascot renders in the browser: a `require('@dicebear/core')` in the
+      // factory would hit the host's frozen module table, which does not ship it.
+      alwaysBundle: [/^@dicebear\//],
     },
     plugins: [cssModulesPlugin],
     outputOptions: {

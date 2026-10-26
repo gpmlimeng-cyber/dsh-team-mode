@@ -951,6 +951,8 @@ export class AgentTeamService extends Service {
       ? current.group
       : normalizeSidebarGroup(patch.group)
     if (patch.group !== undefined) this.assertKnownGroup(group)
+    // Absent keeps the stored mascot; the value itself is validated by the schema.
+    const mascot = patch.mascot ?? current.mascot
     const changed = snapshot.name !== current.assistantSnapshot.name
       || snapshot.avatar !== current.assistantSnapshot.avatar
       || snapshot.provider !== current.assistantSnapshot.provider
@@ -959,6 +961,7 @@ export class AgentTeamService extends Service {
       || snapshot.permissionPresetId !== current.assistantSnapshot.permissionPresetId
       || pinned !== current.pinned
       || group !== current.group
+      || JSON.stringify(mascot) !== JSON.stringify(current.mascot)
     if (!changed) return current
     const next = await this.store.updateAssistantInstance(id, value => {
       const { group: _previousGroup, ...rest } = value
@@ -967,6 +970,7 @@ export class AgentTeamService extends Service {
         assistantSnapshot: snapshot,
         pinned,
         ...(group === undefined ? {} : { group }),
+        ...(mascot === undefined ? {} : { mascot }),
         revision: value.revision + 1,
         updatedAt: new Date().toISOString(),
       }

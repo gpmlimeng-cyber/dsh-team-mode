@@ -125,6 +125,8 @@
     "zod": "4.4.3"
   },
   "dependencies": {
+    "@dicebear/core": "^10.7.0",
+    "@dicebear/styles": "^10.6.0",
     "@pierre/diffs": "^1.3.5",
     "chokidar": "^5.0.0"
   },

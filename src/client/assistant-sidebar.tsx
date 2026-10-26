@@ -61,6 +61,8 @@ import {
   writeAssistantThreadExpanded,
 } from './assistant-thread-state.js'
 import { MemberAvatar } from './member-avatar.js'
+import { Mascot } from './mascot-view.js'
+import { assistantShowsMascot, mascotMotionForStatus, mascotOptionsFor } from './mascot.js'
 import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-groups.js'
 import {
   SidebarGroupCreateRow,
@@ -750,12 +752,19 @@ export function AssistantSidebarSection({
             title={`${name} · ${secondLine} · ${instance.assistantSnapshot.model}`}
           >
             <span className={css.sidebarAssistantAvatar}>
-              <MemberAvatar
-                name={name}
-                avatar={assistantAvatarSource(instance)}
-                size={34}
-                className={css.sidebarAssistantAvatarShape ?? ''}
-              />
+              {assistantShowsMascot(instance)
+                ? <Mascot
+                    {...mascotOptionsFor(instance)}
+                    size={32}
+                    avatarShape="rounded"
+                    motion={mascotMotionForStatus(instance.status)}
+                  />
+                : <MemberAvatar
+                    name={name}
+                    avatar={assistantAvatarSource(instance)}
+                    size={34}
+                    className={css.sidebarAssistantAvatarShape ?? ''}
+                  />}
               {state !== 'none' && (
                 <span
                   className={`${css.sidebarAssistantDot} ${dotClass} ${state === 'needs_input' ? css.sidebarAssistantWaitingBadge : ''}`}

@@ -74,6 +74,21 @@ export const assistantTemplateSchema = z.object({
 }).strict()
 
 /**
+ * Optional offline mascot (DiceBear `gaze`, CC0 1.0) drawn when the Assistant has
+ * no uploaded avatar. Added without a schema-version bump, the same precedent as
+ * the other optional fields: an older row carries no field and reads as "no
+ * mascot", which still means the avatar-less Assistant falls back to the initial.
+ * Only the seed is required; every other field is one DiceBear option we expose.
+ */
+export const assistantMascotSchema = z.object({
+  seed: nonEmpty.max(64),
+  shape: z.string().max(32).optional(),
+  eyes: z.string().max(32).optional(),
+  spacing: z.string().max(32).optional(),
+  color: z.string().max(120).optional(),
+}).strict()
+
+/**
  * One persisted Assistant: a snapshot bound to a workspace, with the lazily
  * created main Session recorded on first open. Creation never makes a Session;
  * `mainSessionId` stays absent until the runtime binds it. `templateId` is
@@ -121,6 +136,8 @@ export const assistantInstanceSchema = z.object({
    * workspace may carry it; `setCoordinatorInstance` is the only writer.
    */
   coordinator: z.boolean().optional(),
+  /** Offline mascot identity; absent means the avatar-less fallback is the initials. */
+  mascot: assistantMascotSchema.optional(),
   revision: z.int().positive(),
   createdAt: isoDate,
   updatedAt: isoDate,
@@ -794,6 +811,8 @@ export const updateAssistantInstanceInputSchema = z.object({
   model: nonEmpty.optional(),
   reasoningEffort: z.string().trim().optional(),
   permissionPresetId: nonEmpty.optional(),
+  /** Replace the mascot identity; absent keeps the stored one. */
+  mascot: assistantMascotSchema.optional(),
 }).strict()
 
 /** Runtime-owned record of one hidden worker Session; the service assigns ids and timestamps. */

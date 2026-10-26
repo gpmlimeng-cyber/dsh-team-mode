@@ -3713,6 +3713,88 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   border-radius: inherit;
 }
 
+/* The mascot is the same tile as an avatar, at a fixed size, so replacing an
+   avatar with it never changes a row's height. All motion is transform-only. */
+.mascotTile {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  overflow: hidden;
+  corner-shape: superellipse(1);
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent);
+}
+
+.mascotCircle {
+  border-radius: 50% !important;
+}
+
+.mascotRounded {
+  border-radius: 25% !important;
+}
+
+.mascotSquare {
+  border-radius: 0;
+}
+
+.mascotImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transition: transform 140ms ease;
+}
+
+.mascotTile:hover .mascotImage {
+  transform: scale(1.04);
+}
+
+/* idle rides DiceBear's own animationVariant; these cover our own states. */
+.mascotTile[data-dsh-mascot-motion='thinking'],
+.mascotTile[data-dsh-mascot-motion='working'] {
+  animation: mascotBob 2.4s ease-in-out infinite;
+}
+
+.mascotTile[data-dsh-mascot-motion='success'] {
+  animation: mascotBounce 480ms cubic-bezier(0.2, 0.9, 0.3, 1) 1;
+}
+
+.mascotTile[data-dsh-mascot-motion='failure'] {
+  animation: mascotShake 400ms ease-in-out 1;
+}
+
+/* Never animate a row: no custom keyframes, no hover zoom, no SVG animation
+   (the component also passes `animationVariant: 'none'` for this state). */
+@media (prefers-reduced-motion: reduce) {
+  .mascotTile,
+  .mascotTile:hover .mascotImage {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}
+
+@keyframes mascotBob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-2px); }
+}
+
+@keyframes mascotBounce {
+  0% { transform: translateY(0); }
+  35% { transform: translateY(-6px); }
+  70% { transform: translateY(1px); }
+  100% { transform: translateY(0); }
+}
+
+@keyframes mascotShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-2px); }
+  40% { transform: translateX(2px); }
+  60% { transform: translateX(-1.5px); }
+  80% { transform: translateX(1.5px); }
+}
+
 .sidebarAssistantDot {
   position: absolute;
   right: -1px;
@@ -4278,6 +4360,46 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   line-height: 17px;
+}
+
+/* The mascot editor: one fixed-size preview beside compact option selects. */
+.assistantMascotSection {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.assistantMascotPreview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.assistantMascotFields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.assistantMascotGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.assistantMascotToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .assistantSettingsSummary {

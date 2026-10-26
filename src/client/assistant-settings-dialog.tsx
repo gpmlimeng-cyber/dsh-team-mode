@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
@@ -16,6 +16,19 @@ import {
   PERMISSION_LABELS,
 } from './labels.js'
 import { MemberAvatar } from './member-avatar.js'
+import { Mascot, usePrefersReducedMotion } from './mascot-view.js'
+import {
+  MASCOT_EYES,
+  MASCOT_SHAPES,
+  MASCOT_SPACINGS,
+  mascotPaletteColor,
+  nextMascotSeed,
+  type MascotEyes,
+  type MascotMotion,
+  type MascotShape,
+  type MascotSpacing,
+} from './mascot.js'
+import { TEAM_IDENTITY_COLORS } from './team-identity.js'
 import { defaultReasoningLabel, useModelCapabilities } from './model-reasoning.js'
 import { AnimatedModal, Field } from './shared.js'
 import css from './AgentTeam.module.css'
@@ -27,6 +40,45 @@ import type {
   UpdateAssistantInstanceInput,
 } from '../domain/types.js'
 import type { AssistantMemoryEntryWriteView, CatalogView } from '../transport/contracts.js'
+
+/** Human labels for the DiceBear `gaze` variants we expose. */
+const MASCOT_SHAPE_LABELS: Record<MascotShape, string> = {
+  circle: '圆形',
+  square: '方形',
+  triangle: '三角',
+  pentagon: '五边形',
+  hexagon: '六边形',
+  octagon: '八边形',
+  diamond: '菱形',
+  pill: '胶囊',
+  column: '柱状',
+  egg: '蛋形',
+  arch: '拱形',
+}
+
+const MASCOT_EYES_LABELS: Record<MascotEyes, string> = {
+  dots: '点点',
+  big: '大眼',
+  small: '小眼',
+  shine: '闪亮',
+  beans: '豆豆',
+  bars: '横条',
+  wide: '宽眼',
+  tall: '竖眼',
+  happy: '开心',
+  grin: '咧嘴',
+  squint: '眯眼',
+}
+
+const MASCOT_SPACING_LABELS: Record<MascotSpacing, string> = {
+  close: '紧凑',
+  snug: '贴合',
+  normal: '正常',
+  wide: '宽距',
+  far: '远距',
+}
+
+const MASCOT_COLOR_VALUES = TEAM_IDENTITY_COLORS.map((_, index) => mascotPaletteColor(index))
 
 const STATUS_LABELS: Record<AssistantInstance['status'], string> = {
   idle: '空闲',
@@ -86,6 +138,17 @@ export function AssistantSettingsDialog({
   const [saving, setSaving] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [error, setError] = useState<string>()
+  const [mascotSeed, setMascotSeed] = useState(assistant.mascot?.seed ?? assistant.id)
+  const [mascotShape, setMascotShape] = useState(assistant.mascot?.shape ?? '')
+  const [mascotEyes, setMascotEyes] = useState(assistant.mascot?.eyes ?? '')
+  const [mascotSpacing, setMascotSpacing] = useState(assistant.mascot?.spacing ?? '')
+  const [mascotColor, setMascotColor] = useState(assistant.mascot?.color ?? '')
+  const [mascotAnimated, setMascotAnimated] = useState(true)
+  const [mascotMotion, setMascotMotion] = useState<MascotMotion>('idle')
+  const [mascotMotionKey, setMascotMotionKey] = useState(0)
+  const reducedMotion = usePrefersReducedMotion()
+  // Closing waits for the save-bounce's animationend instead of a timer.
+  const closeAfterMascot = useRef(false)
 
   const busy = saving || archiving
   const modelCapabilities = useModelCapabilities(provider, model)
@@ -109,6 +172,15 @@ export function AssistantSettingsDialog({
     setSaving(false)
     setArchiving(false)
     setError(undefined)
+    setMascotSeed(assistant.mascot?.seed ?? assistant.id)
+    setMascotShape(assistant.mascot?.shape ?? '')
+    setMascotEyes(assistant.mascot?.eyes ?? '')
+    setMascotSpacing(assistant.mascot?.spacing ?? '')
+    setMascotColor(assistant.mascot?.color ?? '')
+    setMascotAnimated(true)
+    setMascotMotion('idle')
+    setMascotMotionKey(0)
+    closeAfterMascot.current = false
     callAgentTeam('catalog.get')
       .then(value => {
         if (!live) return
@@ -217,6 +289,14 @@ export function AssistantSettingsDialog({
     if (permissionPresetId !== snapshot.permissionPresetId) {
       value.permissionPresetId = permissionPresetId
     }
+    const nextMascot = {
+      seed: mascotSeed.trim() === '' ? assistant.id : mascotSeed.trim(),
+      ...(mascotShape === '' ? {} : { shape: mascotShape }),
+      ...(mascotEyes === '' ? {} : { eyes: mascotEyes }),
+      ...(mascotSpacing === '' ? {} : { spacing: mascotSpacing }),
+      ...(mascotColor === '' ? {} : { color: mascotColor }),
+    }
+    if (JSON.stringify(nextMascot) !== JSON.stringify(assistant.mascot)) value.mascot = nextMascot
     setSaving(true)
     setError(undefined)
     try {
@@ -224,10 +304,20 @@ export function AssistantSettingsDialog({
         id: assistant.id,
         value,
       })
-      onClose()
-      await onSaved()
+      if (reducedMotion) {
+        onClose()
+        await onSaved()
+      } else {
+        // Bounce the preview once, then close when the CSS animation reports it
+        // finished — no timer decides task completion.
+        closeAfterMascot.current = true
+        setMascotMotion('success')
+        setMascotMotionKey(key => key + 1)
+      }
     } catch (cause) {
       setError(`保存失败：${messageOf(cause)}`)
+      setMascotMotion('failure')
+      setMascotMotionKey(key => key + 1)
     } finally {
       setSaving(false)
     }
@@ -273,6 +363,13 @@ export function AssistantSettingsDialog({
   const permissionOptions = catalog?.permissionPresets ?? []
   const permissionInCatalog = permissionOptions.some(option => option.value === permissionPresetId)
   const reasoningEfforts = modelCapabilities.value?.reasoning?.efforts ?? []
+  const mascotOptions = {
+    ...(mascotShape === '' ? {} : { shapeVariant: mascotShape as MascotShape }),
+    ...(mascotEyes === '' ? {} : { eyesVariant: mascotEyes as MascotEyes }),
+    ...(mascotSpacing === '' ? {} : { spacingVariant: mascotSpacing as MascotSpacing }),
+    ...(mascotColor === '' ? {} : { bodyColor: mascotColor }),
+  }
+  const showCurrentMascotColor = mascotColor !== '' && !MASCOT_COLOR_VALUES.includes(mascotColor)
 
   return (
     <AnimatedModal
@@ -312,6 +409,103 @@ export function AssistantSettingsDialog({
               )}
             </div>
             <span className={css.assistantSettingsAvatarHint}>支持 PNG、JPEG、WebP，最大 256KB。</span>
+          </div>
+        </div>
+        <div className={css.assistantMascotSection} data-dsh-assistant-mascot>
+          <div className={css.assistantMascotPreview}>
+            <Mascot
+              seed={mascotSeed}
+              options={mascotOptions}
+              size={52}
+              avatarShape="rounded"
+              motion={mascotMotion}
+              motionKey={mascotMotionKey}
+              animated={mascotAnimated}
+              onMotionEnd={() => {
+                if (!closeAfterMascot.current) return
+                closeAfterMascot.current = false
+                onClose()
+                void onSaved()
+              }}
+            />
+            <Button
+              variant="outline"
+              type="button"
+              disabled={busy}
+              onClick={() => { setMascotSeed(nextMascotSeed()) }}
+            >
+              换一只
+            </Button>
+          </div>
+          <div className={css.assistantMascotFields}>
+            <span className={css.assistantSettingsAvatarTitle}>吉祥物</span>
+            <span className={css.assistantSettingsAvatarHint}>
+              没有上传头像时显示；同一个种子永远是同一只。
+            </span>
+            <div className={css.assistantMascotGrid}>
+              <Field label="轮廓">
+                <select
+                  className={css.input}
+                  value={mascotShape}
+                  disabled={busy}
+                  onChange={event => { setMascotShape(event.target.value) }}
+                >
+                  <option value="">按种子</option>
+                  {MASCOT_SHAPES.map(shape => (
+                    <option key={shape} value={shape}>{MASCOT_SHAPE_LABELS[shape]}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="眼睛">
+                <select
+                  className={css.input}
+                  value={mascotEyes}
+                  disabled={busy}
+                  onChange={event => { setMascotEyes(event.target.value) }}
+                >
+                  <option value="">按种子</option>
+                  {MASCOT_EYES.map(eyes => (
+                    <option key={eyes} value={eyes}>{MASCOT_EYES_LABELS[eyes]}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="眼距">
+                <select
+                  className={css.input}
+                  value={mascotSpacing}
+                  disabled={busy}
+                  onChange={event => { setMascotSpacing(event.target.value) }}
+                >
+                  <option value="">按种子</option>
+                  {MASCOT_SPACINGS.map(spacing => (
+                    <option key={spacing} value={spacing}>{MASCOT_SPACING_LABELS[spacing]}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="配色">
+                <select
+                  className={css.input}
+                  value={mascotColor}
+                  disabled={busy}
+                  onChange={event => { setMascotColor(event.target.value) }}
+                >
+                  <option value="">按种子</option>
+                  {showCurrentMascotColor && <option value={mascotColor}>当前自定义</option>}
+                  {MASCOT_COLOR_VALUES.map((color, index) => (
+                    <option key={`${color}-${index}`} value={color}>配色 {index + 1}</option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+            <label className={css.assistantMascotToggle}>
+              <input
+                type="checkbox"
+                checked={mascotAnimated && !reducedMotion}
+                disabled={busy || reducedMotion}
+                onChange={event => { setMascotAnimated(event.target.checked) }}
+              />
+              {reducedMotion ? '动画（系统已要求减少动效）' : '动画'}
+            </label>
           </div>
         </div>
         <Field label="显示名称">
