@@ -269,6 +269,14 @@ export function SidebarTeamSection({
   const [taskDialogTeamId, setTaskDialogTeamId] = useState<string>()
   const [error, setError] = useState<string>()
 
+  useEffect(() => {
+    const onSearch = (event: Event): void => {
+      setQuery((event as CustomEvent<string>).detail ?? '')
+    }
+    window.addEventListener(SIDEBAR_SEARCH_EVENT, onSearch)
+    return () => window.removeEventListener(SIDEBAR_SEARCH_EVENT, onSearch)
+  }, [])
+
   const load = useCallback(async () => {
     try {
       const value = await callAgentTeam('team.list')
@@ -789,6 +797,8 @@ export function SidebarTeamSection({
 
 
 const SIDEBAR_HOST_ID = 'dsh-team-mode-sidebar-host'
+/** Brand-row search drives every plugin section through one window event. */
+const SIDEBAR_SEARCH_EVENT = 'dsh-team-mode:sidebar-search'
 /** Mount point for the DSH/BOT switch that replaces the shipped brand row. */
 const BRAND_HOST_ID = 'dsh-team-mode-brand-host'
 /** Mount point for the BOT footer actions that replace native sidebar entries. */
@@ -961,6 +971,7 @@ export function SidebarPortal({
 }): JSX.Element | null {
   const [host, setHost] = useState<HTMLElement>()
   const [brandHost, setBrandHost] = useState<HTMLElement>()
+  const [search, setSearch] = useState('')
   const mode = useSurfaceMode()
 
   // Expose the mode on <html> so CSS and DOM-level helpers can follow it
@@ -1054,6 +1065,7 @@ export function SidebarPortal({
       const rect = logoRow.getBoundingClientRect()
       element.style.left = `${Math.round(rect.left + 16)}px`
       element.style.top = `${Math.round(rect.top + rect.height / 2)}px`
+      element.style.width = `${Math.max(0, Math.round(rect.width - 32))}px`
       element.style.visibility = rect.width > 0 && rect.height > 0 ? 'visible' : 'hidden'
     }
 
@@ -1517,7 +1529,29 @@ export function SidebarPortal({
   return (
     <>
       {brandHost !== undefined && createPortal(
-        <SurfaceModeSwitch mode={mode} onChange={switchMode} />,
+        <>
+          <SurfaceModeSwitch mode={mode} onChange={switchMode} />
+          <label className={css.brandSearch}>
+            <IconSearchOutlineRegular className={css.brandSearchIcon} />
+            <input
+              type="search"
+              className={css.brandSearchInput}
+              placeholder="搜索"
+              aria-label="搜索侧栏"
+              value={search}
+              onChange={(event) => {
+                const value = event.target.value
+                setSearch(value)
+                window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: value }))
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape') return
+                setSearch('')
+                window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
+              }}
+            />
+          </label>
+        </>,
         brandHost,
       )}
       {host !== undefined && createPortal(

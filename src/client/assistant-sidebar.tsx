@@ -154,6 +154,16 @@ export function AssistantSidebarSection({
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [query, setQuery] = useState('')
   const [modeMenuOpen, setModeMenuOpen] = useState(false)
+
+  // The brand-row search drives this list too, so both plugin sections answer
+  // the same query instead of each keeping a private one.
+  useEffect(() => {
+    const onSearch = (event: Event): void => {
+      setQuery((event as CustomEvent<string>).detail ?? '')
+    }
+    window.addEventListener('dsh-team-mode:sidebar-search', onSearch)
+    return () => window.removeEventListener('dsh-team-mode:sidebar-search', onSearch)
+  }, [])
   const [threadOpenById, setThreadOpenById] = useState<Record<string, boolean>>({})
   const [openingId, setOpeningId] = useState<string>()
   const [openingTaskId, setOpeningTaskId] = useState<string>()
