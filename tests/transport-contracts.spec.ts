@@ -181,6 +181,25 @@ describe('Agent Team transport contracts', () => {
     }>()
     expectTypeOf<AgentTeamResult<'team.group.set'>>().toEqualTypeOf<TeamView>()
   })
+
+  it('maps the sidebar group list as one read and four ordered-list writes', () => {
+    expect(AGENT_TEAM_METHODS).toContain('sidebar.groups.list')
+    expect(AGENT_TEAM_METHODS).toContain('sidebar.groups.create')
+    expect(AGENT_TEAM_METHODS).toContain('sidebar.groups.rename')
+    expect(AGENT_TEAM_METHODS).toContain('sidebar.groups.delete')
+    expect(AGENT_TEAM_METHODS).toContain('sidebar.groups.reorder')
+    expectTypeOf<AgentTeamPayload<'sidebar.groups.list'>>().toEqualTypeOf<undefined>()
+    expectTypeOf<AgentTeamPayload<'sidebar.groups.create'>>().toEqualTypeOf<{ name: string }>()
+    expectTypeOf<AgentTeamPayload<'sidebar.groups.rename'>>()
+      .toEqualTypeOf<{ from: string; to: string }>()
+    expectTypeOf<AgentTeamPayload<'sidebar.groups.delete'>>().toEqualTypeOf<{ name: string }>()
+    expectTypeOf<AgentTeamPayload<'sidebar.groups.reorder'>>().toEqualTypeOf<{ names: string[] }>()
+    expectTypeOf<AgentTeamResult<'sidebar.groups.list'>>().toEqualTypeOf<string[]>()
+    expectTypeOf<AgentTeamResult<'sidebar.groups.create'>>().toEqualTypeOf<string[]>()
+    expectTypeOf<AgentTeamResult<'sidebar.groups.rename'>>().toEqualTypeOf<string[]>()
+    expectTypeOf<AgentTeamResult<'sidebar.groups.delete'>>().toEqualTypeOf<string[]>()
+    expectTypeOf<AgentTeamResult<'sidebar.groups.reorder'>>().toEqualTypeOf<string[]>()
+  })
 })
 
 interface FakeResponse extends ServerResponse {

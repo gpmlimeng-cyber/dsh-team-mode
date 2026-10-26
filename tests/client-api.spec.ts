@@ -397,3 +397,46 @@ describe('Agent Team mount snapshot (one team.list per fresh mount)', () => {
     expect(calls).toEqual(['team.get', 'team.get'])
   })
 })
+
+describe('Agent Team sidebar group sharing', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    vi.stubGlobal('crypto', { randomUUID: () => 'request-1' })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const stubFetch = (value: unknown): string[] => {
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => {
+      calls.push((JSON.parse(init.body) as { method: string }).method)
+      return { json: async () => ({ requestId: 'request-1', ok: true, value }) }
+    }))
+    return calls
+  }
+
+  it('shares one in-flight sidebar.groups.list between concurrent readers', async () => {
+    const calls = stubFetch(['工作', '生活'])
+    const { callAgentTeam } = await import('../src/client/api.js')
+    const [first, second] = await Promise.all([
+      callAgentTeam('sidebar.groups.list'),
+      callAgentTeam('sidebar.groups.list'),
+    ])
+    expect(calls).toEqual(['sidebar.groups.list'])
+    expect(first).toEqual(['工作', '生活'])
+    expect(second).toEqual(first)
+  })
+
+  it('never shares a sidebar group write', async () => {
+    const calls = stubFetch(['工作'])
+    const { callAgentTeam } = await import('../src/client/api.js')
+    await Promise.all([
+      callAgentTeam('sidebar.groups.rename', { from: '工作', to: '办公' }),
+      callAgentTeam('sidebar.groups.rename', { from: '工作', to: '办公' }),
+    ])
+    expect(calls).toEqual(['sidebar.groups.rename', 'sidebar.groups.rename'])
+  })
+})

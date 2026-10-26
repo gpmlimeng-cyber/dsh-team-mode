@@ -104,6 +104,11 @@ function harness(overrides: {
       sessionId: 'session-worker',
     })),
     setTeamGroup: vi.fn(async (teamId: string, group: string | null) => ({ id: teamId, group })),
+    listGroups: vi.fn(() => ['工作']),
+    createGroup: vi.fn(async (name: string) => ['工作', name]),
+    renameGroup: vi.fn(async (_from: string, to: string) => [to]),
+    deleteGroup: vi.fn(async () => ['工作']),
+    setGroupOrder: vi.fn(async (names: readonly string[]) => [...names]),
   } as unknown as AgentTeamService
   const transport = registerWebTransport(
     ctx,
@@ -260,6 +265,45 @@ describe('web transport authentication and upload contract', () => {
     expect(cleared.status).toBe(200)
     expect(JSON.parse(cleared.body)).toMatchObject({ ok: true, value: { id: 'team-1', group: null } })
     expect(service.setTeamGroup).toHaveBeenCalledWith('team-1', null, {})
+  })
+
+  it('dispatches the sidebar group list and its four writes', async () => {
+    const { call, service } = harness()
+    const post = (method: string, payload: unknown) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ requestId: method, method, payload }),
+    }))
+
+    const listed = await post('sidebar.groups.list', {})
+    expect(listed.status).toBe(200)
+    expect(JSON.parse(listed.body)).toMatchObject({ ok: true, value: ['工作'] })
+    expect(service.listGroups).toHaveBeenCalled()
+
+    // The transport trims: the service never sees the surrounding spaces.
+    const created = await post('sidebar.groups.create', { name: ' 生活 ' })
+    expect(created.status).toBe(200)
+    expect(JSON.parse(created.body)).toMatchObject({ ok: true, value: ['工作', '生活'] })
+    expect(service.createGroup).toHaveBeenCalledWith('生活')
+
+    const renamed = await post('sidebar.groups.rename', { from: '工作', to: '办公' })
+    expect(renamed.status).toBe(200)
+    expect(JSON.parse(renamed.body)).toMatchObject({ ok: true, value: ['办公'] })
+    expect(service.renameGroup).toHaveBeenCalledWith('工作', '办公')
+
+    const deleted = await post('sidebar.groups.delete', { name: '办公' })
+    expect(deleted.status).toBe(200)
+    expect(JSON.parse(deleted.body)).toMatchObject({ ok: true, value: ['工作'] })
+    expect(service.deleteGroup).toHaveBeenCalledWith('办公')
+
+    const reordered = await post('sidebar.groups.reorder', { names: ['生活', '工作'] })
+    expect(reordered.status).toBe(200)
+    expect(JSON.parse(reordered.body)).toMatchObject({ ok: true, value: ['生活', '工作'] })
+    expect(service.setGroupOrder).toHaveBeenCalledWith(['生活', '工作'])
+
+    const blank = await post('sidebar.groups.delete', { name: '   ' })
+    expect(blank.status).toBe(400)
+    expect(JSON.parse(blank.body)).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+    expect(service.deleteGroup).toHaveBeenCalledTimes(1)
   })
 
   it('returns a typed error for an unknown method', async () => {

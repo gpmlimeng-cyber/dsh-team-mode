@@ -25,6 +25,11 @@ const requestSchema = z.object({
 }).strict()
 
 const idPayload = z.object({ id: z.string().trim().min(1) }).strict()
+/**
+ * A sidebar group label, non-blank after trim. The 40-char limit stays in the
+ * service so its rejection carries the limit instead of a bare Zod error.
+ */
+const sidebarGroupLabel = z.string().trim().min(1)
 const interactionResponseSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('question'),
@@ -700,6 +705,25 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       // `open` for the badge. No payload, so nothing to parse.
       const items = service.listEscalations()
       return { items, total: items.length }
+    }
+    case 'sidebar.groups.list':
+      // Ordered labels only; no payload, so nothing to parse.
+      return service.listGroups()
+    case 'sidebar.groups.create': {
+      const payload = z.object({ name: sidebarGroupLabel }).strict().parse(request.payload)
+      return service.createGroup(payload.name)
+    }
+    case 'sidebar.groups.rename': {
+      const payload = z.object({ from: sidebarGroupLabel, to: sidebarGroupLabel }).strict().parse(request.payload)
+      return service.renameGroup(payload.from, payload.to)
+    }
+    case 'sidebar.groups.delete': {
+      const payload = z.object({ name: sidebarGroupLabel }).strict().parse(request.payload)
+      return service.deleteGroup(payload.name)
+    }
+    case 'sidebar.groups.reorder': {
+      const payload = z.object({ names: z.array(sidebarGroupLabel) }).strict().parse(request.payload)
+      return service.setGroupOrder(payload.names)
     }
     case 'team.dissolve': {
       const payload = z.object({ teamId: z.string().min(1), confirmation: z.string() }).strict().parse(request.payload)

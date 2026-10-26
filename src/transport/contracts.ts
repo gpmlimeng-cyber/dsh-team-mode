@@ -73,6 +73,12 @@ export const AGENT_TEAM_METHODS = [
   'assistant.builder.archive',
   /** Workspace-wide escalation rows; the coordinator row badge reads this. */
   'escalation.list',
+  /** Workspace-wide sidebar groups: an ordered entity list, not a derived name set. */
+  'sidebar.groups.list',
+  'sidebar.groups.create',
+  'sidebar.groups.rename',
+  'sidebar.groups.delete',
+  'sidebar.groups.reorder',
   'team.list',
   'team.get',
   'team.createDraft',
@@ -498,6 +504,13 @@ export interface AgentTeamRequestMap {
    * counts `open` only, so the client never needs a second filtered read.
    */
   'escalation.list': { payload: undefined; result: PageView<Escalation> }
+  /** Ordered sidebar group labels; empty means every team and Assistant is ungrouped. */
+  'sidebar.groups.list': { payload: undefined; result: string[] }
+  /** Create, rename, delete and reorder all answer with the resulting ordered list. */
+  'sidebar.groups.create': { payload: { name: string }; result: string[] }
+  'sidebar.groups.rename': { payload: { from: string; to: string }; result: string[] }
+  'sidebar.groups.delete': { payload: { name: string }; result: string[] }
+  'sidebar.groups.reorder': { payload: { names: string[] }; result: string[] }
   'team.list': { payload: undefined; result: PageView<TeamView> }
   'team.get': { payload: { id: string }; result: TeamView }
   'team.createDraft': { payload: CreateTeamDraftInput; result: TeamView }

@@ -30,6 +30,7 @@ const SHARED_READ_METHODS = new Set<AgentTeamMethod>([
   'assistant.instance.list',
   'assistant.task.list',
   'escalation.list',
+  'sidebar.groups.list',
 ])
 
 const sharedReads = new Map<string, Promise<unknown>>()
