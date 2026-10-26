@@ -143,8 +143,8 @@ function SurfaceModeSwitch({
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   const options = [
-    { id: 'native' as const, label: 'DSH', hint: '原生界面' },
-    { id: 'team' as const, label: 'BOT', hint: '团队模式' },
+    { id: 'native' as const, label: 'DeepSeek', hint: '原生界面' },
+    { id: 'team' as const, label: 'DeepBot', hint: '团队模式' },
   ]
   const current = options.find(option => option.id === mode) ?? options[0]!
 
@@ -1064,7 +1064,11 @@ export function SidebarPortal({
         setBrandHost(element)
       }
       const rect = logoRow.getBoundingClientRect()
-      element.style.left = `${Math.round(rect.left + 16)}px`
+      // Align with the section titles below (群聊 / 单聊) instead of guessing a
+      // padding: that column is what the row visually belongs to.
+      const groupTitle = document.querySelector<HTMLElement>('[data-dsh-team-mode-title]')
+      const columnLeft = groupTitle?.getBoundingClientRect().left
+      element.style.left = `${Math.round(columnLeft !== undefined && columnLeft > 0 ? columnLeft : rect.left + 16)}px`
       element.style.top = `${Math.round(rect.top + rect.height / 2)}px`
       element.style.width = `${Math.max(0, Math.round(rect.width - 32))}px`
       element.style.visibility = rect.width > 0 && rect.height > 0 ? 'visible' : 'hidden'

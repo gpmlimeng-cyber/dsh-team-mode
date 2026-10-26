@@ -94,10 +94,10 @@ describe('sidebar surface switch', () => {
   const sidebar = readClientSource('sidebar.tsx')
   const index = readClientSource('index.tsx')
 
-  it('always renders one DSH/BOT control as a brand-shaped dropdown', () => {
+  it('always renders one DeepSeek/DeepBot control as a brand-shaped dropdown', () => {
     expect(sidebar).toContain('data-dsh-surface-switch')
-    expect(sidebar).toContain("label: 'DSH'")
-    expect(sidebar).toContain("label: 'BOT'")
+    expect(sidebar).toContain("label: 'DeepSeek'")
+    expect(sidebar).toContain("label: 'DeepBot'")
     // The popover is the shipped Menu primitive, not a hand-built list.
     expect(sidebar).toContain('<Menu')
     expect(sidebar).toContain('aria-haspopup="menu"')
