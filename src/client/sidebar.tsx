@@ -1079,20 +1079,28 @@ export function SidebarPortal({
       // host to title is measured where a title is present and then reused, so
       // the control does not jump sideways when the mode changes.
       const teamHost = document.getElementById(SIDEBAR_HOST_ID)
+      const teamRect = teamHost?.getBoundingClientRect()
       let columnLeft: number | undefined
-      if (teamHost !== null) {
-        const hostLeft = teamHost.getBoundingClientRect().left
+      let columnWidth: number | undefined
+      if (teamHost !== null && teamRect !== undefined) {
+        const hostLeft = teamRect.left
         const titleLeft = document
           .querySelector<HTMLElement>('[data-dsh-team-mode-title]')
           ?.getBoundingClientRect().left
         if (titleLeft !== undefined && titleLeft > 0 && hostLeft > 0) {
           brandColumnOffset = Math.round(titleLeft - hostLeft)
         }
-        if (hostLeft > 0) columnLeft = hostLeft + brandColumnOffset
+        if (hostLeft > 0 && teamRect.width > 0) {
+          // Same column as the sections below: start where their titles start and
+          // end where their own action buttons end, so the two button groups line
+          // up on both edges.
+          columnLeft = hostLeft + brandColumnOffset
+          columnWidth = Math.max(0, teamRect.width - brandColumnOffset)
+        }
       }
       element.style.left = `${Math.round(columnLeft ?? rect.left + 16)}px`
       element.style.top = `${Math.round(rect.top + rect.height / 2)}px`
-      element.style.width = `${Math.max(0, Math.round(rect.width - 32))}px`
+      element.style.width = `${Math.round(columnWidth ?? Math.max(0, rect.width - 32))}px`
       element.style.visibility = rect.width > 0 && rect.height > 0 ? 'visible' : 'hidden'
     }
 
