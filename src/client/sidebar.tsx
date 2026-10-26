@@ -1199,19 +1199,25 @@ export function SidebarPortal({
      */
     const ensureBrand = (): void => {
       const logoRow = document.querySelector<HTMLElement>('[class*="_logoRow"]')
-      if (logoRow === null) return
+      // Android/mobile shells can hide the brand row while keeping the collapse
+      // toggle; fall back to the toggle row rather than returning and leaving no
+      // mode switch at all.
+      const toggle = logoRow?.querySelector<HTMLElement>('[class*="_toggle"]')
+        ?? document.querySelector<HTMLElement>('button[class*="_toggle"]')
+      const row = logoRow ?? toggle?.parentElement ?? null
+      if (row === null) return
       // The sidebar opens as a narrow rail on mobile and widens to a drawer.
-      // The brand row's own width changes without a window resize, so observe
-      // it directly; otherwise the fixed mode switch keeps the collapsed
-      // 3px width and disappears from the open drawer.
+      // The row's own width changes without a window resize, so observe it
+      // directly; otherwise the fixed mode switch keeps the collapsed 3px
+      // width and disappears from the open drawer.
       if (brandResize === undefined) brandResize = new ResizeObserver(() => { schedule() })
-      if (observedLogoRow !== logoRow) {
+      if (observedLogoRow !== row) {
         brandResize.disconnect()
-        brandResize.observe(logoRow)
-        observedLogoRow = logoRow
+        brandResize.observe(row)
+        observedLogoRow = row
       }
-      const brand = logoRow.querySelector<HTMLElement>('[class*="_brand"]')
-      if (brand !== null) brand.style.display = 'none'
+      const brand = logoRow?.querySelector<HTMLElement>('[class*="_brand"]')
+      if (brand !== null && brand !== undefined) brand.style.display = 'none'
       // The shipped brand row is React-owned: a node inserted into it is removed
       // on its next render, taking the portalled control with it. The host lives
       // on <body> instead and is positioned over the empty row.
@@ -1226,7 +1232,7 @@ export function SidebarPortal({
         document.body.append(element)
         setBrandHost(element)
       }
-      const rect = logoRow.getBoundingClientRect()
+      const rect = row.getBoundingClientRect()
       // One column for both modes: the plugin host exists in DeepSeek and DeepBot
       // alike, while the group headers only exist in DeepBot. The offset from
       // host to the first header is measured where one is present and then
@@ -1251,12 +1257,15 @@ export function SidebarPortal({
           columnWidth = Math.max(0, teamRect.width - brandColumnOffset)
         }
       }
-      const left = Math.round(columnLeft ?? rect.left + 16)
+      // A hidden/display:contents brand row can report width 0 while the
+      // collapse toggle is visible. Fall back to the visible viewport width
+      // instead of rendering a zero-width switch.
+      const left = Math.round(columnLeft ?? (rect.width > 32 ? rect.left + 16 : 16))
       // Keep the collapse toggle on the same row usable: reserve its box plus
       // a gap instead of letting the switch overlay it (mobile especially).
-      const toggle = logoRow.querySelector<HTMLElement>('[class*="_toggle"]')
       const toggleRect = toggle?.getBoundingClientRect()
-      let width = columnWidth ?? Math.max(0, rect.width - 32)
+      let width = columnWidth
+        ?? (rect.width > 32 ? rect.width - 32 : Math.min(240, window.innerWidth - 32))
       if (toggleRect !== undefined && toggleRect.width > 0) {
         width = Math.min(width, toggleRect.left - left - 8)
       }
@@ -1265,7 +1274,7 @@ export function SidebarPortal({
       // drawer starts below the system status bar, and the brand row can be
       // scrolled above it. Clamping to the logo row's own parent (the sidebar
       // root) keeps the row beside the collapse toggle in both cases.
-      const sidebarRoot = logoRow.parentElement ?? logoRow
+      const sidebarRoot = row.parentElement ?? row
       const sidebarRect = sidebarRoot.getBoundingClientRect()
       // Sit on the collapse-button row itself. On mobile that control can stay
       // pinned while the brand row scrolls away, so prefer its center over the
@@ -1277,7 +1286,7 @@ export function SidebarPortal({
       const maxCenter = sidebarRect.bottom - 30
       element.style.top = `${Math.round(Math.min(Math.max(center, minCenter), Math.max(minCenter, maxCenter)))}px`
       element.style.width = `${Math.max(0, Math.round(width))}px`
-      element.style.visibility = rect.width > 0 && rect.height > 0 ? 'visible' : 'hidden'
+      element.style.visibility = (rect.width > 0 && rect.height > 0) || (toggleRect !== undefined && toggleRect.width > 0) ? 'visible' : 'hidden'
     }
 
     /** Lay the pinned BOT row exactly over the shipped 新会话 button box. */
