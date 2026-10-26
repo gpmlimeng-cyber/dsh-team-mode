@@ -768,6 +768,8 @@ const BRAND_HOST_ID = 'dsh-team-mode-brand-host'
 const BOT_FOOTER_HOST_ID = 'dsh-team-mode-footer-host'
 /** Marks a native node this plugin hid for the BOT surface. */
 const BOT_HIDDEN_ATTR = 'data-dsh-bot-hidden'
+/** Marks the account row this plugin stretched to fill the footer. */
+const BOT_GROWN_ATTR = 'data-dsh-bot-grow'
 
 /** One top-menu row of the shipped panel list, matched by its accessible name. */
 function findPanelRow(label: string): HTMLElement | null {
@@ -808,6 +810,11 @@ function restoreBotSidebar(): void {
     node.style.display = ''
     node.removeAttribute(BOT_HIDDEN_ATTR)
   }
+  for (const node of Array.from(document.querySelectorAll<HTMLElement>(`[${BOT_GROWN_ATTR}]`))) {
+    node.style.flex = ''
+    node.style.minWidth = ''
+    node.removeAttribute(BOT_GROWN_ATTR)
+  }
   document.getElementById(BOT_FOOTER_HOST_ID)?.remove()
 }
 
@@ -843,6 +850,16 @@ function syncBotSidebar(mode: SurfaceMode): void {
     row.append(host)
   } else if (host.parentElement !== row) {
     row.append(host)
+  }
+
+  // The account center takes the row's remaining width; the actions keep their
+  // intrinsic size at the right edge.
+  const account = Array.from(row.children)
+    .find(child => (child as HTMLElement).id !== BOT_FOOTER_HOST_ID) as HTMLElement | undefined
+  if (account !== undefined) {
+    account.style.flex = '1 1 auto'
+    account.style.minWidth = '0'
+    account.setAttribute(BOT_GROWN_ATTR, '')
   }
 
   for (const entry of BOT_FOOTER_ENTRIES) {

@@ -3010,15 +3010,14 @@ textarea.input {
 
 /* BOT footer: 新会话 and 自动化任务 as icon actions, modelled on the shipped
    market entry they sit next to. */
-/* BOT footer: the account row keeps its place on the left and these actions take
-   the free space on the right, modelled on the shipped market entry. */
+/* BOT footer: the account row stretches over the free space and these actions
+   keep their intrinsic size at the right edge, modelled on the shipped market
+   entry. */
 .botFooterHost {
   display: flex;
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   align-items: center;
-  justify-content: flex-end;
   gap: 2px;
-  min-width: 0;
 }
 
 .botFooterAction {
