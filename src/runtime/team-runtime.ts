@@ -1776,6 +1776,7 @@ export class TeamRuntime {
           createTask: input => this.commands.createTask(team.id, member.id, input, writeFence),
           updateTask: input => this.commands.updateTask(team.id, member.id, input, writeFence),
           claimTask: input => this.commands.claimTask(team.id, member.id, input, writeFence),
+          refreshEscalations: () => this.commands.refreshEscalations(),
           inbox: input => this.commands.inbox(team.id, member.id, input),
           listTasks: limit => this.commands.listTasks(team.id, limit),
           createGoal: input => this.commands.createGoal(team.id, member.id, input, writeFence),

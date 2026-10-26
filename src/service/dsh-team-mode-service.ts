@@ -44,6 +44,8 @@ import {
   type CreateAssistantSessionInput,
   type CreateTeamDraftInput,
   type CreateTeamGoalInput,
+  type Escalation,
+  type EscalationKind,
   type LinkedAssistantMemory,
   type MemoryEntry,
   type MemoryEntrySource,
@@ -68,6 +70,7 @@ import {
 } from '../domain/types.js'
 import type {
   AgentTeamCheckpointStore,
+  AgentTeamEscalationStore,
   AgentTeamLeaderCheckpointStore,
   AgentTeamStore,
 } from '../storage/store.js'
@@ -75,6 +78,7 @@ import type { AssistantBuilderRuntime } from '../runtime/assistant-builder-runti
 import type { AssistantEnsureResult, AssistantRuntime } from '../runtime/assistant-runtime.js'
 import { resolveMemberToolPolicy } from '../runtime/team-tools.js'
 import type { TeamRuntime } from '../runtime/team-runtime.js'
+import { liftEscalations, recordEscalation, type EscalationGate } from './escalations.js'
 import { WorkspaceService } from './workspace-service.js'
 import type {
   AssistantBuilderConversationView,
@@ -289,6 +293,40 @@ export class AgentTeamService extends Service {
     ctx.on('llm/adapters-updated', () => {
       this.publish('catalog', 'models', 0, 'catalog.models_updated')
     })
+  }
+
+  /**
+   * The escalation table is its own store slice so a store double written
+   * before the table existed stays valid. Probe for it instead of widening
+   * `AgentTeamStore`: a store without it records and lifts nothing.
+   */
+  private get escalationStore(): AgentTeamEscalationStore | undefined {
+    const store = this.store as Partial<AgentTeamEscalationStore>
+    return 'listEscalations' in store ? store as AgentTeamEscalationStore : undefined
+  }
+
+  /** Every persisted escalation row; empty when the store has no such table. */
+  listEscalations(): Escalation[] {
+    return this.escalationStore?.listEscalations() ?? []
+  }
+
+  /** Record one stalled gate; undefined when this store has no escalation table. */
+  recordEscalation(gate: EscalationGate, now = new Date().toISOString()): Promise<Escalation | undefined> {
+    const store = this.escalationStore
+    return store === undefined ? Promise.resolve(undefined) : recordEscalation(store, gate, now)
+  }
+
+  /** Lazily close the gates of one Session + kind that left the newest batch. */
+  liftEscalations(
+    sessionId: string,
+    kind: EscalationKind,
+    activeGateIds: Iterable<string>,
+    now = new Date().toISOString(),
+  ): Promise<Escalation[]> {
+    const store = this.escalationStore
+    return store === undefined
+      ? Promise.resolve([])
+      : liftEscalations(store, sessionId, kind, activeGateIds, now)
   }
 
   subscribe(listener: (change: AgentTeamChange) => void): () => void {

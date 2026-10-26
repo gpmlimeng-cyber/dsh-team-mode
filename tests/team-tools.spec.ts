@@ -35,6 +35,7 @@ function harness(options: { allow: string[] } | undefined = undefined): {
     createTask: vi.fn(async () => ({ taskId: 't1', status: 'assigned', kind: 'work' as const, deliveryState: 'delivered' as const })),
     updateTask: vi.fn(async () => ({ taskId: 't1', status: 'running', deliveryState: 'delivered' as const })),
     claimTask: vi.fn(async () => ({ taskId: 't1', status: 'assigned' as const, owner: 'member', attemptId: 'att-1' })),
+    refreshEscalations: vi.fn(async () => undefined),
     inbox: vi.fn(() => ({ assigned: [], ready: [], unread: [], approvals: [], remaining_unread: 0 })),
     listTasks: vi.fn(() => []),
     createGoal: vi.fn(async () => ({

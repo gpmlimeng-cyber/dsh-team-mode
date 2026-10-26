@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import { taskKindOf } from '../src/domain/types.js'
 import type {
+  Escalation,
+  EscalationKind,
   TeamAggregate,
   TeamGoal,
   TeamMemberSlot,
@@ -10,6 +12,9 @@ import type {
 import { AgentTeamError } from '../src/domain/errors.js'
 import { teamAggregateSchema, teamMessageSchema, teamTaskSchema } from '../src/domain/schemas.js'
 import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
+import { liftEscalations, recordEscalation, type EscalationGate } from '../src/service/escalations.js'
+import type { AgentTeamEscalationStore } from '../src/storage/store.js'
+import type { PendingInteractionView } from '../src/transport/contracts.js'
 import {
   TeamCommandHandler,
   type ClaimTaskResult,
@@ -90,6 +95,14 @@ function harness() {
   let team = makeTeam()
   let other = makeOtherTeam()
   const messages: TeamMessage[] = []
+  /** The escalation table the fake service exposes through the real seam. */
+  const escalationRows = new Map<string, Escalation>()
+  const escalationStore: AgentTeamEscalationStore = {
+    getEscalation: id => escalationRows.get(id),
+    listEscalations: () => [...escalationRows.values()],
+    putEscalation: async value => { escalationRows.set(value.id, value) },
+    deleteEscalation: async id => escalationRows.delete(id),
+  }
   const aggregates = (): Map<string, TeamAggregate> => new Map([
     [team.id, team],
     [other.id, other],
@@ -112,6 +125,14 @@ function harness() {
       items: messages.filter(message => message.teamId === team.id),
       total: messages.filter(message => message.teamId === team.id).length,
     })),
+    listEscalations: vi.fn((): Escalation[] => escalationStore.listEscalations()),
+    recordEscalation: vi.fn(
+      (gate: EscalationGate, now?: string) => recordEscalation(escalationStore, gate, now),
+    ),
+    liftEscalations: vi.fn(
+      (sessionId: string, kind: EscalationKind, activeGateIds: Iterable<string>, now?: string) =>
+        liftEscalations(escalationStore, sessionId, kind, activeGateIds, now),
+    ),
     putRuntimeMessage: vi.fn(async (message: TeamMessage) => {
       const index = messages.findIndex(item => item.id === message.id)
       if (index === -1) messages.push(message)
@@ -243,6 +264,7 @@ function harness() {
         .mockReturnValue(instanceId === undefined ? undefined : { id: instanceId, coordinator: true })
     },
     messages,
+    escalations: () => escalationStore.listEscalations(),
     followup,
     removeMember,
   }
@@ -2974,3 +2996,91 @@ describe('TeamCommandHandler parked deliveries', () => {
     expect(bInbox.unread.find(message => message.id === 'for-removing')?.parked).toBeUndefined()
   })
 })
+
+describe('TeamCommandHandler escalations', () => {
+  /** One pending approval for the given Session; every other Session is quiet. */
+  function pendingApproval(sessionId: string, pending: PendingInteractionView[]) {
+    return (candidate: string): PendingInteractionView[] => candidate === sessionId ? pending : []
+  }
+
+  function approval(id: string): PendingInteractionView {
+    return { id, kind: 'approval', approvalId: `ap-${id}`, toolName: 'bash', reason: 'needs review' }
+  }
+
+  it('records an approval gate the aggregation pass sees', async () => {
+    const { commands, team, port, escalations } = harness()
+    ;(port as { pendingInteractions?: TeamCommandPort['pendingInteractions'] }).pendingInteractions =
+      pendingApproval('session-a', [approval('gate-approval')])
+
+    await commands.refreshEscalations(NOW)
+
+    expect(escalations()).toEqual([{
+      schemaVersion: 1,
+      id: 'team-1:a:approval:gate-approval',
+      teamId: 'team-1',
+      teamName: 'Test Team',
+      memberSlotId: 'a',
+      sessionId: 'session-a',
+      kind: 'approval',
+      gateId: 'gate-approval',
+      summary: 'Alpha: bash',
+      status: 'open',
+      createdAt: NOW,
+    }])
+
+    // A second pass over the same gate is a read, not a second row.
+    await commands.refreshEscalations(NOW)
+    expect(escalations()).toHaveLength(1)
+  })
+
+  it('lifts an answered approval on the next pass', async () => {
+    const { commands, team, port, escalations } = harness()
+    let pending: PendingInteractionView[] = [approval('gate-approval')]
+    ;(port as { pendingInteractions?: TeamCommandPort['pendingInteractions'] }).pendingInteractions =
+      candidate => pendingApproval('session-a', pending)(candidate)
+
+    await commands.refreshEscalations(NOW)
+    expect(escalations().map(row => row.status)).toEqual(['open'])
+
+    pending = []
+    await commands.refreshEscalations('2026-01-01T00:05:00.000Z')
+
+    expect(escalations()).toEqual([expect.objectContaining({
+      kind: 'approval',
+      gateId: 'gate-approval',
+      status: 'lifted',
+      liftedAt: '2026-01-01T00:05:00.000Z',
+    })])
+    // Nothing left to close.
+    await commands.refreshEscalations('2026-01-01T00:06:00.000Z')
+    expect(escalations()[0]?.liftedAt).toBe('2026-01-01T00:05:00.000Z')
+  })
+
+  it('records a blocked task as its own gate', async () => {
+    const { commands, team, escalations } = harness()
+    const created = await commands.createTask(team().id, 'leader', {
+      subject: 'Fix the parser',
+      owner: 'a',
+    })
+    await commands.updateTask(team().id, 'a', {
+      task_id: created.taskId,
+      status: 'blocked',
+      ...(created.attemptId === undefined ? {} : { attempt_id: created.attemptId }),
+    })
+
+    await commands.refreshEscalations(NOW)
+
+    expect(escalations()).toEqual([expect.objectContaining({
+      id: `team-1:a:blocked_task:${created.taskId}`,
+      teamId: 'team-1',
+      teamName: 'Test Team',
+      memberSlotId: 'a',
+      sessionId: 'session-a',
+      kind: 'blocked_task',
+      gateId: created.taskId,
+      summary: 'Fix the parser',
+      status: 'open',
+    })])
+  })
+})
+

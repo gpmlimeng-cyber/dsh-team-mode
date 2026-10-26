@@ -63,6 +63,8 @@ export interface TeamToolHandlers {
     attemptId?: string
   }>
   claimTask: (input: ClaimTaskInput) => Promise<ClaimTaskResult>
+  /** Converge escalations before the inbox reads them; a no-op without a store. */
+  refreshEscalations: () => Promise<void>
   inbox: (input: InboxInput) => TeamInboxResult
   listTasks: (limit?: number) => TeamTaskView[]
   createGoal: (input: CreateGoalInput) => Promise<TeamGoalView>
@@ -614,6 +616,9 @@ export function registerTeamTools(
     output: textOutput,
     execute: async (args, exec) => {
       handlers.assertIdentity(exec.agent)
+      // The read is the aggregation pass: record the gates it sees, then lift
+      // the ones that left, before the sections are shaped.
+      await handlers.refreshEscalations()
       return handlers.inbox(args.limit === undefined ? {} : { limit: args.limit }) as never
     },
   }))

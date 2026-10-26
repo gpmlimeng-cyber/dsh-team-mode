@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { createUserMessage, MessageId, type UserMessage } from '@deepseek-ai/dsh-llm'
 import { AgentTeamError } from '../domain/errors.js'
 import { recallMemoryEntries, type MemoryRecallFilter } from '../domain/memory.js'
-import { teamTaskKindSchema, teamTaskVerdictSchema } from '../domain/schemas.js'
+import { escalationKindSchema, teamTaskKindSchema, teamTaskVerdictSchema } from '../domain/schemas.js'
 import {
   chargeGoalTurn,
   goalBudgetExhausted,
@@ -11,6 +11,8 @@ import {
   taskKindOf,
 } from '../domain/types.js'
 import type {
+  Escalation,
+  EscalationKind,
   MemoryEntry,
   TeamAggregate,
   TeamGoal,
@@ -22,6 +24,7 @@ import type {
   TeamTaskVerdict,
 } from '../domain/types.js'
 import type { AgentTeamService } from '../service/dsh-team-mode-service.js'
+import type { EscalationGate } from '../service/escalations.js'
 import type { PendingInteractionView } from '../transport/contracts.js'
 import {
   appendMemoryJournal,
@@ -89,6 +92,22 @@ export interface TeamCommandPort {
    * only checks member state.
    */
   activeTurn?: (teamId: string) => boolean
+}
+
+/**
+ * The escalation seam the handler needs from the service. Every member is
+ * optional: a store without the escalation table (or an older test double)
+ * records and lifts nothing, and the aggregation still works.
+ */
+export interface TeamEscalationPort {
+  listEscalations(): Escalation[]
+  recordEscalation(gate: EscalationGate, now?: string): Promise<Escalation | undefined>
+  liftEscalations(
+    sessionId: string,
+    kind: EscalationKind,
+    activeGateIds: Iterable<string>,
+    now?: string,
+  ): Promise<Escalation[]>
 }
 
 export interface TeamMemberView {
@@ -1559,6 +1578,61 @@ export class TeamCommandHandler {
     return {
       messages: views,
       remaining_unread: Math.max(0, unread.length - unreadSelected),
+    }
+  }
+
+  /**
+   * One lazy escalation pass over every gate the runtime can see right now:
+   * approvals and questions from the interaction bridge, blocked tasks from the
+   * board. Each gate is recorded first, then its Session + kind is converged
+   * against exactly this batch, so a row is lifted only when its gate left the
+   * batch. There is no timer: the aggregation that reads the pending
+   * confirmations is also the pass that closes them.
+   */
+  async refreshEscalations(now = new Date().toISOString()): Promise<void> {
+    const port: Partial<TeamEscalationPort> = this.service
+    if (port.recordEscalation === undefined || port.liftEscalations === undefined) return
+    for (const team of this.service.listTeams().items) {
+      const blocked = Object.values(team.tasks).filter(task => task.status === 'blocked')
+      for (const member of Object.values(team.members)) {
+        const pending = this.port.pendingInteractions?.(member.sessionId) ?? []
+        const batch: Array<{ kind: EscalationKind; gateId: string; summary: string }> = []
+        for (const view of pending) {
+          if (view.kind === 'approval') {
+            batch.push({
+              kind: 'approval',
+              gateId: view.id,
+              summary: `${member.displayName}: ${view.toolName}`,
+            })
+          } else {
+            const asked = view.questions[0]
+            batch.push({
+              kind: 'question',
+              gateId: view.id,
+              summary: `${member.displayName}: ${asked?.header ?? asked?.question ?? 'question'}`,
+            })
+          }
+        }
+        for (const task of blocked) {
+          if (task.ownerSlotId !== member.id) continue
+          batch.push({ kind: 'blocked_task', gateId: task.id, summary: task.title })
+        }
+        for (const kind of escalationKindSchema.options) {
+          const gates = batch.filter(gate => gate.kind === kind)
+          for (const gate of gates) {
+            await port.recordEscalation?.({
+              teamId: team.id,
+              teamName: team.name,
+              memberSlotId: member.id,
+              sessionId: member.sessionId,
+              kind,
+              gateId: gate.gateId,
+              summary: gate.summary,
+            }, now)
+          }
+          await port.liftEscalations?.(member.sessionId, kind, gates.map(gate => gate.gateId), now)
+        }
+      }
     }
   }
 
