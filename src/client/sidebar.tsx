@@ -45,6 +45,7 @@ import {
 import { useTeamText } from './team-i18n.js'
 import { TEAM_TASK_CREATE_HINT } from './labels.js'
 import { TEAM_AVATAR_TILE_COUNT, teamAvatarColor, teamAvatarTiles } from './team-avatar.js'
+import { teamBadgeCounts } from './team-badge-data.js'
 import { AnimatedModal } from './shared.js'
 import {
   SURFACE_MODE_KEY,
@@ -608,6 +609,9 @@ export function SidebarTeamSection({
                 )
               : visibleTeams.map(team => {
               const summary = teamSidebarSummary(team)
+              // One badge derivation for the entry row, the hover seat and the
+              // team page; `unread` stays 0 until a team-level count exists.
+              const badge = teamBadgeCounts(team)
               const statusText = teamSidebarStatusText(summary)
               const teamActive = selectedTeamId === team.id
               // A member Session is inside this team, but the roster row owns the
@@ -625,11 +629,11 @@ export function SidebarTeamSection({
               return (
                 <div key={team.id} className={css.sidebarTeamGroup}>
                   <div
-                    className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamRowWrapTwoLine} ${teamActive ? css.sidebarTeamRowWrapActive : ''} ${rowMenuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
+                    className={`${css.sidebarTeamRowWrap} ${teamActive ? css.sidebarTeamRowWrapActive : ''} ${rowMenuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
                   >
                     <button
                       type="button"
-                      className={`${css.sidebarTeamRow} ${css.sidebarTeamRowTwoLine}`}
+                      className={css.sidebarTeamRow}
                       onClick={() => { openTeam(team) }}
                       aria-current={teamCurrent ? 'page' : undefined}
                       title={`${team.name} · ${statusText}`}
@@ -659,19 +663,18 @@ export function SidebarTeamSection({
                           )}
                           <span className={css.sidebarTeamTime}>{relativeTime(team.updatedAt)}</span>
                         </span>
-                        <span className={css.sidebarTeamSubtitle} title={statusText}>{statusText}</span>
                       </span>
-                      {summary.waiting > 0
+                      {badge !== undefined && badge.pending > 0
                         ? (
                             <span
                               className={css.sidebarTeamBadge}
-                              title={`${summary.waiting} 个待确认`}
-                              aria-label={`${summary.waiting} 个待确认`}
+                              title={`${badge.pending} 个待确认`}
+                              aria-label={`${badge.pending} 个待确认`}
                             >
-                              {summary.waiting > 99 ? '99+' : summary.waiting}
+                              {badge.pending > 99 ? '99+' : badge.pending}
                             </span>
                           )
-                        : summary.running > 0
+                        : badge !== undefined && badge.running > 0
                           ? <span className={css.sidebarTeamStateDot} aria-hidden="true" />
                           : null}
                     </button>
