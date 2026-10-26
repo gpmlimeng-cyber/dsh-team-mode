@@ -3139,85 +3139,13 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   outline-offset: 3px;
 }
 
-/* Pinned default bot: laid over the shipped 新会话 box, so it inherits that
-   button's position, size and vertical margins without guessing them. */
+/* Pinned default bot: only the host is ours; the row itself is the 单聊
+   assistant row's own markup and styles. */
 .stewardHost {
   box-sizing: border-box;
   display: block;
   margin: 0;
   padding: 0;
-}
-
-.stewardEntry {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  margin: 0;
-  padding: 4px 8px;
-  border: none;
-  border-radius: var(--dsw-radius-md);
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 120ms ease;
-}
-
-.stewardEntry:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.stewardEntry:disabled {
-  opacity: 0.6;
-  cursor: default;
-}
-
-.stewardAvatar {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-primary);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.stewardText {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.stewardName {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--dsw-alias-label-primary);
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 18px;
-}
-
-.stewardName > svg {
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.stewardHint {
-  overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 /* Rows inside the shipped Menu: label plus a muted detail, one line. */
