@@ -119,7 +119,7 @@ describe('sidebar surface switch', () => {
     // The rail is narrow on mobile and widens into the drawer without a
     // window resize; the brand row itself must be observed.
     expect(sidebar).toContain('brandResize.observe(row)')
-    expect(sidebar).toContain('const minCenter = sidebarRect.top + (window.innerWidth <= 760 ? 104 : 30)')
+    expect(sidebar).toContain('const minCenter = sidebarRect.top + (window.innerWidth <= 760 ? 56 : 30)')
     expect(sidebar).toContain('toggleRect.left - left - 20')
     expect(sidebar).toContain('toggleRect.top + toggleRect.height / 2')
   })

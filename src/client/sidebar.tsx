@@ -1326,7 +1326,7 @@ export function SidebarPortal({
         : rect.top + rect.height / 2
       // The Android shell overlays the top of the WebView with its own chrome;
       // keep the fixed row below that strip on phones.
-      const minCenter = sidebarRect.top + (window.innerWidth <= 760 ? 104 : 30)
+      const minCenter = sidebarRect.top + (window.innerWidth <= 760 ? 56 : 30)
       const maxCenter = sidebarRect.bottom - 30
       element.style.top = `${Math.round(Math.min(Math.max(center, minCenter), Math.max(minCenter, maxCenter)))}px`
       element.style.width = `${Math.max(0, Math.round(width))}px`
