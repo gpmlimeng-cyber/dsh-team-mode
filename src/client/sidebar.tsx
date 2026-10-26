@@ -769,24 +769,24 @@ const BOT_FOOTER_HOST_ID = 'dsh-team-mode-footer-host'
 /** Marks a native node this plugin hid for the BOT surface. */
 const BOT_HIDDEN_ATTR = 'data-dsh-bot-hidden'
 
+/** One top-menu row of the shipped panel list, matched by its accessible name. */
+function findPanelRow(label: string): HTMLElement | null {
+  const list = document.querySelector<HTMLElement>('[class*="_panelList"]')
+  if (list === null) return null
+  return Array.from(list.querySelectorAll<HTMLElement>('button, [role="button"]'))
+    .find(node => (node.getAttribute('aria-label') ?? node.textContent ?? '').trim() === label)
+    ?? null
+}
+
 /** Sidebar entries that move into the BOT footer instead of staying in the list. */
 const BOT_FOOTER_ENTRIES = [
-  {
-    key: 'new-session',
-    title: '新会话',
-    find: (): HTMLElement | null => document.querySelector<HTMLElement>('[class*="_newSession"]'),
-  },
-  {
-    key: 'schedules',
-    title: '自动化任务',
-    find: (): HTMLElement | null => {
-      const list = document.querySelector<HTMLElement>('[class*="_panelList"]')
-      if (list === null) return null
-      return Array.from(list.querySelectorAll<HTMLElement>('button, [role="button"]'))
-        .find(node => (node.getAttribute('aria-label') ?? node.textContent ?? '').trim() === '自动化任务')
-        ?? null
-    },
-  },
+  { key: 'plugins', title: '插件', find: (): HTMLElement | null => findPanelRow('插件') },
+  { key: 'schedules', title: '自动化任务', find: (): HTMLElement | null => findPanelRow('自动化任务') },
+] as const
+
+/** Entries the BOT surface drops entirely (no footer replacement). */
+const BOT_DROPPED_ENTRIES = [
+  { key: 'new-session', find: (): HTMLElement | null => document.querySelector<HTMLElement>('[class*="_newSession"]') },
 ] as const
 
 /** The shipped market entry that the BOT footer replaces. */
@@ -873,9 +873,30 @@ function syncBotSidebar(mode: SurfaceMode): void {
     native.setAttribute(BOT_HIDDEN_ATTR, '')
   }
 
+  for (const entry of BOT_DROPPED_ENTRIES) {
+    const native = entry.find()
+    if (native === null) continue
+    native.style.display = 'none'
+    native.setAttribute(BOT_HIDDEN_ATTR, '')
+  }
+
   if (market !== null) {
     market.style.display = 'none'
     market.setAttribute(BOT_HIDDEN_ATTR, '')
+  }
+
+  // One bottom line: the shipped foot stacks `_footerActions` above the account
+  // row, so an emptied actions row would leave a second, blank line behind.
+  const actions = document.querySelector<HTMLElement>('[class*="_footerActions"]')
+  if (actions !== null && actions.childElementCount > 0) {
+    const visible = Array.from(actions.children).some((child) => {
+      const element = child as HTMLElement
+      return element.style.display !== 'none' && (element.textContent ?? '').trim() !== ''
+    })
+    if (!visible) {
+      actions.style.display = 'none'
+      actions.setAttribute(BOT_HIDDEN_ATTR, '')
+    }
   }
 }
 /**

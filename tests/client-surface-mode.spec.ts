@@ -131,16 +131,23 @@ describe('sidebar surface switch', () => {
     expect(index).not.toContain("{mode === 'team' && <SessionRowHider")
   })
 
-  it('moves 新会话 and 自动化任务 into the BOT footer and drops the market entry', () => {
+  it('moves 插件 and 自动化任务 into the BOT footer and drops the market entry', () => {
     expect(sidebar).toContain('BOT_FOOTER_ENTRIES')
     expect(sidebar).toContain('dsh-team-mode-footer-host')
-    expect(sidebar).toContain("title: '新会话'")
+    expect(sidebar).toContain("title: '插件'")
     expect(sidebar).toContain("title: '自动化任务'")
     // The market entry is what the footer actions replace.
     expect(sidebar).toMatch(/插件广场\|市场\|market/)
     // Proxy clicks go to the real control instead of reimplementing it.
     expect(sidebar).toContain('native.click()')
     expect(sidebar).toContain('data-dsh-bot-hidden')
+  })
+
+  it('drops 新会话 instead of moving it, and keeps the footer on one line', () => {
+    expect(sidebar).toContain('BOT_DROPPED_ENTRIES')
+    expect(sidebar).toContain("key: 'new-session'")
+    expect(sidebar).not.toContain("title: '新会话'")
+    expect(sidebar).toContain('_footerActions')
   })
 
   it('restores every native node in DSH mode', () => {
