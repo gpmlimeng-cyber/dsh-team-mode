@@ -66,7 +66,9 @@ import {
   SidebarGroupCreateRow,
   SidebarGroupDialogs,
   SidebarGroupPartition,
+  sidebarDragSwallowsClick,
   sidebarGroupMenuItems,
+  useSidebarDrag,
   type SidebarGroupDialog,
 } from './sidebar-group-ui.js'
 import css from './AgentTeam.module.css'
@@ -522,6 +524,23 @@ export function AssistantSidebarSection({
   )
   const partitioned = groups.length > 0
 
+  /** Rows move between groups, headers reorder groups: one shared state machine. */
+  const drag = useSidebarDrag({
+    groups,
+    assign: async (id, group) => {
+      await callAgentTeam('assistant.instance.update', {
+        id,
+        // An empty string is the update schema's "clear it".
+        value: { group: group ?? '' },
+      })
+      await load()
+    },
+    reorder: async names => {
+      adoptGroups(await callAgentTeam('sidebar.groups.reorder', { names }))
+    },
+    onError: cause => { setError(cause instanceof Error ? cause.message : String(cause)) },
+  })
+
   const togglePartition = (id: string): void => {
     setCollapsedPartitions(current => ({ ...current, [id]: current[id] !== true }))
   }
@@ -579,6 +598,7 @@ export function AssistantSidebarSection({
           : state === 'starting'
             ? css.sidebarAssistantDotStarting
             : css.sidebarAssistantDotQueued
+    const rowDrag = drag.row(instance.id, instance.group)
     const statusClass = state === 'needs_input'
       ? css.sidebarAssistantStatusWaiting
       : state === 'running'
@@ -606,6 +626,10 @@ export function AssistantSidebarSection({
         <div
           className={`${css.sidebarTeamRowWrap} ${css.sidebarAssistantRowWrap} ${active ? css.sidebarTeamRowWrapActive : ''} ${menuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
           data-dsh-assistant-row
+          draggable={rowDrag.draggable}
+          onDragStart={rowDrag.onDragStart}
+          onDragEnd={rowDrag.onDragEnd}
+          {...(rowDrag.dragging ? { 'data-dsh-drag-source': '' } : {})}
         >
           {hasThreads && (
             <button
@@ -632,6 +656,8 @@ export function AssistantSidebarSection({
             type="button"
             className={`${css.sidebarTeamRow} ${css.sidebarAssistantRow}`}
             onClick={() => {
+              // A drag that ended on this row must not also open the assistant.
+              if (sidebarDragSwallowsClick()) return
               if (activity.status === 'needs_input') {
                 const pendingTask = assistantThreadTasks(tasks, instance)
                   .find(task => task.status === 'needs_input')
@@ -1118,6 +1144,7 @@ export function AssistantSidebarSection({
                             count={partition.items.length}
                             collapsed={collapsedPartitions[partition.id] === true}
                             onToggle={() => { togglePartition(partition.id) }}
+                            drag={drag.partition({ ...(group === undefined ? {} : { group }) })}
                             {...(group === undefined
                               ? {}
                               : {

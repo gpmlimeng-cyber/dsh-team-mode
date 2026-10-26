@@ -151,6 +151,66 @@ export function movedGroupOrder(
   return next
 }
 
+/** What is being dragged: a sidebar row, or a named group's header. */
+export type SidebarDragKind = 'row' | 'group'
+
+/** What the pointer is over. `row` exists only so an invalid target is explicit. */
+export type SidebarDropOverKind = 'group' | 'ungrouped' | 'row' | 'none'
+
+/** Which half of the element the pointer sits in, exactly like the native list. */
+export type SidebarDropHalf = 'before' | 'after'
+
+/**
+ * The one action a drop can mean here. There is deliberately no
+ * `reorder-row`: rows carry no order field, so ordering inside a group would be
+ * a second, invented state the Host cannot store.
+ */
+export type SidebarDropIntent =
+  | { kind: 'assign'; ungrouped: boolean }
+  | { kind: 'insert'; half: SidebarDropHalf }
+  | { kind: 'none' }
+
+/**
+ * Resolve one drag/over/half combination into an action.
+ *
+ * Two semantics only, as designed: a row dropped on any header changes its
+ * group (the ungrouped header included), and a group header dropped on another
+ * header inserts itself on that half. Everything else — a row on a row, a group
+ * on the ungrouped header (which is not a group in the list) — is `none`, and
+ * the caller then reports `dropEffect = 'none'` instead of pretending.
+ */
+export function resolveDropTarget(
+  dragKind: SidebarDragKind | undefined,
+  overKind: SidebarDropOverKind,
+  half: SidebarDropHalf,
+): SidebarDropIntent {
+  if (dragKind === undefined || overKind === 'none' || overKind === 'row') return { kind: 'none' }
+  if (dragKind === 'row') {
+    if (overKind === 'ungrouped') return { kind: 'assign', ungrouped: true }
+    return { kind: 'assign', ungrouped: false }
+  }
+  // A group header can only be dropped on another group header.
+  return overKind === 'group' ? { kind: 'insert', half } : { kind: 'none' }
+}
+
+/**
+ * The list after inserting `moving` beside `target`. Mirrors the native insert
+ * line: the moving group leaves its old slot first, then takes the target's
+ * `before`/`after` position. A no-op (same slot, unknown label) returns the same
+ * order so the caller can skip a pointless write.
+ */
+export function insertGroupOrder(
+  groups: readonly string[],
+  moving: string,
+  target: string,
+  half: SidebarDropHalf,
+): string[] {
+  if (moving === target || !groups.includes(moving) || !groups.includes(target)) return [...groups]
+  const rest = groups.filter(group => group !== moving)
+  rest.splice(rest.indexOf(target) + (half === 'after' ? 1 : 0), 0, moving)
+  return rest
+}
+
 export interface SidebarGroups {
   /** Ordered labels, exactly as the Host returned them. */
   groups: string[]

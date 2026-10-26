@@ -63,7 +63,9 @@ import {
   SidebarGroupCreateRow,
   SidebarGroupDialogs,
   SidebarGroupPartition,
+  sidebarDragSwallowsClick,
   sidebarGroupMenuItems,
+  useSidebarDrag,
   type SidebarGroupDialog,
 } from './sidebar-group-ui.js'
 
@@ -439,6 +441,19 @@ export function SidebarTeamSection({
   )
   const partitioned = groups.length > 0
 
+  /** Rows move between groups, headers reorder groups: one shared state machine. */
+  const drag = useSidebarDrag({
+    groups,
+    assign: async (teamId, group) => {
+      await callAgentTeam('team.group.set', { teamId, group: group ?? null })
+      await load()
+    },
+    reorder: async names => {
+      adoptGroups(await callAgentTeam('sidebar.groups.reorder', { names }))
+    },
+    onError: cause => { setError(cause instanceof Error ? cause.message : String(cause)) },
+  })
+
   const togglePartition = (id: string): void => {
     setCollapsedPartitions(current => ({ ...current, [id]: current[id] !== true }))
   }
@@ -483,15 +498,24 @@ export function SidebarTeamSection({
     const rosterOpen = rosterIsOpen(team.id)
     const rosterId = `dsh-team-mode-roster-${team.id}`
     const roster = rosterOpen ? teamRosterRows(team) : []
+    const rowDrag = drag.row(team.id, team.group)
     return (
       <div key={team.id} className={css.sidebarTeamGroup}>
         <div
           className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamRowWrapTwoLine} ${teamActive ? css.sidebarTeamRowWrapActive : ''} ${rowMenuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
+          draggable={rowDrag.draggable}
+          onDragStart={rowDrag.onDragStart}
+          onDragEnd={rowDrag.onDragEnd}
+          {...(rowDrag.dragging ? { 'data-dsh-drag-source': '' } : {})}
         >
           <button
             type="button"
             className={`${css.sidebarTeamRow} ${css.sidebarTeamRowTwoLine}`}
-            onClick={() => { openTeam(team) }}
+            onClick={() => {
+              // A drag that ended on this row must not also open the team.
+              if (sidebarDragSwallowsClick()) return
+              openTeam(team)
+            }}
             aria-current={teamCurrent ? 'page' : undefined}
             title={`${team.name} · ${statusText}`}
           >
@@ -884,6 +908,7 @@ export function SidebarTeamSection({
                             count={partition.items.length}
                             collapsed={collapsedPartitions[partition.id] === true}
                             onToggle={() => { togglePartition(partition.id) }}
+                            drag={drag.partition({ ...(group === undefined ? {} : { group }) })}
                             {...(group === undefined
                               ? {}
                               : {

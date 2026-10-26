@@ -4,7 +4,9 @@ import {
   UNGROUPED_PARTITION_ID,
   groupMembershipCandidates,
   groupMembershipChanges,
+  insertGroupOrder,
   movedGroupOrder,
+  resolveDropTarget,
   sidebarGroupNameError,
   sidebarPartitions,
   type SidebarGroupCandidate,
@@ -122,6 +124,48 @@ describe('movedGroupOrder', () => {
     expect(movedGroupOrder(['a', 'b'], 'a', -1)).toEqual(['a', 'b'])
     expect(movedGroupOrder(['a', 'b'], 'b', 1)).toEqual(['a', 'b'])
     expect(movedGroupOrder(['a', 'b'], 'gone', 1)).toEqual(['a', 'b'])
+  })
+})
+
+describe('resolveDropTarget', () => {
+  it('assigns a row dropped on the ungrouped header', () => {
+    expect(resolveDropTarget('row', 'ungrouped', 'after')).toEqual({ kind: 'assign', ungrouped: true })
+  })
+
+  it('assigns a row dropped on a named group header, on either half', () => {
+    expect(resolveDropTarget('row', 'group', 'before')).toEqual({ kind: 'assign', ungrouped: false })
+    expect(resolveDropTarget('row', 'group', 'after')).toEqual({ kind: 'assign', ungrouped: false })
+  })
+
+  it('inserts a dragged group on the hovered half of another header', () => {
+    expect(resolveDropTarget('group', 'group', 'before')).toEqual({ kind: 'insert', half: 'before' })
+    expect(resolveDropTarget('group', 'group', 'after')).toEqual({ kind: 'insert', half: 'after' })
+  })
+
+  it('reports none for every invalid combination', () => {
+    // Rows carry no order field, so a row never reorders anything.
+    expect(resolveDropTarget('row', 'row', 'before')).toEqual({ kind: 'none' })
+    // The ungrouped header is not a group in the list: it cannot be reordered onto.
+    expect(resolveDropTarget('group', 'ungrouped', 'after')).toEqual({ kind: 'none' })
+    expect(resolveDropTarget('group', 'row', 'before')).toEqual({ kind: 'none' })
+    expect(resolveDropTarget(undefined, 'group', 'after')).toEqual({ kind: 'none' })
+    expect(resolveDropTarget('row', 'none', 'after')).toEqual({ kind: 'none' })
+  })
+})
+
+describe('insertGroupOrder', () => {
+  it('inserts before or after the target after leaving the old slot', () => {
+    expect(insertGroupOrder(['a', 'b', 'c'], 'c', 'a', 'before')).toEqual(['c', 'a', 'b'])
+    expect(insertGroupOrder(['a', 'b', 'c'], 'a', 'b', 'after')).toEqual(['b', 'a', 'c'])
+    // Moving down past a neighbour lands in the same place as moving it up.
+    expect(insertGroupOrder(['a', 'b', 'c'], 'a', 'c', 'after')).toEqual(['b', 'c', 'a'])
+  })
+
+  it('returns the same order for a no-op or an unknown label', () => {
+    expect(insertGroupOrder(['a', 'b'], 'a', 'a', 'before')).toEqual(['a', 'b'])
+    expect(insertGroupOrder(['a', 'b'], 'a', 'b', 'before')).toEqual(['a', 'b'])
+    expect(insertGroupOrder(['a', 'b'], 'gone', 'a', 'after')).toEqual(['a', 'b'])
+    expect(insertGroupOrder(['a', 'b'], 'a', 'gone', 'after')).toEqual(['a', 'b'])
   })
 })
 

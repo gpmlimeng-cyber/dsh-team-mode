@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
+import type { DragEvent, ReactNode } from 'react'
 import {
   Button,
   IconChevronDownOutlineRegular,
@@ -20,9 +20,14 @@ import { assistantInstanceName } from './assistant-instances.js'
 import { AnimatedModal } from './shared.js'
 import {
   SIDEBAR_GROUP_MAX_CHARS,
+  UNGROUPED_PARTITION_ID,
   groupMembershipCandidates,
   groupMembershipChanges,
+  insertGroupOrder,
+  resolveDropTarget,
   sidebarGroupNameError,
+  type SidebarDropHalf,
+  type SidebarDropOverKind,
   type SidebarGroupCandidate,
 } from './sidebar-groups.js'
 import css from './AgentTeam.module.css'
@@ -30,6 +35,167 @@ import type { AssistantInstanceView, TeamView } from '../transport/contracts.js'
 
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
+}
+
+/**
+ * Chromium does not deliver the click that follows a native drag, but a WebView
+ * that cancels a drag differently can. One short window after a drag ends keeps
+ * a finished drag from opening a Session or folding a section.
+ */
+let dragClickGuardUntil = 0
+
+function armDragClickGuard(): void {
+  dragClickGuardUntil = Date.now() + 200
+}
+
+/** Whether the click arriving now belongs to a drag that just ended. */
+export function sidebarDragSwallowsClick(): boolean {
+  return Date.now() < dragClickGuardUntil
+}
+
+/** One partition header as a drop target, plus its own drag source. */
+export interface SidebarPartitionDrag {
+  /** A drag is in flight; without one, no header listens to the pointer. */
+  active: boolean
+  /** This header is the group being dragged. */
+  dragging: boolean
+  /** A row hovers this header: highlight the whole header. */
+  highlight: boolean
+  /** A group header hovers this one: 1px insertion line on this side. */
+  marker: SidebarDropHalf | null
+  start?: () => void
+  end: () => void
+  /** Report the hovered half; returns whether this header accepts the drop. */
+  hover: (half: SidebarDropHalf) => boolean
+  drop: (half: SidebarDropHalf) => void
+}
+
+/** One sidebar row as a drag source. */
+export interface SidebarRowDrag {
+  draggable: boolean
+  dragging: boolean
+  onDragStart: (event: DragEvent<HTMLElement>) => void
+  onDragEnd: () => void
+}
+
+interface DragSource {
+  kind: 'row'
+  id: string
+  group?: string
+}
+
+interface GroupDragSource {
+  kind: 'group'
+  name: string
+}
+
+/**
+ * The sidebar's drag state machine, shared by both sections.
+ *
+ * It owns only the browser-drag bookkeeping (what is dragged, which header is
+ * under the pointer, which half) and hands every decision to `assign`/`reorder`;
+ * the sections keep the transport calls. Native shape throughout: `draggable`
+ * rows, `effectAllowed = 'move'` plus a `text/plain` payload on start,
+ * `preventDefault()` and a before/after half from the rect midpoint on hover.
+ */
+export function useSidebarDrag({
+  groups,
+  assign,
+  reorder,
+  onError,
+}: {
+  groups: readonly string[]
+  /** Move one row into a group; `undefined` means 未分组. */
+  assign: (id: string, group: string | undefined) => Promise<void>
+  /** Replace the order of the named groups. */
+  reorder: (names: string[]) => Promise<void>
+  onError: (cause: unknown) => void
+}): {
+  row: (id: string, group: string | undefined) => SidebarRowDrag
+  partition: (target: { group?: string }) => SidebarPartitionDrag
+} {
+  const [source, setSource] = useState<DragSource | GroupDragSource>()
+  const [over, setOver] = useState<{ key: string; half: SidebarDropHalf }>()
+
+  const end = useCallback((): void => {
+    setSource(undefined)
+    setOver(undefined)
+    armDragClickGuard()
+  }, [])
+
+  const row = (id: string, group: string | undefined): SidebarRowDrag => ({
+    // Without a single group there is nowhere to drop, so rows stay undraggable
+    // and an install that never used groups keeps its old pointer behaviour.
+    draggable: groups.length > 0,
+    dragging: source?.kind === 'row' && source.id === id,
+    onDragStart: (event): void => {
+      event.dataTransfer.effectAllowed = 'move'
+      event.dataTransfer.setData('text/plain', id)
+      setSource({ kind: 'row', id, ...(group === undefined ? {} : { group }) })
+      setOver(undefined)
+    },
+    onDragEnd: end,
+  })
+
+  const partition = (target: { group?: string }): SidebarPartitionDrag => {
+    const key = target.group ?? UNGROUPED_PARTITION_ID
+    const overKind: SidebarDropOverKind = target.group === undefined ? 'ungrouped' : 'group'
+    const settle = (half: SidebarDropHalf): { accepted: boolean } => {
+      const intent = resolveDropTarget(source?.kind, overKind, half)
+      return { accepted: intent.kind !== 'none' }
+    }
+    const runDrop = (half: SidebarDropHalf): void => {
+      const intent = resolveDropTarget(source?.kind, overKind, half)
+      setOver(undefined)
+      if (intent.kind === 'none' || source === undefined) return
+      if (intent.kind === 'assign') {
+        if (source.kind !== 'row') return
+        // Dropping a row back where it already sits is not a write.
+        if ((source.group ?? undefined) === target.group) return
+        void assign(source.id, target.group).catch(onError)
+        return
+      }
+      if (source.kind !== 'group' || target.group === undefined) return
+      const names = insertGroupOrder(groups, source.name, target.group, intent.half)
+      if (names.length === groups.length && names.every((name, index) => name === groups[index])) return
+      void reorder(names).catch(onError)
+    }
+    return {
+      active: source !== undefined,
+      dragging: source?.kind === 'group' && source.name === target.group,
+      highlight: over?.key === key && source?.kind === 'row',
+      marker: over?.key === key && source?.kind === 'group' ? over.half : null,
+      ...(target.group === undefined
+        ? {}
+        : {
+            start: (): void => {
+              setSource({ kind: 'group', name: target.group as string })
+              setOver(undefined)
+            },
+          }),
+      end,
+      hover: (half: SidebarDropHalf): boolean => {
+        const accepted = settle(half).accepted
+        if (!accepted) {
+          setOver(current => (current?.key === key ? undefined : current))
+          return false
+        }
+        setOver(current => (current !== undefined && current.key === key && current.half === half
+          ? current
+          : { key, half }))
+        return true
+      },
+      drop: runDrop,
+    }
+  }
+
+  return { row, partition }
+}
+
+/** Header half from the pointer, the same rule the native list uses. */
+function headerHalf(event: DragEvent<HTMLElement>): SidebarDropHalf {
+  const rect = event.currentTarget.getBoundingClientRect()
+  return event.clientY < rect.top + rect.height / 2 ? 'before' : 'after'
 }
 
 /**
@@ -48,6 +214,7 @@ export function SidebarGroupPartition({
   onAddEntries,
   menuItems,
   onSelect,
+  drag,
   children,
 }: {
   label: string
@@ -58,20 +225,60 @@ export function SidebarGroupPartition({
   onAddEntries?: () => void
   menuItems?: MenuEntry[]
   onSelect?: (id: string) => void
+  /** Drag source (named groups only) and drop target for this header. */
+  drag?: SidebarPartitionDrag
   children: ReactNode
 }): JSX.Element {
   const [menuOpen, setMenuOpen] = useState(false)
   const bodyId = `dsh-team-mode-partition-${label}`
   const hasMenu = menuItems !== undefined && menuItems.length > 0 && onSelect !== undefined
+  const start = drag?.start
+  const marker = drag?.marker ?? null
   return (
-    <div className={css.sidebarPartition} data-dsh-sidebar-partition={label}>
-      <div className={css.sidebarPartitionHeader}>
+    <div
+      className={css.sidebarPartition}
+      data-dsh-sidebar-partition={label}
+      {...(marker === null ? {} : { 'data-dsh-drop-marker': marker })}
+      {...(drag?.dragging === true ? { 'data-dsh-drag-source': '' } : {})}
+    >
+      <div
+        className={css.sidebarPartitionHeader}
+        {...(drag?.highlight === true ? { 'data-dsh-drop-highlight': '' } : {})}
+        draggable={start !== undefined}
+        onDragStart={start === undefined
+          ? undefined
+          : (event) => {
+              event.dataTransfer.effectAllowed = 'move'
+              event.dataTransfer.setData('text/plain', label)
+              start()
+            }}
+        onDragEnd={start === undefined || drag === undefined ? undefined : drag.end}
+        onDragOver={drag?.active !== true
+          ? undefined
+          : (event) => {
+              // Native shape: accept the pointer, then report the half.
+              event.preventDefault()
+              event.stopPropagation()
+              event.dataTransfer.dropEffect = drag.hover(headerHalf(event)) ? 'move' : 'none'
+            }}
+        onDrop={drag?.active !== true
+          ? undefined
+          : (event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              drag.drop(headerHalf(event))
+            }}
+      >
         <button
           type="button"
           className={css.sidebarPartitionToggle}
           aria-expanded={!collapsed}
           aria-controls={collapsed ? undefined : bodyId}
-          onClick={onToggle}
+          onClick={() => {
+            // A drag that ends over the header must not also fold the group.
+            if (sidebarDragSwallowsClick()) return
+            onToggle()
+          }}
         >
           <IconChevronRightOutlineRegular
             size={11}
