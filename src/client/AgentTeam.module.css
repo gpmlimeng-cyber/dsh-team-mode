@@ -12136,17 +12136,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 }
 
 @media (max-width: 760px) {
-  .sidebarBrandHost .brandModeTrigger {
-    font-size: 17px;
-    letter-spacing: -0.02em;
-  }
-  .sidebarBrandHost .brandActions {
-    gap: 0;
-  }
-  .sidebarBrandHost .brandAction {
-    width: 24px;
-  }
-  .stewardHost {
-    background: var(--dsw-specific-sidebar-fill);
+  .sidebarBrandHost .brandActions > :not(:last-child) {
+    display: none;
   }
 }

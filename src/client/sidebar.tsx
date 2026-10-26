@@ -1236,44 +1236,10 @@ export function SidebarPortal({
         element.id = BRAND_HOST_ID
         element.className = css.sidebarBrandHost ?? ''
         element.style.position = 'fixed'
-        element.style.zIndex = '2147483001'
+        element.style.zIndex = '2147483000'
         element.style.transform = 'translateY(-50%)'
         document.body.append(element)
         setBrandHost(element)
-      }
-      // dsh-web-mobile turns the sidebar into a transformed drawer. A body
-      // fixed overlay cannot share that containing block, so on phones mount
-      // the switch inside the drawer's own brand row and make that row sticky.
-      const drawer = document.querySelector<HTMLElement>('[data-mobile-nav="frame"] > :first-child')
-      if (window.innerWidth <= 760 && drawer !== null && toggle !== null && drawer.contains(toggle)) {
-        const stickyRow = toggle.closest<HTMLElement>('[class*="_logoRow"]') ?? drawer
-        stickyRow.style.position = 'sticky'
-        stickyRow.style.top = '0px'
-        stickyRow.style.zIndex = '1301'
-        stickyRow.style.background = 'var(--dsw-specific-sidebar-fill)'
-        // The shipped row is 60px tall for the native brand button. Once the
-        // brand is hidden and the switch is inline, that leftover height is the
-        // blank strip above Plugins.
-        stickyRow.style.height = '40px'
-        stickyRow.style.minHeight = '40px'
-        stickyRow.style.paddingTop = '6px'
-        stickyRow.style.paddingBottom = '6px'
-        stickyRow.style.marginBottom = '0'
-        const first = brand ?? stickyRow.firstElementChild
-        if (element.parentElement !== stickyRow) stickyRow.insertBefore(element, first ?? toggle)
-        element.dataset.dshBrandInline = ''
-        element.style.position = 'static'
-        element.style.transform = 'none'
-        element.style.zIndex = ''
-        element.style.left = ''
-        element.style.top = ''
-        element.style.width = 'auto'
-        element.style.flex = '1 1 auto'
-        element.style.minWidth = '0'
-        element.style.marginRight = '4px'
-        element.style.visibility = 'visible'
-        document.getElementById('dsh-team-mode-header-shade')?.remove()
-        return
       }
       const rect = row.getBoundingClientRect()
       // One column for both modes: the plugin host exists in DeepSeek and DeepBot
@@ -1311,7 +1277,7 @@ export function SidebarPortal({
         ?? (rect.width > 32 ? rect.width - 32 : Math.min(240, window.innerWidth - 32))
       // Keep a hard gap before the native collapse control on phones; the
       // brand actions are reduced to 新建 by CSS at this width.
-      if (window.innerWidth <= 760) width = Math.min(width, 202)
+      if (window.innerWidth <= 760) width = Math.min(width, 190)
       if (toggleRect !== undefined && toggleRect.width > 0) {
         width = Math.min(width, toggleRect.left - left - 20)
       }
@@ -1336,28 +1302,6 @@ export function SidebarPortal({
       // can report a temporary zero rect, and the next layout pass would not
       // necessarily run. It is removed only when the sidebar unmounts.
       element.style.visibility = 'visible'
-      // A full-width opaque band behind the fixed row: scrolling rows must pass
-      // under it, not above the mode switch.
-      let shade = document.getElementById('dsh-team-mode-header-shade')
-      if (shade === null || !shade.isConnected) {
-        shade = document.createElement('div')
-        shade.id = 'dsh-team-mode-header-shade'
-        shade.style.position = 'fixed'
-        shade.style.zIndex = '2147483000'
-        shade.style.pointerEvents = 'none'
-        shade.style.background = 'var(--dsw-specific-sidebar-fill)'
-        document.body.append(shade)
-      }
-      const shadeTop = element.getBoundingClientRect()
-      shade.style.left = `${Math.round(sidebarRect.left)}px`
-      shade.style.top = `${Math.round(Math.max(0, shadeTop.top - 8))}px`
-      shade.style.width = `${Math.round(sidebarRect.width)}px`
-      shade.style.height = `${Math.round(shadeTop.height + 16)}px`
-      // The native collapse control must sit above the header band too.
-      row.style.position = 'relative'
-      row.style.zIndex = '2147483002'
-      row.style.pointerEvents = 'none'
-      if (toggle !== null) toggle.style.pointerEvents = 'auto'
     }
 
     /** Lay the pinned BOT row over 新会话, or over the visible team column when
@@ -1378,19 +1322,22 @@ export function SidebarPortal({
         element.style.zIndex = '2147483000'
         document.body.append(element)
       }
-      // The coordinator is the first row of the team column, not a floating
-      // overlay: it scrolls like every other row and passes under the fixed
-      // mode band.
-      if (teamHost !== null) {
-        if (element.parentElement !== teamHost) teamHost.insertBefore(element, teamHost.firstChild)
-        element.style.position = 'static'
-        element.style.zIndex = ''
-        element.style.left = ''
-        element.style.top = ''
-        element.style.width = '100%'
-        element.style.marginBottom = '6px'
-        element.style.background = 'var(--dsw-specific-sidebar-fill)'
+      const newSessionRect = newSession?.getBoundingClientRect()
+      if (newSessionRect !== undefined && newSessionRect.width > 0) {
+        element.style.left = `${Math.round(newSessionRect.left)}px`
+        element.style.top = `${Math.round(newSessionRect.top)}px`
+        element.style.width = `${Math.round(newSessionRect.width)}px`
+      } else if (teamHost !== null) {
+        const teamRect = teamHost.getBoundingClientRect()
+        const visibleLogo = Array.from(document.querySelectorAll<HTMLElement>('[class*="_logoRow"]'))
+          .map(row => row.getBoundingClientRect())
+          .find(box => box.width > 0 && box.height > 0)
+        element.style.left = `${Math.round(teamRect.left)}px`
+        element.style.top = `${Math.round(visibleLogo === undefined ? Math.max(64, teamRect.top - 48) : visibleLogo.bottom + 8)}px`
+        element.style.width = `${Math.round(teamRect.width)}px`
       }
+      // Height is the row's own: it has to read like a 单聊 assistant row, not
+      // like the 新会话 button it is pinned over.
       element.style.height = ''
     }
 
