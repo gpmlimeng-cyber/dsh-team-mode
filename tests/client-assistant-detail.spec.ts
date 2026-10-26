@@ -10,6 +10,8 @@ import type { AssistantInstanceView } from '../src/transport/contracts.js'
 // assertions below still pin how this panel uses the seat.
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
   const Icon = (): unknown => createElement('span')
+  const Button = (props: { disabled?: boolean; children?: unknown }): unknown =>
+    createElement('button', { type: 'button', disabled: props.disabled }, props.children as never)
   const DisclosureRow = (props: {
     title: string
     open: boolean
@@ -27,13 +29,27 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     props.open ? props.children as never : null,
   )
   return {
+    Button,
     DisclosureRow,
+    IconDatabaseOutlineRegular: Icon,
+    IconEditOutlineRegular: Icon,
+    IconFlatListOutlineRegular: Icon,
     IconInfoOutlineRegular: Icon,
     IconPersonalizationOutlineRegular: Icon,
-    IconSlidersTwoOutlineRegular: Icon,
     IconShieldOutlineRegular: Icon,
+    IconSlidersTwoOutlineRegular: Icon,
   }
 })
+
+// The 记忆 jump reuses the shipped settings dialog wholesale; the panel never
+// re-implements memory editing, so the test only needs to see that the dialog
+// was asked to open for the selected instance.
+vi.mock('../src/client/assistant-settings-dialog.js', () => ({
+  AssistantSettingsDialog: (props: { open: boolean; assistant: { id: string } }): unknown =>
+    props.open
+      ? createElement('div', { 'data-settings-dialog': props.assistant.id }, '助手设置')
+      : null,
+}))
 
 const {
   AssistantDetailBody,
@@ -41,11 +57,16 @@ const {
   DETAIL_EMPTY_TEXT,
   DETAIL_TAB_ID,
   DETAIL_TAB_KIND,
+  HistoryPanel,
+  MemoryPanel,
+  PersonaPanel,
   assistantBoundSessionCount,
   assistantDetailSections,
+  assistantHistoryRows,
   openAssistantDetail,
 } = await import('../src/client/assistant-detail.js')
 type DetailSidebar = import('../src/client/assistant-detail.js').DetailSidebar
+type MemoryPanelView = import('../src/client/labels.js').MemoryPanelView
 
 const ISO = '2026-01-01T00:00:00Z'
 
@@ -156,14 +177,19 @@ describe('assistant detail sections', () => {
 })
 
 describe('assistant detail panel', () => {
-  it('renders four collapsible disclosure blocks with the row values', () => {
+  it('renders the seven blocks of a selected helper', () => {
     const html = renderPanel(instance())
     const view = text(html)
 
     expect(html).toContain('data-dsh-assistant-detail')
-    expect(html.match(/data-disclosure-row/g)).toHaveLength(4)
-    expect(html.match(/data-dsh-assistant-detail-section=/g)).toHaveLength(4)
-    for (const title of ['概览', '身份', '模型', '权限']) expect(view).toContain(title)
+    expect(html.match(/data-disclosure-row/g)).toHaveLength(7)
+    for (const title of ['概览', '身份', '模型', '权限', '人设', '记忆', '会话历史']) {
+      expect(view).toContain(title)
+    }
+    for (const id of ['persona', 'memory', 'history']) {
+      expect(html).toContain(`data-dsh-assistant-detail-section="${id}"`)
+    }
+    expect(html.match(/data-dsh-assistant-detail-section="(?!persona|memory|history)/g)).toHaveLength(4)
     expect(view).toContain('小码')
     expect(view).toContain('空闲')
     expect(view).toContain('前端')
@@ -283,5 +309,203 @@ describe('the old settings dialog stays the old settings dialog', () => {
     expect(detail).not.toContain('createPortal')
     expect(detail).not.toContain('shell.overlay')
     expect(detail).toContain("import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'")
+  })
+})
+
+function memoryView(overrides: Partial<MemoryPanelView> = {}): MemoryPanelView {
+  return {
+    revision: 4,
+    content: '',
+    active: [],
+    proposed: [],
+    history: [],
+    historyTotal: 0,
+    empty: true,
+    ...overrides,
+  }
+}
+
+function memoryEntry(id: string, overrides: Record<string, unknown> = {}): MemoryPanelView['active'][number] {
+  return {
+    schemaVersion: 1,
+    id,
+    scope: 'assistant',
+    visibility: 'private',
+    status: 'active',
+    source: 'user',
+    title: `条目 ${id}`,
+    body: `正文 ${id}`,
+    revision: 1,
+    createdAt: ISO,
+    updatedAt: ISO,
+    ...overrides,
+  } as MemoryPanelView['active'][number]
+}
+
+function persona(overrides: Record<string, unknown> = {}): string {
+  return renderToStaticMarkup(createElement(PersonaPanel, {
+    instructions: '原有的人设',
+    draft: '原有的人设',
+    saving: false,
+    onChange: () => undefined,
+    onSave: () => undefined,
+    onReset: () => undefined,
+    ...overrides,
+  } as never))
+}
+
+describe('人设 block', () => {
+  it('edits the stored instructions through the existing instance update', () => {
+    const detail = source('assistant-detail.tsx')
+
+    expect(detail).toContain("callAgentTeam('assistant.instance.update'")
+    expect(detail).toContain('value: { instructions: draft }')
+    expect(detail).toContain('保存后对新建或恢复的会话生效')
+  })
+
+  it('shows the stored persona in a labelled field', () => {
+    const html = persona()
+
+    expect(html).toContain('aria-label="人设说明"')
+    expect(html).toContain('原有的人设')
+    expect(html).toContain('保存人设')
+    expect(html).toContain('撤销修改')
+  })
+
+  it('keeps the save control disabled until the draft changes', () => {
+    expect(persona()).toContain('disabled=""')
+    expect(persona({ draft: '改过的人设' })).not.toContain('disabled=""')
+  })
+
+  it('reports a failed save inside the block instead of swallowing it', () => {
+    const html = persona({ error: '人设保存失败：network down' })
+    const view = text(html)
+
+    expect(html).toContain('role="alert"')
+    expect(view).toContain('人设保存失败：network down')
+  })
+
+  it('confirms a saved draft in place', () => {
+    expect(text(persona({ saved: true }))).toContain('已保存')
+  })
+})
+
+describe('记忆 block', () => {
+  it('only reads memory; editing stays in the shipped settings dialog', () => {
+    const detail = source('assistant-detail.tsx')
+
+    expect(detail).toContain("callAgentTeam('assistant.memory.get'")
+    expect(detail).not.toContain("'assistant.memory.write'")
+    expect(detail).not.toContain("'assistant.memory.entry.write'")
+    expect(detail).not.toContain("'assistant.memory.undo'")
+    expect(detail).toContain('<AssistantSettingsDialog')
+    expect(detail).toContain('在助手设置中编辑记忆')
+  })
+
+  it('lists the entries read-only with their pending state', () => {
+    const html = renderToStaticMarkup(createElement(MemoryPanel, {
+      state: {
+        loading: false,
+        view: memoryView({
+          empty: false,
+          active: [memoryEntry('a')],
+          proposed: [memoryEntry('b', { status: 'proposed' })],
+          history: [memoryEntry('c', { status: 'superseded' })],
+          historyTotal: 1,
+        }),
+      },
+      onEdit: () => undefined,
+    }))
+    const view = text(html)
+
+    expect(view).toContain('条目 a')
+    expect(view).toContain('正文 b')
+    expect(view).toContain('待确认')
+    expect(view).toContain('修订 4')
+    expect(view).toContain('在助手设置中编辑记忆')
+  })
+
+  it('shows the loading and empty states', () => {
+    const loading = renderToStaticMarkup(createElement(MemoryPanel, {
+      state: { loading: true },
+      onEdit: () => undefined,
+    }))
+    expect(text(loading)).toContain('正在读取记忆…')
+
+    const empty = renderToStaticMarkup(createElement(MemoryPanel, {
+      state: { loading: false, view: memoryView() },
+      onEdit: () => undefined,
+    }))
+    expect(text(empty)).toContain('还没有记忆条目')
+  })
+
+  it('reports a failed read inside the block', () => {
+    const html = renderToStaticMarkup(createElement(MemoryPanel, {
+      state: { loading: false, error: '读取记忆失败：boom' },
+      onEdit: () => undefined,
+    }))
+
+    expect(html).toContain('role="alert"')
+    expect(text(html)).toContain('读取记忆失败：boom')
+  })
+})
+
+describe('会话历史 block', () => {
+  it('marks the main Session and keeps it unarchivable', () => {
+    const rows = assistantHistoryRows(instance({
+      mainSessionId: 'session-main',
+      threadSessionIds: ['session-thread-1'],
+    }))
+
+    expect(rows).toEqual([
+      { sessionId: 'session-main', kind: 'main', badge: '主', archivable: false },
+      { sessionId: 'session-thread-1', kind: 'thread', badge: '附加', archivable: true },
+    ])
+    expect(assistantHistoryRows({ threadSessionIds: ['a'] }).map(row => row.kind)).toEqual(['thread'])
+  })
+
+  it('offers 归档 only on the additional Sessions', () => {
+    const html = renderToStaticMarkup(createElement(HistoryPanel, {
+      instance: instance({ mainSessionId: 'session-main', threadSessionIds: ['session-thread-1'] }),
+      onOpen: () => undefined,
+      onArchive: () => undefined,
+    }))
+    const main = html.slice(
+      html.indexOf('data-dsh-assistant-history-kind="main"'),
+      html.indexOf('data-dsh-assistant-history-kind="thread"'),
+    )
+    const thread = html.slice(html.indexOf('data-dsh-assistant-history-kind="thread"'))
+    const view = text(html)
+
+    expect(text(main)).toContain('主')
+    expect(text(main)).not.toContain('归档')
+    expect(text(main)).toContain('打开')
+    expect(text(thread)).toContain('附加')
+    expect(text(thread)).toContain('归档')
+    expect(view).toContain('主会话是这个助手本身，不能归档。')
+  })
+
+  it('opens and archives through the existing navigation and thread methods', () => {
+    const detail = source('assistant-detail.tsx')
+
+    expect(detail).toContain('openAssistantSession(sessionId)')
+    expect(detail).toContain("callAgentTeam('assistant.thread.archive'")
+    expect(detail).toContain("detailErrorMessage('归档失败'")
+    expect(source('store.ts')).toContain('export function openAssistantSession')
+    expect(source('index.tsx')).toContain('installAssistantSessionOpener(openSession)')
+  })
+
+  it('reports a failed archive inside the block', () => {
+    const html = renderToStaticMarkup(createElement(HistoryPanel, {
+      instance: instance({ mainSessionId: 'session-main', threadSessionIds: ['session-thread-1'] }),
+      error: '归档失败：network down',
+      busySessionId: 'session-thread-1',
+      onOpen: () => undefined,
+      onArchive: () => undefined,
+    }))
+
+    expect(html).toContain('role="alert"')
+    expect(text(html)).toContain('归档失败：network down')
+    expect(text(html)).toContain('归档中…')
   })
 })

@@ -25,6 +25,7 @@ import {
   toggleTeamPanel,
   useTeamPanelOpen,
 } from './store.js'
+import { installAssistantSessionOpener } from './store.js'
 import { SessionRowHider } from './session-row-hider.js'
 import { AssistantSessionTitle, AssistantSessionTitleHost } from './assistant-session-title.js'
 import { TeamModeDialogs } from './team-dialogs.js'
@@ -155,6 +156,9 @@ export function apply(ctx: AgentTeamClientContext): void {
       cause => { reportNavigationError(navigationErrorMessage(cause)) },
     )
   }
+  // The detail panel's rows open Sessions through the same navigation helper the
+  // 单聊 rows use; the tab body is host-mounted and has no `uiWorkspace` of its own.
+  installAssistantSessionOpener(openSession)
   const pickWorkspace = async (): Promise<WorkspaceChoice | null> => {
     const path = await ctx.uiWorkspace.pickDirectory()
     if (path === null) return null

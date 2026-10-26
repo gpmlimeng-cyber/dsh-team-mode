@@ -128,3 +128,24 @@ function subscribe(listener: () => void): () => void {
   listeners.add(listener)
   return () => { listeners.delete(listener) }
 }
+
+/**
+ * Navigation bridge for surfaces the plugin does not own the Context in.
+ *
+ * The right Sidebar's tab body is mounted by the host frame and carries no
+ * `uiWorkspace`; the sidebar host installs the controller's opener here so a
+ * detail-panel row can open a Session through exactly the same call the 单聊 row
+ * uses (including its catalog refresh and error reporting).
+ */
+let sessionOpener: ((sessionId: string) => void) | undefined
+
+export function installAssistantSessionOpener(opener: (sessionId: string) => void): void {
+  sessionOpener = opener
+}
+
+/** Open one Assistant Session; false until the sidebar host installs its opener. */
+export function openAssistantSession(sessionId: string): boolean {
+  if (sessionOpener === undefined) return false
+  sessionOpener(sessionId)
+  return true
+}

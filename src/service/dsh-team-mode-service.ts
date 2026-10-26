@@ -939,6 +939,9 @@ export class AgentTeamService extends Service {
     } = display
     const snapshot: AssistantSnapshot = {
       ...snapshotRest,
+      // The persona is part of the snapshot the create dialog fills; a patch may
+      // replace it, and an absent field keeps the stored text.
+      instructions: patch.instructions ?? current.assistantSnapshot.instructions,
       provider,
       model,
       permissionPresetId: permissionPresetId ?? current.assistantSnapshot.permissionPresetId,
@@ -955,6 +958,7 @@ export class AgentTeamService extends Service {
     const mascot = patch.mascot ?? current.mascot
     const changed = snapshot.name !== current.assistantSnapshot.name
       || snapshot.avatar !== current.assistantSnapshot.avatar
+      || snapshot.instructions !== current.assistantSnapshot.instructions
       || snapshot.provider !== current.assistantSnapshot.provider
       || snapshot.model !== current.assistantSnapshot.model
       || snapshot.reasoningEffort !== current.assistantSnapshot.reasoningEffort

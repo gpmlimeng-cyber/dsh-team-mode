@@ -804,6 +804,8 @@ export const createAssistantInstanceInputSchema = z.union([
 export const updateAssistantInstanceInputSchema = z.object({
   name: nonEmpty.optional(),
   avatar: z.string().max(400_000).optional(),
+  /** Persona text of the snapshot; an empty string clears it. */
+  instructions: z.string().optional(),
   pinned: z.boolean().optional(),
   /** Sidebar group; an empty string clears it (same convention as teams). */
   group: z.string().optional(),

@@ -352,6 +352,31 @@ describe('Assistant instances', () => {
     expect(noop).toEqual(cleared)
   })
 
+  it('replaces the persona text without touching the rest of the snapshot', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+    const created = await service.createAssistantInstance({
+      templateId: 'template-1',
+      name: 'Researcher',
+      workspaceId: 'workspace-1',
+    })
+    expect(created.assistantSnapshot.instructions).toBe('Research carefully and cite sources.')
+
+    const updated = await service.updateAssistantInstance(created.id, {
+      instructions: 'Cite every claim.',
+    })
+    expect(updated.revision).toBe(created.revision + 1)
+    expect(updated.assistantSnapshot.instructions).toBe('Cite every claim.')
+    expect(updated.assistantSnapshot.name).toBe('Researcher')
+    expect(updated.assistantSnapshot.model).toBe(created.assistantSnapshot.model)
+
+    // An absent field keeps the stored persona; an empty string clears it.
+    const kept = await service.updateAssistantInstance(created.id, { pinned: true })
+    expect(kept.assistantSnapshot.instructions).toBe('Cite every claim.')
+    const cleared = await service.updateAssistantInstance(created.id, { instructions: '' })
+    expect(cleared.assistantSnapshot.instructions).toBe('')
+  })
+
   it('updates model, reasoning, and permission on the stored snapshot', async () => {
     const { service, store } = createHarness()
     const assistant = template()
