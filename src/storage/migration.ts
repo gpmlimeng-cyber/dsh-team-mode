@@ -4,6 +4,8 @@ import { dshTeamModeDomainSpec } from './domain.js'
 
 export const TEAM_SCHEMA_VERSION = 2
 export const TEAM_MIGRATION_ID = 'teams-v2'
+/** One-shot: make the shipped Chief instance the workspace coordinator. */
+export const CHIEF_COORDINATOR_MIGRATION_ID = 'chief-coordinator-v1'
 
 /**
  * Fill the v2 presentation/warmup fields on a v1 team. Pure and idempotent so
@@ -65,4 +67,39 @@ export async function migrateDomain(
     toVersion: TEAM_SCHEMA_VERSION,
   })
   return migrated
+}
+
+/**
+ * Adopt the shipped Chief instance as the workspace coordinator once.
+ *
+ * A ledger row makes this a single pass: cancelling the coordinator later is a
+ * user decision, and a startup must not quietly undo it. Fresh installs are
+ * covered separately, when the Chief instance is created.
+ */
+export async function adoptChiefCoordinator(
+  domain: Domain<typeof dshTeamModeDomainSpec>,
+): Promise<number> {
+  const migrations = domain.table('migrations')
+  if (migrations.get(CHIEF_COORDINATOR_MIGRATION_ID) !== undefined) return 0
+
+  const instances = domain.table('assistant_instances')
+  const rows = Array.from(instances.entries()).map(([, value]) => value)
+  const now = new Date().toISOString()
+  let adopted = 0
+
+  const hasCoordinator = rows.some(row => row.coordinator === true && row.status !== 'archived')
+  const chief = rows.find(row => row.templateId === 'builtin-chief' && row.status !== 'archived')
+  if (!hasCoordinator && chief !== undefined) {
+    await instances.put(chief.id, { ...chief, coordinator: true, revision: chief.revision + 1, updatedAt: now })
+    adopted = 1
+  }
+
+  await migrations.put(CHIEF_COORDINATOR_MIGRATION_ID, {
+    schemaVersion: 1,
+    id: CHIEF_COORDINATOR_MIGRATION_ID,
+    appliedAt: now,
+    fromVersion: 1,
+    toVersion: 1,
+  })
+  return adopted
 }

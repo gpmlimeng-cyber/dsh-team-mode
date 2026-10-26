@@ -3148,6 +3148,15 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   padding: 0;
 }
 
+/* The coordinator's crown: the same mark the team Leader uses, in the accent
+   tone so it reads as a role rather than as another status glyph. */
+.sidebarAssistantCrown {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--dsw-alias-state-business-primary);
+}
+
 /* Rows inside the shipped Menu: label plus a muted detail, one line. */
 .brandModeItem {
   display: inline-flex;

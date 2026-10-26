@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { LeaderMark } from './team-member-chrome.js'
 import {
   IconChecklistOutlineRegular,
   IconChevronRightOutlineRegular,
@@ -11,7 +12,6 @@ import {
   IconPlusOutlineRegular,
   IconSearchOutlineRegular,
   IconSlidersTwoOutlineRegular,
-  IconSparkleRegular,
   Menu,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -129,7 +129,7 @@ export function assistantMenuEntries(
     {
       id: 'coordinator',
       label: coordinator ? '取消总协调' : '设为总协调',
-      icon: <IconSparkleRegular size={14} />,
+      icon: <LeaderMark size={14} />,
     },
     { id: 'tasks', label: '查看任务', icon: <IconChecklistOutlineRegular size={14} /> },
     unread
@@ -610,6 +610,17 @@ export function AssistantSidebarSection({
             <span className={`${css.sidebarTeamCopy} ${css.sidebarAssistantCopy}`}>
               <span className={css.sidebarAssistantTop}>
                 <span className={css.sidebarTeamName}>{name}</span>
+                {isCoordinatorInstance(instance) && (
+                  <span
+                    className={css.sidebarAssistantCrown}
+                    title="总协调"
+                    aria-label="总协调"
+                    role="img"
+                    data-dsh-assistant-coordinator
+                  >
+                    <LeaderMark size={11} />
+                  </span>
+                )}
                 {instance.pinned === true && (
                   <span
                     className={css.sidebarAssistantPinned}

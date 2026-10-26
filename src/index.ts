@@ -25,7 +25,7 @@ import {
   DomainAssistantBuilderModelPreferenceStore,
 } from './storage/assistant-builder-preferences.js'
 import { DomainAgentTeamStore } from './storage/store.js'
-import { migrateDomain } from './storage/migration.js'
+import { adoptChiefCoordinator, migrateDomain } from './storage/migration.js'
 import { registerWebTransport } from './transport/web.js'
 
 export const name = 'dsh-team-mode'
@@ -98,6 +98,7 @@ export async function apply(ctx: Context, config: AgentTeamConfig): Promise<void
       return
     }
     await migrateDomain(domain)
+    await adoptChiefCoordinator(domain)
     if (disposed) {
       await closeResources()
       return
