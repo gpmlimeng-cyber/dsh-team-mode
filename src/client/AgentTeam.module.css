@@ -3004,8 +3004,9 @@ textarea.input {
 }
 
 .sidebarBrandHost .surfaceModeSwitch {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   margin: 0;
+  align-self: center;
 }
 
 /* BOT footer: 新会话 and 自动化任务 as icon actions, modelled on the shipped
@@ -3062,31 +3063,42 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
    which is the only plugin UI left on the sidebar in that mode. */
 .surfaceModeSwitch {
   box-sizing: border-box;
-  display: flex;
+  display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 2px;
-  margin: 8px 8px 4px;
+  height: 26px;
+  margin: 0;
   padding: 2px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-md);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
 }
 
+/* Two steady states, one raised pill: the selected mode reads as a physical
+   key rather than as coloured text. Motion is a 120ms colour rise only. */
 .surfaceModeButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  flex: 1 1 0;
-  min-width: 0;
-  height: 22px;
-  padding: 0 8px;
+  min-width: 46px;
+  height: 20px;
+  padding: 0 10px;
   border: 1px solid transparent;
-  border-radius: var(--dsw-radius-sm);
+  border-radius: 6px;
   background: transparent;
   color: var(--dsw-alias-label-tertiary);
   font: inherit;
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  line-height: 20px;
   cursor: pointer;
+  transition:
+    color 120ms ease,
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
 
 .surfaceModeButton:hover {
@@ -3094,16 +3106,32 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   color: var(--dsw-alias-label-primary);
 }
 
+/* Tactile press: half a pixel, not a bounce. */
+.surfaceModeButton:active {
+  transform: translateY(0.5px);
+}
+
 .surfaceModeButtonActive,
 .surfaceModeButtonActive:hover {
   border-color: var(--dsw-alias-border-l2);
-  background: var(--dsw-alias-bg-layer-2);
+  background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-primary);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
 }
 
 .surfaceModeButton:focus-visible {
   outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: -1px;
+  outline-offset: 1px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .surfaceModeButton {
+    transition: none;
+  }
+
+  .surfaceModeButton:active {
+    transform: none;
+  }
 }
 
 .sidebarTeamHost {
