@@ -3006,8 +3006,47 @@ textarea.input {
   min-width: 0;
 }
 
-/* The search is the shipped Input primitive; only its width is ours, so the row
-   keeps room for the mode control. */
+/* Right-aligned icon actions on the brand row: 搜索 / 筛选 / 新建. */
+.brandActions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+}
+
+.brandAction {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease;
+}
+
+.brandAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.brandAction:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+.brandAction > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* The expanded search keeps the shipped Input primitive, only narrower. */
 .brandSearch {
   flex: 0 1 auto;
   width: 152px;
