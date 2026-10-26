@@ -75,6 +75,9 @@ export default defineConfig([
     dts: false,
     clean: false,
     sourcemap: true,
+    // The mascot bundle pushed this file past 1.6 MB; minifying keeps the
+    // shipped artifact near its pre-mascot size. Sourcemaps stay for stack traces.
+    minify: true,
     deps: {
       neverBundle: [
         'react',
