@@ -11,6 +11,7 @@ import {
   taskKindOf,
 } from '../domain/types.js'
 import type {
+  AssistantInstance,
   Escalation,
   EscalationKind,
   MemoryEntry,
@@ -434,6 +435,34 @@ export interface TeamInboxResult {
    */
   cross_team?: TeamInboxCrossTeam
 }
+
+/** One open stall as the coordinator tool relays it: where, what kind, one line. */
+export interface TeamEscalationView {
+  id: string
+  team_id: string
+  team_name: string
+  member_slot_id: string
+  kind: EscalationKind
+  summary: string
+  created_at: string
+}
+
+/**
+ * The coordinator's escalation feed. `note` is present exactly when the caller
+ * is not the coordinator: a teammate that calls the tool by mistake gets an
+ * empty list and a sentence, never an error that fails its turn.
+ */
+export interface TeamEscalationList {
+  escalations: TeamEscalationView[]
+  note?: string
+}
+
+/** Default rows and the hard per-call cap of the coordinator escalation feed. */
+const ESCALATIONS_DEFAULT_LIMIT = 20
+const ESCALATIONS_LIMIT_MAX = 50
+/** A non-coordinator call is answered, not rejected: an empty list plus this. */
+const ESCALATIONS_COORDINATOR_ONLY =
+  'Only the workspace coordinator can read escalations; this returned an empty list.'
 
 export interface SendMessageInput {
   to?: string
@@ -1708,6 +1737,55 @@ export class TeamCommandHandler {
   }
 
   /**
+   * The coordinator's escalation feed: every open stall across this workspace's
+   * teams, newest first. Escalations are data, not instructions — the caller
+   * relays where to answer them and never answers a gate itself. Every other
+   * member gets an empty list and one sentence instead of an error.
+   */
+  escalations(teamId: string, slotId: string, limit?: number): TeamEscalationList {
+    const team = this.service.getTeam(teamId)
+    const member = this.requireMember(team, slotId)
+    const instance = this.coordinatorInstanceFor(member)
+    if (instance === undefined) {
+      return { escalations: [], note: ESCALATIONS_COORDINATOR_ONLY }
+    }
+    const bounded = Math.min(
+      Math.max(1, Math.trunc(limit ?? ESCALATIONS_DEFAULT_LIMIT)),
+      ESCALATIONS_LIMIT_MAX,
+    )
+    const workspaceTeamIds = new Set(this.service.listTeams().items
+      .filter(candidate => candidate.workspaceId === instance.workspaceId)
+      .map(candidate => candidate.id))
+    const rows = this.service.listEscalations()
+      .filter(row => row.status === 'open' && workspaceTeamIds.has(row.teamId))
+      .sort((left, right) =>
+        right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
+      .slice(0, bounded)
+      .map(row => ({
+        id: row.id,
+        team_id: row.teamId,
+        team_name: row.teamName,
+        member_slot_id: row.memberSlotId,
+        kind: row.kind,
+        summary: row.summary,
+        created_at: row.createdAt,
+      }))
+    return { escalations: rows }
+  }
+
+  /**
+   * The coordinator instance a member is explicitly linked to, or undefined for
+   * every other member. Read live on each call, so clearing or reassigning the
+   * coordinator narrows the very next read without restarting the Session.
+   */
+  private coordinatorInstanceFor(member: TeamMemberSlot): AssistantInstance | undefined {
+    const linked = member.assistantInstanceId
+    if (linked === undefined) return undefined
+    const instance = this.service.getCoordinatorInstance()
+    return instance?.id === linked ? instance : undefined
+  }
+
+  /**
    * The coordinator aggregates the other teams' pending confirmations; every
    * other member keeps the single-team inbox. Identity comes from the caller's
    * explicit Assistant instance link read live, so clearing or reassigning the
@@ -1720,8 +1798,7 @@ export class TeamCommandHandler {
     member: TeamMemberSlot,
     perSection: number,
   ): TeamInboxCrossTeam | undefined {
-    const linked = member.assistantInstanceId
-    if (linked === undefined || this.service.getCoordinatorInstance()?.id !== linked) return undefined
+    if (this.coordinatorInstanceFor(member) === undefined) return undefined
     const teams: TeamInboxTeamSummary[] = []
     const items: TeamInboxCrossTeamItem[] = []
     let total = 0

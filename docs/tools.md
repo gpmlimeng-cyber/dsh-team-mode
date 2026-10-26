@@ -1,6 +1,6 @@
 # 工具清单
 
-## 模型工具（24 个）
+## 模型工具（25 个）
 
 | 工具 | 作用 |
 |---|---|
@@ -16,6 +16,7 @@
 | `team_mode_task_claim` | 成员认领一个就绪且无 owner 的任务：原子占用并生成新的 `attempt_id` |
 | `team_mode_task_list` | 查询任务板（含 owner、依赖、`attempt_id`、`goal_id`、`kind`、`verdict`、`due_at` / `remind_at` / `reminded_at`） |
 | `team_mode_inbox` | 只读成员收件箱：分派给我的任务、可认领任务、未读消息、待审批 |
+| `team_escalations` | 协调者专用的升级线程：跨队 `open` 的审批卡 / 待输入提问 / blocked 任务，参数只有 `limit`；非协调者得到空列表 + 一句说明，不报错 |
 | `team_memory_propose` | 提议/写入团队记忆：成员提议待 Leader 决定，Leader 写入立即生效 |
 | `team_memory_list` | 只读召回团队记忆（状态、可见性、key、作者、版本）；可用 `query` / `status` / `limit` 过滤；只有 `active` 会进入提示 |
 | `team_memory_accept` | Leader 专用：接受或拒绝一条记忆提议（`decision=accept` / `decision=reject`） |

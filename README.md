@@ -10,7 +10,7 @@ AionUi-style multi-agent **Team Mode** for DeepSeek Harness: one Leader coordina
 - **左侧会话列表里的“团队”分组**：与原生“工作区”同一行样式（14px、同一左/右对齐、搜索 / 视图选项 / 新建图标）；列出团队、Leader、成员数、运行状态与待确认角标。
 - **Leader + 独立 Teammates**：每个成员都是独立根 Agent，拥有独立模型/Preset/思考档/权限/上下文；不是 subagent。
 - **主体完全复用 DSH 会话**：点击团队或成员直接在原生 Session 视图中打开；消息流、输入框、附件、文件 @、右侧文件/变更 sidebar 全部是 DSH 原组件，不再有独立 Team Mode 页面。
-- **24 个原生 team_* 工具**（21 个主名 + 3 个兼容别名）：`team_members`、`team_read_messages`、`team_send_message`、`team_interrupt_agent`、`team_mode_goal_create`、`team_mode_goal_list`、`team_mode_goal_update`、`team_mode_task_create`、`team_mode_task_update`、`team_mode_task_claim`、`team_mode_task_list`、`team_mode_inbox`、`team_memory_propose`、`team_memory_list`、`team_memory_accept`、`team_list_assistants`、`team_describe_assistant`、`team_spawn_agent`、`team_rename_agent`、`team_clear_agent_context`、`team_shutdown_agent`；兼容别名 `team_create_task`、`team_update_task`、`team_get_task_board`。
+- **25 个原生 team_* 工具**（22 个主名 + 3 个兼容别名）：`team_members`、`team_read_messages`、`team_send_message`、`team_interrupt_agent`、`team_mode_goal_create`、`team_mode_goal_list`、`team_mode_goal_update`、`team_mode_task_create`、`team_mode_task_update`、`team_mode_task_claim`、`team_mode_task_list`、`team_mode_inbox`、`team_escalations`、`team_memory_propose`、`team_memory_list`、`team_memory_accept`、`team_list_assistants`、`team_describe_assistant`、`team_spawn_agent`、`team_rename_agent`、`team_clear_agent_context`、`team_shutdown_agent`；兼容别名 `team_create_task`、`team_update_task`、`team_get_task_board`。
 - **持久邮箱 + 任务板**：任务 owner 自动唤醒、依赖/阻塞、完成自动解除下游、广播、未读/已读、4000 字符预览。
 - **动态成员生命周期**：创建后添加/移出/重命名/换 Leader/清空单个成员上下文/优雅下线；Leader 只能由用户明确要求下线成员。
 - **每成员权限**：只读 / 工作区可写 / 完全访问；成员列内审批/提问卡片，侧边栏与胶囊显示待确认数量。

@@ -78,7 +78,7 @@ describe('team runtime support', () => {
       'Available team tools: team_members, team_read_messages, team_send_message, '
         + 'team_interrupt_agent, team_mode_goal_create, team_mode_goal_list, team_mode_goal_update, '
         + 'team_mode_task_create, team_mode_task_update, team_mode_task_claim, team_mode_task_list, '
-        + 'team_mode_inbox, team_memory_propose, team_memory_list, team_memory_accept, '
+        + 'team_mode_inbox, team_escalations, team_memory_propose, team_memory_list, team_memory_accept, '
         + 'team_list_assistants, team_describe_assistant, team_spawn_agent, team_rename_agent, '
         + 'team_clear_agent_context, team_shutdown_agent.',
     )

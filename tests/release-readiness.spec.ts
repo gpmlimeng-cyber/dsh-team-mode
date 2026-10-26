@@ -82,12 +82,12 @@ describe('release readiness', () => {
   })
 
   it('describes the registered team tool surface in both READMEs', () => {
-    expect(TEAM_TOOL_NAMES).toHaveLength(24)
+    expect(TEAM_TOOL_NAMES).toHaveLength(25)
     expect(TEAM_TOOL_ALIAS_NAMES.size).toBe(3)
 
     for (const file of ['README.md', 'README_CN.md']) {
       const text = read(file)
-      expect(text, file).toContain('24 个')
+      expect(text, file).toContain('25 个')
       expect(text, file).not.toContain('13 个')
       for (const tool of TEAM_TOOL_NAMES) expect(text, `${file} misses ${tool}`).toContain(tool)
       for (const stale of ['team_task_create', 'team_task_update', 'team_task_list']) {
@@ -113,7 +113,7 @@ describe('release readiness', () => {
 
     const release = read('docs/RELEASE-2026-10-20.md')
     expect(release).toContain('0.4.0')
-    expect(release).toContain('24 个')
+    expect(release).toContain('25 个')
     expect(release).not.toContain('13 个')
     expect(release).not.toContain('22 test files')
 
