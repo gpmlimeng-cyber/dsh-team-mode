@@ -45,7 +45,6 @@ import {
 import { useTeamText } from './team-i18n.js'
 import { TEAM_TASK_CREATE_HINT } from './labels.js'
 import { TEAM_AVATAR_TILE_COUNT, teamAvatarColor, teamAvatarTiles } from './team-avatar.js'
-import { teamBadgeCounts } from './team-badge-data.js'
 import { AnimatedModal } from './shared.js'
 import {
   SURFACE_MODE_KEY,
@@ -609,9 +608,6 @@ export function SidebarTeamSection({
                 )
               : visibleTeams.map(team => {
               const summary = teamSidebarSummary(team)
-              // One badge derivation for the entry row, the hover seat and the
-              // team page; `unread` stays 0 until a team-level count exists.
-              const badge = teamBadgeCounts(team)
               const statusText = teamSidebarStatusText(summary)
               const teamActive = selectedTeamId === team.id
               // A member Session is inside this team, but the roster row owns the
@@ -664,17 +660,17 @@ export function SidebarTeamSection({
                           <span className={css.sidebarTeamTime}>{relativeTime(team.updatedAt)}</span>
                         </span>
                       </span>
-                      {badge !== undefined && badge.pending > 0
+                      {summary.waiting > 0
                         ? (
                             <span
                               className={css.sidebarTeamBadge}
-                              title={`${badge.pending} 个待确认`}
-                              aria-label={`${badge.pending} 个待确认`}
+                              title={`${summary.waiting} 个待确认`}
+                              aria-label={`${summary.waiting} 个待确认`}
                             >
-                              {badge.pending > 99 ? '99+' : badge.pending}
+                              {summary.waiting > 99 ? '99+' : summary.waiting}
                             </span>
                           )
-                        : badge !== undefined && badge.running > 0
+                        : summary.running > 0
                           ? <span className={css.sidebarTeamStateDot} aria-hidden="true" />
                           : null}
                     </button>

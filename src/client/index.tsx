@@ -19,10 +19,6 @@ import {
   useTeamPanelOpen,
 } from './store.js'
 import { SessionRowHider } from './session-row-hider.js'
-import { LineLeading } from './session-row-leading.js'
-import { RowHover } from './session-row-hover.js'
-import { RowOpenParallel } from './session-row-action.js'
-import { TeamDetailMenuItem, TeamResetContextMenuItem } from './session-row-menu.js'
 import { AssistantSessionTitle, AssistantSessionTitleHost } from './assistant-session-title.js'
 import { TeamModeDialogs } from './team-dialogs.js'
 import { TeamParallelHost, TeamMentionAction, TeamParallelView } from './team-parallel.js'
@@ -36,7 +32,6 @@ import {
   TEAM_BOARD_VIEW_ORDER,
   TeamBoardView,
   keepNativeConversationTab,
-  keepTeamParallelTab,
 } from './team-board.js'
 import {
   callAgentTeam,
@@ -379,57 +374,5 @@ export function apply(ctx: AgentTeamClientContext): void {
     label: '团队',
   }, SidebarTeamHost))
 
-  // The two native Session-row seats: a member identity dot in the row's 16px
-  // leading cell, and the team facts in the row's hover card. Both read the one
-  // derived lookup; neither binds a click nor activates a Session, and the host
-  // keeps its own status-dot precedence and archived-row blank.
-  ctx.slots.inject('sidebar.session.row.leading', () => ctx.slots.register({
-    name: 'sidebar.session.row.leading',
-    id: 'dsh-team-mode-row-leading',
-    order: 100,
-  }, LineLeading))
 
-  ctx.slots.inject('sidebar.session.row.hover', () => ctx.slots.register({
-    name: 'sidebar.session.row.hover',
-    id: 'dsh-team-mode-row-hover',
-    order: 100,
-  }, RowHover))
-
-  // Row action: land the member's Session on the team 群聊 tab. It reuses the
-  // shell's remembered view key plus the shared catalog opener, so navigation
-  // stays the shell's and ordinary rows render no button at all.
-  ctx.slots.inject('sidebar.workspaces.session.row.action', () => ctx.slots.register({
-    name: 'sidebar.workspaces.session.row.action',
-    id: 'dsh-team-mode-row-open-parallel',
-    order: 300,
-    label: '打开并行',
-    inject: () => ({
-      openParallel: (sessionId: string) => {
-        keepTeamParallelTab(sessionId)
-        openSession(sessionId)
-      },
-    }),
-  }, RowOpenParallel as never))
-
-  // Row menu entry: the owning team's page. Only team Sessions render it; the
-  // shipped pin/rename/fork/archive/session-id rows are left untouched.
-  ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
-    name: 'sidebar.workspaces.session.menu.item',
-    id: 'dsh-team-mode-row-team-detail',
-    order: 500,
-    label: '打开团队详情',
-    inject: () => ({ openTeamPage, openResetMemberContext: openResetMemberContextDialog }),
-  }, TeamDetailMenuItem as never))
-
-  // Destructive row menu entry: clear this member's context. The confirmation
-  // is the primitive RiskConfirmation hosted by the always-mounted dialog
-  // surface, and the write is the same `team.member.contextReset` the
-  // management dialog already calls.
-  ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
-    name: 'sidebar.workspaces.session.menu.item',
-    id: 'dsh-team-mode-row-reset-context',
-    order: 600,
-    label: '清空该成员上下文',
-    inject: () => ({ openTeamPage, openResetMemberContext: openResetMemberContextDialog }),
-  }, TeamResetContextMenuItem as never))
 }
