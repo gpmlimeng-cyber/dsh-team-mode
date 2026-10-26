@@ -94,6 +94,18 @@ export const assistantInstanceSchema = z.object({
    * still parses; readers treat absent as `[]`.
    */
   retiredMainSessionIds: z.array(nonEmpty).max(100).optional(),
+  /**
+   * Extra visible Sessions owned by this assistant, in display order. The main
+   * Session is not repeated here: it has its own field and always sorts first.
+   * Added without a schema-version bump, same precedent as
+   * `retiredMainSessionIds`: an older row carries no field and reads as `[]`.
+   */
+  threadSessionIds: z.array(nonEmpty).max(20).optional(),
+  /**
+   * Thread Sessions archived off the list above. Same absent-reads-as-`[]`
+   * precedent; the two arrays never hold the same id.
+   */
+  retiredThreadSessionIds: z.array(nonEmpty).max(100).optional(),
   status: z.enum(['idle', 'starting', 'active', 'error', 'archived']),
   pinned: z.boolean().default(false),
   /**

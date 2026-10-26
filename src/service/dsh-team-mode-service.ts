@@ -150,6 +150,12 @@ export const TEAM_CHECKPOINT_LIMIT = 20
 export const ASSISTANT_RETIRED_SESSION_LIMIT = 100
 
 /**
+ * How many extra visible Sessions one instance may own. The schema bound is the
+ * same number; a longer list would be more than the sidebar can show.
+ */
+export const ASSISTANT_THREAD_SESSION_LIMIT = 20
+
+/**
  * Structured memory is unbounded by design only up to this many entries; past it
  * a runaway writer would keep growing the record with no reader able to show it.
  */
@@ -1632,6 +1638,95 @@ export class AgentTeamService extends Service {
       }
     })
     this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.handoff')
+    return next
+  }
+
+  /**
+   * Attach one extra visible Session to an instance. The main Session is not a
+   * thread (it has its own field and always sorts first), so it is rejected
+   * here instead of being listed twice.
+   */
+  async attachAssistantThread(assistantId: string, sessionId: string): Promise<AssistantInstance> {
+    const id = assistantId.trim()
+    const threadSessionId = sessionId.trim()
+    if (id === '' || threadSessionId === '') {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        'Assistant instance id and thread Session id cannot be empty',
+      )
+    }
+    assertThreadSession(requireAssistantInstance(this.store, id), threadSessionId)
+    const now = new Date().toISOString()
+    const next = await this.store.updateAssistantInstance(id, value => {
+      // Re-checked inside the write: an archive that committed while this attach
+      // waited wins instead of gaining a thread it can never list.
+      assertThreadSession(value, threadSessionId)
+      return {
+        ...value,
+        threadSessionIds: [...(value.threadSessionIds ?? []), threadSessionId],
+        revision: value.revision + 1,
+        updatedAt: now,
+      }
+    })
+    this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.thread_attached')
+    return next
+  }
+
+  /**
+   * Archive one thread Session off the visible list. The main Session is the
+   * instance's own conversation, so only the instance archive may retire it.
+   */
+  async archiveAssistantThread(assistantId: string, sessionId: string): Promise<AssistantInstance> {
+    const id = assistantId.trim()
+    const threadSessionId = sessionId.trim()
+    if (id === '' || threadSessionId === '') {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        'Assistant instance id and thread Session id cannot be empty',
+      )
+    }
+    const current = requireAssistantInstance(this.store, id)
+    if (current.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${id}' is archived`,
+        { instanceId: id },
+      )
+    }
+    if (current.mainSessionId === threadSessionId) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        'The main Session cannot be archived as a thread; archive the assistant instead',
+        { instanceId: id, sessionId: threadSessionId },
+      )
+    }
+    if (!(current.threadSessionIds ?? []).includes(threadSessionId)) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Session '${threadSessionId}' is not a thread of assistant instance '${id}'`,
+        { instanceId: id, sessionId: threadSessionId },
+      )
+    }
+    const now = new Date().toISOString()
+    const next = await this.store.updateAssistantInstance(id, value => {
+      if (value.status === 'archived') {
+        throw new AgentTeamError(
+          'ASSISTANT_INSTANCE_ARCHIVED',
+          `Assistant instance '${id}' is archived`,
+          { instanceId: id },
+        )
+      }
+      const retiredIds = [...(value.retiredThreadSessionIds ?? [])]
+      if (!retiredIds.includes(threadSessionId)) retiredIds.push(threadSessionId)
+      return {
+        ...value,
+        threadSessionIds: (value.threadSessionIds ?? []).filter(item => item !== threadSessionId),
+        retiredThreadSessionIds: retiredIds.slice(-ASSISTANT_RETIRED_SESSION_LIMIT),
+        revision: value.revision + 1,
+        updatedAt: now,
+      }
+    })
+    this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.thread_archived')
     return next
   }
 
@@ -3699,6 +3794,43 @@ function requireAssistantInstance(store: AgentTeamStore, id: string): AssistantI
     throw new AgentTeamError('ASSISTANT_INSTANCE_NOT_FOUND', `Unknown assistant instance '${id}'`)
   }
   return instance
+}
+
+/**
+ * The one gate every thread attach goes through, checked again inside the write
+ * so a queued archive or a full list cannot slip past the pre-check.
+ */
+function assertThreadSession(instance: AssistantInstance, sessionId: string): void {
+  if (instance.status === 'archived') {
+    throw new AgentTeamError(
+      'ASSISTANT_INSTANCE_ARCHIVED',
+      `Assistant instance '${instance.id}' is archived`,
+      { instanceId: instance.id },
+    )
+  }
+  if (instance.mainSessionId === sessionId) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Session '${sessionId}' is the main Session of assistant instance '${instance.id}'; `
+        + 'a thread must be a different Session',
+      { instanceId: instance.id, sessionId },
+    )
+  }
+  const threadSessionIds = instance.threadSessionIds ?? []
+  if (threadSessionIds.includes(sessionId)) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Session '${sessionId}' is already a thread of assistant instance '${instance.id}'`,
+      { instanceId: instance.id, sessionId },
+    )
+  }
+  if (threadSessionIds.length >= ASSISTANT_THREAD_SESSION_LIMIT) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Assistant instance '${instance.id}' already has ${ASSISTANT_THREAD_SESSION_LIMIT} thread Sessions`,
+      { instanceId: instance.id, limit: ASSISTANT_THREAD_SESSION_LIMIT },
+    )
+  }
 }
 
 /**
