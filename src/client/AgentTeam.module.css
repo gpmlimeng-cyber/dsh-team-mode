@@ -3057,93 +3057,111 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   align-items: center;
 }
 
-/* No background, no border: the control has to read as the brand wordmark. */
+/* No background, no border, no pill: the control reads as the product mark
+   itself, the way Codex renders its own name with a caret. */
 .brandModeTrigger {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 2px 2px 0;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
   border: none;
   border-radius: 6px;
   background: transparent;
   color: var(--dsw-alias-label-primary);
   font: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.09em;
-  line-height: 20px;
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  line-height: 24px;
   cursor: pointer;
   transition: opacity 120ms ease;
 }
 
 .brandModeTrigger:hover {
-  opacity: 0.72;
+  opacity: 0.68;
 }
 
 .brandModeCaret {
   flex: none;
-  width: 12px;
-  height: 12px;
+  width: 15px;
+  height: 15px;
+  margin-top: 2px;
   color: var(--dsw-alias-label-tertiary);
 }
 
 .brandModeTrigger:focus-visible {
   outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: 2px;
+  outline-offset: 3px;
 }
 
+/* Menu: soft card, two-line rows, check on the selected row. */
 .brandModeMenu {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 8px);
   left: 0;
   z-index: 60;
   display: flex;
   flex-direction: column;
-  gap: 1px;
-  min-width: 168px;
-  padding: 4px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
+  gap: 2px;
+  min-width: 244px;
+  padding: 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 14px;
   background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 0.12);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
 }
 
 .brandModeItem {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-  min-height: 28px;
-  padding: 4px 8px;
+  min-height: 56px;
+  padding: 8px 12px;
   border: none;
-  border-radius: 6px;
+  border-radius: 10px;
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
+  color: var(--dsw-alias-label-primary);
   font: inherit;
   text-align: left;
   cursor: pointer;
+  transition: background-color 120ms ease;
 }
 
 .brandModeItem:hover {
   background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
 }
 
-.brandModeItemActive {
+.brandModeItemText {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.brandModeItemLabel {
   color: var(--dsw-alias-label-primary);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 20px;
 }
 
 .brandModeItemActive .brandModeItemLabel {
   font-weight: 600;
 }
 
-.brandModeItemLabel {
-  font-size: 12px;
-  letter-spacing: 0.09em;
-}
-
 .brandModeItemHint {
   color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.brandModeItemCheck {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-primary);
 }
 
 @media (prefers-reduced-motion: reduce) {

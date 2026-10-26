@@ -5,6 +5,7 @@ import {
   IconArchiveOutlineRegular,
   IconChecklistOutlineRegular,
   IconChevronRightOutlineRegular,
+  IconCheckOutlineRegular,
   IconChevronsUpDownOutlineRegular,
   IconClockOutlineRegular,
   IconCloseFillRegular,
@@ -200,8 +201,11 @@ function SurfaceModeSwitch({
                 setOpen(false)
               }}
             >
-              <span className={css.brandModeItemLabel}>{option.label}</span>
-              <span className={css.brandModeItemHint}>{option.hint}</span>
+              <span className={css.brandModeItemText}>
+                <span className={css.brandModeItemLabel}>{option.label}</span>
+                <span className={css.brandModeItemHint}>{option.hint}</span>
+              </span>
+              {mode === option.value && <IconCheckOutlineRegular className={css.brandModeItemCheck} />}
             </button>
           ))}
         </div>
