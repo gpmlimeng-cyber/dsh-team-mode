@@ -3,6 +3,7 @@ import { Context, Service } from '@deepseek-ai/cordis'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import { isModelInvocable, isSkillName, isUserInvocable } from '@deepseek-ai/dsh-skill'
 import type { Config } from '../config.js'
+import { CHIEF_ASSISTANT } from '../domain/chief.js'
 import { AgentTeamError, epochStaleError, sessionRetiredError } from '../domain/errors.js'
 import { memoryDedupeKey, redactMemoryText } from '../domain/memory.js'
 import { isMcpServerName, mcpServerFromToolName } from '../domain/mcp.js'
@@ -509,6 +510,105 @@ export class AgentTeamService extends Service {
         || left.createdAt.localeCompare(right.createdAt)
         || left.id.localeCompare(right.id))
     return { items, total: items.length }
+  }
+
+  /**
+   * Seed the shipped Chief template once. The template needs a real model,
+   * preset, and permission name, so this runs after the catalog is available
+   * and leaves an existing user-customized row untouched.
+   */
+  async ensureBuiltinAssistants(): Promise<void> {
+    if (this.store.getAssistant(CHIEF_ASSISTANT.id) !== undefined) return
+    const catalog = await this.catalog()
+    const configuredProvider = this.config.assistantBuilderProvider.trim()
+    const configuredModel = this.config.assistantBuilderModel.trim()
+    const provider = configuredProvider !== ''
+      && catalog.providers.some(entry => entry.id === configuredProvider)
+      ? configuredProvider
+      : catalog.providers.find(entry => (catalog.models[entry.id]?.length ?? 0) > 0)?.id
+    if (provider === undefined) return
+    const models = catalog.models[provider] ?? []
+    const model = configuredModel !== ''
+      && models.some(entry => entry.id === configuredModel)
+      ? configuredModel
+      : models[0]?.id
+    if (model === undefined) return
+
+    const configuredPreset = this.config.assistantBuilderAgentPresetId.trim()
+    const agentPresetId = configuredPreset !== ''
+      && catalog.agentPresets.some(entry => entry.id === configuredPreset)
+      ? configuredPreset
+      : catalog.agentPresets.find(entry => entry.broken === undefined)?.id
+    if (agentPresetId === undefined) return
+
+    const configuredPermission = this.config.assistantBuilderPermissionPresetId.trim()
+    const permissionPresetId = configuredPermission !== ''
+      && catalog.permissionPresets.some(entry => entry.value === configuredPermission)
+      ? configuredPermission
+      : catalog.permissionPresets.find(entry => entry.value === 'workspace-write')?.value
+        ?? catalog.permissionPresets[0]?.value
+    if (permissionPresetId === undefined) return
+
+    const input = await this.validateAssistantDraft({
+      name: CHIEF_ASSISTANT.name,
+      description: CHIEF_ASSISTANT.description,
+      instructions: CHIEF_ASSISTANT.instructions,
+      avatar: CHIEF_ASSISTANT.avatar,
+      provider,
+      model,
+      agentPresetId,
+      permissionPresetId,
+      skillAllowlist: [],
+      mcpServers: [],
+      prompts: [...CHIEF_ASSISTANT.prompts],
+      enabled: true,
+      teamSelectable: true,
+    })
+    const now = new Date().toISOString()
+    const assistant: AssistantTemplate = {
+      schemaVersion: 1,
+      id: CHIEF_ASSISTANT.id,
+      ...input,
+      avatar: input.avatar?.trim() || undefined,
+      enabled: true,
+      teamSelectable: true,
+      sortOrder: 0,
+      prompts: uniqueOrdered(input.prompts ?? []).slice(0, 12),
+      source: 'builtin',
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+    }
+    await this.store.putAssistant(assistant)
+    await this.activity('assistant.created', assistant.id, assistant.revision, 'Built-in Chief assistant created')
+    this.publish('assistant', assistant.id, assistant.revision, 'assistant.created')
+  }
+
+  /**
+   * Add Chief as the default single-chat assistant exactly once. The archived
+   * row also counts as a prior installation, so a user who archives Chief does
+   * not get it recreated on the next restart.
+   */
+  async ensureDefaultChiefAssistant(): Promise<void> {
+    if (this.store.getAssistant(CHIEF_ASSISTANT.id) === undefined) return
+    const installed = this.store.listAssistantInstances()
+      .some(instance => instance.templateId === CHIEF_ASSISTANT.id)
+    if (installed) return
+    const catalog = await this.catalog()
+    const workspace = catalog.workspaces.find(entry => entry.status === 'ok')
+    if (workspace === undefined) return
+    const created = await this.createAssistantInstance({
+      templateId: CHIEF_ASSISTANT.id,
+      workspaceId: workspace.id,
+      name: CHIEF_ASSISTANT.name,
+      avatar: CHIEF_ASSISTANT.avatar,
+      pinned: true,
+    })
+    // The seeded Chief is the out-of-the-box coordinator. Only when nobody else
+    // holds that role: an explicit choice must survive a reinstall of the sample.
+    if (this.getCoordinatorInstance() === undefined) {
+      await this.setCoordinatorInstance(created.id)
+    }
   }
 
   /** Append new templates after the current library order (AionUi drag ordering). */

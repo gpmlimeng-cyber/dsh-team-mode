@@ -126,6 +126,13 @@ export async function apply(ctx: Context, config: AgentTeamConfig): Promise<void
     service.attachAssistantRuntime(assistantRuntime)
     transport = registerWebTransport(ctx, config, service)
 
+    try {
+      await service.ensureBuiltinAssistants()
+      await service.ensureDefaultChiefAssistant()
+    } catch (error) {
+      ctx.logger.warn('dsh-team-mode: failed to seed built-in assistants', error)
+    }
+
     await runtime.recoverTeams()
     if (disposed) return
     service.startWorkspaceTracking()
