@@ -10,6 +10,7 @@ import {
   IconPinFillRegular,
   IconPinOutlineRegular,
   IconPlusOutlineRegular,
+  IconProjectAddOutlineRegular,
   IconSearchOutlineRegular,
   IconSlidersTwoOutlineRegular,
   Menu,
@@ -60,6 +61,14 @@ import {
   writeAssistantThreadExpanded,
 } from './assistant-thread-state.js'
 import { MemberAvatar } from './member-avatar.js'
+import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-groups.js'
+import {
+  SidebarGroupCreateRow,
+  SidebarGroupDialogs,
+  SidebarGroupPartition,
+  sidebarGroupMenuItems,
+  type SidebarGroupDialog,
+} from './sidebar-group-ui.js'
 import css from './AgentTeam.module.css'
 import { isCoordinatorInstance } from '../domain/types.js'
 import type { AssistantInstance, AssistantSession, Escalation } from '../domain/types.js'
@@ -102,7 +111,7 @@ function taskStatusClass(status: AssistantSession['status']): string {
 }
 
 export interface AssistantMenuEntry {
-  id: 'checkpoint' | 'settings' | 'pin' | 'coordinator' | 'tasks' | 'mark-read' | 'mark-unread' | 'open-main'
+  id: 'checkpoint' | 'settings' | 'pin' | 'group' | 'coordinator' | 'tasks' | 'mark-read' | 'mark-unread' | 'open-main'
   label: string
   icon: JSX.Element
 }
@@ -127,6 +136,8 @@ export function assistantMenuEntries(
       label: pinned ? '取消置顶' : '置顶',
       icon: pinned ? <IconPinFillRegular size={14} /> : <IconPinOutlineRegular size={14} />,
     },
+    // Same slot as a team row's move: after 置顶, before the role switch.
+    { id: 'group', label: '移动到分组…', icon: <IconProjectAddOutlineRegular size={14} /> },
     {
       id: 'coordinator',
       label: coordinator ? '取消总协调' : '设为总协调',
@@ -218,6 +229,10 @@ export function AssistantSidebarSection({
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState<string>()
   const [threadError, setThreadError] = useState<{ assistantId: string; message: string }>()
+  const { groups, refresh: refreshGroups, adopt: adoptGroups } = useSidebarGroups()
+  /** Collapsed named groups, in-memory only: a fold is a view, not a setting. */
+  const [collapsedPartitions, setCollapsedPartitions] = useState<Record<string, boolean>>({})
+  const [groupDialog, setGroupDialog] = useState<SidebarGroupDialog>()
 
   useEffect(() => () => {
     if (feedbackTimerRef.current !== undefined) window.clearTimeout(feedbackTimerRef.current)
@@ -233,6 +248,9 @@ export function AssistantSidebarSection({
         // The badge is decoration: an older Host that does not answer this read
         // must not blank the assistant list it shares a request with.
         callAgentTeam('escalation.list').catch(() => ({ items: [] as Escalation[], total: 0 })),
+        // The group list is a view over these rows; a Host without it answers
+        // nothing and the list keeps rendering exactly as before.
+        refreshGroups(),
       ])
       setInstances(instancePage.items)
       setTasks(taskPage.items)
@@ -245,7 +263,7 @@ export function AssistantSidebarSection({
       // empty state: an unanswered request is not an empty workspace.
       setLoaded(true)
     }
-  }, [])
+  }, [refreshGroups])
 
   useEffect(() => {
     void load()
@@ -497,6 +515,37 @@ export function AssistantSidebarSection({
 
   const message = error ?? listError
 
+  /** Named groups in the Host's order; one unlabelled partition when none exist. */
+  const partitions = useMemo(
+    () => sidebarPartitions(groups, visible, instance => instance.group),
+    [groups, visible],
+  )
+  const partitioned = groups.length > 0
+
+  const togglePartition = (id: string): void => {
+    setCollapsedPartitions(current => ({ ...current, [id]: current[id] !== true }))
+  }
+
+  /** One group header's `⋯`: rename, delete, or move the group itself. */
+  const selectGroupMenu = async (group: string, id: string): Promise<void> => {
+    if (id === 'rename') {
+      setGroupDialog({ kind: 'rename', from: group })
+      return
+    }
+    if (id === 'delete') {
+      setGroupDialog({ kind: 'delete', name: group })
+      return
+    }
+    if (id !== 'move-up' && id !== 'move-down') return
+    try {
+      adoptGroups(await callAgentTeam('sidebar.groups.reorder', {
+        names: movedGroupOrder(groups, group, id === 'move-up' ? -1 : 1),
+      }))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
   const renderAssistantRow = (instance: AssistantInstanceView): JSX.Element => {
     const name = assistantInstanceName(instance)
     const opening = openingId === instance.id
@@ -699,6 +748,21 @@ export function AssistantSidebarSection({
               if (id === 'checkpoint') openCheckpoint(instance)
               else if (id === 'settings') openSettings(instance)
               else if (id === 'pin') void togglePin(instance)
+              else if (id === 'group') {
+                setGroupDialog({
+                  kind: 'move',
+                  title: `移动「${name}」到分组`,
+                  ...(instance.group === undefined ? {} : { current: instance.group }),
+                  apply: async group => {
+                    await callAgentTeam('assistant.instance.update', {
+                      id: instance.id,
+                      // An empty string is the update schema's "clear it".
+                      value: { group: group ?? '' },
+                    })
+                    await load()
+                  },
+                })
+              }
               else if (id === 'coordinator') void toggleCoordinator(instance)
               else if (id === 'tasks') openTasks(instance)
               else if (id === 'mark-read') setReadState(markAssistantRead(instance.id))
@@ -1042,7 +1106,34 @@ export function AssistantSidebarSection({
                       </button>
                     </div>
                     )
-              : visible.map(renderAssistantRow)}
+              : (
+                <>
+                  {partitioned
+                    ? partitions.map(partition => {
+                        const group = partition.group
+                        return (
+                          <SidebarGroupPartition
+                            key={partition.id}
+                            label={group ?? '未分组'}
+                            count={partition.items.length}
+                            collapsed={collapsedPartitions[partition.id] === true}
+                            onToggle={() => { togglePartition(partition.id) }}
+                            {...(group === undefined
+                              ? {}
+                              : {
+                                  onAddEntries: () => { setGroupDialog({ kind: 'members', group }) },
+                                  menuItems: sidebarGroupMenuItems(groups, group),
+                                  onSelect: (id: string) => { void selectGroupMenu(group, id) },
+                                })}
+                          >
+                            {partition.items.map(renderAssistantRow)}
+                          </SidebarGroupPartition>
+                        )
+                      })
+                    : visible.map(renderAssistantRow)}
+                  <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
+                </>
+              )}
         </div>
       )}
       <AssistantCreateDialog
@@ -1077,6 +1168,13 @@ export function AssistantSidebarSection({
         />
       )}
       {stewardRow}
+      <SidebarGroupDialogs
+        dialog={groupDialog}
+        groups={groups}
+        onClose={() => { setGroupDialog(undefined) }}
+        onListChanged={adoptGroups}
+        onChanged={() => { void load() }}
+      />
     </section>
   )
 }

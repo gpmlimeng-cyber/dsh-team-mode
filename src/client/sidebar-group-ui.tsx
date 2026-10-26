@@ -1,0 +1,649 @@
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
+import {
+  Button,
+  IconChevronDownOutlineRegular,
+  IconChevronRightOutlineRegular,
+  IconChevronUpOutlineRegular,
+  IconCheckOutlineRegular,
+  IconEditOutlineRegular,
+  IconEllipsisOutlineRegular,
+  IconPlusOutlineRegular,
+  IconTrashOutlineRegular,
+  IconWarningOutlineRegular,
+  Menu,
+  Tooltip,
+  type MenuEntry,
+} from '@deepseek-ai/dsh-client-ui-primitives'
+import { callAgentTeam } from './api.js'
+import { assistantInstanceName } from './assistant-instances.js'
+import { AnimatedModal } from './shared.js'
+import {
+  SIDEBAR_GROUP_MAX_CHARS,
+  groupMembershipCandidates,
+  groupMembershipChanges,
+  sidebarGroupNameError,
+  type SidebarGroupCandidate,
+} from './sidebar-groups.js'
+import css from './AgentTeam.module.css'
+import type { AssistantInstanceView, TeamView } from '../transport/contracts.js'
+
+function messageOf(cause: unknown): string {
+  return cause instanceof Error ? cause.message : String(cause)
+}
+
+/**
+ * One group section of the sidebar: a header that collapses, plus the group's
+ * own controls. The `+` and `⋯` buttons live in the header's trailing slot and
+ * stay invisible (but focusable) until the header is hovered or holds focus, so
+ * a sidebar with many groups is not a wall of icon buttons. `opacity` — not
+ * `display` — keeps them in the tab order; the ungrouped header has neither
+ * button at all, because that section cannot be renamed, deleted or filled.
+ */
+export function SidebarGroupPartition({
+  label,
+  count,
+  collapsed,
+  onToggle,
+  onAddEntries,
+  menuItems,
+  onSelect,
+  children,
+}: {
+  label: string
+  count: number
+  collapsed: boolean
+  onToggle: () => void
+  /** Opens the membership checklist; absent on the ungrouped section. */
+  onAddEntries?: () => void
+  menuItems?: MenuEntry[]
+  onSelect?: (id: string) => void
+  children: ReactNode
+}): JSX.Element {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const bodyId = `dsh-team-mode-partition-${label}`
+  const hasMenu = menuItems !== undefined && menuItems.length > 0 && onSelect !== undefined
+  return (
+    <div className={css.sidebarPartition} data-dsh-sidebar-partition={label}>
+      <div className={css.sidebarPartitionHeader}>
+        <button
+          type="button"
+          className={css.sidebarPartitionToggle}
+          aria-expanded={!collapsed}
+          aria-controls={collapsed ? undefined : bodyId}
+          onClick={onToggle}
+        >
+          <IconChevronRightOutlineRegular
+            size={11}
+            className={`${css.sidebarPartitionChevron} ${collapsed ? '' : css.sidebarPartitionChevronOpen}`}
+          />
+          <span className={css.sidebarPartitionLabel}>{label}</span>
+          <span className={css.sidebarPartitionCount}>{count}</span>
+        </button>
+        {(onAddEntries !== undefined || hasMenu) && (
+          <span className={css.sidebarPartitionActions}>
+            {onAddEntries !== undefined && (
+              <Tooltip label="添加或移除条目" delayMs={400}>
+                <button
+                  type="button"
+                  className={css.sidebarPartitionAction}
+                  aria-label={`添加或移除「${label}」的条目`}
+                  data-dsh-sidebar-group-add
+                  onClick={onAddEntries}
+                >
+                  <IconPlusOutlineRegular size={13} />
+                </button>
+              </Tooltip>
+            )}
+            {hasMenu && (
+              <Menu
+                open={menuOpen}
+                onClose={() => { setMenuOpen(false) }}
+                align="end"
+                side="bottom"
+                dense
+                portal
+                items={menuItems}
+                onSelect={id => {
+                  setMenuOpen(false)
+                  onSelect(id)
+                }}
+                anchor={(
+                  <button
+                    type="button"
+                    className={css.sidebarPartitionAction}
+                    aria-label={`「${label}」分组操作`}
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    data-dsh-sidebar-group-menu
+                    onClick={() => { setMenuOpen(value => !value) }}
+                  >
+                    <IconEllipsisOutlineRegular size={13} />
+                  </button>
+                )}
+              />
+            )}
+          </span>
+        )}
+      </div>
+      {!collapsed && (
+        <div id={bodyId} className={css.sidebarPartitionBody}>
+          {/* An empty named group is a section with nothing in it yet; a faint
+              line keeps it from reading as a broken header. The ungrouped
+              section never renders empty, so the hint never shows there. */}
+          {count === 0 && <div className={css.sidebarPartitionEmpty}>还没有条目</div>}
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Trailing list row that creates the first (or next) group. */
+export function SidebarGroupCreateRow({ onCreate }: { onCreate: () => void }): JSX.Element {
+  return (
+    <button
+      type="button"
+      className={css.sidebarGroupCreateRow}
+      data-dsh-sidebar-group-create
+      onClick={onCreate}
+    >
+      <span className={css.sidebarGroupCreateSlot} aria-hidden="true">
+        <IconPlusOutlineRegular size={13} />
+      </span>
+      <span>新建分组</span>
+    </button>
+  )
+}
+
+/**
+ * The sidebar's one group dialog. Every entry point (a group header, a row menu,
+ * the create row) opens the same modal with a different `kind`, so there is one
+ * place that owns the transport calls and one place that shows their errors.
+ */
+export type SidebarGroupDialog =
+  | { kind: 'create' }
+  | { kind: 'rename'; from: string }
+  | { kind: 'delete'; name: string }
+  | { kind: 'members'; group: string }
+  | {
+    kind: 'move'
+    title: string
+    current?: string
+    /** Writes the new membership; `undefined` means 不分组. */
+    apply: (group: string | undefined) => Promise<void>
+  }
+
+export function SidebarGroupDialogs({
+  dialog,
+  groups,
+  onClose,
+  onListChanged,
+  onChanged,
+}: {
+  dialog: SidebarGroupDialog | undefined
+  groups: string[]
+  onClose: () => void
+  /** Adopt the list a write returned; the Host owns order and membership. */
+  onListChanged: (groups: string[]) => void
+  /** Rows changed indirectly (a delete cascades); the section re-reads itself. */
+  onChanged: () => void
+}): JSX.Element | null {
+  if (dialog === undefined) return null
+  if (dialog.kind === 'create' || dialog.kind === 'rename') {
+    return (
+      <GroupNameDialog
+        {...(dialog.kind === 'rename' ? { initial: dialog.from } : {})}
+        groups={groups}
+        onClose={onClose}
+        onListChanged={list => { onListChanged(list); onChanged() }}
+      />
+    )
+  }
+  if (dialog.kind === 'delete') {
+    return (
+      <GroupDeleteDialog
+        name={dialog.name}
+        onClose={onClose}
+        onListChanged={list => { onListChanged(list); onChanged() }}
+      />
+    )
+  }
+  if (dialog.kind === 'members') {
+    return (
+      <GroupMembersDialog
+        group={dialog.group}
+        onClose={onClose}
+        onChanged={onChanged}
+      />
+    )
+  }
+  return (
+    <GroupMoveDialog
+      title={dialog.title}
+      {...(dialog.current === undefined ? {} : { current: dialog.current })}
+      groups={groups}
+      apply={dialog.apply}
+      onClose={onClose}
+    />
+  )
+}
+
+/** Header menu of one group: rename, delete, and the two order moves. */
+export function sidebarGroupMenuItems(
+  groups: readonly string[],
+  group: string,
+): MenuEntry[] {
+  const index = groups.indexOf(group)
+  return [
+    { id: 'rename', label: '重命名', icon: <IconEditOutlineRegular size={14} /> },
+    { id: 'delete', label: '删除分组', icon: <IconTrashOutlineRegular size={14} />, danger: true },
+    { type: 'separator', id: 'order-separator' },
+    {
+      id: 'move-up',
+      label: '上移',
+      icon: <IconChevronUpOutlineRegular size={14} />,
+      disabled: index <= 0,
+    },
+    {
+      id: 'move-down',
+      label: '下移',
+      icon: <IconChevronDownOutlineRegular size={14} />,
+      disabled: index < 0 || index >= groups.length - 1,
+    },
+  ]
+}
+
+function GroupNameDialog({
+  initial,
+  groups,
+  onClose,
+  onListChanged,
+}: {
+  initial?: string
+  groups: string[]
+  onClose: () => void
+  onListChanged: (groups: string[]) => void
+}): JSX.Element {
+  const renaming = initial !== undefined
+  const [value, setValue] = useState(initial ?? '')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  // Renaming to the current name is a no-op, not a duplicate.
+  const taken = renaming ? groups.filter(group => group !== initial) : groups
+  const nameError = sidebarGroupNameError(value, taken)
+  const formId = 'dsh-team-mode-group-name-form'
+
+  const save = async (): Promise<void> => {
+    if (busy) return
+    if (nameError !== undefined) {
+      setError(nameError)
+      return
+    }
+    setBusy(true)
+    setError(undefined)
+    try {
+      // The Host trims; sending the typed value keeps one normalization point.
+      const list = renaming
+        ? await callAgentTeam('sidebar.groups.rename', { from: initial, to: value })
+        : await callAgentTeam('sidebar.groups.create', { name: value })
+      onListChanged(list)
+      onClose()
+    } catch (cause) {
+      setError(messageOf(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AnimatedModal
+      open
+      onClose={() => { if (!busy) onClose() }}
+      title={renaming ? '重命名分组' : '新建分组'}
+      description="分组只影响侧栏的排列，不改变团队和助手本身。"
+      closeLabel="关闭"
+      className={css.sidebarGroupDialog ?? ''}
+      footer={(
+        <>
+          <Button variant="outline" type="button" disabled={busy} onClick={onClose}>取消</Button>
+          <Button variant="primary" type="submit" form={formId} disabled={busy}>
+            {busy ? '保存中…' : '保存'}
+          </Button>
+        </>
+      )}
+    >
+      <form
+        id={formId}
+        className={css.sidebarGroupNameForm}
+        onSubmit={event => {
+          event.preventDefault()
+          void save()
+        }}
+      >
+        <input
+          className={css.input}
+          data-modal-autofocus
+          value={value}
+          maxLength={120}
+          placeholder={`分组名，最多 ${SIDEBAR_GROUP_MAX_CHARS} 个字`}
+          aria-label="分组名"
+          aria-invalid={nameError !== undefined && value !== ''}
+          onChange={event => { setValue(event.target.value) }}
+        />
+        {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
+      </form>
+    </AnimatedModal>
+  )
+}
+
+function GroupDeleteDialog({
+  name,
+  onClose,
+  onListChanged,
+}: {
+  name: string
+  onClose: () => void
+  onListChanged: (groups: string[]) => void
+}): JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  const remove = async (): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    setError(undefined)
+    try {
+      onListChanged(await callAgentTeam('sidebar.groups.delete', { name }))
+      onClose()
+    } catch (cause) {
+      setError(messageOf(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <AnimatedModal
+      open
+      onClose={() => { if (!busy) onClose() }}
+      title="删除分组"
+      closeLabel="关闭"
+      className={css.sidebarGroupDialog ?? ''}
+      footer={(
+        <>
+          <Button variant="outline" type="button" disabled={busy} onClick={onClose}>取消</Button>
+          <button
+            type="button"
+            className={`${css.dangerButton} ${css.confirmDangerButton}`}
+            disabled={busy}
+            onClick={() => { void remove() }}
+          >
+            {busy ? '删除中…' : '删除分组'}
+          </button>
+        </>
+      )}
+    >
+      <div className={css.sidebarGroupConfirm}>
+        <span className={css.sidebarGroupConfirmIcon} aria-hidden="true">
+          <IconTrashOutlineRegular size={16} />
+        </span>
+        <div>
+          <strong>确定删除「{name}」？</strong>
+          <p>组内的团队和助手会回到「未分组」，它们本身不受影响。</p>
+        </div>
+        {error !== undefined && <div className={`${css.inlineError} ${css.fullWidth}`} role="alert">{error}</div>}
+      </div>
+    </AnimatedModal>
+  )
+}
+
+function GroupMoveDialog({
+  title,
+  current,
+  groups,
+  apply,
+  onClose,
+}: {
+  title: string
+  current?: string
+  groups: string[]
+  apply: (group: string | undefined) => Promise<void>
+  onClose: () => void
+}): JSX.Element {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  // Only groups that already exist are offered: a dialog that could type a new
+  // name would create labels nobody can see or delete from the header.
+  const options: Array<{ id: string; label: string; group?: string }> = [
+    // Prefixed ids: a group may be named anything, including "不分组".
+    { id: 'option:none', label: '不分组' },
+    ...groups.map(group => ({ id: `option:${group}`, label: group, group })),
+  ]
+  const pick = async (group: string | undefined): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    setError(undefined)
+    try {
+      await apply(group)
+      onClose()
+    } catch (cause) {
+      setError(messageOf(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <AnimatedModal
+      open
+      onClose={() => { if (!busy) onClose() }}
+      title={title}
+      description={groups.length === 0
+        ? '还没有分组，先在侧栏底部新建一个分组。'
+        : '选择一个已有分组，或用「不分组」移出当前分组。'}
+      closeLabel="关闭"
+      className={css.sidebarGroupDialog ?? ''}
+      footer={<Button variant="outline" type="button" disabled={busy} onClick={onClose}>取消</Button>}
+    >
+      <div className={css.sidebarGroupChoices} role="group" aria-label="选择分组">
+        {options.map(option => {
+          const selected = option.group === undefined
+            ? current === undefined
+            : current === option.group
+          return (
+            <button
+              key={option.id}
+              type="button"
+              className={`${css.sidebarGroupChoice} ${selected ? css.sidebarGroupChoiceActive : ''}`}
+              aria-pressed={selected}
+              disabled={busy}
+              onClick={() => { void pick(option.group) }}
+            >
+              <span className={css.sidebarGroupChoiceLabel}>{option.label}</span>
+              {selected && <IconCheckOutlineRegular size={14} />}
+            </button>
+          )
+        })}
+      </div>
+      {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
+    </AnimatedModal>
+  )
+}
+
+/**
+ * The header `+`: a checklist of who belongs to one group. It offers the group's
+ * current members and everything still ungrouped — never a row of another group,
+ * because this is a membership edit, not a bulk re-assignment. Saving submits the
+ * difference only, so untouched rows are not rewritten.
+ */
+function GroupMembersDialog({
+  group,
+  onClose,
+  onChanged,
+}: {
+  group: string
+  onClose: () => void
+  onChanged: () => void
+}): JSX.Element {
+  const [teams, setTeams] = useState<TeamView[]>([])
+  const [assistants, setAssistants] = useState<AssistantInstanceView[]>([])
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [loaded, setLoaded] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([
+      callAgentTeam('team.list'),
+      callAgentTeam('assistant.instance.list'),
+    ]).then(([teamPage, assistantPage]) => {
+      if (cancelled) return
+      setTeams(teamPage.items)
+      setAssistants(assistantPage.items)
+      const members = [
+        ...teamPage.items.filter(team => team.group === group).map(team => team.id),
+        ...assistantPage.items.filter(item => item.group === group).map(item => item.id),
+      ]
+      setChecked(new Set(members))
+    }).catch(cause => {
+      if (!cancelled) setError(messageOf(cause))
+    }).finally(() => {
+      if (!cancelled) setLoaded(true)
+    })
+    return () => { cancelled = true }
+  }, [group])
+
+  const teamCandidates = useMemo(
+    () => groupMembershipCandidates<TeamView>(group, teams, team => ({
+      id: team.id,
+      name: team.name,
+      ...(team.group === undefined ? {} : { group: team.group }),
+    })),
+    [group, teams],
+  )
+  const assistantCandidates = useMemo(
+    () => groupMembershipCandidates<AssistantInstanceView>(group, assistants, item => ({
+      id: item.id,
+      name: assistantInstanceName(item),
+      ...(item.group === undefined ? {} : { group: item.group }),
+    })),
+    [assistants, group],
+  )
+  const teamIds = useMemo(() => new Set(teams.map(team => team.id)), [teams])
+  const all = useMemo(
+    () => [...teamCandidates, ...assistantCandidates],
+    [assistantCandidates, teamCandidates],
+  )
+  const changes = useMemo(
+    () => groupMembershipChanges(group, all, checked),
+    [all, checked, group],
+  )
+  const dirty = changes.add.length > 0 || changes.remove.length > 0
+
+  const toggle = useCallback((id: string): void => {
+    setChecked(current => {
+      const next = new Set(current)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const save = async (): Promise<void> => {
+    if (busy || !dirty) return
+    setBusy(true)
+    setError(undefined)
+    try {
+      const write = async (rows: readonly SidebarGroupCandidate[], next: string | undefined): Promise<void> => {
+        for (const row of rows) {
+          if (teamIds.has(row.id)) {
+            await callAgentTeam('team.group.set', { teamId: row.id, group: next ?? null })
+          } else {
+            await callAgentTeam('assistant.instance.update', {
+              id: row.id,
+              value: { group: next ?? '' },
+            })
+          }
+        }
+      }
+      await write(changes.add, group)
+      await write(changes.remove, undefined)
+      onChanged()
+      onClose()
+    } catch (cause) {
+      setError(messageOf(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const renderRows = (
+    rows: readonly SidebarGroupCandidate[],
+    empty: string,
+  ): JSX.Element => (
+    rows.length === 0
+      ? <div className={css.sidebarPartitionEmpty}>{empty}</div>
+      : (
+        <div className={css.sidebarGroupCheckList}>
+          {rows.map(row => {
+            const on = checked.has(row.id)
+            return (
+              <button
+                key={row.id}
+                type="button"
+                className={`${css.sidebarGroupCheckRow} ${on ? css.sidebarGroupCheckRowOn : ''}`}
+                role="checkbox"
+                aria-checked={on}
+                disabled={busy}
+                onClick={() => { toggle(row.id) }}
+              >
+                <span className={`${css.sidebarGroupCheckBox} ${on ? css.sidebarGroupCheckBoxOn : ''}`} aria-hidden="true">
+                  {on && <IconCheckOutlineRegular size={11} />}
+                </span>
+                <span className={css.sidebarGroupCheckLabel}>{row.name}</span>
+              </button>
+            )
+          })}
+        </div>
+      )
+  )
+
+  return (
+    <AnimatedModal
+      open
+      onClose={() => { if (!busy) onClose() }}
+      title={`「${group}」的条目`}
+      description="勾选要放进这个分组的团队和助手，取消勾选即移回未分组。"
+      closeLabel="关闭"
+      className={css.sidebarGroupDialog ?? ''}
+      contentClassName={css.sidebarGroupDialogContent ?? ''}
+      footer={(
+        <>
+          <Button variant="outline" type="button" disabled={busy} onClick={onClose}>取消</Button>
+          <Button variant="primary" type="button" disabled={busy || !dirty} onClick={() => { void save() }}>
+            {busy ? '保存中…' : '保存'}
+          </Button>
+        </>
+      )}
+    >
+      {!loaded
+        ? <div className={css.dialogEmpty}>正在读取…</div>
+        : (
+          <div className={css.sidebarGroupSegments}>
+            <section className={css.sidebarGroupSegment}>
+              <h4 className={css.sidebarGroupSegmentTitle}>团队</h4>
+              {renderRows(teamCandidates, '没有可加入的团队')}
+            </section>
+            <section className={css.sidebarGroupSegment}>
+              <h4 className={css.sidebarGroupSegmentTitle}>助手</h4>
+              {renderRows(assistantCandidates, '没有可加入的助手')}
+            </section>
+          </div>
+        )}
+      {error !== undefined && (
+        <div className={css.inlineError} role="alert">
+          <IconWarningOutlineRegular size={12} /> {error}
+        </div>
+      )}
+    </AnimatedModal>
+  )
+}

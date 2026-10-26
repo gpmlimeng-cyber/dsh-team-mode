@@ -58,6 +58,14 @@ import type { TeamView } from '../transport/contracts.js'
 import type { AssistantInstance } from '../domain/types.js'
 import { LeaderMark } from './team-member-chrome.js'
 import { assistantAvatarSource, assistantInstanceName, coordinatorAssistant } from './assistant-instances.js'
+import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-groups.js'
+import {
+  SidebarGroupCreateRow,
+  SidebarGroupDialogs,
+  SidebarGroupPartition,
+  sidebarGroupMenuItems,
+  type SidebarGroupDialog,
+} from './sidebar-group-ui.js'
 
 const SIDEBAR_TEAM_EXPANDED_KEY = 'dsh-team-mode:sidebar-expanded'
 
@@ -309,6 +317,10 @@ export function SidebarTeamSection({
   const [menuTeamId, setMenuTeamId] = useState<string>()
   const [taskDialogTeamId, setTaskDialogTeamId] = useState<string>()
   const [error, setError] = useState<string>()
+  const { groups, refresh: refreshGroups, adopt: adoptGroups } = useSidebarGroups()
+  /** Collapsed named groups, in-memory only: a fold is a view, not a setting. */
+  const [collapsedPartitions, setCollapsedPartitions] = useState<Record<string, boolean>>({})
+  const [groupDialog, setGroupDialog] = useState<SidebarGroupDialog>()
 
   useEffect(() => {
     const onSearch = (event: Event): void => {
@@ -329,7 +341,12 @@ export function SidebarTeamSection({
 
   const load = useCallback(async () => {
     try {
-      const value = await callAgentTeam('team.list')
+      const [value] = await Promise.all([
+        callAgentTeam('team.list'),
+        // The group list is a view over these rows; an older Host answers
+        // nothing and the list keeps rendering exactly as before.
+        refreshGroups(),
+      ])
       setTeams(value.items)
       setError(undefined)
     } catch (cause) {
@@ -339,7 +356,7 @@ export function SidebarTeamSection({
       // an empty team list must never be drawn before `team.list` answered.
       setLoaded(true)
     }
-  }, [])
+  }, [refreshGroups])
 
   useEffect(() => {
     void load()
@@ -414,6 +431,255 @@ export function SidebarTeamSection({
   const taskDialogTasks = taskDialogTeam === undefined
     ? []
     : recentTeamTasks(taskDialogTeam, 50)
+
+  /** Named groups in the Host's order; one unlabelled partition when none exist. */
+  const partitions = useMemo(
+    () => sidebarPartitions(groups, visibleTeams, team => team.group),
+    [groups, visibleTeams],
+  )
+  const partitioned = groups.length > 0
+
+  const togglePartition = (id: string): void => {
+    setCollapsedPartitions(current => ({ ...current, [id]: current[id] !== true }))
+  }
+
+  const openGroupDialog = (dialog: SidebarGroupDialog): void => { setGroupDialog(dialog) }
+
+  /** One group header's `⋯`: rename, delete, or move the group itself. */
+  const selectGroupMenu = async (group: string, id: string): Promise<void> => {
+    if (id === 'rename') {
+      openGroupDialog({ kind: 'rename', from: group })
+      return
+    }
+    if (id === 'delete') {
+      openGroupDialog({ kind: 'delete', name: group })
+      return
+    }
+    if (id !== 'move-up' && id !== 'move-down') return
+    try {
+      adoptGroups(await callAgentTeam('sidebar.groups.reorder', {
+        names: movedGroupOrder(groups, group, id === 'move-up' ? -1 : 1),
+      }))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
+  /** One team row: identical inside a partition and in the flat list, so an
+   *  install with no groups renders exactly what it rendered before. */
+  const renderTeamRow = (team: TeamView): JSX.Element => {
+    const summary = teamSidebarSummary(team)
+    const statusText = teamSidebarStatusText(summary)
+    const teamActive = selectedTeamId === team.id
+    // A member Session is inside this team, but the roster row owns the
+    // page marker; the team row keeps only its background highlight.
+    const teamCurrent = teamActive
+      && !Object.values(team.members).some(member => member.sessionId === activeSessionId)
+    const archivable = team.archivedAt === undefined
+      && team.state !== 'active'
+      && team.state !== 'starting'
+    const rowMenuOpen = menuTeamId === team.id
+    const avatarTiles = teamAvatarTiles(team.name)
+    const rosterOpen = rosterIsOpen(team.id)
+    const rosterId = `dsh-team-mode-roster-${team.id}`
+    const roster = rosterOpen ? teamRosterRows(team) : []
+    return (
+      <div key={team.id} className={css.sidebarTeamGroup}>
+        <div
+          className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamRowWrapTwoLine} ${teamActive ? css.sidebarTeamRowWrapActive : ''} ${rowMenuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
+        >
+          <button
+            type="button"
+            className={`${css.sidebarTeamRow} ${css.sidebarTeamRowTwoLine}`}
+            onClick={() => { openTeam(team) }}
+            aria-current={teamCurrent ? 'page' : undefined}
+            title={`${team.name} · ${statusText}`}
+          >
+            <span
+              className={css.sidebarTeamAvatar}
+              data-team-avatar={team.id}
+              aria-hidden="true"
+              style={{ '--team-avatar-ink': teamAvatarColor(team.id) } as CSSProperties}
+            >
+              {Array.from({ length: TEAM_AVATAR_TILE_COUNT }, (_, index) => (
+                <span
+                  key={index}
+                  className={`${css.sidebarTeamAvatarTile} ${avatarTiles[index] === undefined ? css.sidebarTeamAvatarTileEmpty : ''}`}
+                >
+                  {avatarTiles[index] ?? ''}
+                </span>
+              ))}
+            </span>
+            <span className={css.sidebarTeamCopy}>
+              <span className={css.sidebarAssistantTop}>
+                <span className={css.sidebarTeamName}>{team.name}</span>
+                {team.pinned === true && (
+                  <span className={css.sidebarTeamPinned} title="已置顶" aria-label="已置顶" role="img">
+                    <IconPinFillRegular size={11} />
+                  </span>
+                )}
+                <span className={css.sidebarTeamTime}>{relativeTime(team.updatedAt)}</span>
+              </span>
+              <span className={css.sidebarTeamSubtitle} title={statusText}>{statusText}</span>
+            </span>
+            {summary.waiting > 0
+              ? (
+                  <span
+                    className={css.sidebarTeamBadge}
+                    title={`${summary.waiting} 个待确认`}
+                    aria-label={`${summary.waiting} 个待确认`}
+                  >
+                    {summary.waiting > 99 ? '99+' : summary.waiting}
+                  </span>
+                )
+              : summary.running > 0
+                ? <span className={css.sidebarTeamStateDot} aria-hidden="true" />
+                : null}
+          </button>
+          <button
+            type="button"
+            className={css.sidebarTeamExpand}
+            aria-expanded={rosterOpen}
+            aria-controls={rosterOpen ? rosterId : undefined}
+            aria-label={`${rosterOpen ? '收起' : '展开'} ${team.name} 成员名册`}
+            title={rosterOpen ? '收起成员' : '展开成员'}
+            data-dsh-team-roster-toggle
+            onClick={() => { toggleRoster(team.id) }}
+          >
+            <IconChevronRightOutlineRegular
+              size={12}
+              className={`${css.sidebarTeamExpandChevron} ${rosterOpen ? css.sidebarTeamExpandChevronOpen : ''}`}
+            />
+          </button>
+          <Menu
+            open={rowMenuOpen}
+            onClose={() => { setMenuTeamId(undefined) }}
+            align="end"
+            side="bottom"
+            dense
+            portal
+            className={css.sidebarTeamMore ?? ''}
+            items={[
+              { id: 'tasks', label: '查看任务', icon: <IconChecklistOutlineRegular size={14} /> },
+              {
+                id: 'pin',
+                label: team.pinned === true ? '取消置顶' : '置顶',
+                icon: team.pinned === true
+                  ? <IconPinFillRegular size={14} />
+                  : <IconPinOutlineRegular size={14} />,
+              },
+              // Between 置顶 and 管理, as designed: moving a team is a
+              // classification change, not team administration.
+              { id: 'group', label: '移动到分组…', icon: <IconProjectAddOutlineRegular size={14} /> },
+              { id: 'manage', label: t('sidebar.manage'), icon: <IconSettingsOutlineRegular /> },
+              {
+                id: 'archive',
+                label: archivable ? '归档团队' : '归档团队（先解散）',
+                icon: <IconArchiveOutlineRegular />,
+                disabled: !archivable,
+              },
+            ]}
+            onSelect={id => {
+              setMenuTeamId(undefined)
+              if (id === 'tasks') setTaskDialogTeamId(team.id)
+              else if (id === 'pin') {
+                void callAgentTeam('team.pin', {
+                  teamId: team.id,
+                  pinned: team.pinned !== true,
+                }, team.revision).then(() => { void load() }).catch(cause => {
+                  setError(cause instanceof Error ? cause.message : String(cause))
+                })
+              } else if (id === 'group') {
+                openGroupDialog({
+                  kind: 'move',
+                  title: `移动「${team.name}」到分组`,
+                  ...(team.group === undefined ? {} : { current: team.group }),
+                  apply: async group => {
+                    await callAgentTeam('team.group.set', {
+                      teamId: team.id,
+                      group: group ?? null,
+                    })
+                    await load()
+                  },
+                })
+              } else if (id === 'manage') openManageTeamDialog(team.id)
+              else if (id === 'archive') {
+                void callAgentTeam('team.archive', {
+                  teamId: team.id,
+                  archived: true,
+                }, team.revision).then(() => { void load() }).catch(cause => {
+                  setError(cause instanceof Error ? cause.message : String(cause))
+                })
+              }
+            }}
+            anchor={(
+              <Tooltip label="更多操作" delayMs={400}>
+                <button
+                  type="button"
+                  className={`${css.sidebarTeamManage} ${css.sidebarTeamMoreButton}`}
+                  aria-label={`更多操作 ${team.name}`}
+                  aria-haspopup="menu"
+                  aria-expanded={rowMenuOpen}
+                  onClick={() => {
+                    setMenuTeamId(current => current === team.id ? undefined : team.id)
+                  }}
+                >
+                  <IconEllipsisOutlineRegular size={14} />
+                </button>
+              </Tooltip>
+            )}
+          />
+        </div>
+        {rosterOpen && (
+          <div
+            id={rosterId}
+            className={css.sidebarRosterList}
+            role="group"
+            aria-label={`${team.name} 成员`}
+            data-dsh-team-roster
+          >
+            {roster.length === 0
+              ? <div className={css.sidebarRosterEmpty}>还没有成员</div>
+              : roster.map(row => (
+                <button
+                  key={row.slotId}
+                  type="button"
+                  className={css.sidebarRosterRow}
+                  aria-current={activeSessionId === row.sessionId ? 'page' : undefined}
+                  title={`${row.name} · ${rosterSubtitle(row)}`}
+                  data-dsh-team-roster-row={row.slotId}
+                  onClick={() => { openRosterMember(team, row) }}
+                >
+                  <MemberAvatar name={row.name} avatar={row.avatar} size={20} />
+                  <span className={css.sidebarRosterCopy}>
+                    <span className={css.sidebarRosterTop}>
+                      <span className={css.sidebarRosterName}>{row.name}</span>
+                      {row.role === 'leader' && (
+                        <span className={css.sidebarRosterRole}>Leader</span>
+                      )}
+                      {row.tone === 'running' && (
+                        <span className={css.sidebarTeamStateDot} aria-hidden="true" />
+                      )}
+                      {row.attention !== undefined && (
+                        <span
+                          className={`${css.sidebarRosterBadge} ${row.attention === 'error' ? css.sidebarRosterBadgeError : ''}`}
+                          role="img"
+                          title={row.attention === 'error' ? row.errorText ?? '异常' : '待审批'}
+                          aria-label={row.attention === 'error' ? '异常' : '待审批'}
+                        >
+                          !
+                        </span>
+                      )}
+                    </span>
+                    <span className={css.sidebarRosterSubtitle}>{rosterSubtitle(row)}</span>
+                  </span>
+                </button>
+              ))}
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <section className={css.sidebarTeamSection} aria-label="群聊" data-dsh-team-mode-section>
@@ -606,203 +872,34 @@ export function SidebarTeamSection({
                       : scope === 'archived' ? '暂无历史团队' : '暂无进行中的团队'}
                   </div>
                 )
-              : visibleTeams.map(team => {
-              const summary = teamSidebarSummary(team)
-              const statusText = teamSidebarStatusText(summary)
-              const teamActive = selectedTeamId === team.id
-              // A member Session is inside this team, but the roster row owns the
-              // page marker; the team row keeps only its background highlight.
-              const teamCurrent = teamActive
-                && !Object.values(team.members).some(member => member.sessionId === activeSessionId)
-              const archivable = team.archivedAt === undefined
-                && team.state !== 'active'
-                && team.state !== 'starting'
-              const rowMenuOpen = menuTeamId === team.id
-              const avatarTiles = teamAvatarTiles(team.name)
-              const rosterOpen = rosterIsOpen(team.id)
-              const rosterId = `dsh-team-mode-roster-${team.id}`
-              const roster = rosterOpen ? teamRosterRows(team) : []
-              return (
-                <div key={team.id} className={css.sidebarTeamGroup}>
-                  <div
-                    className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamRowWrapTwoLine} ${teamActive ? css.sidebarTeamRowWrapActive : ''} ${rowMenuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
-                  >
-                    <button
-                      type="button"
-                      className={`${css.sidebarTeamRow} ${css.sidebarTeamRowTwoLine}`}
-                      onClick={() => { openTeam(team) }}
-                      aria-current={teamCurrent ? 'page' : undefined}
-                      title={`${team.name} · ${statusText}`}
-                    >
-                      <span
-                        className={css.sidebarTeamAvatar}
-                        data-team-avatar={team.id}
-                        aria-hidden="true"
-                        style={{ '--team-avatar-ink': teamAvatarColor(team.id) } as CSSProperties}
-                      >
-                        {Array.from({ length: TEAM_AVATAR_TILE_COUNT }, (_, index) => (
-                          <span
-                            key={index}
-                            className={`${css.sidebarTeamAvatarTile} ${avatarTiles[index] === undefined ? css.sidebarTeamAvatarTileEmpty : ''}`}
+              : (
+                <>
+                  {partitioned
+                    ? partitions.map(partition => {
+                        const group = partition.group
+                        return (
+                          <SidebarGroupPartition
+                            key={partition.id}
+                            label={group ?? '未分组'}
+                            count={partition.items.length}
+                            collapsed={collapsedPartitions[partition.id] === true}
+                            onToggle={() => { togglePartition(partition.id) }}
+                            {...(group === undefined
+                              ? {}
+                              : {
+                                  onAddEntries: () => { openGroupDialog({ kind: 'members', group }) },
+                                  menuItems: sidebarGroupMenuItems(groups, group),
+                                  onSelect: (id: string) => { void selectGroupMenu(group, id) },
+                                })}
                           >
-                            {avatarTiles[index] ?? ''}
-                          </span>
-                        ))}
-                      </span>
-                      <span className={css.sidebarTeamCopy}>
-                        <span className={css.sidebarAssistantTop}>
-                          <span className={css.sidebarTeamName}>{team.name}</span>
-                          {team.pinned === true && (
-                            <span className={css.sidebarTeamPinned} title="已置顶" aria-label="已置顶" role="img">
-                              <IconPinFillRegular size={11} />
-                            </span>
-                          )}
-                          <span className={css.sidebarTeamTime}>{relativeTime(team.updatedAt)}</span>
-                        </span>
-                        <span className={css.sidebarTeamSubtitle} title={statusText}>{statusText}</span>
-                      </span>
-                      {summary.waiting > 0
-                        ? (
-                            <span
-                              className={css.sidebarTeamBadge}
-                              title={`${summary.waiting} 个待确认`}
-                              aria-label={`${summary.waiting} 个待确认`}
-                            >
-                              {summary.waiting > 99 ? '99+' : summary.waiting}
-                            </span>
-                          )
-                        : summary.running > 0
-                          ? <span className={css.sidebarTeamStateDot} aria-hidden="true" />
-                          : null}
-                    </button>
-                    <button
-                      type="button"
-                      className={css.sidebarTeamExpand}
-                      aria-expanded={rosterOpen}
-                      aria-controls={rosterOpen ? rosterId : undefined}
-                      aria-label={`${rosterOpen ? '收起' : '展开'} ${team.name} 成员名册`}
-                      title={rosterOpen ? '收起成员' : '展开成员'}
-                      data-dsh-team-roster-toggle
-                      onClick={() => { toggleRoster(team.id) }}
-                    >
-                      <IconChevronRightOutlineRegular
-                        size={12}
-                        className={`${css.sidebarTeamExpandChevron} ${rosterOpen ? css.sidebarTeamExpandChevronOpen : ''}`}
-                      />
-                    </button>
-                    <Menu
-                      open={rowMenuOpen}
-                      onClose={() => { setMenuTeamId(undefined) }}
-                      align="end"
-                      side="bottom"
-                      dense
-                      portal
-                      className={css.sidebarTeamMore ?? ''}
-                      items={[
-                        { id: 'tasks', label: '查看任务', icon: <IconChecklistOutlineRegular size={14} /> },
-                        {
-                          id: 'pin',
-                          label: team.pinned === true ? '取消置顶' : '置顶',
-                          icon: team.pinned === true
-                            ? <IconPinFillRegular size={14} />
-                            : <IconPinOutlineRegular size={14} />,
-                        },
-                        { id: 'manage', label: t('sidebar.manage'), icon: <IconSettingsOutlineRegular /> },
-                        {
-                          id: 'archive',
-                          label: archivable ? '归档团队' : '归档团队（先解散）',
-                          icon: <IconArchiveOutlineRegular />,
-                          disabled: !archivable,
-                        },
-                      ]}
-                      onSelect={id => {
-                        setMenuTeamId(undefined)
-                        if (id === 'tasks') setTaskDialogTeamId(team.id)
-                        else if (id === 'pin') {
-                          void callAgentTeam('team.pin', {
-                            teamId: team.id,
-                            pinned: team.pinned !== true,
-                          }, team.revision).then(() => { void load() }).catch(cause => {
-                            setError(cause instanceof Error ? cause.message : String(cause))
-                          })
-                        } else if (id === 'manage') openManageTeamDialog(team.id)
-                        else if (id === 'archive') {
-                          void callAgentTeam('team.archive', {
-                            teamId: team.id,
-                            archived: true,
-                          }, team.revision).then(() => { void load() }).catch(cause => {
-                            setError(cause instanceof Error ? cause.message : String(cause))
-                          })
-                        }
-                      }}
-                      anchor={(
-                        <Tooltip label="更多操作" delayMs={400}>
-                          <button
-                            type="button"
-                            className={`${css.sidebarTeamManage} ${css.sidebarTeamMoreButton}`}
-                            aria-label={`更多操作 ${team.name}`}
-                            aria-haspopup="menu"
-                            aria-expanded={rowMenuOpen}
-                            onClick={() => {
-                              setMenuTeamId(current => current === team.id ? undefined : team.id)
-                            }}
-                          >
-                            <IconEllipsisOutlineRegular size={14} />
-                          </button>
-                        </Tooltip>
-                      )}
-                    />
-                  </div>
-                  {rosterOpen && (
-                    <div
-                      id={rosterId}
-                      className={css.sidebarRosterList}
-                      role="group"
-                      aria-label={`${team.name} 成员`}
-                      data-dsh-team-roster
-                    >
-                      {roster.length === 0
-                        ? <div className={css.sidebarRosterEmpty}>还没有成员</div>
-                        : roster.map(row => (
-                          <button
-                            key={row.slotId}
-                            type="button"
-                            className={css.sidebarRosterRow}
-                            aria-current={activeSessionId === row.sessionId ? 'page' : undefined}
-                            title={`${row.name} · ${rosterSubtitle(row)}`}
-                            data-dsh-team-roster-row={row.slotId}
-                            onClick={() => { openRosterMember(team, row) }}
-                          >
-                            <MemberAvatar name={row.name} avatar={row.avatar} size={20} />
-                            <span className={css.sidebarRosterCopy}>
-                              <span className={css.sidebarRosterTop}>
-                                <span className={css.sidebarRosterName}>{row.name}</span>
-                                {row.role === 'leader' && (
-                                  <span className={css.sidebarRosterRole}>Leader</span>
-                                )}
-                                {row.tone === 'running' && (
-                                  <span className={css.sidebarTeamStateDot} aria-hidden="true" />
-                                )}
-                                {row.attention !== undefined && (
-                                  <span
-                                    className={`${css.sidebarRosterBadge} ${row.attention === 'error' ? css.sidebarRosterBadgeError : ''}`}
-                                    role="img"
-                                    title={row.attention === 'error' ? row.errorText ?? '异常' : '待审批'}
-                                    aria-label={row.attention === 'error' ? '异常' : '待审批'}
-                                  >
-                                    !
-                                  </span>
-                                )}
-                              </span>
-                              <span className={css.sidebarRosterSubtitle}>{rosterSubtitle(row)}</span>
-                            </span>
-                          </button>
-                        ))}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
+                            {partition.items.map(renderTeamRow)}
+                          </SidebarGroupPartition>
+                        )
+                      })
+                    : visibleTeams.map(renderTeamRow)}
+                  <SidebarGroupCreateRow onCreate={() => { openGroupDialog({ kind: 'create' }) }} />
+                </>
+              )}
         </div>
       )}
       <AnimatedModal
@@ -847,6 +944,13 @@ export function SidebarTeamSection({
           <p className={css.sidebarTeamTaskHint}>{TEAM_TASK_CREATE_HINT}</p>
         </div>
       </AnimatedModal>
+      <SidebarGroupDialogs
+        dialog={groupDialog}
+        groups={groups}
+        onClose={() => { setGroupDialog(undefined) }}
+        onListChanged={adoptGroups}
+        onChanged={() => { void load() }}
+      />
     </section>
   )
 }

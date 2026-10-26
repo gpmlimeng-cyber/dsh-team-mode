@@ -21,6 +21,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     'IconChecklistOutlineRegular', 'IconChevronRightOutlineRegular', 'IconCloseFillRegular',
     'IconEditOutlineRegular', 'IconEllipsisOutlineRegular', 'IconNewChatOutlineRegular',
     'IconPinFillRegular', 'IconPinOutlineRegular', 'IconPlusOutlineRegular',
+    'IconProjectAddOutlineRegular',
     'IconSearchOutlineRegular', 'IconSlidersTwoOutlineRegular', 'IconSparkleRegular',
     'IconWarningOutlineRegular',
     'IconLoadingOutlineRegular',
@@ -179,7 +180,7 @@ describe('assistant menu entries', () => {
 
   it('keeps the read/unread entry and the full menu order', () => {
     expect(assistantMenuEntries(instance(), false).map(entry => entry.id))
-      .toEqual(['checkpoint', 'settings', 'pin', 'coordinator', 'tasks', 'mark-unread', 'open-main'])
+      .toEqual(['checkpoint', 'settings', 'pin', 'group', 'coordinator', 'tasks', 'mark-unread', 'open-main'])
     expect(assistantMenuEntries(instance(), true).map(entry => entry.id))
       .toContain('mark-read')
   })

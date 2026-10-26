@@ -11175,3 +11175,366 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   line-height: 18px;
   text-align: center;
 }
+
+/* ── Sidebar groups ────────────────────────────────────────────────────────
+   A group section mirrors the shipped section header's metrics so a grouped
+   sidebar still reads as one list: 24px header, 12px/400 label, rows indented
+   by 6px. The header's two controls stay in the tab order while invisible
+   (`opacity: 0` + `pointer-events: none`) and appear on hover or focus. */
+.sidebarPartition {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.sidebarPartitionHeader {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  height: 24px;
+  padding: 0 4px 0 6px;
+}
+
+.sidebarPartitionHeader:hover,
+.sidebarPartitionHeader:focus-within {
+  background: var(--dsw-alias-interactive-bg-hover);
+  border-radius: var(--dsw-radius-sm);
+}
+
+.sidebarPartitionToggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebarPartitionToggle:hover,
+.sidebarPartitionToggle:focus-visible {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sidebarPartitionToggle:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+.sidebarPartitionChevron {
+  flex: none;
+  color: currentColor;
+  transform: rotate(0deg);
+  transition: transform 120ms var(--ds-ease-in-out);
+}
+
+.sidebarPartitionChevronOpen {
+  transform: rotate(90deg);
+}
+
+.sidebarPartitionLabel {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarPartitionCount {
+  flex: none;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 11px;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebarPartitionActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms var(--ds-ease-in-out);
+}
+
+.sidebarPartitionHeader:hover .sidebarPartitionActions,
+.sidebarPartitionHeader:focus-within .sidebarPartitionActions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.sidebarPartitionAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.sidebarPartitionAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.sidebarPartitionAction:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+.sidebarPartitionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  padding-left: 6px;
+}
+
+/* An empty named group must still read as a section, not as a broken header. */
+.sidebarPartitionEmpty {
+  padding: 2px 8px 4px;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+/* List-end entry that creates the first group; same 34px row height as a team
+   row so the list keeps one rhythm. */
+.sidebarGroupCreateRow {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebarGroupCreateRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.sidebarGroupCreateRow:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+.sidebarGroupCreateSlot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  flex: none;
+}
+
+/* ── Group dialogs ──────────────────────────────────────────────────────── */
+.sidebarGroupDialog {
+  width: min(460px, calc(100vw - 32px));
+}
+
+.sidebarGroupDialogContent {
+  max-height: min(56vh, 460px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.sidebarGroupNameForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebarGroupConfirm {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 4px 0;
+}
+
+.sidebarGroupConfirmIcon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.sidebarGroupConfirm strong {
+  display: block;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 21px;
+}
+
+.sidebarGroupConfirm p {
+  margin: 4px 0 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 18px;
+}
+
+.sidebarGroupChoices {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebarGroupChoice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebarGroupChoice:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sidebarGroupChoiceActive {
+  color: var(--dsw-alias-brand-primary);
+}
+
+.sidebarGroupChoice:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+.sidebarGroupChoiceLabel {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebarGroupSegments {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.sidebarGroupSegment {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebarGroupSegmentTitle {
+  margin: 0;
+  padding: 0 2px 2px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+.sidebarGroupCheckList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.sidebarGroupCheckRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: 20px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.sidebarGroupCheckRow:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.sidebarGroupCheckRowOn {
+  color: var(--dsw-alias-label-primary);
+}
+
+.sidebarGroupCheckRow:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+.sidebarGroupCheckBox {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-xs);
+  color: var(--dsw-alias-bg-layer-1);
+}
+
+.sidebarGroupCheckBoxOn {
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-brand-primary);
+}
+
+.sidebarGroupCheckLabel {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
