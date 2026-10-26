@@ -925,6 +925,8 @@ const SIDEBAR_MENU_EVENT = 'dsh-team-mode:sidebar-menu'
 let brandColumnOffset = 4
 /** Mount point for the DSH/BOT switch that replaces the shipped brand row. */
 const BRAND_HOST_ID = 'dsh-team-mode-brand-host'
+/** Body-level mount for the pinned BOT row, laid over the 新会话 box. */
+const STEWARD_HOST_ID = 'dsh-team-mode-steward-host'
 /** Mount point for the BOT footer actions that replace native sidebar entries. */
 const BOT_FOOTER_HOST_ID = 'dsh-team-mode-footer-host'
 /** Marks a native node this plugin hid for the BOT surface. */
@@ -969,6 +971,7 @@ function findMarketEntry(foot: HTMLElement): HTMLElement | null {
 function restoreBotSidebar(): void {
   for (const node of Array.from(document.querySelectorAll<HTMLElement>(`[${BOT_HIDDEN_ATTR}]`))) {
     node.style.display = ''
+    node.style.visibility = ''
     node.removeAttribute(BOT_HIDDEN_ATTR)
   }
   for (const node of Array.from(document.querySelectorAll<HTMLElement>(`[${BOT_GROWN_ATTR}]`))) {
@@ -1054,7 +1057,9 @@ function syncBotSidebar(mode: SurfaceMode): void {
   for (const entry of BOT_DROPPED_ENTRIES) {
     const native = entry.find()
     if (native === null) continue
-    native.style.display = 'none'
+    // Keep the box: the pinned BOT row is laid over it, so the two share one
+    // geometry instead of the row guessing its own margins.
+    native.style.visibility = 'hidden'
     native.setAttribute(BOT_HIDDEN_ATTR, '')
   }
 
@@ -1095,6 +1100,7 @@ export function SidebarPortal({
 }): JSX.Element | null {
   const [host, setHost] = useState<HTMLElement>()
   const [brandHost, setBrandHost] = useState<HTMLElement>()
+  const [stewardHost, setStewardHost] = useState<HTMLElement>()
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const mode = useSurfaceMode()
@@ -1218,8 +1224,33 @@ export function SidebarPortal({
       element.style.visibility = rect.width > 0 && rect.height > 0 ? 'visible' : 'hidden'
     }
 
+    /** Lay the pinned BOT row exactly over the shipped 新会话 button box. */
+    const ensureSteward = (): void => {
+      const newSession = document.querySelector<HTMLElement>('[class*="_newSession"]')
+      let element = document.getElementById(STEWARD_HOST_ID)
+      if (getSurfaceMode() !== 'team' || newSession === null) {
+        element?.remove()
+        return
+      }
+      if (element === null || !element.isConnected) {
+        element = document.createElement('div')
+        element.id = STEWARD_HOST_ID
+        element.className = css.stewardHost ?? ''
+        element.style.position = 'fixed'
+        element.style.zIndex = '50'
+        document.body.append(element)
+        setStewardHost(element)
+      }
+      const rect = newSession.getBoundingClientRect()
+      element.style.left = `${Math.round(rect.left)}px`
+      element.style.top = `${Math.round(rect.top)}px`
+      element.style.width = `${Math.round(rect.width)}px`
+      element.style.height = `${Math.round(rect.height)}px`
+    }
+
     const ensure = (): void => {
       ensureBrand()
+      ensureSteward()
       syncBotSidebar(getSurfaceMode())
       const anchor = anchorElement()
       if (anchor === null) return
@@ -1677,6 +1708,10 @@ export function SidebarPortal({
 
   return (
     <>
+      {stewardHost !== undefined && mode === 'team' && createPortal(
+        <StewardEntry openSession={openSession} />,
+        stewardHost,
+      )}
       {brandHost !== undefined && createPortal(
         <>
           <SurfaceModeSwitch mode={mode} onChange={switchMode} />
@@ -1774,7 +1809,6 @@ export function SidebarPortal({
         <>
           {mode === 'team' && (
             <>
-              <StewardEntry openSession={openSession} />
               <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
               <AssistantSidebarSection openSession={openSession} />
             </>

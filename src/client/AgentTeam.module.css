@@ -3139,15 +3139,24 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   outline-offset: 3px;
 }
 
-/* Pinned default bot above the DeepBot chat groups. */
+/* Pinned default bot: laid over the shipped 新会话 box, so it inherits that
+   button's position, size and vertical margins without guessing them. */
+.stewardHost {
+  box-sizing: border-box;
+  display: block;
+  margin: 0;
+  padding: 0;
+}
+
 .stewardEntry {
   box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 8px;
   width: 100%;
-  margin: 0 0 6px;
-  padding: 6px 4px;
+  height: 100%;
+  margin: 0;
+  padding: 0 8px;
   border: none;
   border-radius: var(--dsw-radius-md);
   background: transparent;
