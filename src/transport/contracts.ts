@@ -48,6 +48,8 @@ export const AGENT_TEAM_METHODS = [
   'assistant.instance.update',
   'assistant.instance.archive',
   'assistant.instance.ensure',
+  'assistant.thread.create',
+  'assistant.thread.archive',
   'assistant.coordinator.get',
   'assistant.coordinator.set',
   'assistant.memory.get',
@@ -401,6 +403,16 @@ export interface AgentTeamRequestMap {
   'assistant.instance.ensure': {
     payload: { id: string }
     result: { instance: AssistantInstance; sessionId: string }
+  }
+  /** One more visible Session for an instance; `cwd` overrides its workspace. */
+  'assistant.thread.create': {
+    payload: { instanceId: string; cwd?: string }
+    result: AssistantInstanceView
+  }
+  /** Move one thread Session to the retired list; the main Session is refused. */
+  'assistant.thread.archive': {
+    payload: { instanceId: string; sessionId: string }
+    result: AssistantInstanceView
   }
   /** The workspace coordinator; null when none is set (never an invented row). */
   'assistant.coordinator.get': { payload: undefined; result: AssistantInstance | null }

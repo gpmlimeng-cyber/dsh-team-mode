@@ -254,6 +254,23 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
     }
     case 'assistant.instance.ensure':
       return service.ensureAssistantInstance(idPayload.parse(request.payload).id)
+    case 'assistant.thread.create': {
+      const payload = z.object({
+        instanceId: z.string().trim().min(1).max(200),
+        cwd: z.string().trim().min(1).max(4096).optional(),
+      }).strict().parse(request.payload)
+      // The runtime attaches the new Session before answering, so the instance
+      // it returns is already the one that lists it.
+      const { instance } = await service.createAssistantThread(payload.instanceId, payload.cwd)
+      return instance
+    }
+    case 'assistant.thread.archive': {
+      const payload = z.object({
+        instanceId: z.string().trim().min(1).max(200),
+        sessionId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.archiveAssistantThread(payload.instanceId, payload.sessionId)
+    }
     case 'assistant.coordinator.get':
       return service.getCoordinatorInstance() ?? null
     case 'assistant.coordinator.set': {

@@ -76,6 +76,17 @@ describe('Agent Team transport contracts', () => {
     }>()
   })
 
+  it('maps the Assistant thread create and archive writes', () => {
+    expect(AGENT_TEAM_METHODS).toContain('assistant.thread.create')
+    expect(AGENT_TEAM_METHODS).toContain('assistant.thread.archive')
+    expectTypeOf<AgentTeamPayload<'assistant.thread.create'>>()
+      .toEqualTypeOf<{ instanceId: string; cwd?: string }>()
+    expectTypeOf<AgentTeamResult<'assistant.thread.create'>>().toEqualTypeOf<AssistantInstanceView>()
+    expectTypeOf<AgentTeamPayload<'assistant.thread.archive'>>()
+      .toEqualTypeOf<{ instanceId: string; sessionId: string }>()
+    expectTypeOf<AgentTeamResult<'assistant.thread.archive'>>().toEqualTypeOf<AssistantInstanceView>()
+  })
+
   it('maps the workspace coordinator read and write', () => {
     expect(AGENT_TEAM_METHODS).toContain('assistant.coordinator.get')
     expect(AGENT_TEAM_METHODS).toContain('assistant.coordinator.set')

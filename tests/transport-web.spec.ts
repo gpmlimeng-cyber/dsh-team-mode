@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
+import { AgentTeamError } from '../src/domain/errors.js'
 import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import {
   AGENT_TEAM_API_PATH,
@@ -99,6 +100,11 @@ function harness(overrides: {
       instance: { id, status: 'active' },
       sessionId: 'session-main',
     })),
+    createAssistantThread: vi.fn(async (id: string) => ({
+      instance: { id, status: 'active', threadSessionIds: ['session-thread'] },
+      sessionId: 'session-thread',
+    })),
+    archiveAssistantThread: vi.fn(async (id: string, sessionId: string) => ({ id, sessionId })),
     openAssistantTask: vi.fn(async (taskId: string) => ({
       task: { id: taskId, status: 'completed' },
       sessionId: 'session-worker',
@@ -225,6 +231,64 @@ describe('web transport authentication and upload contract', () => {
       value: { instance: { id: 'instance-1', status: 'active' }, sessionId: 'session-main' },
     })
     expect(service.ensureAssistantInstance).toHaveBeenCalledWith('instance-1')
+  })
+
+  it('dispatches the Assistant thread create and archive writes', async () => {
+    const { call, service } = harness()
+    const post = (method: string, payload: unknown) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ requestId: method, method, payload }),
+    }))
+
+    const created = await post('assistant.thread.create', {
+      instanceId: 'instance-1',
+      cwd: '/tmp/workspace',
+    })
+    expect(created.status).toBe(200)
+    expect(JSON.parse(created.body)).toMatchObject({
+      ok: true,
+      value: { id: 'instance-1', status: 'active' },
+    })
+    expect(service.createAssistantThread).toHaveBeenCalledWith('instance-1', '/tmp/workspace')
+
+    const archived = await post('assistant.thread.archive', {
+      instanceId: 'instance-1',
+      sessionId: 'session-a',
+    })
+    expect(archived.status).toBe(200)
+    expect(JSON.parse(archived.body)).toMatchObject({
+      ok: true,
+      value: { id: 'instance-1', sessionId: 'session-a' },
+    })
+    expect(service.archiveAssistantThread).toHaveBeenCalledWith('instance-1', 'session-a')
+
+    // Strict payloads: a field the contract does not carry is refused, not ignored.
+    const extra = await post('assistant.thread.archive', {
+      instanceId: 'instance-1',
+      sessionId: 'session-a',
+      force: true,
+    })
+    expect(extra.status).toBe(400)
+    expect(JSON.parse(extra.body)).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+  })
+
+  it('refuses to archive the main Session as a thread', async () => {
+    const { call, service } = harness()
+    vi.mocked(service.archiveAssistantThread).mockRejectedValueOnce(
+      new AgentTeamError('INVALID_REQUEST', 'The main Session cannot be archived as a thread'),
+    )
+    const reply = await call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        requestId: 'r1',
+        method: 'assistant.thread.archive',
+        payload: { instanceId: 'instance-1', sessionId: 'session-main' },
+      }),
+    }))
+
+    expect(reply.status).toBe(400)
+    expect(JSON.parse(reply.body)).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+    expect(service.archiveAssistantThread).toHaveBeenCalledWith('instance-1', 'session-main')
   })
 
   it('dispatches assistant.task.open', async () => {
