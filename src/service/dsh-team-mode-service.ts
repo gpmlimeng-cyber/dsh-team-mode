@@ -26,6 +26,7 @@ import {
 } from '../domain/schemas.js'
 import {
   epochOf,
+  isCoordinatorInstance,
   snapshotAssistant,
   type AddTeamMemberInput,
   type AssistantInstance,
@@ -260,6 +261,13 @@ export class AgentTeamService extends Service {
    * unreachable from this service.
    */
   private readonly memoryWrites = new Map<string, Promise<void>>()
+  /**
+   * Coordinator switching touches two instance rows (clear the old flag, set the
+   * new one) and the store offers no cross-row transaction, so every switch runs
+   * one at a time: the read-check-write window is unreachable from a concurrent
+   * switch. A failed switch never poisons the queue.
+   */
+  private coordinatorQueue: Promise<unknown> = Promise.resolve()
 
   constructor(
     ctx: Context,
@@ -565,6 +573,7 @@ export class AgentTeamService extends Service {
    */
   listAssistantInstances(): Page<AssistantInstance> {
     const items = this.store.listAssistantInstances()
+      .map(coordinatorVisible)
       .sort((left, right) => Number(right.pinned) - Number(left.pinned)
         || right.updatedAt.localeCompare(left.updatedAt)
         || left.id.localeCompare(right.id))
@@ -572,8 +581,86 @@ export class AgentTeamService extends Service {
   }
 
   getAssistantInstance(id: string): AssistantInstance {
-    return requireAssistantInstance(this.store, id)
+    return coordinatorVisible(requireAssistantInstance(this.store, id))
   }
+
+  /**
+   * The workspace's one coordinator, or undefined when none is set. The flag is
+   * the only source of truth: no name or template match can make an instance the
+   * coordinator.
+   */
+  getCoordinatorInstance(): AssistantInstance | undefined {
+    const instance = this.store.listAssistantInstances().find(isCoordinatorInstance)
+    return instance === undefined ? undefined : coordinatorVisible(instance)
+  }
+
+  /**
+   * Set or clear the workspace coordinator. A switch clears the previous flag
+   * and sets the new one inside one serialized critical section, so two rows can
+   * never both be coordinators; `null` clears it. An archived instance cannot
+   * become the coordinator (the read guards would then be lying about it).
+   */
+  async setCoordinatorInstance(assistantId: string | null): Promise<AssistantInstance | undefined> {
+    const targetId = assistantId === null ? undefined : assistantId.trim()
+    if (targetId === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Assistant instance id cannot be empty')
+    }
+    return this.queueCoordinatorWrite(async () => {
+      // Re-read inside the serialized slot: a queued switch may have committed a
+      // different coordinator, and an archive may have landed while waiting.
+      const target = targetId === undefined
+        ? undefined
+        : requireAssistantInstance(this.store, targetId)
+      if (target !== undefined && target.status === 'archived') {
+        throw new AgentTeamError(
+          'ASSISTANT_INSTANCE_ARCHIVED',
+          `Assistant instance '${target.id}' is archived; it cannot be the coordinator`,
+          { instanceId: target.id },
+        )
+      }
+      const now = new Date().toISOString()
+      const next: { instance?: AssistantInstance } = {}
+      for (const instance of this.store.listAssistantInstances()) {
+        if (instance.id === targetId) {
+          if (!isCoordinatorInstance(instance)) {
+            next.instance = await this.store.updateAssistantInstance(instance.id, value => ({
+              ...value,
+              coordinator: true,
+              revision: value.revision + 1,
+              updatedAt: now,
+            }))
+            this.publishCoordinator(next.instance)
+          } else {
+            next.instance = instance
+          }
+          continue
+        }
+        if (!isCoordinatorInstance(instance)) continue
+        this.publishCoordinator(await this.clearCoordinatorFlag(instance.id, now))
+      }
+      return next.instance
+    })
+  }
+
+  /** Remove the flag entirely so a cleared row looks like a pre-feature row. */
+  private clearCoordinatorFlag(id: string, now: string): Promise<AssistantInstance> {
+    return this.store.updateAssistantInstance(id, value => {
+      const { coordinator: _coordinator, ...rest } = value
+      return { ...rest, revision: value.revision + 1, updatedAt: now }
+    })
+  }
+
+  private publishCoordinator(instance: AssistantInstance): void {
+    this.publish('assistant-instance', instance.id, instance.revision, 'assistant.instance.updated')
+  }
+
+  /** One coordinator write at a time; a rejection must not block the next one. */
+  private queueCoordinatorWrite<T>(work: () => Promise<T>): Promise<T> {
+    const next = this.coordinatorQueue.then(work, work)
+    this.coordinatorQueue = next.then(() => undefined, () => undefined)
+    return next
+  }
+
   /**
    * Sidebar view: the persisted instances plus a bounded latest-message
    * preview. A preview failure is presentation-only and never hides the row.
@@ -739,6 +826,10 @@ export class AgentTeamService extends Service {
   async archiveAssistantInstance(id: string): Promise<AssistantInstance> {
     const current = requireAssistantInstance(this.store, id)
     if (current.status === 'archived') return current
+    // The coordinator is the one visible "person" of the workspace; archiving it
+    // would silently remove the pinned row, so the action is refused with the
+    // step that makes it legal.
+    assertNotCoordinator(current)
     if (this.assistantRuntime !== undefined) {
       await this.assistantRuntime.stopForArchive(id)
     }
@@ -757,13 +848,18 @@ export class AgentTeamService extends Service {
     const current = requireAssistantInstance(this.store, id)
     if (current.status === 'archived') return current
     const now = new Date().toISOString()
-    const next = await this.store.updateAssistantInstance(id, value => ({
-      ...value,
-      status: 'archived',
-      archivedAt: now,
-      revision: value.revision + 1,
-      updatedAt: now,
-    }))
+    const next = await this.store.updateAssistantInstance(id, value => {
+      // Re-checked inside the write: a coordinator set while this archive waited
+      // wins, exactly like the bind/archive ordering above.
+      assertNotCoordinator(value)
+      return {
+        ...value,
+        status: 'archived',
+        archivedAt: now,
+        revision: value.revision + 1,
+        updatedAt: now,
+      }
+    })
     this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.archived')
     return next
   }
@@ -3286,6 +3382,29 @@ function requireAssistantInstance(store: AgentTeamStore, id: string): AssistantI
     throw new AgentTeamError('ASSISTANT_INSTANCE_NOT_FOUND', `Unknown assistant instance '${id}'`)
   }
   return instance
+}
+
+/**
+ * The read-side guard for the coordinator's "never silently hidden" rule. The
+ * archive entry point already refuses a coordinator, so this only ever fires for
+ * a record written by an older build or edited outside the service; reporting it
+ * as idle keeps the pinned row reachable instead of dropping it from the list.
+ */
+function coordinatorVisible(instance: AssistantInstance): AssistantInstance {
+  if (!isCoordinatorInstance(instance) || instance.status !== 'archived') return instance
+  const { archivedAt: _archivedAt, ...rest } = instance
+  return { ...rest, status: 'idle' }
+}
+
+/** One message for every coordinator-archive refusal; it names the way out. */
+function assertNotCoordinator(instance: AssistantInstance): void {
+  if (!isCoordinatorInstance(instance)) return
+  throw new AgentTeamError(
+    'ASSISTANT_INSTANCE_COORDINATOR',
+    `Assistant instance '${instance.id}' is the workspace coordinator and cannot be archived; `
+      + 'clear the coordinator first (assistant.coordinator.set with null), then archive it',
+    { instanceId: instance.id },
+  )
 }
 
 function requireAssistantSession(store: AgentTeamStore, id: string): AssistantSession {

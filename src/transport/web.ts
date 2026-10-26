@@ -249,6 +249,14 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
     }
     case 'assistant.instance.ensure':
       return service.ensureAssistantInstance(idPayload.parse(request.payload).id)
+    case 'assistant.coordinator.get':
+      return service.getCoordinatorInstance() ?? null
+    case 'assistant.coordinator.set': {
+      const payload = z.object({
+        assistantId: z.string().trim().min(1).max(200).nullable(),
+      }).strict().parse(request.payload)
+      return (await service.setCoordinatorInstance(payload.assistantId)) ?? null
+    }
     case 'assistant.memory.get': {
       const payload = z.object({
         assistantId: z.string().trim().min(1).max(200),

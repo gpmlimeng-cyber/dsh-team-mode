@@ -47,6 +47,8 @@ export const AGENT_TEAM_METHODS = [
   'assistant.instance.update',
   'assistant.instance.archive',
   'assistant.instance.ensure',
+  'assistant.coordinator.get',
+  'assistant.coordinator.set',
   'assistant.memory.get',
   'assistant.memory.write',
   'assistant.memory.entry.write',
@@ -389,6 +391,16 @@ export interface AgentTeamRequestMap {
   'assistant.instance.ensure': {
     payload: { id: string }
     result: { instance: AssistantInstance; sessionId: string }
+  }
+  /** The workspace coordinator; null when none is set (never an invented row). */
+  'assistant.coordinator.get': { payload: undefined; result: AssistantInstance | null }
+  /**
+   * Set or clear the single workspace coordinator. `null` clears it; setting a
+   * different instance clears the previous one in the same write.
+   */
+  'assistant.coordinator.set': {
+    payload: { assistantId: string | null }
+    result: AssistantInstance | null
   }
   'assistant.memory.get': {
     payload: { assistantId: string }

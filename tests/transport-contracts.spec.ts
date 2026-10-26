@@ -76,6 +76,18 @@ describe('Agent Team transport contracts', () => {
     }>()
   })
 
+  it('maps the workspace coordinator read and write', () => {
+    expect(AGENT_TEAM_METHODS).toContain('assistant.coordinator.get')
+    expect(AGENT_TEAM_METHODS).toContain('assistant.coordinator.set')
+    expectTypeOf<AgentTeamPayload<'assistant.coordinator.get'>>().toEqualTypeOf<undefined>()
+    expectTypeOf<AgentTeamResult<'assistant.coordinator.get'>>()
+      .toEqualTypeOf<AssistantInstance | null>()
+    expectTypeOf<AgentTeamPayload<'assistant.coordinator.set'>>()
+      .toEqualTypeOf<{ assistantId: string | null }>()
+    expectTypeOf<AgentTeamResult<'assistant.coordinator.set'>>()
+      .toEqualTypeOf<AssistantInstance | null>()
+  })
+
   it('maps the explicit member assistant-instance update method', () => {
     expect(AGENT_TEAM_METHODS).toContain('team.member.setAssistantInstance')
     expectTypeOf<AgentTeamPayload<'team.member.setAssistantInstance'>>().toEqualTypeOf<{
@@ -345,5 +357,63 @@ describe('team.checkpoint.handoff wire shape', () => {
       'checkpoint-1',
       { expectedRevision: 9 },
     )
+  })
+})
+
+describe('assistant.coordinator wire shape', () => {
+  it('reads the coordinator and clears it through one set method', async () => {
+    const routes = new Map<string, (req: IncomingMessage, res: ServerResponse) => unknown>()
+    const ctx = {
+      webServer: {
+        register(route: { path: string; handler: (req: IncomingMessage, res: ServerResponse) => unknown }) {
+          routes.set(route.path, route.handler)
+          return () => { routes.delete(route.path) }
+        },
+      },
+      connection: { requestRejection: () => undefined },
+      logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+    } as never
+    const coordinator = { id: 'instance-1', revision: 2, coordinator: true } as AssistantInstance
+    const getCoordinatorInstance = vi.fn(() => coordinator)
+    const setCoordinatorInstance = vi.fn(async (assistantId: string | null) => (
+      assistantId === null ? undefined : coordinator
+    ))
+    const service = {
+      subscribe: () => () => {},
+      getCoordinatorInstance,
+      setCoordinatorInstance,
+    } as unknown as AgentTeamService
+    registerWebTransport(
+      ctx,
+      { maxRequestBytes: 1024, sseHeartbeatMs: 60_000 } as Config,
+      service,
+    )
+    const handler = routes.get(AGENT_TEAM_API_PATH)!
+
+    const read = response()
+    await handler(request(JSON.stringify({
+      requestId: 'r1',
+      method: 'assistant.coordinator.get',
+      payload: null,
+    })), read)
+    expect(JSON.parse(read.body)).toMatchObject({ ok: true, value: { id: 'instance-1' } })
+
+    const set = response()
+    await handler(request(JSON.stringify({
+      requestId: 'r2',
+      method: 'assistant.coordinator.set',
+      payload: { assistantId: 'instance-1' },
+    })), set)
+    expect(JSON.parse(set.body)).toMatchObject({ ok: true, value: { id: 'instance-1' } })
+
+    const clear = response()
+    await handler(request(JSON.stringify({
+      requestId: 'r3',
+      method: 'assistant.coordinator.set',
+      payload: { assistantId: null },
+    })), clear)
+    // No coordinator is `null` on the wire, never a missing field.
+    expect(JSON.parse(clear.body)).toEqual({ requestId: 'r3', ok: true, value: null })
+    expect(setCoordinatorInstance.mock.calls).toEqual([['instance-1'], [null]])
   })
 })

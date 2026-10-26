@@ -74,6 +74,13 @@ export const assistantInstanceSchema = z.object({
   retiredMainSessionIds: z.array(nonEmpty).max(100).optional(),
   status: z.enum(['idle', 'starting', 'active', 'error', 'archived']),
   pinned: z.boolean().default(false),
+  /**
+   * Workspace-wide coordinator flag, added without a schema-version bump: a row
+   * stored before the coordinator existed carries no field and still parses, and
+   * `isCoordinatorInstance` reads absent as false. Only one instance in the
+   * workspace may carry it; `setCoordinatorInstance` is the only writer.
+   */
+  coordinator: z.boolean().optional(),
   revision: z.int().positive(),
   createdAt: isoDate,
   updatedAt: isoDate,

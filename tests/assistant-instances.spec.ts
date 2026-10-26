@@ -14,6 +14,7 @@ import type {
   TeamAggregate,
   TeamMessage,
 } from '../src/domain/types.js'
+import { isCoordinatorInstance } from '../src/domain/types.js'
 import type { AssistantRuntime } from '../src/runtime/assistant-runtime.js'
 import { AgentTeamService, ASSISTANT_MEMORY_MAX_CHARS } from '../src/service/dsh-team-mode-service.js'
 import { dshTeamModeDomainSpec } from '../src/storage/domain.js'
@@ -1028,6 +1029,132 @@ describe('Assistant sessions', () => {
     }))
     expect(updated).toMatchObject({ status: 'completed', resultSummary: 'Done.' })
     expect(store.getAssistantSession(task.id)).toEqual(updated)
+  })
+})
+
+/** A directly configured instance: no template row, so the test owns every field. */
+function createInstance(service: AgentTeamService, name: string): Promise<AssistantInstance> {
+  return service.createAssistantInstance({
+    workspaceId: 'workspace-1',
+    name,
+    provider: 'openai',
+    model: 'gpt-5',
+    agentPresetId: 'default',
+    permissionPresetId: 'read-only',
+  })
+}
+
+describe('Assistant coordinator', () => {
+  it('leaves the flag absent on an instance that was never made coordinator', async () => {
+    const { service } = createHarness()
+    const instance = await createInstance(service, 'Plain')
+
+    // Missing-field compatibility: a row stored before the flag existed carries
+    // no key at all, still parses, and reads as "not the coordinator".
+    expect('coordinator' in instance).toBe(false)
+    expect(assistantInstanceSchema.parse(instance)).toEqual(instance)
+    expect(isCoordinatorInstance(instance)).toBe(false)
+    expect(service.getCoordinatorInstance()).toBeUndefined()
+  })
+
+  it('switches the single coordinator: setting a new one clears the old', async () => {
+    const { service, store } = createHarness()
+    const first = await createInstance(service, 'First')
+    const second = await createInstance(service, 'Second')
+
+    const set = await service.setCoordinatorInstance(first.id)
+    expect(set?.id).toBe(first.id)
+    expect(isCoordinatorInstance(store.getAssistantInstance(first.id)!)).toBe(true)
+
+    const switched = await service.setCoordinatorInstance(second.id)
+    expect(switched?.id).toBe(second.id)
+    expect(isCoordinatorInstance(store.getAssistantInstance(second.id)!)).toBe(true)
+    // Cleared by removing the field, so a former coordinator reads exactly like
+    // a pre-coordinator row.
+    expect('coordinator' in store.getAssistantInstance(first.id)!).toBe(false)
+    expect(store.listAssistantInstances().filter(isCoordinatorInstance).map(item => item.id))
+      .toEqual([second.id])
+    // Persisted, not held in memory: a fresh service sees the same coordinator.
+    expect(new AgentTeamService(new Context(), config, store).getCoordinatorInstance()?.id)
+      .toBe(second.id)
+
+    // Setting the current coordinator again is a no-op, not a revision bump.
+    const stable = await service.setCoordinatorInstance(second.id)
+    expect(stable).toEqual(switched)
+    expect(store.getAssistantInstance(second.id)?.revision).toBe(switched?.revision)
+  })
+
+  it('clears the coordinator with null and refuses unknown or archived targets', async () => {
+    const { service, store } = createHarness()
+    const instance = await createInstance(service, 'Coordinator')
+    await service.setCoordinatorInstance(instance.id)
+
+    expect(await service.setCoordinatorInstance(null)).toBeUndefined()
+    expect(service.getCoordinatorInstance()).toBeUndefined()
+    expect(store.listAssistantInstances().some(isCoordinatorInstance)).toBe(false)
+
+    await expect(service.setCoordinatorInstance('missing'))
+      .rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_NOT_FOUND' })
+    await expect(service.setCoordinatorInstance('   '))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    const archived = await createInstance(service, 'Archived')
+    await service.archiveAssistantInstance(archived.id)
+    await expect(service.setCoordinatorInstance(archived.id))
+      .rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+  })
+
+  it('refuses to archive the coordinator and names the way out', async () => {
+    const { service, store } = createHarness()
+    const instance = await createInstance(service, 'Coordinator')
+    await service.setCoordinatorInstance(instance.id)
+
+    await expect(service.archiveAssistantInstance(instance.id)).rejects.toMatchObject({
+      code: 'ASSISTANT_INSTANCE_COORDINATOR',
+      message: expect.stringContaining('assistant.coordinator.set'),
+    })
+    expect(store.getAssistantInstance(instance.id)?.status).not.toBe('archived')
+
+    // The hint is executable: clearing the coordinator unblocks the archive.
+    await service.setCoordinatorInstance(null)
+    const archived = await service.archiveAssistantInstance(instance.id)
+    expect(archived.status).toBe('archived')
+    expect(isCoordinatorInstance(archived)).toBe(false)
+  })
+
+  it('never reports a coordinator as archived on load or list', async () => {
+    // A state the archive entry point cannot produce (older build, direct edit):
+    // read it back visible instead of silently dropping the pinned row.
+    const { service, store } = createHarness()
+    const instance = await createInstance(service, 'Legacy coordinator')
+    await store.putAssistantInstance({
+      ...instance,
+      coordinator: true,
+      status: 'archived',
+      archivedAt: NOW,
+    })
+
+    const loaded = service.getAssistantInstance(instance.id)
+    expect(loaded).toMatchObject({ status: 'idle', coordinator: true })
+    expect(loaded.archivedAt).toBeUndefined()
+    expect(service.listAssistantInstances().items.find(item => item.id === instance.id))
+      .toMatchObject({ status: 'idle' })
+    expect(service.getCoordinatorInstance()?.status).toBe('idle')
+  })
+
+  it('serializes concurrent switches so exactly one coordinator remains', async () => {
+    const { service, store } = createHarness()
+    const first = await createInstance(service, 'First')
+    const second = await createInstance(service, 'Second')
+
+    await Promise.all([
+      service.setCoordinatorInstance(first.id),
+      service.setCoordinatorInstance(second.id),
+    ])
+
+    expect(store.listAssistantInstances().filter(isCoordinatorInstance).map(item => item.id))
+      .toEqual([second.id])
+    expect(service.getCoordinatorInstance()?.id).toBe(second.id)
   })
 })
 

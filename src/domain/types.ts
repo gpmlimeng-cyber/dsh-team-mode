@@ -51,6 +51,14 @@ import type {
 export type AssistantSnapshot = z.infer<typeof assistantSnapshotSchema>
 export type AssistantTemplate = z.infer<typeof assistantTemplateSchema>
 export type AssistantInstance = z.infer<typeof assistantInstanceSchema>
+
+/**
+ * The single reader for the optional coordinator flag: absent means false, the
+ * pre-coordinator behavior. Never write `=== true` or `?? false` inline.
+ */
+export function isCoordinatorInstance(instance: Pick<AssistantInstance, 'coordinator'>): boolean {
+  return instance.coordinator === true
+}
 export type CreateAssistantInstanceInput = z.infer<typeof createAssistantInstanceInputSchema>
 export type UpdateAssistantInstanceInput = z.infer<typeof updateAssistantInstanceInputSchema>
 export type AssistantMemory = z.infer<typeof assistantMemorySchema>
