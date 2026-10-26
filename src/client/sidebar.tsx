@@ -1198,12 +1198,22 @@ export function SidebarPortal({
      * is mounting point for the switch.
      */
     const ensureBrand = (): void => {
-      const logoRow = document.querySelector<HTMLElement>('[class*="_logoRow"]')
+      // Several sidebar roots can be mounted at once (desktop rail + mobile
+      // drawer). Position over the visible one; otherwise the switch is created
+      // inside a hidden root and never appears on a phone.
+      const logoRows = Array.from(document.querySelectorAll<HTMLElement>('[class*="_logoRow"]'))
+      const logoRow = logoRows.find(candidate => {
+        const box = candidate.getBoundingClientRect()
+        return box.width > 0 && box.height > 0 && getComputedStyle(candidate).visibility !== 'hidden'
+      }) ?? logoRows[0] ?? null
       // Android/mobile shells can hide the brand row while keeping the collapse
       // toggle; fall back to the toggle row rather than returning and leaving no
       // mode switch at all.
       const toggle = logoRow?.querySelector<HTMLElement>('[class*="_toggle"]')
-        ?? document.querySelector<HTMLElement>('button[class*="_toggle"]')
+        ?? [...document.querySelectorAll<HTMLElement>('button[class*="_toggle"]')].find(candidate => {
+          const box = candidate.getBoundingClientRect()
+          return box.width > 0 && box.height > 0
+        })
       const row = logoRow ?? toggle?.parentElement ?? null
       if (row === null) return
       // The sidebar opens as a narrow rail on mobile and widens to a drawer.
