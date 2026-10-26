@@ -12134,3 +12134,9 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 .mascotColor[aria-pressed='true'] {
   border-color: var(--dsw-alias-label-primary);
 }
+
+@media (max-width: 760px) {
+  .sidebarBrandHost .brandActions > :not(:last-child) {
+    display: none;
+  }
+}

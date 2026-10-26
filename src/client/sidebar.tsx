@@ -1275,6 +1275,9 @@ export function SidebarPortal({
       const toggleRect = toggle?.getBoundingClientRect()
       let width = columnWidth
         ?? (rect.width > 32 ? rect.width - 32 : Math.min(240, window.innerWidth - 32))
+      // Keep a hard gap before the native collapse control on phones; the
+      // brand actions are reduced to 新建 by CSS at this width.
+      if (window.innerWidth <= 760) width = Math.min(width, 190)
       if (toggleRect !== undefined && toggleRect.width > 0) {
         width = Math.min(width, toggleRect.left - left - 20)
       }
@@ -1316,7 +1319,7 @@ export function SidebarPortal({
         element.id = STEWARD_HOST_ID
         element.className = css.stewardHost ?? ''
         element.style.position = 'fixed'
-        element.style.zIndex = '5'
+        element.style.zIndex = '2147483000'
         document.body.append(element)
       }
       const newSessionRect = newSession?.getBoundingClientRect()
