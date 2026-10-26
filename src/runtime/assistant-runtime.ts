@@ -310,9 +310,10 @@ export class AssistantRuntime {
    * defaults to the instance workspace; an explicit directory becomes the
    * thread's working folder.
    *
-   * The thread reuses the main Session setup, so the same assistant answers in
-   * it. Its task and memory tools stay bound to the main Session by their
-   * identity check (threads do not participate in team roles).
+   * The thread reuses the same setup as the main Session, so the same assistant
+   * answers in it. It registers neither the team task tools nor the memory
+   * tools: both write as the main Session, and a thread must not offer a tool it
+   * may never call.
    */
   async createAssistantThread(
     rawAssistantId: string,
@@ -346,7 +347,7 @@ export class AssistantRuntime {
           agentPreset: instance.assistantSnapshot.agentPresetId,
         },
         agentOptions: agentOptionsFor(instance.assistantSnapshot),
-        setup: this.mainSetup(id, instance),
+        setup: this.assistantSetup(id, instance, 'thread'),
       })
     } catch (error) {
       throw this.startupError(instance, error)
@@ -530,7 +531,7 @@ export class AssistantRuntime {
           agentPreset: instance.assistantSnapshot.agentPresetId,
         },
         agentOptions: agentOptionsFor(instance.assistantSnapshot),
-        setup: this.mainSetup(instance.id, instance),
+        setup: this.assistantSetup(instance.id, instance, 'main'),
       })
     } catch (error) {
       throw this.startupError(instance, error)
@@ -1204,7 +1205,7 @@ export class AssistantRuntime {
 
     const sessionId = boundSessionId ?? `session-${randomUUID()}`
     const snapshot = instance.assistantSnapshot
-    const setup = this.mainSetup(id, instance)
+    const setup = this.assistantSetup(id, instance, 'main')
     const agentOptions = agentOptionsFor(snapshot)
 
     let handle: AgentHandle
@@ -1248,12 +1249,19 @@ export class AssistantRuntime {
   }
 
   /**
-   * Setup shared by every main Session of one Assistant: preset mount, model
-   * selection, the identity/memory/task prompt sections, and the task and
-   * memory tools. A handoff reuses it so a fresh Session is configured exactly
-   * like a normal main-Session start.
+   * Setup shared by every Session of one Assistant: preset mount, model
+   * selection, permission preset, and the memory/identity/task/coordinator
+   * prompt sections. Only a main Session also registers the task and memory
+   * tools: both act as the main Session, and a thread is an additional visible
+   * conversation whose team identity stays bound to the main one. A handoff
+   * reuses the main role so a fresh Session is configured exactly like a normal
+   * main-Session start.
    */
-  private mainSetup(id: string, instance: AssistantInstance): AgentSetup {
+  private assistantSetup(
+    id: string,
+    instance: AssistantInstance,
+    role: 'main' | 'thread',
+  ): AgentSetup {
     const snapshot = instance.assistantSnapshot
     const modelSelection = modelSelectionFor(snapshot)
     return async (agentCtx, agent): Promise<void> => {
@@ -1280,6 +1288,9 @@ export class AssistantRuntime {
         text: () => this.coordinatorPromptFor(id),
       })
       this.ctx.permissionPresets.set(agent.session, snapshot.permissionPresetId)
+      // Task and memory tools act as the main Session; a thread has no identity
+      // of its own there, so it registers neither instead of failing on call.
+      if (role === 'thread') return
       registerAssistantTaskTools(agentCtx, {
         assertIdentity: agent => { this.assertMainToolIdentity(id, agent) },
         createTask: input => this.createTask(id, input),

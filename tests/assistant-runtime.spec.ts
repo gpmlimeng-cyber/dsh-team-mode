@@ -701,6 +701,20 @@ describe('AssistantRuntime', () => {
       .toContain('You are Researcher')
   })
 
+  it('registers no task or memory tools on a thread Session', async () => {
+    const h = createHarness()
+    await h.runtime.ensureInstance('instance-1')
+
+    await h.runtime.createAssistantThread('instance-1')
+
+    // A thread keeps the assistant's prompts and permission, but the team task
+    // and memory tools act as the main Session, so it offers neither.
+    expect(toolsRegistered(h.handles[1])).toEqual([])
+    expect(toolsRegistered(h.handles[0]).sort())
+      .toEqual([...TASK_TOOL_NAMES, ...MEMORY_TOOL_NAMES].sort())
+    expect(h.permissionSet).toHaveBeenCalledWith(h.handles[1]?.agent.session, 'workspace-write')
+  })
+
   it('binds an explicit working directory to a thread Session', async () => {
     const h = createHarness()
 
