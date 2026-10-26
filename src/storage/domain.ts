@@ -10,6 +10,7 @@ import {
   migrationBackupSchema,
   migrationRecordSchema,
   operationSchema,
+  sidebarGroupsSchema,
   teamActivitySchema,
   teamAggregateSchema,
   teamCheckpointSchema,
@@ -23,6 +24,7 @@ import type {
   ContextCheckpoint,
   Escalation,
   Operation,
+  SidebarGroups,
   TeamActivity,
   TeamAggregate,
   TeamCheckpoint,
@@ -87,6 +89,10 @@ export const dshTeamModeDomainSpec = defineDomain({
     ),
     operations: domainTable<OperationId, Operation>(
       storedTableSchema<OperationId, Operation>(operationSchema),
+    ),
+    /** One row (`SIDEBAR_GROUPS_KEY`) holding the ordered group labels. */
+    sidebar_groups: domainTable<string, SidebarGroups>(
+      storedTableSchema<string, SidebarGroups>(sidebarGroupsSchema),
     ),
     migrations: domainTable<string, { schemaVersion: 1, id: string, appliedAt: string, fromVersion: number, toVersion: number }>(
       storedTableSchema<string, { schemaVersion: 1, id: string, appliedAt: string, fromVersion: number, toVersion: number }>(migrationRecordSchema),

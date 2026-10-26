@@ -7,6 +7,7 @@ import type {
   ContextCheckpoint,
   Escalation,
   Operation,
+  SidebarGroups,
   TeamActivity,
   TeamAggregate,
   TeamCheckpoint,
@@ -61,6 +62,22 @@ export interface AgentTeamEscalationStore {
 
 export type AgentTeamStoreWithEscalations = AgentTeamStore & AgentTeamEscalationStore
 
+/** The one row that holds the ordered sidebar group labels. */
+export const SIDEBAR_GROUPS_KEY = 'sidebar'
+
+/**
+ * Sidebar group labels, kept separate from `AgentTeamStore` for the same reason
+ * as the other slice interfaces: a store double written before groups existed
+ * stays valid. Membership (`group`) lives on the teams and instances in
+ * `AgentTeamStore`; this slice only owns existence and order.
+ */
+export interface AgentTeamSidebarGroupStore {
+  getSidebarGroups(): SidebarGroups | undefined
+  putSidebarGroups(value: SidebarGroups): Promise<void>
+}
+
+export type AgentTeamStoreWithSidebarGroups = AgentTeamStore & AgentTeamSidebarGroupStore
+
 export interface AgentTeamStore {
   getAssistant(id: string): AssistantTemplate | undefined
   listAssistants(): AssistantTemplate[]
@@ -114,7 +131,12 @@ export interface AgentTeamStore {
 }
 
 export class DomainAgentTeamStore
-implements AgentTeamStore, AgentTeamCheckpointStore, AgentTeamLeaderCheckpointStore, AgentTeamEscalationStore {
+implements
+  AgentTeamStore,
+  AgentTeamCheckpointStore,
+  AgentTeamLeaderCheckpointStore,
+  AgentTeamEscalationStore,
+  AgentTeamSidebarGroupStore {
   private readonly assistants: KvTable<string, AssistantTemplate>
   private readonly assistantInstances: KvTable<string, AssistantInstance>
   private readonly assistantSessions: KvTable<string, AssistantSession>
@@ -122,6 +144,7 @@ implements AgentTeamStore, AgentTeamCheckpointStore, AgentTeamLeaderCheckpointSt
   private readonly contextCheckpoints: KvTable<string, ContextCheckpoint>
   private readonly teamCheckpoints: KvTable<string, TeamCheckpoint>
   private readonly escalations: KvTable<string, Escalation>
+  private readonly sidebarGroups: KvTable<string, SidebarGroups>
   private readonly teams: KvTable<string, TeamAggregate>
   private readonly messages: KvTable<string, TeamMessage>
   private readonly activities: KvTable<string, TeamActivity>
@@ -135,6 +158,7 @@ implements AgentTeamStore, AgentTeamCheckpointStore, AgentTeamLeaderCheckpointSt
     this.contextCheckpoints = domain.table('context_checkpoints')
     this.teamCheckpoints = domain.table('team_checkpoints')
     this.escalations = domain.table('escalations')
+    this.sidebarGroups = domain.table('sidebar_groups')
     this.teams = domain.table('teams')
     this.messages = domain.table('messages')
     this.activities = domain.table('activities')
@@ -284,6 +308,14 @@ implements AgentTeamStore, AgentTeamCheckpointStore, AgentTeamLeaderCheckpointSt
 
   deleteEscalation(id: string): Promise<boolean> {
     return this.escalations.delete(id)
+  }
+
+  getSidebarGroups(): SidebarGroups | undefined {
+    return this.sidebarGroups.get(SIDEBAR_GROUPS_KEY)
+  }
+
+  putSidebarGroups(value: SidebarGroups): Promise<void> {
+    return this.sidebarGroups.put(SIDEBAR_GROUPS_KEY, value)
   }
 
   getTeam(id: string): TeamAggregate | undefined {

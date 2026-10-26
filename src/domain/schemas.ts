@@ -3,6 +3,28 @@ import { z } from 'zod'
 const isoDate = z.iso.datetime({ offset: true })
 const nonEmpty = z.string().trim().min(1)
 
+/**
+ * Bounds of one sidebar group label and of the group list. They live here
+ * because both the record schemas and the service validate against them.
+ */
+export const SIDEBAR_GROUP_MAX_CHARS = 40
+export const SIDEBAR_GROUP_MAX_COUNT = 100
+
+const sidebarGroupName = nonEmpty.max(SIDEBAR_GROUP_MAX_CHARS)
+
+/**
+ * The ordered custom sidebar group labels. Membership stays on each team and
+ * assistant instance (`group`); this record only owns existence and order, so
+ * an empty group is renderable and no membership table is needed.
+ */
+export const sidebarGroupsSchema = z.object({
+  schemaVersion: z.literal(1),
+  /** Trimmed, unique labels in render order. */
+  groups: z.array(sidebarGroupName).max(SIDEBAR_GROUP_MAX_COUNT),
+  revision: z.int().positive(),
+  updatedAt: isoDate,
+}).strict()
+
 export const assistantSnapshotSchema = z.object({
   assistantId: nonEmpty,
   revision: z.int().positive(),
@@ -74,6 +96,12 @@ export const assistantInstanceSchema = z.object({
   retiredMainSessionIds: z.array(nonEmpty).max(100).optional(),
   status: z.enum(['idle', 'starting', 'active', 'error', 'archived']),
   pinned: z.boolean().default(false),
+  /**
+   * Sidebar group label, added without a schema-version bump: a row stored
+   * before groups existed carries no field and reads as ungrouped. The label
+   * must name a group in `sidebarGroupsSchema`; only clearing is unconditional.
+   */
+  group: sidebarGroupName.optional(),
   /**
    * Workspace-wide coordinator flag, added without a schema-version bump: a row
    * stored before the coordinator existed carries no field and still parses, and
@@ -601,6 +629,12 @@ export const teamAggregateSchema = z.object({
   /** Stable member order for the capsule bar; Leader remains first (v2). */
   memberOrder: z.array(nonEmpty).optional(),
   /**
+   * Sidebar group label, added without a schema-version bump: a team stored
+   * before groups existed carries no field and reads as ungrouped. The label
+   * must name a group in `sidebarGroupsSchema`; only clearing is unconditional.
+   */
+  group: sidebarGroupName.optional(),
+  /**
    * Leader Sessions retired by an explicit context handoff, newest last. Same
    * precedent as `retiredMainSessionIds`: optional, no schema-version bump, and
    * readers treat absent as `[]`. Kept separate from `retiredSessions` so the
@@ -742,6 +776,8 @@ export const updateAssistantInstanceInputSchema = z.object({
   name: nonEmpty.optional(),
   avatar: z.string().max(400_000).optional(),
   pinned: z.boolean().optional(),
+  /** Sidebar group; an empty string clears it (same convention as teams). */
+  group: z.string().optional(),
   provider: nonEmpty.optional(),
   model: nonEmpty.optional(),
   reasoningEffort: z.string().trim().optional(),

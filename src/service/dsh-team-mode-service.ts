@@ -18,6 +18,8 @@ import {
   createTeamDraftInputSchema,
   createTeamGoalInputSchema,
   memberAssistantInstanceLinkSchema,
+  SIDEBAR_GROUP_MAX_CHARS,
+  SIDEBAR_GROUP_MAX_COUNT,
   teamCheckpointSchema,
   updateAssistantInputSchema,
   updateAssistantInstanceInputSchema,
@@ -55,6 +57,7 @@ import {
   type MemoryJournalSnapshot,
   type Operation,
   type Page,
+  type SidebarGroups,
   type TeamActivity,
   type TeamAggregate,
   type TeamCheckpoint,
@@ -73,6 +76,7 @@ import type {
   AgentTeamCheckpointStore,
   AgentTeamEscalationStore,
   AgentTeamLeaderCheckpointStore,
+  AgentTeamSidebarGroupStore,
   AgentTeamStore,
 } from '../storage/store.js'
 import type { AssistantBuilderRuntime } from '../runtime/assistant-builder-runtime.js'
@@ -935,6 +939,12 @@ export class AgentTeamService extends Service {
       ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
     }
     const pinned = patch.pinned ?? current.pinned
+    // Same convention as teams: an absent patch field keeps the stored group,
+    // a blank one clears it, and a new label must already exist as a group.
+    const group = patch.group === undefined
+      ? current.group
+      : normalizeSidebarGroup(patch.group)
+    if (patch.group !== undefined) this.assertKnownGroup(group)
     const changed = snapshot.name !== current.assistantSnapshot.name
       || snapshot.avatar !== current.assistantSnapshot.avatar
       || snapshot.provider !== current.assistantSnapshot.provider
@@ -942,14 +952,19 @@ export class AgentTeamService extends Service {
       || snapshot.reasoningEffort !== current.assistantSnapshot.reasoningEffort
       || snapshot.permissionPresetId !== current.assistantSnapshot.permissionPresetId
       || pinned !== current.pinned
+      || group !== current.group
     if (!changed) return current
-    const next = await this.store.updateAssistantInstance(id, value => ({
-      ...value,
-      assistantSnapshot: snapshot,
-      pinned,
-      revision: value.revision + 1,
-      updatedAt: new Date().toISOString(),
-    }))
+    const next = await this.store.updateAssistantInstance(id, value => {
+      const { group: _previousGroup, ...rest } = value
+      return {
+        ...rest,
+        assistantSnapshot: snapshot,
+        pinned,
+        ...(group === undefined ? {} : { group }),
+        revision: value.revision + 1,
+        updatedAt: new Date().toISOString(),
+      }
+    })
     this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.updated')
     return next
   }
@@ -3012,6 +3027,170 @@ export class AgentTeamService extends Service {
     )
   }
 
+  /**
+   * Move a team into a sidebar group, or back to ungrouped with `null`/blank.
+   * `group` is only a label; the group itself must exist in the ordered list, so
+   * a move can never invent a group that no one can see or delete.
+   */
+  async setTeamGroup(
+    teamId: string,
+    group: string | null,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertRevision('team', team.revision, options.expectedRevision)
+    const next = normalizeSidebarGroup(group)
+    this.assertKnownGroup(next)
+    return this.updateRuntimeTeam(
+      teamId,
+      current => {
+        const { group: _previous, ...rest } = current
+        return {
+          ...rest,
+          ...(next === undefined ? {} : { group: next }),
+        }
+      },
+      'team.group',
+      next === undefined ? 'Team group cleared' : `Team moved to group ${next}`,
+    )
+  }
+
+  /**
+   * The sidebar group list lives in its own store slice, probed exactly like
+   * `escalationStore`, so a store double written before groups existed stays
+   * valid. A store without the slice has no groups and cannot create one.
+   */
+  private get sidebarGroupStore(): AgentTeamSidebarGroupStore | undefined {
+    const store = this.store as Partial<AgentTeamSidebarGroupStore>
+    return 'getSidebarGroups' in store ? store as AgentTeamSidebarGroupStore : undefined
+  }
+
+  /** Ordered group labels; empty for a store that never created one. */
+  listGroups(): string[] {
+    return this.sidebarGroupStore?.getSidebarGroups()?.groups ?? []
+  }
+
+  async createGroup(name: string): Promise<string[]> {
+    const label = requireGroupLabel(name)
+    const groups = this.listGroups()
+    if (groups.includes(label)) {
+      throw new AgentTeamError('INVALID_REQUEST', `Group '${label}' already exists`, { group: label })
+    }
+    if (groups.length >= SIDEBAR_GROUP_MAX_COUNT) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `At most ${SIDEBAR_GROUP_MAX_COUNT} sidebar groups are allowed`,
+        { limit: SIDEBAR_GROUP_MAX_COUNT },
+      )
+    }
+    return this.writeGroups([...groups, label])
+  }
+
+  /**
+   * Rename a group and every member that points at it. The member writes run
+   * first and the list last: a failed list write leaves members on the old
+   * label, which still exists, instead of on a label nobody can see.
+   */
+  async renameGroup(from: string, to: string): Promise<string[]> {
+    const previous = requireGroupLabel(from)
+    const label = requireGroupLabel(to)
+    const groups = this.listGroups()
+    if (!groups.includes(previous)) {
+      throw new AgentTeamError('INVALID_REQUEST', `Unknown group '${previous}'`, { group: previous })
+    }
+    if (previous === label) return groups
+    if (groups.includes(label)) {
+      throw new AgentTeamError('INVALID_REQUEST', `Group '${label}' already exists`, { group: label })
+    }
+    await this.moveGroupMembers(previous, label)
+    return this.writeGroups(groups.map(group => group === previous ? label : group))
+  }
+
+  /** Delete a group; its members fall back to ungrouped. */
+  async deleteGroup(name: string): Promise<string[]> {
+    const label = requireGroupLabel(name)
+    const groups = this.listGroups()
+    if (!groups.includes(label)) {
+      throw new AgentTeamError('INVALID_REQUEST', `Unknown group '${label}'`, { group: label })
+    }
+    await this.moveGroupMembers(label, undefined)
+    return this.writeGroups(groups.filter(group => group !== label))
+  }
+
+  /** Reorder the list; `names` must be exactly the existing groups. */
+  async setGroupOrder(names: readonly string[]): Promise<string[]> {
+    const groups = this.listGroups()
+    const unique = names.map(name => requireGroupLabel(name))
+    const valid = unique.length === groups.length
+      && new Set(unique).size === unique.length
+      && unique.every(name => groups.includes(name))
+    if (!valid) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        'Group order must list every existing group exactly once',
+        { groups },
+      )
+    }
+    return this.writeGroups(unique)
+  }
+
+  /** Reject a group label that was never created; clearing is always legal. */
+  private assertKnownGroup(group: string | undefined): void {
+    if (group === undefined || this.listGroups().includes(group)) return
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Unknown group '${group}'; create it before moving anything into it`,
+      { group },
+    )
+  }
+
+  private async writeGroups(groups: string[]): Promise<string[]> {
+    const store = this.sidebarGroupStore
+    if (store === undefined) {
+      throw new AgentTeamError('INVALID_REQUEST', 'This store cannot persist sidebar groups')
+    }
+    const revision = (store.getSidebarGroups()?.revision ?? 0) + 1
+    await store.putSidebarGroups({
+      schemaVersion: 1,
+      groups,
+      revision,
+      updatedAt: new Date().toISOString(),
+    })
+    this.publish('catalog', 'sidebar-groups', revision, 'sidebar.groups.changed')
+    return groups
+  }
+
+  /** Rewrite every member of one group, teams first then Assistant instances. */
+  private async moveGroupMembers(from: string, to: string | undefined): Promise<void> {
+    const now = new Date().toISOString()
+    for (const team of this.store.listTeams()) {
+      if (team.group !== from) continue
+      const next = await this.store.updateTeam(team.id, current => {
+        const { group: _previous, ...rest } = current
+        return {
+          ...rest,
+          ...(to === undefined ? {} : { group: to }),
+          revision: current.revision + 1,
+          updatedAt: now,
+        }
+      })
+      this.publish('team', next.id, next.revision, 'team.group')
+    }
+    for (const instance of this.store.listAssistantInstances()) {
+      if (instance.group !== from) continue
+      const next = await this.store.updateAssistantInstance(instance.id, current => {
+        const { group: _previous, ...rest } = current
+        return {
+          ...rest,
+          ...(to === undefined ? {} : { group: to }),
+          revision: current.revision + 1,
+          updatedAt: now,
+        }
+      })
+      this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.updated')
+    }
+  }
+
   async setTeamArchived(
     teamId: string,
     archived: boolean,
@@ -4062,6 +4241,31 @@ function requireTeamMemoryText(actual: number, limit: number, label: string): vo
     length: actual,
     limit,
   })
+}
+
+/**
+ * Trim one sidebar group label. Blank means "no group"; an over-long label is
+ * refused instead of silently truncated, so the caller never stores a value the
+ * domain schema would then reject.
+ */
+function normalizeSidebarGroup(group: string | null): string | undefined {
+  const trimmed = group?.trim() ?? ''
+  if (trimmed === '') return undefined
+  if (trimmed.length > SIDEBAR_GROUP_MAX_CHARS) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Group name exceeds ${SIDEBAR_GROUP_MAX_CHARS} characters`,
+      { length: trimmed.length, limit: SIDEBAR_GROUP_MAX_CHARS },
+    )
+  }
+  return trimmed
+}
+
+/** Same normalization, but a blank label is an error (creating/renaming a group). */
+function requireGroupLabel(group: string): string {
+  const label = normalizeSidebarGroup(group)
+  if (label === undefined) throw new AgentTeamError('INVALID_REQUEST', 'Group name cannot be empty')
+  return label
 }
 
 function requireTeamMemoryEntry(team: TeamAggregate, entryId: string): MemoryEntry {
