@@ -169,83 +169,6 @@ async function startStewardSession(open: (sessionId: string) => void): Promise<v
 }
 
 /**
- * The default bot of the DeepBot surface, pinned over the shipped 新会话 slot.
- * It reuses the 单聊 assistant row markup and styles verbatim, so it is the same
- * row as the list below rather than a lookalike.
- */
-function StewardEntry({
-  openSession,
-}: {
-  openSession: (sessionId: string) => void
-}): JSX.Element | null {
-  const [steward, setSteward] = useState<AssistantInstance>()
-  const [opening, setOpening] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    void callAgentTeam('assistant.instance.list').then((value) => {
-      if (cancelled) return
-      const items = value.items
-      // Only the coordinating assistant is pinned; nothing else is promoted.
-      const id = coordinatorAssistantId(items)
-      setSteward(id === undefined ? undefined : items.find(entry => entry.id === id))
-    }, () => {
-      // No assistant catalog is a valid state: the row simply stays hidden.
-    })
-    return () => { cancelled = true }
-  }, [])
-
-  if (steward === undefined) return null
-  const name = assistantInstanceName(steward)
-  const hint = steward.assistantSnapshot.instructions
-    .split('\n')
-    .map(line => line.trim())
-    .find(line => line !== '')
-    ?? `${steward.assistantSnapshot.provider} · ${steward.assistantSnapshot.model}`
-
-  return (
-    <div className={`${css.sidebarTeamRowWrap} ${css.sidebarAssistantRowWrap}`}>
-      <button
-        type="button"
-        className={`${css.sidebarTeamRow} ${css.sidebarAssistantRow}`}
-        disabled={opening}
-        aria-busy={opening ? true : undefined}
-        title={`${name} · ${steward.assistantSnapshot.model}`}
-        onClick={() => {
-          if (opening) return
-          setOpening(true)
-          void callAgentTeam('assistant.instance.ensure', { id: steward.id })
-            .then(result => { openSession(result.sessionId) })
-            .catch(() => {})
-            .finally(() => { setOpening(false) })
-        }}
-      >
-        <span className={css.sidebarAssistantAvatar}>
-          <MemberAvatar
-            name={name}
-            avatar={assistantAvatarSource(steward)}
-            size={34}
-            className={css.sidebarAssistantAvatarShape ?? ''}
-          />
-        </span>
-        <span className={`${css.sidebarTeamCopy} ${css.sidebarAssistantCopy}`}>
-          <span className={css.sidebarAssistantTop}>
-            <span className={css.sidebarTeamName}>{name}</span>
-            <LeaderMark size={12} />
-          </span>
-          <span
-            className={`${css.sidebarAssistantStatus} ${css.sidebarAssistantPreview}`}
-            title={hint}
-          >
-            {hint}
-          </span>
-        </span>
-      </button>
-    </div>
-  )
-}
-
-/**
  * Brand-shaped mode control: the current surface is bold text with a caret, so
  * the row reads as the product mark. The popover is the shipped `Menu`
  * primitive, which keeps its colours and metrics identical to the rest of the
@@ -931,17 +854,14 @@ export function SidebarTeamSection({
 }
 
 
-const SIDEBAR_HOST_ID = 'dsh-team-mode-sidebar-host'
+import { BRAND_HOST_ID, SIDEBAR_HOST_ID, STEWARD_HOST_ID } from './sidebar-hosts.js'
+
 /** Brand-row search drives every plugin section through one window event. */
 const SIDEBAR_SEARCH_EVENT = 'dsh-team-mode:sidebar-search'
 /** Brand-row 筛选 button opens the section's own filter/sort menu. */
 const SIDEBAR_MENU_EVENT = 'dsh-team-mode:sidebar-menu'
 /** Measured indentation from the plugin host to its section titles. */
 let brandColumnOffset = 4
-/** Mount point for the DSH/BOT switch that replaces the shipped brand row. */
-const BRAND_HOST_ID = 'dsh-team-mode-brand-host'
-/** Body-level mount for the pinned BOT row, laid over the 新会话 box. */
-const STEWARD_HOST_ID = 'dsh-team-mode-steward-host'
 /** Mount point for the BOT footer actions that replace native sidebar entries. */
 const BOT_FOOTER_HOST_ID = 'dsh-team-mode-footer-host'
 /** Marks a native node this plugin hid for the BOT surface. */
@@ -1115,7 +1035,6 @@ export function SidebarPortal({
 }): JSX.Element | null {
   const [host, setHost] = useState<HTMLElement>()
   const [brandHost, setBrandHost] = useState<HTMLElement>()
-  const [stewardHost, setStewardHost] = useState<HTMLElement>()
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const mode = useSurfaceMode()
@@ -1254,7 +1173,6 @@ export function SidebarPortal({
         element.style.position = 'fixed'
         element.style.zIndex = '5'
         document.body.append(element)
-        setStewardHost(element)
       }
       const rect = newSession.getBoundingClientRect()
       element.style.left = `${Math.round(rect.left)}px`
@@ -1725,10 +1643,6 @@ export function SidebarPortal({
 
   return (
     <>
-      {stewardHost !== undefined && mode === 'team' && createPortal(
-        <StewardEntry openSession={openSession} />,
-        stewardHost,
-      )}
       {brandHost !== undefined && createPortal(
         <>
           <SurfaceModeSwitch mode={mode} onChange={switchMode} />

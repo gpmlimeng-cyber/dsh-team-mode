@@ -109,11 +109,22 @@ describe('sidebar surface switch', () => {
   })
 
   it('mounts the switch where the shipped brand row was', () => {
-    expect(sidebar).toContain('dsh-team-mode-brand-host')
+    // Host ids live in one module so the shell and the assistant section agree.
+    expect(sidebar).toContain('BRAND_HOST_ID')
+    expect(sidebar).toContain("from './sidebar-hosts.js'")
     expect(sidebar).toContain('[class*="_logoRow"]')
     expect(sidebar).toContain('ensureBrand')
     // The row itself survives; only the original brand button is hidden.
     expect(sidebar).toContain('brand.style.display')
+  })
+
+  it('renders the pinned coordinator with the real assistant row', () => {
+    const assistant = readClientSource('assistant-sidebar.tsx')
+    expect(assistant).toContain('renderAssistantRow')
+    expect(assistant).toContain('createPortal(renderAssistantRow(coordinator)')
+    expect(assistant).toContain('coordinatorAssistantId')
+    // The row is removed from the list, not duplicated.
+    expect(assistant).toMatch(/filter\(instance => instance\.id !== coordinatorId\)/)
   })
 
   it('puts a right-aligned 搜索 / 筛选 / 新建 group on the brand row', () => {
