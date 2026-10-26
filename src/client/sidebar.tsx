@@ -1056,16 +1056,24 @@ export function SidebarPortal({
       if (logoRow === null) return
       const brand = logoRow.querySelector<HTMLElement>('[class*="_brand"]')
       if (brand !== null) brand.style.display = 'none'
-      const existing = document.getElementById(BRAND_HOST_ID)
-      if (existing !== null && existing.isConnected) {
-        if (existing.parentElement !== logoRow) logoRow.insertBefore(existing, logoRow.firstChild)
-        return
+      // The shipped brand row is React-owned: a node inserted into it is removed
+      // on its next render, taking the portalled control with it. The host lives
+      // on <body> instead and is positioned over the empty row.
+      let element = document.getElementById(BRAND_HOST_ID)
+      if (element === null || !element.isConnected) {
+        element = document.createElement('div')
+        element.id = BRAND_HOST_ID
+        element.className = css.sidebarBrandHost ?? ''
+        element.style.position = 'fixed'
+        element.style.zIndex = '50'
+        element.style.transform = 'translateY(-50%)'
+        document.body.append(element)
+        setBrandHost(element)
       }
-      const element = document.createElement('div')
-      element.id = BRAND_HOST_ID
-      element.className = css.sidebarBrandHost ?? ''
-      logoRow.insertBefore(element, logoRow.firstChild)
-      setBrandHost(element)
+      const rect = logoRow.getBoundingClientRect()
+      element.style.left = `${Math.round(rect.left + 16)}px`
+      element.style.top = `${Math.round(rect.top + rect.height / 2)}px`
+      element.style.visibility = rect.width > 0 && rect.height > 0 ? 'visible' : 'hidden'
     }
 
     const ensure = (): void => {
@@ -1245,9 +1253,11 @@ export function SidebarPortal({
     }
 
     ensure()
+    window.addEventListener('resize', schedule)
     const observer = new MutationObserver(schedule)
     observer.observe(document.body, { childList: true, subtree: true })
     return () => {
+      window.removeEventListener('resize', schedule)
       observer.disconnect()
       toggle?.removeEventListener('click', onToggle)
       toggle?.remove()
