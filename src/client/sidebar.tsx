@@ -1295,7 +1295,10 @@ export function SidebarPortal({
       const maxCenter = sidebarRect.bottom - 30
       element.style.top = `${Math.round(Math.min(Math.max(center, minCenter), Math.max(minCenter, maxCenter)))}px`
       element.style.width = `${Math.max(0, Math.round(width))}px`
-      element.style.visibility = (rect.width > 0 && rect.height > 0) || (toggleRect !== undefined && toggleRect.width > 0) ? 'visible' : 'hidden'
+      // Never hide a created switch: mobile shell chrome and drawer transitions
+      // can report a temporary zero rect, and the next layout pass would not
+      // necessarily run. It is removed only when the sidebar unmounts.
+      element.style.visibility = 'visible'
     }
 
     /** Lay the pinned BOT row exactly over the shipped 新会话 button box. */
@@ -1414,13 +1417,24 @@ export function SidebarPortal({
 
     ensure()
     observer = new MutationObserver(schedule)
-    observer.observe(document.body, { childList: true, subtree: true })
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'data-sidebar-collapsed'],
+    })
     window.addEventListener('resize', schedule)
+    window.addEventListener('scroll', schedule, true)
+    // React can replace the sidebar root after a connection reset; keep the
+    // manually mounted host attached and positioned through that lifecycle.
+    const heartbeat = window.setInterval(schedule, 1000)
     return () => {
       observer?.disconnect()
       resize?.disconnect()
       brandResize?.disconnect()
+      window.clearInterval(heartbeat)
       window.removeEventListener('resize', schedule)
+      window.removeEventListener('scroll', schedule, true)
       scrollRoot?.removeAttribute('data-dsh-team-scroll')
       if (nativeList !== undefined && nativeListStyle !== undefined) {
         nativeList.style.flex = nativeListStyle.flex
