@@ -8888,9 +8888,9 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   width: 14px;
   height: 20px;
   flex: none;
-  /* Pull toward the row edge: the 8px row padding plus the flex gap read as an
-     empty column between the chevron and the avatar. */
-  margin-left: -2px;
+  /* Pull toward the row edge: 8px row padding minus 4px lands the glyph 4px in,
+     and the right margin keeps the flex gap from opening an empty column. */
+  margin-left: -4px;
   margin-right: -2px;
   padding: 0;
   border: 0;
