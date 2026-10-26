@@ -1,5 +1,5 @@
 import { isCoordinatorInstance } from '../domain/types.js'
-import type { AssistantInstance, AssistantSession } from '../domain/types.js'
+import type { AssistantInstance, AssistantSession, Escalation } from '../domain/types.js'
 import type { AssistantInstanceView } from '../transport/contracts.js'
 import { isAssistantUnread } from './assistant-read-state.js'
 import { assistantInstanceStatusLabel } from './labels.js'
@@ -60,6 +60,25 @@ export function coordinatorAssistantId(
   instances: readonly Pick<AssistantInstance, 'id' | 'coordinator'>[],
 ): string | undefined {
   return coordinatorAssistant(instances)?.id
+}
+
+/**
+ * The one badge number on the coordinator's pinned row: how many gates are open
+ * across every team. Only `open` rows count — a lifted gate is history, not a
+ * pending stall — and a zero count is no badge at all, so the row never claims
+ * "0". Non-coordinator rows never carry it: the count is the coordinator's job,
+ * and leaving the channel empty keeps the row reading exactly as before.
+ *
+ * Pure on purpose: the caller owns where the rows come from, so this stays a
+ * row-shape decision that a test can pin without a store or a DOM.
+ */
+export function coordinatorEscalationBadge(
+  instance: Pick<AssistantInstance, 'coordinator'>,
+  escalations: readonly Pick<Escalation, 'status'>[],
+): number | undefined {
+  if (!isCoordinatorInstance(instance)) return undefined
+  const open = escalations.reduce((count, row) => (row.status === 'open' ? count + 1 : count), 0)
+  return open === 0 ? undefined : open
 }
 
 /** Fallback glyph for an assistant without a usable avatar. */
