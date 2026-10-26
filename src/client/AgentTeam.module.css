@@ -2993,181 +2993,52 @@ textarea.input {
   overflow: hidden;
 }
 
-/* Host for the DSH/BOT switch, mounted where the shipped brand row was. The
-   row keeps its own height so the fixed header spacing is unchanged. */
-.sidebarBrandHost {
+/* Compact, always-visible 原生/团队 switch. It must stay usable in native
+   mode, which is the only plugin UI left on the sidebar in that mode. */
+.surfaceModeSwitch {
   box-sizing: border-box;
   display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  min-width: 0;
-}
-
-.sidebarBrandHost /* BOT footer: the account row stretches over the free space and these actions
-   keep their intrinsic size at the right edge, modelled on the shipped market
-   entry. */
-.botFooterHost {
-  display: flex;
-  flex: 0 0 auto;
   align-items: center;
   gap: 2px;
+  margin: 8px 8px 4px;
+  padding: 2px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-md);
 }
 
-.botFooterAction {
-  box-sizing: border-box;
+.surfaceModeButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
   border-radius: var(--dsw-radius-sm);
   background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
-
-.botFooterAction:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.botFooterAction:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: -2px;
-}
-
-.botFooterAction > svg {
-  flex: none;
-  width: 16px;
-  height: 16px;
-}
-
-/* BOT mode shows the team sections only: the shipped Workspace browser keeps
-   its slot but its own header and session rows are hidden. The team host is the
-   WorkspaceBrowser root's first child, so every sibling after it is native. */
-html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
-  display: none;
-}
-
-.brandMode {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-}
-
-/* No background, no border, no pill: the control reads as the product mark
-   itself, the way Codex renders its own name with a caret. */
-.brandModeTrigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 19px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  line-height: 24px;
-  cursor: pointer;
-  transition: opacity 120ms ease;
-}
-
-.brandModeTrigger:hover {
-  opacity: 0.68;
-}
-
-.brandModeCaret {
-  flex: none;
-  width: 15px;
-  height: 15px;
-  margin-top: 2px;
   color: var(--dsw-alias-label-tertiary);
-}
-
-.brandModeTrigger:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: 3px;
-}
-
-/* Menu: soft card, two-line rows, check on the selected row. */
-.brandModeMenu {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 0;
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 244px;
-  padding: 8px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 14px;
-  background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
-}
-
-.brandModeItem {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 56px;
-  padding: 8px 12px;
-  border: none;
-  border-radius: 10px;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
   font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 120ms ease;
-}
-
-.brandModeItem:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.brandModeItemText {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.brandModeItemLabel {
-  color: var(--dsw-alias-label-primary);
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 20px;
-}
-
-.brandModeItemActive .brandModeItemLabel {
-  font-weight: 600;
-}
-
-.brandModeItemHint {
-  color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
-  line-height: 17px;
+  line-height: 18px;
+  cursor: pointer;
 }
 
-.brandModeItemCheck {
-  flex: none;
-  width: 16px;
-  height: 16px;
+.surfaceModeButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .brandModeTrigger {
-    transition: none;
-  }
+.surfaceModeButtonActive,
+.surfaceModeButtonActive:hover {
+  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.surfaceModeButton:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -1px;
 }
 
 .sidebarTeamHost {

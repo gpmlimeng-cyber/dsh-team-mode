@@ -94,26 +94,16 @@ describe('sidebar surface switch', () => {
   const sidebar = readClientSource('sidebar.tsx')
   const index = readClientSource('index.tsx')
 
-  it('always renders one DSH/BOT control as a brand-shaped dropdown', () => {
+  it('always renders one compact native/team switch', () => {
     expect(sidebar).toContain('data-dsh-surface-switch')
-    expect(sidebar).toContain("label: 'DSH'")
-    expect(sidebar).toContain("label: 'BOT'")
-    // The trigger is a popover button, not two pressed toggles.
-    expect(sidebar).toContain('aria-haspopup="listbox"')
-    expect(sidebar).toContain('role="option"')
-    expect(sidebar).toContain('aria-selected={mode === option.value}')
+    expect(sidebar).toContain('原生')
+    expect(sidebar).toContain('团队')
+    expect(sidebar).toContain("aria-pressed={mode === 'native'}")
+    expect(sidebar).toContain("aria-pressed={mode === 'team'}")
     const switchAt = sidebar.indexOf('<SurfaceModeSwitch')
     const gateAt = sidebar.indexOf("{mode === 'team' && (")
     expect(switchAt).toBeGreaterThan(-1)
     expect(gateAt).toBeGreaterThan(switchAt)
-  })
-
-  it('mounts the switch where the shipped brand row was', () => {
-    expect(sidebar).toContain('dsh-team-mode-brand-host')
-    expect(sidebar).toContain('[class*="_logoRow"]')
-    expect(sidebar).toContain('ensureBrand')
-    // The row itself survives; only the original brand button is hidden.
-    expect(sidebar).toContain('brand.style.display')
   })
 
   it('persists the switch through the surface-mode helper', () => {
@@ -133,32 +123,6 @@ describe('sidebar surface switch', () => {
     expect(index).not.toContain("{mode === 'team' && <SessionRowHider")
   })
 
-  it('moves 插件 and 自动化任务 into the BOT footer and drops the market entry', () => {
-    expect(sidebar).toContain('BOT_FOOTER_ENTRIES')
-    expect(sidebar).toContain('dsh-team-mode-footer-host')
-    expect(sidebar).toContain("title: '插件'")
-    expect(sidebar).toContain("title: '自动化任务'")
-    // The market entry is what the footer actions replace.
-    expect(sidebar).toMatch(/插件广场\|市场\|market/)
-    // Proxy clicks go to the real control instead of reimplementing it.
-    expect(sidebar).toContain('native.click()')
-    expect(sidebar).toContain('data-dsh-bot-hidden')
-  })
-
-  it('drops 新会话 instead of moving it, and keeps the footer on one line', () => {
-    expect(sidebar).toContain('BOT_DROPPED_ENTRIES')
-    expect(sidebar).toContain("key: 'new-session'")
-    expect(sidebar).not.toContain("title: '新会话'")
-    expect(sidebar).toContain('_footerActions')
-  })
-
-  it('restores every native node in DSH mode', () => {
-    const restoreAt = sidebar.indexOf('function restoreBotSidebar')
-    expect(restoreAt).toBeGreaterThan(-1)
-    expect(sidebar).toContain('restoreBotSidebar()')
-    expect(sidebar).toContain("if (mode !== 'team')")
-  })
-
   it('registers team conversation views and overlays only in team mode', () => {
     expect(index).toContain("mode !== 'team'")
     expect(index).toContain('useSurfaceMode')
@@ -174,26 +138,10 @@ describe('surface switch styling', () => {
   )
 
   it('uses semantic DSH tokens and a visible focus ring', () => {
-    expect(styles).toContain('.brandModeTrigger')
-    expect(styles).toContain('.brandModeItemActive')
-    expect(styles).toMatch(/\.brandModeTrigger:focus-visible/)
-    // The trigger carries no background or border of its own.
-    expect(styles).toContain('background: transparent;')
+    expect(styles).toContain('.surfaceModeSwitch')
+    expect(styles).toContain('.surfaceModeButtonActive')
+    expect(styles).toMatch(/\.surfaceModeButton:focus-visible/)
     expect(styles).toContain('var(--dsw-alias-border-l1)')
     expect(styles).toContain('var(--dsw-alias-label-primary)')
-  })
-
-  it('hides the shipped workspace rows in BOT mode only', () => {
-    // The team host stays; only the native siblings after it are hidden.
-    expect(styles).toContain("[data-dsh-team-mode='sidebar'] ~ *")
-    expect(styles).toContain("html[data-dsh-surface-mode='team']")
-    expect(styles).toContain('.sidebarBrandHost')
-  })
-
-  it('styles the BOT footer actions as icon buttons on semantic tokens', () => {
-    expect(styles).toContain('.botFooterHost')
-    expect(styles).toContain('.botFooterAction')
-    expect(styles).toMatch(/\.botFooterAction > svg/)
-    expect(styles).toContain('var(--dsw-alias-interactive-bg-hover)')
   })
 })
