@@ -8883,9 +8883,12 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 24px;
+  /* Narrow on purpose: the chevron is a 12px glyph, so a 20px cell plus the
+     row gap pushed the avatar far enough right to read as an empty column. */
+  width: 14px;
+  height: 20px;
   flex: none;
+  margin-right: -3px;
   padding: 0;
   border: 0;
   border-radius: var(--dsw-radius-xs);
