@@ -1,7 +1,8 @@
 /**
- * Per-assistant inline-thread disclosure state. This is view state only: it
- * never changes which tasks exist or how they run, and it is scoped by the
- * assistant id so expanding one row does not expand the others.
+ * Per-assistant inline-disclosure state for the Assistant row: the conversation
+ * tree (main Session + thread Sessions) and, in advanced mode, its task threads.
+ * This is view state only: it never changes which Sessions or tasks exist, and
+ * it is scoped by the assistant id so expanding one row does not expand others.
  */
 export const ASSISTANT_THREADS_KEY_PREFIX = 'dsh-team-mode:assistant-threads:'
 

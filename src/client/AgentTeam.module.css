@@ -4025,6 +4025,25 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   line-height: 16px;
 }
 
+/* Conversation tree under one assistant: the roster row plus its own menu
+   trigger. The trigger stays visible (not hover-only) so a keyboard can reach
+   the archive entry of a thread. */
+.assistantConversationRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.assistantConversationRow .sidebarRosterRow {
+  flex: 1 1 auto;
+  width: auto;
+}
+
+.assistantConversationRow .sidebarTeamManage {
+  display: inline-flex;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .sidebarAssistantThreadToggle,
   .sidebarAssistantThreadRow {

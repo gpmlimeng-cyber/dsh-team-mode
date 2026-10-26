@@ -56,6 +56,7 @@ import {
 import css from './AgentTeam.module.css'
 import type { TeamView } from '../transport/contracts.js'
 import type { AssistantInstance } from '../domain/types.js'
+import type { WorkspaceChoice } from './types.js'
 import { LeaderMark } from './team-member-chrome.js'
 import { assistantAvatarSource, assistantInstanceName, coordinatorAssistant } from './assistant-instances.js'
 import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-groups.js'
@@ -1155,10 +1156,13 @@ export function SidebarPortal({
   openSession,
   openTeamPage,
   onOpenNativeLanding,
+  pickWorkspace,
 }: {
   openSession: (sessionId: string) => void
   openTeamPage: (teamId: string) => void
   onOpenNativeLanding?: () => void
+  /** The shipped directory picker, for a conversation created in a folder. */
+  pickWorkspace: () => Promise<WorkspaceChoice | null>
 }): JSX.Element | null {
   const [host, setHost] = useState<HTMLElement>()
   const [brandHost, setBrandHost] = useState<HTMLElement>()
@@ -1868,7 +1872,7 @@ export function SidebarPortal({
           {mode === 'team' && (
             <>
               <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
-              <AssistantSidebarSection openSession={openSession} />
+              <AssistantSidebarSection openSession={openSession} pickWorkspace={pickWorkspace} />
             </>
           )}
         </>,

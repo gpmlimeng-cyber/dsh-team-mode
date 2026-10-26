@@ -6,6 +6,7 @@ import {
   IconCloseFillRegular,
   IconEditOutlineRegular,
   IconEllipsisOutlineRegular,
+  IconFolderOpenOutlineRegular,
   IconNewChatOutlineRegular,
   IconPinFillRegular,
   IconPinOutlineRegular,
@@ -57,7 +58,11 @@ import {
 import { createPortal } from 'react-dom'
 import { STEWARD_HOST_ID } from './sidebar-hosts.js'
 import {
-  readAssistantThreadExpanded,
+  AssistantConversationList,
+  assistantConversationExpanded,
+  assistantConversationRows,
+} from './assistant-conversations.js'
+import {
   writeAssistantThreadExpanded,
 } from './assistant-thread-state.js'
 import { MemberAvatar } from './member-avatar.js'
@@ -72,6 +77,7 @@ import {
   type SidebarGroupDialog,
 } from './sidebar-group-ui.js'
 import css from './AgentTeam.module.css'
+import type { WorkspaceChoice } from './types.js'
 import { isCoordinatorInstance } from '../domain/types.js'
 import type { AssistantInstance, AssistantSession, Escalation } from '../domain/types.js'
 import type { AssistantInstanceView, PendingInteractionView } from '../transport/contracts.js'
@@ -113,13 +119,26 @@ function taskStatusClass(status: AssistantSession['status']): string {
 }
 
 export interface AssistantMenuEntry {
-  id: 'checkpoint' | 'settings' | 'pin' | 'group' | 'coordinator' | 'tasks' | 'mark-read' | 'mark-unread' | 'open-main'
+  id:
+    | 'new-thread'
+    | 'new-thread-folder'
+    | 'checkpoint'
+    | 'settings'
+    | 'pin'
+    | 'group'
+    | 'coordinator'
+    | 'tasks'
+    | 'mark-read'
+    | 'mark-unread'
+    | 'open-main'
   label: string
   icon: JSX.Element
 }
 
 /**
- * Row menu of one Assistant. `checkpoint` is the single entry for both
+ * Row menu of one Assistant. The two new-conversation entries lead, the way a
+ * MausBot bot menu leads with its thread actions; the folder variant picks a
+ * working directory before creating. `checkpoint` is the single entry for both
  * creating a checkpoint and handing off; there is deliberately no second
  * handoff item, so the dialog owns that flow end to end. The coordinator item
  * flips to 取消总协调 purely from the row's own field.
@@ -131,6 +150,12 @@ export function assistantMenuEntries(
   const pinned = instance.pinned === true
   const coordinator = isCoordinatorInstance(instance)
   return [
+    { id: 'new-thread', label: '新建会话', icon: <IconNewChatOutlineRegular size={14} /> },
+    {
+      id: 'new-thread-folder',
+      label: '在工作目录中新建…',
+      icon: <IconFolderOpenOutlineRegular size={14} />,
+    },
     { id: 'checkpoint', label: '检查点与交接', icon: <IconChecklistOutlineRegular size={14} /> },
     { id: 'settings', label: '助手设置', icon: <IconEditOutlineRegular size={14} /> },
     {
@@ -182,8 +207,10 @@ function useStewardHost(): HTMLElement | undefined {
 
 export function AssistantSidebarSection({
   openSession,
+  pickWorkspace,
 }: {
   openSession: (sessionId: string) => void
+  pickWorkspace: () => Promise<WorkspaceChoice | null>
 }): JSX.Element {
   const { selectedAssistantId } = useAgentTeamUi()
   const [instances, setInstances] = useState<AssistantInstanceView[]>([])
@@ -219,6 +246,7 @@ export function AssistantSidebarSection({
   const [threadOpenById, setThreadOpenById] = useState<Record<string, boolean>>({})
   const [openingId, setOpeningId] = useState<string>()
   const [openingTaskId, setOpeningTaskId] = useState<string>()
+  const [creatingThreadId, setCreatingThreadId] = useState<string>()
   const [menuOpenId, setMenuOpenId] = useState<string>()
   const [taskAssistantId, setTaskAssistantId] = useState<string>()
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
@@ -453,6 +481,73 @@ export function AssistantSidebarSection({
     setThreadError(current => (current?.assistantId === instance.id ? undefined : current))
   }
 
+  /**
+   * Create one more visible Session for this Assistant. The Host creates it and
+   * answers with the instance that already lists it, so the answer is the only
+   * source of the new row — nothing is drawn ahead of it. Expanding afterwards
+   * is view state, not data.
+   */
+  async function createConversation(instance: AssistantInstance, cwd?: string): Promise<void> {
+    if (creatingThreadId !== undefined) return
+    setCreatingThreadId(instance.id)
+    setThreadError(undefined)
+    // Open the tree first: this is the row whose list gains the new Session, and
+    // a failure has to be visible in the same place. Nothing is drawn into it
+    // before the Host answers.
+    writeAssistantThreadExpanded(instance.id, true)
+    setThreadOpenById(current => ({ ...current, [instance.id]: true }))
+    try {
+      const next = await callAgentTeam('assistant.thread.create', cwd === undefined
+        ? { instanceId: instance.id }
+        : { instanceId: instance.id, cwd })
+      setInstances(current => current.map(item => item.id === next.id ? { ...item, ...next } : item))
+    } catch (cause) {
+      setThreadError({
+        assistantId: instance.id,
+        message: `新建会话失败：${cause instanceof Error ? cause.message : String(cause)}`,
+      })
+    } finally {
+      setCreatingThreadId(undefined)
+    }
+  }
+
+  /** 在工作目录中新建…: the shipped directory picker first, then the same create. */
+  async function createConversationInFolder(instance: AssistantInstance): Promise<void> {
+    if (creatingThreadId !== undefined) return
+    let choice: WorkspaceChoice | null
+    try {
+      choice = await pickWorkspace()
+    } catch (cause) {
+      setThreadError({
+        assistantId: instance.id,
+        message: `选择工作目录失败：${cause instanceof Error ? cause.message : String(cause)}`,
+      })
+      return
+    }
+    if (choice === null) return
+    await createConversation(instance, choice.path)
+  }
+
+  /** Retire one thread Session. The main Session is the instance and never lands here. */
+  async function archiveConversation(
+    instance: AssistantInstance,
+    sessionId: string,
+  ): Promise<void> {
+    setThreadError(undefined)
+    try {
+      const next = await callAgentTeam('assistant.thread.archive', {
+        instanceId: instance.id,
+        sessionId,
+      })
+      setInstances(current => current.map(item => item.id === next.id ? { ...item, ...next } : item))
+    } catch (cause) {
+      setThreadError({
+        assistantId: instance.id,
+        message: `归档会话失败：${cause instanceof Error ? cause.message : String(cause)}`,
+      })
+    }
+  }
+
   async function respondInteraction(
     taskId: string,
     interactionId: string,
@@ -610,14 +705,19 @@ export function AssistantSidebarSection({
             : state === 'queued'
               ? css.sidebarAssistantStatusQueued
               : css.sidebarAssistantStatusIdle
-    // Advanced mode only: the persisted disclosure is read lazily so
-    // simple mode never touches thread storage at all.
+    // The disclosure is view state: the persisted per-Assistant value is read
+    // lazily, and an instance only earns a chevron once it owns a thread
+    // Session (a lone main Session is opened by the row itself) or, in advanced
+    // mode, a task thread.
+    const conversationRows = assistantConversationRows(instance)
+    const hasConversations = (instance.threadSessionIds ?? []).length > 0
     const threadTasks = mode === 'advanced'
       ? assistantThreadTasks(tasks, instance)
       : []
-    const hasThreads = threadTasks.length > 0
-    const threadsOpen = hasThreads
-      && (threadOpenById[instance.id] ?? readAssistantThreadExpanded(instance.id))
+    const disclosure = hasConversations || threadTasks.length > 0
+    const threadsOpen = disclosure
+      && assistantConversationExpanded(instance.id, threadOpenById)
+    const creating = creatingThreadId === instance.id
     const threadErrorForRow = threadError?.assistantId === instance.id
       ? threadError.message
       : undefined
@@ -631,7 +731,7 @@ export function AssistantSidebarSection({
           onDragEnd={rowDrag.onDragEnd}
           {...(rowDrag.dragging ? { 'data-dsh-drag-source': '' } : {})}
         >
-          {hasThreads && (
+          {disclosure && (
             <button
               type="button"
               className={css.sidebarAssistantThreadToggle}
@@ -640,9 +740,9 @@ export function AssistantSidebarSection({
                 ? `dsh-team-mode-assistant-threads-${instance.id}`
                 : undefined}
               aria-label={threadsOpen
-                ? `收起 ${name} 的任务线程`
-                : `展开 ${name} 的任务线程`}
-              title={threadsOpen ? '收起任务线程' : '展开任务线程'}
+                ? `收起 ${name} 的会话`
+                : `展开 ${name} 的会话`}
+              title={threadsOpen ? '收起会话' : '展开会话'}
               data-dsh-assistant-thread-toggle
               onClick={() => { toggleThreads(instance, threadsOpen) }}
             >
@@ -738,9 +838,11 @@ export function AssistantSidebarSection({
                 <span className={css.sidebarTeamTime}>
                   {opening
                     ? '打开中'
-                    : relativeAssistantTime(instance.preview === undefined
-                      ? instance.updatedAt
-                      : new Date(instance.preview.time).toISOString())}
+                    : creating
+                      ? '新建中'
+                      : relativeAssistantTime(instance.preview === undefined
+                        ? instance.updatedAt
+                        : new Date(instance.preview.time).toISOString())}
                 </span>
               </span>
               <span
@@ -791,6 +893,8 @@ export function AssistantSidebarSection({
               }
               else if (id === 'coordinator') void toggleCoordinator(instance)
               else if (id === 'tasks') openTasks(instance)
+              else if (id === 'new-thread') void createConversation(instance)
+              else if (id === 'new-thread-folder') void createConversationInFolder(instance)
               else if (id === 'mark-read') setReadState(markAssistantRead(instance.id))
               else if (id === 'mark-unread') setReadState(markAssistantUnread(instance.id))
               else if (id === 'open-main') void openAssistant(instance)
@@ -817,42 +921,59 @@ export function AssistantSidebarSection({
         {threadsOpen && (
           <div
             id={`dsh-team-mode-assistant-threads-${instance.id}`}
-            className={css.sidebarAssistantThreads}
             data-dsh-assistant-threads
           >
             {threadErrorForRow !== undefined && (
-              <div className={css.sidebarAssistantThreadError} role="alert">
-                {threadErrorForRow}
+              <div className={css.sidebarAssistantThreads}>
+                <div className={css.sidebarAssistantThreadError} role="alert">
+                  {threadErrorForRow}
+                </div>
               </div>
             )}
-            {threadTasks.map(task => {
-              const openingTask = openingTaskId === task.id
-              return (
-                <button
-                  key={task.id}
-                  type="button"
-                  className={css.sidebarAssistantThreadRow}
-                  data-dsh-assistant-task={task.id}
-                  data-dsh-assistant-task-status={task.status}
-                  title={`${task.title} · ${assistantTaskStatusLabel(task.status)}`}
-                  disabled={openingTask}
-                  aria-busy={openingTask}
-                  onClick={() => { void openThreadTask(instance, task) }}
-                >
-                  <span className={css.sidebarAssistantThreadCopy}>
-                    <span className={css.sidebarAssistantThreadTitle}>{task.title}</span>
-                    <span className={css.sidebarAssistantThreadMeta}>
-                      <span className={`${css.assistantTaskStatus} ${taskStatusClass(task.status)}`}>
-                        {assistantTaskStatusLabel(task.status)}
+            {hasConversations && (
+              <AssistantConversationList
+                name={name}
+                rows={conversationRows}
+                onOpen={sessionId => {
+                  // Navigation only: open the Session, keep the row selected.
+                  selectAssistant(instance.id)
+                  openSession(sessionId)
+                }}
+                onArchive={sessionId => { void archiveConversation(instance, sessionId) }}
+              />
+            )}
+            {threadTasks.length > 0 && (
+              <div className={css.sidebarAssistantThreads}>
+                {threadTasks.map(task => {
+                  const openingTask = openingTaskId === task.id
+                  return (
+                    <button
+                      key={task.id}
+                      type="button"
+                      className={css.sidebarAssistantThreadRow}
+                      data-dsh-assistant-task={task.id}
+                      data-dsh-assistant-task-status={task.status}
+                      title={`${task.title} · ${assistantTaskStatusLabel(task.status)}`}
+                      disabled={openingTask}
+                      aria-busy={openingTask}
+                      onClick={() => { void openThreadTask(instance, task) }}
+                    >
+                      <span className={css.sidebarAssistantThreadCopy}>
+                        <span className={css.sidebarAssistantThreadTitle}>{task.title}</span>
+                        <span className={css.sidebarAssistantThreadMeta}>
+                          <span className={`${css.assistantTaskStatus} ${taskStatusClass(task.status)}`}>
+                            {assistantTaskStatusLabel(task.status)}
+                          </span>
+                          <span className={css.sidebarAssistantThreadTime}>
+                            {openingTask ? '打开中' : relativeAssistantTime(task.updatedAt)}
+                          </span>
+                        </span>
                       </span>
-                      <span className={css.sidebarAssistantThreadTime}>
-                        {openingTask ? '打开中' : relativeAssistantTime(task.updatedAt)}
-                      </span>
-                    </span>
-                  </span>
-                </button>
-              )
-            })}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -19,7 +19,8 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
   const names = [
     'Button', 'Input', 'Menu', 'Modal', 'Tag', 'Tooltip', 'MarkdownText', 'UserTextRun',
     'IconChecklistOutlineRegular', 'IconChevronRightOutlineRegular', 'IconCloseFillRegular',
-    'IconEditOutlineRegular', 'IconEllipsisOutlineRegular', 'IconNewChatOutlineRegular',
+    'IconEditOutlineRegular', 'IconEllipsisOutlineRegular', 'IconFolderOpenOutlineRegular',
+    'IconNewChatOutlineRegular',
     'IconPinFillRegular', 'IconPinOutlineRegular', 'IconPlusOutlineRegular',
     'IconProjectAddOutlineRegular',
     'IconSearchOutlineRegular', 'IconSlidersTwoOutlineRegular', 'IconSparkleRegular',
@@ -180,9 +181,27 @@ describe('assistant menu entries', () => {
 
   it('keeps the read/unread entry and the full menu order', () => {
     expect(assistantMenuEntries(instance(), false).map(entry => entry.id))
-      .toEqual(['checkpoint', 'settings', 'pin', 'group', 'coordinator', 'tasks', 'mark-unread', 'open-main'])
+      .toEqual([
+        'new-thread',
+        'new-thread-folder',
+        'checkpoint',
+        'settings',
+        'pin',
+        'group',
+        'coordinator',
+        'tasks',
+        'mark-unread',
+        'open-main',
+      ])
     expect(assistantMenuEntries(instance(), true).map(entry => entry.id))
       .toContain('mark-read')
+  })
+
+  it('leads with both new-conversation entries', () => {
+    const entries = assistantMenuEntries(instance(), false)
+
+    expect(entries.find(entry => entry.id === 'new-thread')?.label).toBe('新建会话')
+    expect(entries.find(entry => entry.id === 'new-thread-folder')?.label).toBe('在工作目录中新建…')
   })
 
   it('offers 设为总协调 and flips to 取消总协调 from the field', () => {

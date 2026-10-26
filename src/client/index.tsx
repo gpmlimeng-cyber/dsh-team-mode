@@ -173,6 +173,7 @@ export function apply(ctx: AgentTeamClientContext): void {
         openSession={openSession}
         openTeamPage={openTeamPage}
         onOpenNativeLanding={openNativeLanding}
+        pickWorkspace={pickWorkspace}
       />
     </>
   )

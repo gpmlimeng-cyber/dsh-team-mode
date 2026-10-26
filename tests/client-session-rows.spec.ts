@@ -45,6 +45,20 @@ describe('hiddenSessionIds', () => {
     expect([...ids]).toEqual(['old-1'])
   })
 
+  it('hides thread Sessions and their archived predecessors', () => {
+    const ids = hiddenSessionIds(
+      [],
+      [{
+        mainSessionId: 'main',
+        threadSessionIds: ['thread-1', 'main', ''],
+        retiredThreadSessionIds: ['thread-old', 'main'],
+      }],
+      [],
+    )
+    // Blank entries are skipped and a Session listed twice stays one row.
+    expect([...ids].sort()).toEqual(['main', 'thread-1', 'thread-old'])
+  })
+
   it('hides Leader Sessions retired by an explicit handoff', () => {
     const ids = hiddenSessionIds(
       [
