@@ -33,6 +33,7 @@ import {
   setAssistantDisplayMode,
   useAssistantDisplayMode,
 } from './assistant-display-mode.js'
+import { coordinatorAssistant } from './assistant-instances.js'
 import { MemberAvatar } from './member-avatar.js'
 import {
   openCreateTeamDialog,
@@ -165,6 +166,66 @@ function clickNativeAction(pattern: RegExp): boolean {
 /** DeepSeek mode: start a native 新会话. */
 function startNativeSession(): void {
   document.querySelector<HTMLElement>('[class*="_newSession"]')?.click()
+}
+
+/** DeepBot mode: open the coordinator's session, else the first assistant's. */
+async function startStewardSession(open: (sessionId: string) => void): Promise<void> {
+  try {
+    const value = await callAgentTeam('assistant.instance.list')
+    const instances = value.items
+    const steward = coordinatorAssistant(instances) ?? instances[0]
+    if (steward === undefined) return
+    const result = await callAgentTeam('assistant.instance.ensure', { id: steward.id })
+    open(result.sessionId)
+  } catch {
+    // Opening a session is user-visible when it fails; a silent retry is worse
+    // than leaving the sidebar untouched.
+  }
+}
+
+/**
+ * Whether a coordinator instance exists, so the ＋ menu can say "not yet"
+ * instead of offering a row that would do nothing.
+ */
+function useStewardAvailable(): boolean {
+  const [available, setAvailable] = useState(false)
+  useEffect(() => {
+    let live = true
+    const load = (): void => {
+      void callAgentTeam('assistant.instance.list')
+        .then(value => {
+          if (live) setAvailable(coordinatorAssistant(value.items) !== undefined)
+        })
+        .catch(() => { if (live) setAvailable(false) })
+    }
+    load()
+    const unsubscribe = subscribeAgentTeam(load, () => {}, load)
+    return () => {
+      live = false
+      unsubscribe()
+    }
+  }, [])
+  return available
+}
+
+/**
+ * The brand ＋ menu. 新建团队 / 新建助手 create different objects, so both stay
+ * explicit; the steward row opens the coordinator's own conversation instead of
+ * creating anything. Without a coordinator it is disabled and says why.
+ */
+export function brandCreateItems(hasSteward: boolean): MenuEntry[] {
+  return [
+    { id: 'new-team', label: '新建团队' },
+    { id: 'new-assistant', label: '新建助手' },
+    { type: 'separator', id: 'steward-separator' },
+    hasSteward
+      ? { id: 'open-steward', label: '打开管家会话' }
+      : {
+          id: 'open-steward',
+          label: <span title="还没有总协调助手">打开管家会话</span>,
+          disabled: true,
+        },
+  ]
 }
 
 /**
@@ -1059,6 +1120,7 @@ export function SidebarPortal({
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [createMenuOpen, setCreateMenuOpen] = useState(false)
+  const stewardAvailable = useStewardAvailable()
   const mode = useSurfaceMode()
 
   // Expose the mode on <html> so CSS and DOM-level helpers can follow it
@@ -1746,17 +1808,14 @@ export function SidebarPortal({
                 align="end"
                 dense
                 portal
-                items={[
-                  { id: 'new-team', label: '新建团队' },
-                  { id: 'new-assistant', label: '新建助手' },
-                ]}
+                items={brandCreateItems(stewardAvailable)}
                 onSelect={id => {
                   setCreateMenuOpen(false)
                   if (id === 'new-team') openCreateTeamDialog()
                   else if (id === 'new-assistant') {
                     // The assistant section owns its own dialog; it answers this.
                     window.dispatchEvent(new CustomEvent(SIDEBAR_ASSISTANT_CREATE_EVENT))
-                  }
+                  } else if (id === 'open-steward') void startStewardSession(openSession)
                 }}
                 anchor={(
                   <button

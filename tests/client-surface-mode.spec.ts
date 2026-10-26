@@ -130,12 +130,14 @@ describe('sidebar surface switch', () => {
   it('drives the pinned row and the DeepBot entry from the coordinator field only', () => {
     const assistant = readClientSource('assistant-sidebar.tsx')
     // No name/template guessing survives: an empty field means no pinned row.
+    // 管家 is only the brand menu's label, never a name to match an instance on.
     expect(assistant).not.toContain('管家')
     expect(assistant).not.toContain('builtin-chief')
-    expect(sidebar).not.toContain('管家')
+    expect(sidebar).toContain("label: '打开管家会话'")
+    expect(sidebar).not.toContain("=== '管家'")
     expect(sidebar).not.toContain('builtin-chief')
-    // The brand row no longer guesses a coordinator Session from the list.
-    expect(sidebar).not.toContain('coordinatorAssistant(')
+    // The brand row resolves the coordinator Session from the same field.
+    expect(sidebar).toContain('coordinatorAssistant(instances)')
     // 设为/取消总协调 goes through the one host write.
     expect(assistant).toContain("callAgentTeam('assistant.coordinator.set'")
     expect(assistant).toContain('assistantId: isCoordinatorInstance(instance) ? null : instance.id')

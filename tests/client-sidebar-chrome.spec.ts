@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
+import type { MenuItem } from '@deepseek-ai/dsh-client-ui-primitives'
 import { sidebarPartitionLabel } from '../src/client/sidebar-group-ui.js'
 
 // The sections import the whole primitive set through their child modules and
@@ -28,7 +29,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
   return Object.fromEntries(names.map(name => [name, Stub]))
 })
 
-const { SidebarTeamSection } = await import('../src/client/sidebar.js')
+const { SidebarTeamSection, brandCreateItems } = await import('../src/client/sidebar.js')
 const { AssistantSidebarSection } = await import('../src/client/assistant-sidebar.js')
 
 const sidebar = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
@@ -100,6 +101,33 @@ describe('the brand row carries the three actions', () => {
     // The list with focus comes first; 群聊 is the fallback.
     expect(sidebar).toContain('selectedTeamId === undefined && selectedAssistantId !== undefined')
     expect(sidebar).toContain("setAssistantDisplayMode('advanced')")
+  })
+
+  it('keeps 打开管家会话 as the last row, behind a separator', () => {
+    const items = brandCreateItems(true)
+    expect(items.map(item => ('id' in item ? item.id : ''))).toEqual([
+      'new-team',
+      'new-assistant',
+      'steward-separator',
+      'open-steward',
+    ])
+    expect(items[2]).toEqual({ type: 'separator', id: 'steward-separator' })
+    const steward = items[3] as MenuItem
+    expect(steward.label).toBe('打开管家会话')
+    expect(steward.disabled).toBeUndefined()
+  })
+
+  it('disables the steward row without a coordinator and says why', () => {
+    const steward = brandCreateItems(false)[3] as MenuItem
+    expect(steward.disabled).toBe(true)
+    expect((steward.label as unknown as { props: { title?: string } }).props.title)
+      .toBe('还没有总协调助手')
+  })
+
+  it('opens the coordinator session through the pre-existing action', () => {
+    expect(sidebar).toContain('void startStewardSession(openSession)')
+    expect(sidebar).toContain('const stewardAvailable = useStewardAvailable()')
+    expect(sidebar).toContain('items={brandCreateItems(stewardAvailable)}')
   })
 
   it('keeps one 新建分组 entry, at the bottom of the sidebar list', () => {
