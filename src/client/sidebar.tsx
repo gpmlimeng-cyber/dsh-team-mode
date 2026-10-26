@@ -510,6 +510,21 @@ export function SidebarTeamSection({
         >
           <button
             type="button"
+            className={css.sidebarTeamExpand}
+            aria-expanded={rosterOpen}
+            aria-controls={rosterOpen ? rosterId : undefined}
+            aria-label={`${rosterOpen ? '收起' : '展开'} ${team.name} 成员名册`}
+            title={rosterOpen ? '收起成员' : '展开成员'}
+            data-dsh-team-roster-toggle
+            onClick={() => { toggleRoster(team.id) }}
+          >
+            <IconChevronRightOutlineRegular
+              size={12}
+              className={`${css.sidebarTeamExpandChevron} ${rosterOpen ? css.sidebarTeamExpandChevronOpen : ''}`}
+            />
+          </button>
+          <button
+            type="button"
             className={`${css.sidebarTeamRow} ${css.sidebarTeamRowTwoLine}`}
             onClick={() => {
               // A drag that ended on this row must not also open the team.
@@ -559,21 +574,6 @@ export function SidebarTeamSection({
               : summary.running > 0
                 ? <span className={css.sidebarTeamStateDot} aria-hidden="true" />
                 : null}
-          </button>
-          <button
-            type="button"
-            className={css.sidebarTeamExpand}
-            aria-expanded={rosterOpen}
-            aria-controls={rosterOpen ? rosterId : undefined}
-            aria-label={`${rosterOpen ? '收起' : '展开'} ${team.name} 成员名册`}
-            title={rosterOpen ? '收起成员' : '展开成员'}
-            data-dsh-team-roster-toggle
-            onClick={() => { toggleRoster(team.id) }}
-          >
-            <IconChevronRightOutlineRegular
-              size={12}
-              className={`${css.sidebarTeamExpandChevron} ${rosterOpen ? css.sidebarTeamExpandChevronOpen : ''}`}
-            />
           </button>
           <Menu
             open={rowMenuOpen}
