@@ -1236,7 +1236,7 @@ export function SidebarPortal({
         element.id = BRAND_HOST_ID
         element.className = css.sidebarBrandHost ?? ''
         element.style.position = 'fixed'
-        element.style.zIndex = '2147483000'
+        element.style.zIndex = '1000'
         element.style.transform = 'translateY(-50%)'
         document.body.append(element)
         setBrandHost(element)
@@ -1277,7 +1277,7 @@ export function SidebarPortal({
         ?? (rect.width > 32 ? rect.width - 32 : Math.min(240, window.innerWidth - 32))
       // Keep a hard gap before the native collapse control on phones; the
       // brand actions are reduced to 新建 by CSS at this width.
-      if (window.innerWidth <= 760) width = Math.min(width, 190)
+      if (window.innerWidth <= 760) width = Math.min(width, 204)
       if (toggleRect !== undefined && toggleRect.width > 0) {
         width = Math.min(width, toggleRect.left - left - 20)
       }
@@ -1322,8 +1322,14 @@ export function SidebarPortal({
         element.style.zIndex = '2147483000'
         document.body.append(element)
       }
+      const brand = document.getElementById(BRAND_HOST_ID)?.getBoundingClientRect()
       const newSessionRect = newSession?.getBoundingClientRect()
-      if (newSessionRect !== undefined && newSessionRect.width > 0) {
+      if (window.innerWidth <= 760 && brand !== undefined && brand.height > 0 && teamHost !== null) {
+        const teamRect = teamHost.getBoundingClientRect()
+        element.style.left = `${Math.round(teamRect.left)}px`
+        element.style.top = `${Math.round(brand.bottom + 8)}px`
+        element.style.width = `${Math.round(teamRect.width)}px`
+      } else if (newSessionRect !== undefined && newSessionRect.width > 0) {
         element.style.left = `${Math.round(newSessionRect.left)}px`
         element.style.top = `${Math.round(newSessionRect.top)}px`
         element.style.width = `${Math.round(newSessionRect.width)}px`
