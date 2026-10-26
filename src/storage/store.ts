@@ -5,6 +5,7 @@ import type {
   AssistantSession,
   AssistantTemplate,
   ContextCheckpoint,
+  Escalation,
   Operation,
   TeamActivity,
   TeamAggregate,
@@ -45,6 +46,20 @@ export interface AgentTeamLeaderCheckpointStore {
   ): Promise<TeamCheckpoint>
   deleteTeamCheckpoint(id: string): Promise<boolean>
 }
+
+/**
+ * Persisted escalations, kept separate from `AgentTeamStore` for the same reason
+ * as the checkpoint interfaces: a store double written before the table existed
+ * stays valid, and the escalation service takes only this slice.
+ */
+export interface AgentTeamEscalationStore {
+  getEscalation(id: string): Escalation | undefined
+  listEscalations(): Escalation[]
+  putEscalation(value: Escalation): Promise<void>
+  deleteEscalation(id: string): Promise<boolean>
+}
+
+export type AgentTeamStoreWithEscalations = AgentTeamStore & AgentTeamEscalationStore
 
 export interface AgentTeamStore {
   getAssistant(id: string): AssistantTemplate | undefined
@@ -99,13 +114,14 @@ export interface AgentTeamStore {
 }
 
 export class DomainAgentTeamStore
-implements AgentTeamStore, AgentTeamCheckpointStore, AgentTeamLeaderCheckpointStore {
+implements AgentTeamStore, AgentTeamCheckpointStore, AgentTeamLeaderCheckpointStore, AgentTeamEscalationStore {
   private readonly assistants: KvTable<string, AssistantTemplate>
   private readonly assistantInstances: KvTable<string, AssistantInstance>
   private readonly assistantSessions: KvTable<string, AssistantSession>
   private readonly assistantMemory: KvTable<string, AssistantMemory>
   private readonly contextCheckpoints: KvTable<string, ContextCheckpoint>
   private readonly teamCheckpoints: KvTable<string, TeamCheckpoint>
+  private readonly escalations: KvTable<string, Escalation>
   private readonly teams: KvTable<string, TeamAggregate>
   private readonly messages: KvTable<string, TeamMessage>
   private readonly activities: KvTable<string, TeamActivity>
@@ -118,6 +134,7 @@ implements AgentTeamStore, AgentTeamCheckpointStore, AgentTeamLeaderCheckpointSt
     this.assistantMemory = domain.table('assistant_memory')
     this.contextCheckpoints = domain.table('context_checkpoints')
     this.teamCheckpoints = domain.table('team_checkpoints')
+    this.escalations = domain.table('escalations')
     this.teams = domain.table('teams')
     this.messages = domain.table('messages')
     this.activities = domain.table('activities')
@@ -250,6 +267,23 @@ implements AgentTeamStore, AgentTeamCheckpointStore, AgentTeamLeaderCheckpointSt
 
   deleteTeamCheckpoint(id: string): Promise<boolean> {
     return this.teamCheckpoints.delete(id)
+  }
+
+  getEscalation(id: string): Escalation | undefined {
+    return this.escalations.get(id)
+  }
+
+  listEscalations(): Escalation[] {
+    return values(this.escalations)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+  }
+
+  putEscalation(value: Escalation): Promise<void> {
+    return this.escalations.put(value.id, value)
+  }
+
+  deleteEscalation(id: string): Promise<boolean> {
+    return this.escalations.delete(id)
   }
 
   getTeam(id: string): TeamAggregate | undefined {

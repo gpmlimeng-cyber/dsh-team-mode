@@ -18,6 +18,9 @@ import type {
   createTeamDraftInputSchema,
   createTeamGoalInputSchema,
   createTeamMemberInputSchema,
+  escalationKindSchema,
+  escalationSchema,
+  escalationStatusSchema,
   fileScopeLeaseSchema,
   memoryEntrySourceSchema,
   memoryEntryStatusSchema,
@@ -93,6 +96,9 @@ export type RetiredMemberSession = z.infer<typeof retiredMemberSessionSchema>
 export type TeamTask = z.infer<typeof teamTaskSchema>
 export type TeamTaskKind = z.infer<typeof teamTaskKindSchema>
 export type TeamTaskVerdict = z.infer<typeof teamTaskVerdictSchema>
+export type Escalation = z.infer<typeof escalationSchema>
+export type EscalationKind = z.infer<typeof escalationKindSchema>
+export type EscalationStatus = z.infer<typeof escalationStatusSchema>
 
 /**
  * The single reader for the optional task kind: absent means `work`, the

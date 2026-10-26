@@ -342,6 +342,36 @@ export const teamCheckpointSchema = z.object({
   consumedAt: isoDate.optional(),
 }).strict()
 
+/** The three gates an escalation can represent: approval, question, blocked task. */
+export const escalationKindSchema = z.enum(['approval', 'question', 'blocked_task'])
+
+/** `open` needs a human; `lifted` means the gate disappeared on its own. */
+export const escalationStatusSchema = z.enum(['open', 'lifted'])
+
+/**
+ * One persisted gate that stopped a member. `id` is the natural dedupe key
+ * (`teamId:memberSlotId:kind:gateId`), so one gate is recorded exactly once no
+ * matter how many aggregation passes see it. `mutedAt` marks the record that
+ * absorbed the hourly limit: the limit suppresses new rows, never the human's
+ * view of the ones already there.
+ */
+export const escalationSchema = z.object({
+  schemaVersion: z.literal(1),
+  id: nonEmpty,
+  teamId: nonEmpty,
+  teamName: nonEmpty,
+  memberSlotId: nonEmpty,
+  sessionId: nonEmpty,
+  kind: escalationKindSchema,
+  gateId: nonEmpty,
+  /** One line, at most 120 chars; the gate's own body stays where it lives. */
+  summary: z.string().max(120),
+  status: escalationStatusSchema,
+  createdAt: isoDate,
+  liftedAt: isoDate.optional(),
+  mutedAt: isoDate.optional(),
+}).strict()
+
 export const memberRuntimeStateSchema = z.enum([
   'offline',
   'starting',
