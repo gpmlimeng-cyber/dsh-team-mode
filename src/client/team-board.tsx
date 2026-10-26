@@ -22,6 +22,8 @@ import type { TeamView } from '../transport/contracts.js'
 
 /** Registration identity for the `conversation.view` tab. */
 export const TEAM_BOARD_VIEW_ID = 'team-board'
+/** Shell view id of the team 群聊 tab (registered by `conversation.view`). */
+export const TEAM_PARALLEL_VIEW_ID = 'team-parallel'
 /** Tab label rendered by the native conversation header. */
 export const TEAM_BOARD_VIEW_LABEL = '看板'
 /** Tab order beside the shipped chat (0) and trajectory (10) views. */
@@ -247,6 +249,15 @@ function keepConversationView(sessionId: string, view: string): void {
 
 function keepTeamBoardTab(sessionId: string): void {
   keepConversationView(sessionId, TEAM_BOARD_VIEW_ID)
+}
+
+/**
+ * Land a Session on the team's 群聊 (parallel) tab. A row action reuses the
+ * shell's own remembered view key rather than driving the tab strip, so the
+ * navigation stays the shell's and no second selection path exists.
+ */
+export function keepTeamParallelTab(sessionId: string): void {
+  keepConversationView(sessionId, TEAM_PARALLEL_VIEW_ID)
 }
 
 /**

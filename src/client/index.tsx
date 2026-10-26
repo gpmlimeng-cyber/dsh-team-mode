@@ -20,6 +20,8 @@ import {
 import { SessionRowHider } from './session-row-hider.js'
 import { LineLeading } from './session-row-leading.js'
 import { RowHover } from './session-row-hover.js'
+import { RowOpenParallel } from './session-row-action.js'
+import { TeamDetailMenuItem } from './session-row-menu.js'
 import { AssistantSessionTitle, AssistantSessionTitleHost } from './assistant-session-title.js'
 import { TeamModeDialogs } from './team-dialogs.js'
 import { TeamParallelHost, TeamMentionAction, TeamParallelView } from './team-parallel.js'
@@ -33,6 +35,7 @@ import {
   TEAM_BOARD_VIEW_ORDER,
   TeamBoardView,
   keepNativeConversationTab,
+  keepTeamParallelTab,
 } from './team-board.js'
 import {
   callAgentTeam,
@@ -390,4 +393,30 @@ export function apply(ctx: AgentTeamClientContext): void {
     id: 'dsh-team-mode-row-hover',
     order: 100,
   }, RowHover))
+
+  // Row action: land the member's Session on the team 群聊 tab. It reuses the
+  // shell's remembered view key plus the shared catalog opener, so navigation
+  // stays the shell's and ordinary rows render no button at all.
+  ctx.slots.inject('sidebar.workspaces.session.row.action', () => ctx.slots.register({
+    name: 'sidebar.workspaces.session.row.action',
+    id: 'dsh-team-mode-row-open-parallel',
+    order: 300,
+    label: '打开并行',
+    inject: () => ({
+      openParallel: (sessionId: string) => {
+        keepTeamParallelTab(sessionId)
+        openSession(sessionId)
+      },
+    }),
+  }, RowOpenParallel as never))
+
+  // Row menu entry: the owning team's page. Only team Sessions render it; the
+  // shipped pin/rename/fork/archive/session-id rows are left untouched.
+  ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
+    name: 'sidebar.workspaces.session.menu.item',
+    id: 'dsh-team-mode-row-team-detail',
+    order: 500,
+    label: '打开团队详情',
+    inject: () => ({ openTeamPage }),
+  }, TeamDetailMenuItem as never))
 }
