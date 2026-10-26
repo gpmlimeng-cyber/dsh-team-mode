@@ -1241,6 +1241,40 @@ export function SidebarPortal({
         document.body.append(element)
         setBrandHost(element)
       }
+      // dsh-web-mobile turns the sidebar into a transformed drawer. A body
+      // fixed overlay cannot share that containing block, so on phones mount
+      // the switch inside the drawer's own brand row and make that row sticky.
+      const drawer = document.querySelector<HTMLElement>('[data-mobile-nav="frame"] > :first-child')
+      if (window.innerWidth <= 760 && drawer !== null && toggle !== null && drawer.contains(toggle)) {
+        const stickyRow = toggle.closest<HTMLElement>('[class*="_logoRow"]') ?? drawer
+        stickyRow.style.position = 'sticky'
+        stickyRow.style.top = '0px'
+        stickyRow.style.zIndex = '1301'
+        stickyRow.style.background = 'var(--dsw-specific-sidebar-fill)'
+        // The shipped row is 60px tall for the native brand button. Once the
+        // brand is hidden and the switch is inline, that leftover height is the
+        // blank strip above Plugins.
+        stickyRow.style.height = '40px'
+        stickyRow.style.minHeight = '40px'
+        stickyRow.style.paddingTop = '6px'
+        stickyRow.style.paddingBottom = '6px'
+        stickyRow.style.marginBottom = '0'
+        const first = brand ?? stickyRow.firstElementChild
+        if (element.parentElement !== stickyRow) stickyRow.insertBefore(element, first ?? toggle)
+        element.dataset.dshBrandInline = ''
+        element.style.position = 'static'
+        element.style.transform = 'none'
+        element.style.zIndex = ''
+        element.style.left = ''
+        element.style.top = ''
+        element.style.width = 'auto'
+        element.style.flex = '1 1 auto'
+        element.style.minWidth = '0'
+        element.style.marginRight = '4px'
+        element.style.visibility = 'visible'
+        document.getElementById('dsh-team-mode-header-shade')?.remove()
+        return
+      }
       const rect = row.getBoundingClientRect()
       // One column for both modes: the plugin host exists in DeepSeek and DeepBot
       // alike, while the group headers only exist in DeepBot. The offset from
