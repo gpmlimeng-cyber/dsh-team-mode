@@ -1201,19 +1201,18 @@ export function SidebarPortal({
       // Several sidebar roots can be mounted at once (desktop rail + mobile
       // drawer). Position over the visible one; otherwise the switch is created
       // inside a hidden root and never appears on a phone.
-      const logoRows = Array.from(document.querySelectorAll<HTMLElement>('[class*="_logoRow"]'))
-      const logoRow = logoRows.find(candidate => {
-        const box = candidate.getBoundingClientRect()
-        return box.width > 0 && box.height > 0 && getComputedStyle(candidate).visibility !== 'hidden'
-      }) ?? logoRows[0] ?? null
-      // Android/mobile shells can hide the brand row while keeping the collapse
-      // toggle; fall back to the toggle row rather than returning and leaving no
-      // mode switch at all.
-      const toggle = logoRow?.querySelector<HTMLElement>('[class*="_toggle"]')
-        ?? [...document.querySelectorAll<HTMLElement>('button[class*="_toggle"]')].find(candidate => {
+      // Several sidebar roots can be mounted at once (desktop rail + mobile
+      // drawer). Pick the visible collapse button that is actually on screen,
+      // not merely the first hidden one, and use its row as the anchor.
+      const toggles = Array.from(document.querySelectorAll<HTMLElement>('button[class*="_toggle"]'))
+        .filter(candidate => {
           const box = candidate.getBoundingClientRect()
-          return box.width > 0 && box.height > 0
+          return box.width > 0 && box.height > 0 && getComputedStyle(candidate).visibility !== 'hidden'
         })
+        .sort((left, right) => right.getBoundingClientRect().top - left.getBoundingClientRect().top)
+      const toggle = toggles[0]
+        ?? document.querySelector<HTMLElement>('[class*="_logoRow"] [class*="_toggle"]')
+      const logoRow = toggle?.closest<HTMLElement>('[class*="_logoRow"]') ?? null
       const row = logoRow ?? toggle?.parentElement ?? null
       if (row === null) return
       // The sidebar opens as a narrow rail on mobile and widens to a drawer.
@@ -1237,7 +1236,7 @@ export function SidebarPortal({
         element.id = BRAND_HOST_ID
         element.className = css.sidebarBrandHost ?? ''
         element.style.position = 'fixed'
-        element.style.zIndex = '50'
+        element.style.zIndex = '2147483000'
         element.style.transform = 'translateY(-50%)'
         document.body.append(element)
         setBrandHost(element)
