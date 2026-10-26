@@ -715,6 +715,50 @@ describe('AssistantRuntime', () => {
     expect(h.permissionSet).toHaveBeenCalledWith(h.handles[1]?.agent.session, 'workspace-write')
   })
 
+  it('keeps task and memory tool names out of the thread prompt only', async () => {
+    const h = createHarness()
+    await h.createAssistantSession({
+      assistantId: 'instance-1',
+      sessionId: 'session-worker',
+      title: 'Compare vendors',
+      brief: 'Compare the three vendors.',
+      parentSessionId: 'session-main',
+    })
+    await h.runtime.ensureInstance('instance-1')
+    await h.runtime.createAssistantThread('instance-1')
+
+    const sectionsOf = (record: AgentRecord | undefined): Map<string, string> => new Map(
+      (record?.section.mock.calls ?? []).map(call => {
+        const section = call[0] as { name: string; text: () => string }
+        return [section.name.replace(/:[^:]+$/, ''), section.text()]
+      }),
+    )
+    const promptOf = (record: AgentRecord | undefined): string =>
+      [...sectionsOf(record).values()].join('\n')
+
+    const threadPrompt = promptOf(h.handles[1])
+    expect(threadPrompt).not.toContain('assistant_task_')
+    expect(threadPrompt).not.toContain('assistant_memory_')
+    // The thread still sees the same board and knows where it belongs.
+    expect(threadPrompt).toContain('Compare vendors')
+    expect(threadPrompt).toContain('You are Researcher')
+    expect(threadPrompt).toContain('additional conversation of the assistant')
+
+    const mainPrompt = promptOf(h.handles[0])
+    expect(mainPrompt).toContain('assistant_task_create')
+    expect(mainPrompt).toContain('assistant_memory_write')
+    expect(mainPrompt).toContain('Compare vendors')
+
+    // Only the memory and task sections differ; identity and coordinator match.
+    const mainSections = sectionsOf(h.handles[0])
+    const threadSections = sectionsOf(h.handles[1])
+    for (const suffix of ['assistant-identity', 'assistant-coordinator']) {
+      const main = [...mainSections].find(([name]) => name.endsWith(suffix))?.[1]
+      const thread = [...threadSections].find(([name]) => name.endsWith(suffix))?.[1]
+      expect(thread).toBe(main)
+    }
+  })
+
   it('binds an explicit working directory to a thread Session', async () => {
     const h = createHarness()
 

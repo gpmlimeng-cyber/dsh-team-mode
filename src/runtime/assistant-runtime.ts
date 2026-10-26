@@ -1084,10 +1084,12 @@ export class AssistantRuntime {
   }
 
   /**
-   * Bounded task status for the main prompt, so routing decisions can see the
-   * latest active and finished titles without reading any transcript.
+   * Bounded task status for the prompt, so routing decisions can see the latest
+   * active and finished titles without reading any transcript. A main Session
+   * gets the delegation contract; a thread gets the same board read-only and is
+   * pointed at the main conversation, because it registers no task tools.
    */
-  private taskDigest(assistantId: string): string {
+  private taskDigest(assistantId: string, role: 'main' | 'thread'): string {
     const tasks = this.service.listAssistantSessions(assistantId).items
     const active = tasks
       .filter(task => ACTIVE_TASK_STATUSES.has(task.status))
@@ -1095,7 +1097,9 @@ export class AssistantRuntime {
     const terminal = tasks
       .filter(task => isTerminalTaskStatus(task.status))
       .slice(0, DIGEST_TERMINAL_LIMIT)
-    const lines = ['Background task routing:']
+    const lines = [role === 'main'
+      ? 'Background task routing:'
+      : 'Background tasks of this assistant (read-only in this conversation):']
     if (active.length === 0) {
       lines.push('Active tasks: none.')
     } else {
@@ -1109,6 +1113,14 @@ export class AssistantRuntime {
       for (const task of terminal) {
         lines.push(`- [${task.status}] ${truncate(task.title, DIGEST_TITLE_LIMIT)} (id: ${task.id})`)
       }
+    }
+    if (role === 'thread') {
+      lines.push(
+        'This is an additional conversation of the assistant, not its main Session: '
+        + 'starting, steering, and finishing background work happens in the main '
+        + 'conversation, so summarize what you see here and let the user make changes there.',
+      )
+      return lines.join('\n')
     }
     lines.push(
       'Routing fallback: answer simple one-step requests directly in this main Session. '
@@ -1270,7 +1282,7 @@ export class AssistantRuntime {
       agentCtx.systemPrompt.section({
         name: `dsh-team-mode:assistant-memory:${instance.id}`,
         order: 9,
-        text: () => memoryPrompt(this.service.getAssistantMemory(id), 'main'),
+        text: () => memoryPrompt(this.service.getAssistantMemory(id), role),
       })
       agentCtx.systemPrompt.section({
         name: `dsh-team-mode:assistant-identity:${instance.id}`,
@@ -1280,7 +1292,7 @@ export class AssistantRuntime {
       agentCtx.systemPrompt.section({
         name: `dsh-team-mode:assistant-tasks:${instance.id}`,
         order: 11,
-        text: () => this.taskDigest(id),
+        text: () => this.taskDigest(id, role),
       })
       agentCtx.systemPrompt.section({
         name: `dsh-team-mode:assistant-coordinator:${instance.id}`,
@@ -1354,12 +1366,18 @@ function assistantPrompt(snapshot: AssistantSnapshot): string {
  * main-only: a worker is the same assistant but cannot mutate them. Linked team
  * members instead receive only active, assistant-scoped, team-safe entries,
  * read-only, from their explicitly linked instance; main sessions keep the
- * existing assistant memory view.
+ * existing assistant memory view. A thread reads the same background without
+ * being offered the write tools, so its intro names none.
  */
-function memoryPrompt(memory: AssistantMemory | undefined, role: 'main' | 'worker'): string {
+function memoryPrompt(
+  memory: AssistantMemory | undefined,
+  role: 'main' | 'thread' | 'worker',
+): string {
   const intro = role === 'main'
     ? 'Durable assistant memory: a persistent note plus structured entries shared by every Session of this assistant. Use assistant_memory_read to inspect it, assistant_memory_write for the legacy note, and assistant_memory_entry_write for structured entries. Keep it to lasting preferences and facts, not transcripts.'
-    : 'Durable assistant memory: a short persistent note shared by every Session of this assistant and maintained by its main Session. Treat it as background context; this worker cannot change it.'
+    : role === 'thread'
+      ? 'Durable assistant memory: a persistent note shared by every Session of this assistant and maintained by its main Session. Treat it as background context; changes belong to the main conversation.'
+      : 'Durable assistant memory: a short persistent note shared by every Session of this assistant and maintained by its main Session. Treat it as background context; this worker cannot change it.'
   const content = memory?.content.trim() ?? ''
   const lines = [intro]
   lines.push(content === '' ? 'No memory has been saved yet.' : boundedText(content, MEMORY_PROMPT_LIMIT))
