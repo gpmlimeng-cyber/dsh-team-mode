@@ -790,12 +790,17 @@ const BOT_FOOTER_ENTRIES = [
 ] as const
 
 /** The shipped market entry that the BOT footer replaces. */
-function findMarketEntry(footer: HTMLElement): HTMLElement | null {
-  return Array.from(footer.querySelectorAll<HTMLElement>('button, [role="button"]'))
-    .find(node => /插件广场|市场|market/i.test(
-      `${node.getAttribute('aria-label') ?? ''} ${node.getAttribute('title') ?? ''}`,
-    ))
-    ?? null
+function findMarketEntry(foot: HTMLElement): HTMLElement | null {
+  const nodes = Array.from(foot.querySelectorAll<HTMLElement>('button, [role="button"]'))
+  return nodes.find((node) => {
+    if (node.closest(`#${BOT_FOOTER_HOST_ID}`) !== null) return false
+    const name = [
+      node.getAttribute('aria-label') ?? '',
+      node.getAttribute('title') ?? '',
+      (node.textContent ?? '').trim(),
+    ].join(' ')
+    return /插件广场|市场|market/i.test(name)
+  }) ?? null
 }
 
 function restoreBotSidebar(): void {
@@ -819,15 +824,24 @@ function syncBotSidebar(mode: SurfaceMode): void {
     restoreBotSidebar()
     return
   }
-  const footer = document.querySelector<HTMLElement>('[class*="_footerActions"]')
-  if (footer === null) return
+  // The shipped foot is `_footArea > (_footerActions, _settingsArea)`. The market
+  // entry is registered next to the account row, so anchor on the entry itself
+  // and take its parent row: that puts the BOT actions exactly where the market
+  // icon was, in the same flex line.
+  const foot = document.querySelector<HTMLElement>('[class*="_footArea"]')
+  const market = foot === null ? null : findMarketEntry(foot)
+  const row = market?.parentElement
+    ?? document.querySelector<HTMLElement>('[class*="_settingsArea"]')
+    ?? document.querySelector<HTMLElement>('[class*="_footerActions"]')
+  if (row === null) return
 
   let host = document.getElementById(BOT_FOOTER_HOST_ID)
   if (host === null || !host.isConnected) {
     host = document.createElement('div')
     host.id = BOT_FOOTER_HOST_ID
     host.className = css.botFooterHost ?? ''
-    footer.insertBefore(host, footer.firstChild)
+    if (market !== null) row.insertBefore(host, market)
+    else row.insertBefore(host, row.firstChild)
   }
 
   for (const entry of BOT_FOOTER_ENTRIES) {
@@ -858,13 +872,11 @@ function syncBotSidebar(mode: SurfaceMode): void {
     native.setAttribute(BOT_HIDDEN_ATTR, '')
   }
 
-  const market = findMarketEntry(footer)
-  if (market !== null && !market.closest(`#${BOT_FOOTER_HOST_ID}`)) {
+  if (market !== null) {
     market.style.display = 'none'
     market.setAttribute(BOT_HIDDEN_ATTR, '')
   }
 }
-
 /**
  * Additive mount for the “群聊” and “单聊” sections above the shipped Workspace
  * browser. The `sidebar.workspaces` slot is single and its occupant owns a
