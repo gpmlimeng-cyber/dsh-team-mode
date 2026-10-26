@@ -121,6 +121,7 @@ describe('sidebar surface switch', () => {
     expect(sidebar).toContain('brandResize.observe(logoRow)')
     expect(sidebar).toContain('const minCenter = sidebarRect.top + 30')
     expect(sidebar).toContain('toggleRect.left - left - 8')
+    expect(sidebar).toContain('toggleRect.top + toggleRect.height / 2')
   })
 
   it('renders the pinned coordinator with the real assistant row', () => {

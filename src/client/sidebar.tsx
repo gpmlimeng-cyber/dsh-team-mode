@@ -1267,7 +1267,12 @@ export function SidebarPortal({
       // root) keeps the row beside the collapse toggle in both cases.
       const sidebarRoot = logoRow.parentElement ?? logoRow
       const sidebarRect = sidebarRoot.getBoundingClientRect()
-      const center = rect.top + rect.height / 2
+      // Sit on the collapse-button row itself. On mobile that control can stay
+      // pinned while the brand row scrolls away, so prefer its center over the
+      // brand row center.
+      const center = toggleRect !== undefined && toggleRect.height > 0
+        ? toggleRect.top + toggleRect.height / 2
+        : rect.top + rect.height / 2
       const minCenter = sidebarRect.top + 30
       const maxCenter = sidebarRect.bottom - 30
       element.style.top = `${Math.round(Math.min(Math.max(center, minCenter), Math.max(minCenter, maxCenter)))}px`
