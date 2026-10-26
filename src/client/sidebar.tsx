@@ -300,6 +300,8 @@ export function SidebarTeamSection({
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  /** Set when the brand row opens this menu, so it drops from there. */
+  const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement>()
   const [onlyPending, setOnlyPending] = useState(false)
   const [scope, setScope] = useState<'active' | 'archived'>('active')
   const [sortMode, setSortMode] = useState<'updated' | 'name'>('updated')
@@ -311,7 +313,11 @@ export function SidebarTeamSection({
     const onSearch = (event: Event): void => {
       setQuery((event as CustomEvent<string>).detail ?? '')
     }
-    const onMenu = (): void => { setMenuOpen(true) }
+    const onMenu = (event: Event): void => {
+      const anchor = (event as CustomEvent<HTMLElement | undefined>).detail
+      setMenuAnchorEl(anchor)
+      setMenuOpen(true)
+    }
     window.addEventListener(SIDEBAR_SEARCH_EVENT, onSearch)
     window.addEventListener(SIDEBAR_MENU_EVENT, onMenu)
     return () => {
@@ -466,7 +472,13 @@ export function SidebarTeamSection({
             <div className={css.sidebarTeamHeaderActions}>
               <Menu
                 open={menuOpen}
-                onClose={() => { setMenuOpen(false) }}
+                onClose={() => {
+                  setMenuOpen(false)
+                  setMenuAnchorEl(undefined)
+                }}
+                {...(menuAnchorEl === undefined
+                  ? {}
+                  : { getAnchorRect: () => menuAnchorEl.getBoundingClientRect() })}
                 align="end"
                 dense
                 portal
@@ -1661,10 +1673,14 @@ export function SidebarPortal({
                 className={css.brandAction}
                 aria-label="筛选"
                 title="筛选"
-                onClick={() => {
+                onClick={(event) => {
                   // DeepSeek mode opens the shipped grouping/sort/filter menu.
                   if (mode === 'native' && clickNativeAction(/筛选|排序|分组|filter|sort/i)) return
-                  window.dispatchEvent(new CustomEvent(SIDEBAR_MENU_EVENT))
+                  // Hand the brand button over so the menu drops from this row,
+                  // not from the section header far below.
+                  window.dispatchEvent(
+                    new CustomEvent(SIDEBAR_MENU_EVENT, { detail: event.currentTarget }),
+                  )
                 }}
               >
                 <IconSlidersTwoOutlineRegular />
