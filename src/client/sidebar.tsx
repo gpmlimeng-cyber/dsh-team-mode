@@ -800,6 +800,8 @@ export function SidebarTeamSection({
 const SIDEBAR_HOST_ID = 'dsh-team-mode-sidebar-host'
 /** Brand-row search drives every plugin section through one window event. */
 const SIDEBAR_SEARCH_EVENT = 'dsh-team-mode:sidebar-search'
+/** Measured indentation from the plugin host to its section titles. */
+let brandColumnOffset = 4
 /** Mount point for the DSH/BOT switch that replaces the shipped brand row. */
 const BRAND_HOST_ID = 'dsh-team-mode-brand-host'
 /** Mount point for the BOT footer actions that replace native sidebar entries. */
@@ -1064,11 +1066,23 @@ export function SidebarPortal({
         setBrandHost(element)
       }
       const rect = logoRow.getBoundingClientRect()
-      // Align with the section titles below (群聊 / 单聊) instead of guessing a
-      // padding: that column is what the row visually belongs to.
-      const groupTitle = document.querySelector<HTMLElement>('[data-dsh-team-mode-title]')
-      const columnLeft = groupTitle?.getBoundingClientRect().left
-      element.style.left = `${Math.round(columnLeft !== undefined && columnLeft > 0 ? columnLeft : rect.left + 16)}px`
+      // One column for both modes: the plugin host exists in DeepSeek and DeepBot
+      // alike, while the section titles only exist in DeepBot. The offset from
+      // host to title is measured where a title is present and then reused, so
+      // the control does not jump sideways when the mode changes.
+      const teamHost = document.getElementById(SIDEBAR_HOST_ID)
+      let columnLeft: number | undefined
+      if (teamHost !== null) {
+        const hostLeft = teamHost.getBoundingClientRect().left
+        const titleLeft = document
+          .querySelector<HTMLElement>('[data-dsh-team-mode-title]')
+          ?.getBoundingClientRect().left
+        if (titleLeft !== undefined && titleLeft > 0 && hostLeft > 0) {
+          brandColumnOffset = Math.round(titleLeft - hostLeft)
+        }
+        if (hostLeft > 0) columnLeft = hostLeft + brandColumnOffset
+      }
+      element.style.left = `${Math.round(columnLeft ?? rect.left + 16)}px`
       element.style.top = `${Math.round(rect.top + rect.height / 2)}px`
       element.style.width = `${Math.max(0, Math.round(rect.width - 32))}px`
       element.style.visibility = rect.width > 0 && rect.height > 0 ? 'visible' : 'hidden'
