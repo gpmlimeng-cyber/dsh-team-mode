@@ -57,7 +57,7 @@ import css from './AgentTeam.module.css'
 import type { TeamView } from '../transport/contracts.js'
 import type { AssistantInstance } from '../domain/types.js'
 import { LeaderMark } from './team-member-chrome.js'
-import { assistantAvatarSource, assistantInstanceName } from './assistant-instances.js'
+import { assistantAvatarSource, assistantInstanceName, coordinatorAssistantId } from './assistant-instances.js'
 
 const SIDEBAR_TEAM_EXPANDED_KEY = 'dsh-team-mode:sidebar-expanded'
 
@@ -186,11 +186,9 @@ function StewardEntry({
     void callAgentTeam('assistant.instance.list').then((value) => {
       if (cancelled) return
       const items = value.items
-      setSteward(
-        items.find(entry => (entry.assistantSnapshot.name ?? '').includes('管家'))
-        ?? items.find(entry => entry.templateId === 'builtin-chief')
-        ?? items[0],
-      )
+      // Only the coordinating assistant is pinned; nothing else is promoted.
+      const id = coordinatorAssistantId(items)
+      setSteward(id === undefined ? undefined : items.find(entry => entry.id === id))
     }, () => {
       // No assistant catalog is a valid state: the row simply stays hidden.
     })

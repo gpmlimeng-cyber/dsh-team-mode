@@ -42,6 +42,18 @@ export function assistantInstanceName(instance: AssistantInstance): string {
   return name === '' ? '助手' : name
 }
 
+/**
+ * The coordinating assistant (总协调机器人): pinned at the top of the DeepBot
+ * sidebar instead of sitting in the 单聊 list. Matched by name first so a renamed
+ * coordinator still wins, then by the shipped chief template.
+ */
+export function coordinatorAssistantId(
+  instances: readonly AssistantInstance[],
+): string | undefined {
+  return (instances.find(entry => (entry.assistantSnapshot.name ?? '').includes('管家'))
+    ?? instances.find(entry => entry.templateId === 'builtin-chief'))?.id
+}
+
 /** Fallback glyph for an assistant without a usable avatar. */
 export function assistantInitial(name: string): string {
   return name.trim().slice(0, 1).toLocaleUpperCase() || '?'

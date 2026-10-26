@@ -46,6 +46,7 @@ import {
   assistantSidebarSummary,
   assistantTaskStatusLabel,
   assistantThreadTasks,
+  coordinatorAssistantId,
   relativeAssistantTime,
   visibleAssistantInstances,
 } from './assistant-instances.js'
@@ -211,8 +212,14 @@ export function AssistantSidebarSection({
     }, () => { void load() })
   }, [load])
 
+  // The coordinating assistant is pinned above the groups, so it is not repeated
+  // here; every other row is untouched.
   const visible = useMemo(
-    () => visibleAssistantInstances(instances, query),
+    () => {
+      const coordinatorId = coordinatorAssistantId(instances)
+      return visibleAssistantInstances(instances, query)
+        .filter(instance => instance.id !== coordinatorId)
+    },
     [instances, query],
   )
 
