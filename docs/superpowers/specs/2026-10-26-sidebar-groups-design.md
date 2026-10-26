@@ -9,19 +9,21 @@
 
 ## 数据
 
-两端各加一个可选字段，**不引入分组实体表**：
+分组是**实体**（对照 MausBot `AppState.sections: string[]`），不是一个派生出来的名字集合：
 
 | 记录 | 字段 | 约束 |
 |---|---|---|
-| 团队聚合（`teamAggregateSchema`） | `group?: string` | 去空白、长度 ≤ 40；空串归一为 undefined |
-| 助手实例（`assistantInstanceSchema`） | `group?: string` | 同上 |
+| 分组列表 | 有序 `string[]` | 去重、去空白、每项 ≤ 40；顺序即渲染顺序；**允许为空组** |
+| 团队聚合 | `group?: string` | 必须是已存在的分组名；空串归一为 undefined |
+| 助手实例 | `group?: string` | 同上 |
 
-分组**不是实体**：分组列表由现有条目的 `group` 去重得到，顺序按名称排序，「未分组」固定排最后。这样没有"空分组"要清理，也没有重命名要级联——改名就是给成员换个值。
+有了列表才有重命名、删除（级联置空成员）和稳定顺序；代价是不能靠"成员没了分组自动消失"，所以删除必须级联，写入必须校验存在性——**不允许写入不存在的分组名**（否则出现指向幽灵分组的条目）。
 
 ## 传输
 
-- 团队：新增 `team.group.set`，payload `{ teamId: string; group: string | null }`，result `TeamView`。
-- 助手：复用现有 `assistant.instance.update`，给 `updateAssistantInstanceInputSchema` 加 `group: z.string().optional()`（`null` 用空串清除，与团队口径一致）。
+- 条目归属：`team.group.set { teamId, group: string | null }` → `TeamView`；助手复用 `assistant.instance.update`（`group: z.string().optional()`）。
+- 分组列表：`sidebar.groups.list` → `string[]`；`sidebar.groups.create { name }`、`sidebar.groups.rename { from, to }`、`sidebar.groups.delete { name }`、`sidebar.groups.reorder { names }`，均回 `string[]`。
+- 改名与删除**级联**：改名把所有 `group === from` 的团队/实例改为 `to`；删除把它们置为未分组。
 
 ## 交互
 
