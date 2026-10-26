@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import {
   IconArchiveOutlineRegular,
   IconChecklistOutlineRegular,
   IconChevronRightOutlineRegular,
+  IconCheckOutlineRegular,
   IconChevronsUpDownOutlineRegular,
   IconClockOutlineRegular,
   IconCloseFillRegular,
@@ -125,7 +126,11 @@ export function useSurfaceMode(): SurfaceMode {
   return useSyncExternalStore(subscribeSurfaceMode, getSurfaceMode, () => 'team' as const)
 }
 
-/** Compact always-visible switch; native mode must still be able to return to team. */
+/**
+ * Brand-shaped mode control, modelled on Codex: the current surface is plain
+ * bold text with a caret, and choosing happens in a small card with two-line
+ * rows and a check on the active one.
+ */
 function SurfaceModeSwitch({
   mode,
   onChange,
@@ -133,26 +138,69 @@ function SurfaceModeSwitch({
   mode: SurfaceMode
   onChange: (mode: SurfaceMode) => void
 }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const close = (event: MouseEvent): void => {
+      if (root.current !== null && !root.current.contains(event.target as Node)) setOpen(false)
+    }
+    const escape = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('mousedown', close)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [open])
+
+  const options = [
+    { value: 'native' as const, label: 'DSH', hint: '原生界面' },
+    { value: 'team' as const, label: 'BOT', hint: '团队模式' },
+  ]
+  const current = options.find(option => option.value === mode) ?? options[0]!
+
   return (
-    <div className={css.surfaceModeSwitch} role="group" aria-label="界面模式" data-dsh-surface-switch>
+    <div className={css.brandMode} data-dsh-surface-switch ref={root}>
       <button
         type="button"
-        className={`${css.surfaceModeButton} ${mode === 'native' ? css.surfaceModeButtonActive : ''}`}
-        aria-pressed={mode === 'native'}
-        data-dsh-surface-mode="native"
-        onClick={() => { onChange('native') }}
+        className={css.brandModeTrigger}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={`界面模式：${current.label}`}
+        data-dsh-surface-mode={mode}
+        onClick={() => { setOpen(value => !value) }}
       >
-        原生
+        <span className={css.brandModeLabel}>{current.label}</span>
+        <IconChevronsUpDownOutlineRegular className={css.brandModeCaret} />
       </button>
-      <button
-        type="button"
-        className={`${css.surfaceModeButton} ${mode === 'team' ? css.surfaceModeButtonActive : ''}`}
-        aria-pressed={mode === 'team'}
-        data-dsh-surface-mode="team"
-        onClick={() => { onChange('team') }}
-      >
-        团队
-      </button>
+      {open && (
+        <div className={css.brandModeMenu} role="listbox" aria-label="界面模式">
+          {options.map(option => (
+            <button
+              key={option.value}
+              type="button"
+              role="option"
+              aria-selected={mode === option.value}
+              title={option.hint}
+              className={`${css.brandModeItem} ${mode === option.value ? css.brandModeItemActive : ''}`}
+              onClick={() => {
+                onChange(option.value)
+                setOpen(false)
+              }}
+            >
+              <span className={css.brandModeItemText}>
+                <span className={css.brandModeItemLabel}>{option.label}</span>
+                <span className={css.brandModeItemHint}>{option.hint}</span>
+              </span>
+              {mode === option.value && <IconCheckOutlineRegular className={css.brandModeItemCheck} />}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -760,6 +808,8 @@ export function SidebarTeamSection({
 
 
 const SIDEBAR_HOST_ID = 'dsh-team-mode-sidebar-host'
+/** Body-level mount for the mode control pinned over the shipped brand row. */
+const BRAND_HOST_ID = 'dsh-team-mode-brand-host'
 
 /**
  * Additive mount for the “群聊” and “单聊” sections above the shipped Workspace
@@ -778,6 +828,7 @@ export function SidebarPortal({
   onOpenNativeLanding?: () => void
 }): JSX.Element | null {
   const [host, setHost] = useState<HTMLElement>()
+  const [brandHost, setBrandHost] = useState<HTMLElement>()
   const mode = useSurfaceMode()
 
   // Expose the mode on <html> so CSS and DOM-level helpers can follow it
@@ -838,7 +889,37 @@ export function SidebarPortal({
       document.querySelector('[data-slot="sidebar.workspaces"]') as HTMLElement | null
     )
 
+    /**
+     * Pin the mode control over the shipped brand row.
+     *
+     * The row is React-owned: a node inserted into it is dropped on the next
+     * render, taking the control with it. The mount lives on <body> and is
+     * positioned over the empty row instead.
+     */
+    const ensureBrand = (): void => {
+      const logoRow = document.querySelector<HTMLElement>('[class*="_logoRow"]')
+      if (logoRow === null) return
+      const brand = logoRow.querySelector<HTMLElement>('[class*="_brand"]')
+      if (brand !== null) brand.style.display = 'none'
+      let element = document.getElementById(BRAND_HOST_ID)
+      if (element === null || !element.isConnected) {
+        element = document.createElement('div')
+        element.id = BRAND_HOST_ID
+        element.className = css.sidebarBrandHost ?? ''
+        element.style.position = 'fixed'
+        element.style.zIndex = '50'
+        element.style.transform = 'translateY(-50%)'
+        document.body.append(element)
+        setBrandHost(element)
+      }
+      const rect = logoRow.getBoundingClientRect()
+      element.style.left = `${Math.round(rect.left + 16)}px`
+      element.style.top = `${Math.round(rect.top + rect.height / 2)}px`
+      element.style.visibility = rect.width > 0 && rect.height > 0 ? 'visible' : 'hidden'
+    }
+
     const ensure = (): void => {
+      ensureBrand()
       const anchor = anchorElement()
       if (anchor === null) return
       // The team section belongs inside the shipped WorkspaceBrowser root,
@@ -1013,9 +1094,11 @@ export function SidebarPortal({
     }
 
     ensure()
+    window.addEventListener('resize', schedule)
     const observer = new MutationObserver(schedule)
     observer.observe(document.body, { childList: true, subtree: true })
     return () => {
+      window.removeEventListener('resize', schedule)
       observer.disconnect()
       toggle?.removeEventListener('click', onToggle)
       toggle?.remove()
@@ -1291,16 +1374,23 @@ export function SidebarPortal({
     }
   }, [])
 
-  return host === undefined ? null : createPortal(
+  return (
     <>
-      <SurfaceModeSwitch mode={mode} onChange={switchMode} />
-      {mode === 'team' && (
-        <>
-          <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
-          <AssistantSidebarSection openSession={openSession} />
-        </>
+      {brandHost !== undefined && createPortal(
+        <SurfaceModeSwitch mode={mode} onChange={switchMode} />,
+        brandHost,
       )}
-    </>,
-    host,
+      {host !== undefined && createPortal(
+        <>
+          {mode === 'team' && (
+            <>
+              <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
+              <AssistantSidebarSection openSession={openSession} />
+            </>
+          )}
+        </>,
+        host,
+      )}
+    </>
   )
 }

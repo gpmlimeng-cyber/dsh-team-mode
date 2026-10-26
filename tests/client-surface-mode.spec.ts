@@ -94,12 +94,27 @@ describe('sidebar surface switch', () => {
   const sidebar = readClientSource('sidebar.tsx')
   const index = readClientSource('index.tsx')
 
-  it('always renders one compact native/team switch', () => {
+  it('always renders one DSH/BOT control as a brand-shaped dropdown', () => {
     expect(sidebar).toContain('data-dsh-surface-switch')
-    expect(sidebar).toContain('原生')
-    expect(sidebar).toContain('团队')
-    expect(sidebar).toContain("aria-pressed={mode === 'native'}")
-    expect(sidebar).toContain("aria-pressed={mode === 'team'}")
+    expect(sidebar).toContain("label: 'DSH'")
+    expect(sidebar).toContain("label: 'BOT'")
+    // A popover button with listbox options, not two pressed toggles.
+    expect(sidebar).toContain('aria-haspopup="listbox"')
+    expect(sidebar).toContain('role="option"')
+    expect(sidebar).toContain('aria-selected={mode === option.value}')
+    // The control is pinned over the brand row from <body>, never mounted in it.
+    expect(sidebar).toContain('dsh-team-mode-brand-host')
+    expect(sidebar).toContain("element.style.position = 'fixed'")
+  })
+
+  it('keeps the control outside every React-owned row', () => {
+    const brandAt = sidebar.indexOf('const ensureBrand')
+    expect(brandAt).toBeGreaterThan(-1)
+    expect(sidebar).toContain('document.body.append(element)')
+    expect(sidebar).not.toContain('logoRow.insertBefore')
+  })
+
+  it('places the switch ahead of the team sections in source order', () => {
     const switchAt = sidebar.indexOf('<SurfaceModeSwitch')
     const gateAt = sidebar.indexOf("{mode === 'team' && (")
     expect(switchAt).toBeGreaterThan(-1)
@@ -138,9 +153,10 @@ describe('surface switch styling', () => {
   )
 
   it('uses semantic DSH tokens and a visible focus ring', () => {
-    expect(styles).toContain('.surfaceModeSwitch')
-    expect(styles).toContain('.surfaceModeButtonActive')
-    expect(styles).toMatch(/\.surfaceModeButton:focus-visible/)
+    expect(styles).toContain('.brandModeTrigger')
+    expect(styles).toContain('.brandModeItemActive')
+    expect(styles).toMatch(/\.brandModeTrigger:focus-visible/)
+    expect(styles).toContain('.sidebarBrandHost')
     expect(styles).toContain('var(--dsw-alias-border-l1)')
     expect(styles).toContain('var(--dsw-alias-label-primary)')
   })
