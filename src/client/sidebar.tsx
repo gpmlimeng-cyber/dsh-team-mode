@@ -824,14 +824,14 @@ function syncBotSidebar(mode: SurfaceMode): void {
     restoreBotSidebar()
     return
   }
-  // The shipped foot is `_footArea > (_footerActions, _settingsArea)`. The market
-  // entry is registered next to the account row, so anchor on the entry itself
-  // and take its parent row: that puts the BOT actions exactly where the market
-  // icon was, in the same flex line.
+  // Account row first, actions last: the account stays where the shipped UI puts
+  // it (left) and the BOT actions take the free space on the right. Appending to
+  // the account row makes the order deterministic instead of depending on where
+  // the market entry happens to sit.
   const foot = document.querySelector<HTMLElement>('[class*="_footArea"]')
   const market = foot === null ? null : findMarketEntry(foot)
-  const row = market?.parentElement
-    ?? document.querySelector<HTMLElement>('[class*="_settingsArea"]')
+  const row = document.querySelector<HTMLElement>('[class*="_settingsArea"]')
+    ?? market?.parentElement
     ?? document.querySelector<HTMLElement>('[class*="_footerActions"]')
   if (row === null) return
 
@@ -840,8 +840,9 @@ function syncBotSidebar(mode: SurfaceMode): void {
     host = document.createElement('div')
     host.id = BOT_FOOTER_HOST_ID
     host.className = css.botFooterHost ?? ''
-    if (market !== null) row.insertBefore(host, market)
-    else row.insertBefore(host, row.firstChild)
+    row.append(host)
+  } else if (host.parentElement !== row) {
+    row.append(host)
   }
 
   for (const entry of BOT_FOOTER_ENTRIES) {
