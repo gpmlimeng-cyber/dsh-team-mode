@@ -1236,7 +1236,7 @@ export function SidebarPortal({
         element.id = BRAND_HOST_ID
         element.className = css.sidebarBrandHost ?? ''
         element.style.position = 'fixed'
-        element.style.zIndex = '2147483000'
+        element.style.zIndex = '2147483001'
         element.style.transform = 'translateY(-50%)'
         document.body.append(element)
         setBrandHost(element)
