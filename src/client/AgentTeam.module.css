@@ -3761,11 +3761,11 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 }
 
 /* One shape language for every sidebar identity: the assistant avatar is the
-   same rounded square as the team mark (radius matches .sidebarTeamAvatar), so
-   an app-icon-like squircle, not a profile picture. */
+   same rounded square as the team mark. Both use a percentage radius so the
+   corner stays the same at 32px and 34px. */
 .sidebarAssistantAvatar .sidebarAssistantAvatarShape {
   corner-shape: superellipse(1);
-  border-radius: 8px !important;
+  border-radius: 25% !important;
 }
 
 .sidebarAssistantAvatar .sidebarAssistantAvatarShape img {
@@ -11122,7 +11122,9 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   overflow: hidden;
   padding: 3px;
   border: 1px solid color-mix(in srgb, var(--team-avatar-ink, var(--dsw-alias-label-tertiary)) 22%, transparent);
-  border-radius: 8px;
+  /* Percentage keeps the corner-to-size ratio identical to the assistant
+     avatar, which is a different box size. */
+  border-radius: 25%;
   background: color-mix(in srgb, var(--team-avatar-ink, var(--dsw-alias-label-tertiary)) 10%, var(--dsw-alias-bg-layer-1));
 }
 
