@@ -20,6 +20,8 @@ import type {
   ContextCheckpoint,
   CreateAssistantSessionInput,
   MemoryEntry,
+  TeamAggregate,
+  TeamMemberSlot,
   UpdateAssistantSessionInput,
   WriteAssistantMemoryEntryInput,
 } from '../src/domain/types.js'
@@ -96,6 +98,40 @@ function instance(overrides: Partial<AssistantInstance> = {}): AssistantInstance
     workspacePath: WORKSPACE_PATH,
     status: 'idle',
     pinned: false,
+    revision: 1,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  }
+}
+
+function coordinatorTeam(overrides: Partial<TeamAggregate> = {}): TeamAggregate {
+  const leaderSlot: TeamMemberSlot = {
+    id: 'leader-1',
+    assistantId: 'template-1',
+    displayName: 'Alice',
+    role: 'leader',
+    assistantSnapshot: instance().assistantSnapshot,
+    permissionPresetId: 'workspace-write',
+    sessionId: 'session-leader',
+    desiredState: 'online',
+    lastRuntimeState: 'idle',
+    joinedAt: NOW,
+  }
+  return {
+    schemaVersion: 2,
+    id: 'team-1',
+    name: 'Alpha',
+    workspaceId: WORKSPACE_ID,
+    workspacePath: WORKSPACE_PATH,
+    leaderSlotId: leaderSlot.id,
+    state: 'active',
+    directMemberChat: false,
+    members: { [leaderSlot.id]: leaderSlot },
+    retiredSessions: {},
+    tasks: {},
+    leases: {},
+    outbox: {},
     revision: 1,
     createdAt: NOW,
     updatedAt: NOW,
@@ -204,6 +240,8 @@ function createHarness(
     }
     return current
   })
+  const teamRows: TeamAggregate[] = []
+  const listTeams = vi.fn(() => ({ items: [...teamRows], total: teamRows.length }))
   const bindAssistantMainSession = vi.fn(async (id: string, sessionId: string) => {
     if (id !== current.id) {
       throw new AgentTeamError('ASSISTANT_INSTANCE_NOT_FOUND', `Unknown assistant instance '${id}'`)
@@ -451,6 +489,7 @@ function createHarness(
 
   const service = {
     getAssistantInstance,
+    listTeams,
     bindAssistantMainSession,
     persistAssistantArchived,
     getContextCheckpoint,
@@ -507,6 +546,11 @@ function createHarness(
     tasks,
     memories,
     current: () => current,
+    teamRows,
+    listTeams,
+    setCoordinator(value: boolean) {
+      current = { ...current, coordinator: value }
+    },
     setInstanceStatus(status: AssistantInstance['status']) {
       current = { ...current, status }
     },
@@ -610,6 +654,42 @@ describe('AssistantRuntime', () => {
 
     expect(toolsRegistered(h.handles[0]).sort())
       .toEqual([...TASK_TOOL_NAMES, ...MEMORY_TOOL_NAMES].sort())
+  })
+
+  it('injects the coordinator roster only while the instance is the coordinator', async () => {
+    const h = createHarness({ coordinator: true })
+    h.teamRows.push(coordinatorTeam())
+    h.teamRows.push(coordinatorTeam({ id: 'team-other', name: 'OtherWorkspace', workspaceId: 'workspace-2' }))
+
+    await h.runtime.ensureInstance('instance-1')
+    const sections = h.handles[0]?.section.mock.calls.map(
+      call => call[0] as { name: string; order: number; text: () => string },
+    ) ?? []
+    const coordinator = sections.find(section => section.name.includes('assistant-coordinator'))
+
+    expect(coordinator?.order).toBe(12)
+    expect(coordinator?.text()).toContain('Alpha [active]: Leader Alice')
+    expect(coordinator?.text()).toContain('Coordinator duties:')
+    expect(coordinator?.text()).not.toContain('OtherWorkspace')
+
+    // The flag is read live: a handover empties the section on the next turn,
+    // and the system prompt drops empty sections, leaving the other prompt alone.
+    h.setCoordinator(false)
+    expect(coordinator?.text()).toBe('')
+    expect(h.listTeams).toHaveBeenCalled()
+  })
+
+  it('keeps the coordinator section empty for a non-coordinator Session', async () => {
+    const h = createHarness()
+    h.teamRows.push(coordinatorTeam())
+
+    await h.runtime.ensureInstance('instance-1')
+    const sections = h.handles[0]?.section.mock.calls.map(
+      call => call[0] as { name: string; text: () => string },
+    ) ?? []
+    const coordinator = sections.find(section => section.name.includes('assistant-coordinator'))
+
+    expect(coordinator?.text()).toBe('')
   })
 
   it('creates a hidden worker, persists the task, and delivers the brief', async () => {

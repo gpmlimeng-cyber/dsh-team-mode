@@ -14,14 +14,15 @@ import type {} from '@deepseek-ai/dsh-session-persistence'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type { Config } from '../config.js'
 import { AgentTeamError } from '../domain/errors.js'
-import type {
-  AssistantInstance,
-  AssistantMemory,
-  AssistantSession,
-  AssistantSnapshot,
-  AssistantPreview,
-  ContextCheckpoint,
-  MemoryEntry,
+import {
+  isCoordinatorInstance,
+  type AssistantInstance,
+  type AssistantMemory,
+  type AssistantSession,
+  type AssistantSnapshot,
+  type AssistantPreview,
+  type ContextCheckpoint,
+  type MemoryEntry,
 } from '../domain/types.js'
 import type { InteractionResponseInput, PendingInteractionView } from '../transport/contracts.js'
 import type { AgentTeamService } from '../service/dsh-team-mode-service.js'
@@ -33,6 +34,7 @@ import {
 import { buildCheckpointFacts, checkpointHandoffMessage } from './checkpoint-facts.js'
 import { projectConversation } from './conversation-projector.js'
 import { TeamInteractionBridge } from './team-interaction-bridge.js'
+import { coordinatorPrompt } from './team-prompts.js'
 import type { ConversationNode } from '../transport/contracts.js'
 import { readStoredSessionEvents } from './session-log.js'
 
@@ -1061,6 +1063,22 @@ export class AssistantRuntime {
     return lines.join('\n')
   }
 
+  /**
+   * The coordinator roster and duties, or an empty string for every other
+   * Session. Both the flag and the teams are read live on each assembly: an
+   * empty section contributes nothing to the rendered prompt, so a
+   * non-coordinator Session assembles exactly what it did before, while a
+   * coordinator handover reaches the next turn without a Session restart.
+   */
+  private coordinatorPromptFor(assistantId: string): string {
+    const instance = this.service.getAssistantInstance(assistantId)
+    if (!isCoordinatorInstance(instance)) return ''
+    return coordinatorPrompt(
+      this.service.listTeams().items
+        .filter(team => team.workspaceId === instance.workspaceId),
+    )
+  }
+
   private assertMainToolIdentity(assistantId: string, agent: Agent | undefined): void {
     const instance = this.service.getAssistantInstance(assistantId)
     if (
@@ -1192,6 +1210,11 @@ export class AssistantRuntime {
         name: `dsh-team-mode:assistant-tasks:${instance.id}`,
         order: 11,
         text: () => this.taskDigest(id),
+      })
+      agentCtx.systemPrompt.section({
+        name: `dsh-team-mode:assistant-coordinator:${instance.id}`,
+        order: 12,
+        text: () => this.coordinatorPromptFor(id),
       })
       this.ctx.permissionPresets.set(agent.session, snapshot.permissionPresetId)
       registerAssistantTaskTools(agentCtx, {

@@ -3,6 +3,7 @@ import type {
   MemoryEntry,
   TeamAggregate,
   TeamMemberSlot,
+  TeamTask,
 } from '../domain/types.js'
 
 const SHARED_RULES = [
@@ -116,6 +117,103 @@ export function linkedAssistantMemoryPrompt(memory: LinkedAssistantMemory): stri
     return `- ${truncate(label, LINKED_ASSISTANT_MEMORY_TITLE_LIMIT)}: ${boundedText(entry.body, LINKED_ASSISTANT_MEMORY_BODY_LIMIT)}`
   }).join('\n')
   return `${header}\n${boundedText(entries, LINKED_ASSISTANT_MEMORY_PROMPT_LIMIT)}`
+}
+
+/** How many teams the coordinator prompt names before summarizing the rest. */
+const COORDINATOR_TEAM_LIMIT = 8
+const COORDINATOR_MEMBER_LIMIT = 8
+const COORDINATOR_TASK_LIMIT = 3
+const COORDINATOR_TEAM_NAME_LIMIT = 60
+const COORDINATOR_MEMBER_NAME_LIMIT = 40
+const COORDINATOR_TASK_TITLE_LIMIT = 60
+/**
+ * Hard ceiling for the whole block. The header and the duties are always kept;
+ * only roster entries are dropped — and counted — when a workspace has many
+ * teams, so a large roster can never crowd out the responsibilities.
+ */
+const COORDINATOR_PROMPT_LIMIT = 4_000
+const COORDINATOR_HIDDEN_NOTE_RESERVE = 128
+
+/** Tasks still needing work; failed and cancelled are as terminal as completed. */
+const TERMINAL_TEAM_TASK_STATUSES: ReadonlySet<TeamTask['status']> = new Set([
+  'completed',
+  'failed',
+  'cancelled',
+])
+
+const COORDINATOR_DUTIES = [
+  'Coordinator duties:',
+  '- You are the single contact person for the user: the user talks to you, you answer for every team, and you never tell the user to go ask a team directly.',
+  '- Delegate; do not do team work yourself. Address each team through its Leader with team_send_message, keep the board current with team_mode_task_create/team_mode_task_update, and follow progress with team_mode_task_list, team_mode_inbox, and team_read_messages.',
+  '- After you delegate, end your turn. Waiting means ending the turn: do not poll, do not repeat the same request, and do not start the member work yourself.',
+  '- When results come back, check them against the board and summarize them for the user in your own words: outcome, evidence, and open decisions. Never paste member transcripts, raw Session output, or message dumps.',
+  '- Report failures and blockers honestly, including what is still undone, and say so plainly when you do not know something.',
+  '- Never invent progress, owners, task statuses, or results. Do not claim work is done before the board shows it completed, and do not record a verdict on someone else’s behalf.',
+]
+
+/**
+ * Cross-team roster and the coordinator's duties, for a Session whose Assistant
+ * instance currently carries `coordinator: true`. Callers return an empty
+ * string for every other Session: the system prompt drops empty sections, so a
+ * non-coordinator prompt assembles exactly as it did before. The caller reads
+ * the flag live each turn, so a coordinator handover lands on the next turn
+ * instead of needing a Session restart.
+ */
+export function coordinatorPrompt(teams: readonly TeamAggregate[]): string {
+  const live = teams
+    .filter(team => team.archivedAt === undefined)
+    .sort((left, right) =>
+      right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id))
+  const duties = COORDINATOR_DUTIES.join('\n')
+  const header = live.length === 0
+    ? 'You are the workspace coordinator. This workspace has no teams yet.'
+    : `You are the workspace coordinator, the single contact person for this workspace’s ${live.length} team${live.length === 1 ? '' : 's'}.`
+  const budget = COORDINATOR_PROMPT_LIMIT - header.length - duties.length - COORDINATOR_HIDDEN_NOTE_RESERVE
+  const entries: string[] = []
+  let used = 0
+  for (const team of live.slice(0, COORDINATOR_TEAM_LIMIT)) {
+    const entry = coordinatorTeamEntry(team)
+    if (used + entry.length > budget) break
+    entries.push(entry)
+    used += entry.length + 1
+  }
+  const hidden = live.length - entries.length
+  const lines = [header]
+  if (entries.length > 0) lines.push('Teams:', ...entries)
+  if (hidden > 0) {
+    lines.push(`- ${hidden} more team${hidden === 1 ? '' : 's'} not shown.`)
+  }
+  lines.push(duties)
+  return lines.join('\n')
+}
+
+function coordinatorTeamEntry(team: TeamAggregate): string {
+  const members = Object.values(team.members)
+    .sort((left, right) => (left.joinedAt ?? '').localeCompare(right.joinedAt ?? '')
+      || left.id.localeCompare(right.id))
+  const leader = team.members[team.leaderSlotId] ?? members.find(member => member.role === 'leader')
+  const others = members.filter(member => member.id !== leader?.id)
+  const names = others.slice(0, COORDINATOR_MEMBER_LIMIT)
+    .map(member => truncate(member.displayName, COORDINATOR_MEMBER_NAME_LIMIT))
+  if (others.length > names.length) names.push(`+${others.length - names.length} more`)
+  const openTasks = Object.values(team.tasks)
+    .filter(task => !TERMINAL_TEAM_TASK_STATUSES.has(task.status))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+  const leaderName = leader === undefined
+    ? 'unassigned'
+    : truncate(leader.displayName, COORDINATOR_MEMBER_NAME_LIMIT)
+  return [
+    `- ${truncate(team.name, COORDINATOR_TEAM_NAME_LIMIT)} [${team.state}]: Leader ${leaderName}; members: ${names.length === 0 ? 'none' : names.join(', ')}`,
+    `  open tasks: ${openTasks.length}${coordinatorTaskDigest(openTasks)}`,
+  ].join('\n')
+}
+
+function coordinatorTaskDigest(tasks: readonly TeamTask[]): string {
+  if (tasks.length === 0) return ''
+  const shown = tasks.slice(0, COORDINATOR_TASK_LIMIT)
+    .map(task => `[${task.status}] ${truncate(task.title, COORDINATOR_TASK_TITLE_LIMIT)}`)
+  const more = tasks.length > shown.length ? ` (+${tasks.length - shown.length} more)` : ''
+  return ` — ${shown.join(' · ')}${more}`
 }
 
 function truncate(value: string, limit: number): string {
