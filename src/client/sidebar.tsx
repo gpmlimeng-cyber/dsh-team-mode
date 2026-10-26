@@ -1174,16 +1174,6 @@ export function SidebarPortal({
     if (next === 'native') void leaveTeamSession()
   }
 
-  // The DOM fallback button is used only when React's brand portal is empty
-  // (for example while the sidebar remounts after a reconnect).
-  useEffect(() => {
-    const toggle = (): void => {
-      switchMode(getSurfaceMode() === 'team' ? 'native' : 'team')
-    }
-    window.addEventListener('dsh-team-mode:surface-toggle', toggle)
-    return () => { window.removeEventListener('dsh-team-mode:surface-toggle', toggle) }
-  }, [mode])
-
   useEffect(() => {
     let current: HTMLElement | undefined
     let scrollRoot: HTMLElement | undefined
@@ -1246,31 +1236,11 @@ export function SidebarPortal({
         element.id = BRAND_HOST_ID
         element.className = css.sidebarBrandHost ?? ''
         element.style.position = 'fixed'
-        element.style.zIndex = '1000'
+        element.style.zIndex = '2147483000'
         element.style.transform = 'translateY(-50%)'
         document.body.append(element)
         setBrandHost(element)
       }
-      // React unmounts the portal during a sidebar reconnect. Keep a native
-      // fallback so the mode row never becomes an empty fixed box.
-      const portalChild = element.querySelector(':scope > *:not([data-dsh-mode-fallback])')
-      let fallback = element.querySelector<HTMLButtonElement>('[data-dsh-mode-fallback]')
-      if (portalChild !== null && fallback !== null) {
-        fallback.remove()
-        fallback = null
-      }
-      if (portalChild === null && fallback === null) {
-        fallback = document.createElement('button')
-        fallback.type = 'button'
-        fallback.dataset.dshModeFallback = ''
-        fallback.className = css.brandModeTrigger ?? ''
-        fallback.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:transparent;color:inherit;font:inherit;cursor:pointer;'
-        fallback.addEventListener('click', () => {
-          window.dispatchEvent(new CustomEvent('dsh-team-mode:surface-toggle'))
-        })
-        element.append(fallback)
-      }
-      if (fallback !== null) fallback.textContent = getSurfaceMode() === 'team' ? 'DeepBot' : 'DeepSeek'
       const rect = row.getBoundingClientRect()
       // One column for both modes: the plugin host exists in DeepSeek and DeepBot
       // alike, while the group headers only exist in DeepBot. The offset from
@@ -1307,7 +1277,7 @@ export function SidebarPortal({
         ?? (rect.width > 32 ? rect.width - 32 : Math.min(240, window.innerWidth - 32))
       // Keep a hard gap before the native collapse control on phones; the
       // brand actions are reduced to 新建 by CSS at this width.
-      if (window.innerWidth <= 760) width = Math.min(width, 204)
+      if (window.innerWidth <= 760) width = Math.min(width, 202)
       if (toggleRect !== undefined && toggleRect.width > 0) {
         width = Math.min(width, toggleRect.left - left - 20)
       }
@@ -1324,9 +1294,7 @@ export function SidebarPortal({
       const center = toggleRect !== undefined && toggleRect.height > 0
         ? toggleRect.top + toggleRect.height / 2
         : rect.top + rect.height / 2
-      // The Android shell overlays the top of the WebView with its own chrome;
-      // keep the fixed row below that strip on phones.
-      const minCenter = sidebarRect.top + (window.innerWidth <= 760 ? 56 : 30)
+      const minCenter = sidebarRect.top + 30
       const maxCenter = sidebarRect.bottom - 30
       element.style.top = `${Math.round(Math.min(Math.max(center, minCenter), Math.max(minCenter, maxCenter)))}px`
       element.style.width = `${Math.max(0, Math.round(width))}px`
@@ -1354,27 +1322,8 @@ export function SidebarPortal({
         element.style.zIndex = '2147483000'
         document.body.append(element)
       }
-      if (window.innerWidth <= 760 && teamHost !== null) {
-        if (element.parentElement !== teamHost) teamHost.insertBefore(element, teamHost.firstChild)
-        element.style.position = 'static'
-        element.style.zIndex = ''
-        element.style.left = ''
-        element.style.top = ''
-        element.style.width = '100%'
-        element.style.marginBottom = '6px'
-        element.style.background = 'var(--dsw-specific-sidebar-fill)'
-        element.style.height = ''
-        return
-      }
-      if (element.parentElement !== document.body) document.body.append(element)
-      const brand = document.getElementById(BRAND_HOST_ID)?.getBoundingClientRect()
       const newSessionRect = newSession?.getBoundingClientRect()
-      if (window.innerWidth <= 760 && brand !== undefined && brand.height > 0 && teamHost !== null) {
-        const teamRect = teamHost.getBoundingClientRect()
-        element.style.left = `${Math.round(teamRect.left)}px`
-        element.style.top = `${Math.round(brand.bottom + 8)}px`
-        element.style.width = `${Math.round(teamRect.width)}px`
-      } else if (newSessionRect !== undefined && newSessionRect.width > 0) {
+      if (newSessionRect !== undefined && newSessionRect.width > 0) {
         element.style.left = `${Math.round(newSessionRect.left)}px`
         element.style.top = `${Math.round(newSessionRect.top)}px`
         element.style.width = `${Math.round(newSessionRect.width)}px`

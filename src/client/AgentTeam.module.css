@@ -3004,10 +3004,6 @@ textarea.input {
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
-  /* The host floats over the scrolling sidebar; keep it opaque so rows cannot
-     show through the mode row while the user scrolls. */
-  background: var(--dsw-specific-sidebar-fill);
-  border-radius: 6px;
 }
 
 /* Right-aligned icon actions on the brand row: 搜索 / 筛选 / 新建. */
@@ -3150,14 +3146,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   display: block;
   margin: 0;
   padding: 0;
-  /* Pinned outside the assistant section, so it must inherit the same
-     typography as a normal row. */
-  font-size: 14px;
-  color: var(--dsw-alias-label-primary);
-}
-
-.stewardHost:empty {
-  display: none;
 }
 
 /* The coordinator's crown: the same mark the team Leader uses, in the accent
