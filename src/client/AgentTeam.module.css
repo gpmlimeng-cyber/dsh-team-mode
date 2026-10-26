@@ -3095,31 +3095,31 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   outline-offset: 3px;
 }
 
-/* Menu: soft card, two-line rows, check on the selected row. */
+/* Menu: tight card, one line title + muted detail, check on the selected row. */
 .brandModeMenu {
   position: absolute;
-  top: calc(100% + 8px);
+  top: calc(100% + 6px);
   left: 0;
   z-index: 60;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  min-width: 244px;
-  padding: 8px;
+  gap: 1px;
+  min-width: 156px;
+  padding: 4px;
   border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 14px;
+  border-radius: 10px;
   background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 12px 32px rgb(0 0 0 / 0.14);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 0.12);
 }
 
 .brandModeItem {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 56px;
-  padding: 8px 12px;
+  gap: 6px;
+  min-height: 26px;
+  padding: 3px 6px;
   border: none;
-  border-radius: 10px;
+  border-radius: 6px;
   background: transparent;
   color: var(--dsw-alias-label-primary);
   font: inherit;
@@ -3135,16 +3135,17 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 .brandModeItemText {
   display: flex;
   flex: 1 1 auto;
-  flex-direction: column;
-  gap: 2px;
+  align-items: baseline;
+  gap: 6px;
   min-width: 0;
 }
 
 .brandModeItemLabel {
   color: var(--dsw-alias-label-primary);
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 500;
-  line-height: 20px;
+  letter-spacing: 0.02em;
+  line-height: 18px;
 }
 
 .brandModeItemActive .brandModeItemLabel {
@@ -3153,14 +3154,15 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 
 .brandModeItemHint {
   color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 17px;
+  font-size: 11px;
+  line-height: 16px;
+  white-space: nowrap;
 }
 
 .brandModeItemCheck {
   flex: none;
-  width: 16px;
-  height: 16px;
+  width: 13px;
+  height: 13px;
   color: var(--dsw-alias-label-primary);
 }
 
