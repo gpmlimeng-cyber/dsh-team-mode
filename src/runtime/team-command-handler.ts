@@ -25,7 +25,7 @@ import type {
   TeamTaskVerdict,
 } from '../domain/types.js'
 import type { AgentTeamService } from '../service/dsh-team-mode-service.js'
-import type { EscalationGate } from '../service/escalations.js'
+import { boundedSummary, type EscalationGate } from '../service/escalations.js'
 import type { PendingInteractionView } from '../transport/contracts.js'
 import {
   appendMemoryJournal,
@@ -434,6 +434,26 @@ export interface TeamInboxResult {
    * keeps its single-team scope and shape.
    */
   cross_team?: TeamInboxCrossTeam
+  /**
+   * Present only for the workspace coordinator: every `open` escalation of this
+   * workspace, newest first, capped like one inbox section. Its own budget —
+   * `cross_team` and this section never consume each other's rows — and absent
+   * for every other member, so the five-key member shape stays as it was.
+   */
+  escalations?: TeamInboxEscalationItem[]
+}
+
+/**
+ * One open escalation as the inbox prints it: which team stalled, on what kind
+ * of gate, and one bounded line. The gate's body and the member's mail stay in
+ * the team they belong to.
+ */
+export interface TeamInboxEscalationItem {
+  team_id: string
+  team_name: string
+  kind: EscalationKind
+  /** The stored line, re-bounded by t1's rule so no second truncation exists. */
+  summary: string
 }
 
 /** One open stall as the coordinator tool relays it: where, what kind, one line. */
@@ -1726,6 +1746,7 @@ export class TeamCommandHandler {
       .slice(0, sizes.get('unread'))
       .map(message => this.messageView(team, message, slotId))
     const crossTeam = this.crossTeamInbox(team, member, perSection)
+    const escalations = this.inboxEscalations(member, perSection)
     return {
       assigned: assignedView,
       ready: readyView,
@@ -1733,6 +1754,7 @@ export class TeamCommandHandler {
       approvals: approvals.slice(0, sizes.get('approvals')),
       remaining_unread: Math.max(0, unread.length - unreadView.length),
       ...(crossTeam === undefined ? {} : { cross_team: crossTeam }),
+      ...(escalations === undefined ? {} : { escalations }),
     }
   }
 
@@ -1753,13 +1775,7 @@ export class TeamCommandHandler {
       Math.max(1, Math.trunc(limit ?? ESCALATIONS_DEFAULT_LIMIT)),
       ESCALATIONS_LIMIT_MAX,
     )
-    const workspaceTeamIds = new Set(this.service.listTeams().items
-      .filter(candidate => candidate.workspaceId === instance.workspaceId)
-      .map(candidate => candidate.id))
-    const rows = this.service.listEscalations()
-      .filter(row => row.status === 'open' && workspaceTeamIds.has(row.teamId))
-      .sort((left, right) =>
-        right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
+    const rows = this.openWorkspaceEscalations(instance)
       .slice(0, bounded)
       .map(row => ({
         id: row.id,
@@ -1771,6 +1787,44 @@ export class TeamCommandHandler {
         created_at: row.createdAt,
       }))
     return { escalations: rows }
+  }
+
+  /**
+   * Every open escalation of the coordinator's workspace, newest first. Both
+   * surfaces read through here, so `team_escalations` and the inbox section can
+   * never disagree about scope or order.
+   */
+  private openWorkspaceEscalations(instance: AssistantInstance): Escalation[] {
+    const workspaceTeamIds = new Set(this.service.listTeams().items
+      .filter(candidate => candidate.workspaceId === instance.workspaceId)
+      .map(candidate => candidate.id))
+    return this.service.listEscalations()
+      .filter(row => row.status === 'open' && workspaceTeamIds.has(row.teamId))
+      .sort((left, right) =>
+        right.createdAt.localeCompare(left.createdAt) || left.id.localeCompare(right.id))
+  }
+
+  /**
+   * The coordinator's inbox section: `open` escalations only, newest first,
+   * capped like one inbox section but outside the 50-row budget — the same rule
+   * `cross_team` follows. A busy single-team inbox therefore never hides a
+   * stall, and a long escalation list never shrinks the sections the member
+   * actually works from.
+   */
+  private inboxEscalations(
+    member: TeamMemberSlot,
+    perSection: number,
+  ): TeamInboxEscalationItem[] | undefined {
+    const instance = this.coordinatorInstanceFor(member)
+    if (instance === undefined) return undefined
+    return this.openWorkspaceEscalations(instance)
+      .slice(0, perSection)
+      .map(row => ({
+        team_id: row.teamId,
+        team_name: row.teamName,
+        kind: row.kind,
+        summary: boundedSummary(row.summary),
+      }))
   }
 
   /**
