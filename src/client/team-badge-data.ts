@@ -7,7 +7,11 @@ export interface SessionTeamFacts {
   teamName: string
   memberName: string
   role: 'leader' | 'member'
-  /** Approvals waiting in the owning team; the team row's badge number. */
+  /**
+   * Whether THIS member is parked on an approval. Per member, not the team
+   * total: summing the member rows reproduces the team badge exactly, because
+   * `teamSidebarSummary.waiting` counts the same `waiting_approval` members.
+   */
   pending: number
 }
 
@@ -34,14 +38,13 @@ export interface TeamBadgeCounts {
 export function sessionTeamLookup(teams: readonly TeamView[]): Map<string, SessionTeamFacts> {
   const lookup = new Map<string, SessionTeamFacts>()
   for (const team of teams) {
-    const pending = teamSidebarSummary(team).waiting
     for (const member of Object.values(team.members)) {
       lookup.set(member.sessionId, {
         teamId: team.id,
         teamName: team.name,
         memberName: member.displayName,
         role: member.id === team.leaderSlotId ? 'leader' : 'member',
-        pending,
+        pending: member.lastRuntimeState === 'waiting_approval' ? 1 : 0,
       })
     }
   }

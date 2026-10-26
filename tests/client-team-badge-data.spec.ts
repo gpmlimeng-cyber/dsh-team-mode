@@ -71,7 +71,7 @@ describe('teamBadgeCounts', () => {
       .toBe(countsOf(team({ members: forward })).pending)
   })
 
-  it('marks the leader from leaderSlotId and shares the team pending count', () => {
+  it('counts each member own approval so the rows sum to the team badge', () => {
     const lookup = sessionTeamLookup([team({
       members: slots([
         ['leader', 'session-leader', 'idle'],
@@ -84,10 +84,20 @@ describe('teamBadgeCounts', () => {
       teamName: '测试团队',
       memberName: 'leader',
       role: 'leader',
-      pending: 1,
+      pending: 0,
     })
     expect(lookup.get('session-member-1')?.role).toBe('member')
+    expect(lookup.get('session-leader')?.pending).toBe(0)
     expect(lookup.get('session-member-1')?.pending).toBe(1)
+    // The invariant the row badge relies on: summing the member rows is the
+    // team badge, not a multiple of it.
+    const sum = [...lookup.values()].reduce((total, facts) => total + facts.pending, 0)
+    expect(sum).toBe(countsOf(team({
+      members: slots([
+        ['leader', 'session-leader', 'idle'],
+        ['member-1', 'session-member-1', 'waiting_approval'],
+      ]),
+    })).pending)
   })
 
   it('returns undefined for a team with no members and no pending approval', () => {
