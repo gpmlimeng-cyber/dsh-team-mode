@@ -1261,10 +1261,16 @@ export function SidebarPortal({
         width = Math.min(width, toggleRect.left - left - 8)
       }
       element.style.left = `${left}px`
-      // The sidebar can scroll its middle region; the brand row scrolls with
-      // it. Pin the fixed switch to the top so it cannot disappear above the
-      // viewport while the list is scrolled.
-      element.style.top = `${Math.max(36, Math.round(rect.top + rect.height / 2))}px`
+      // Keep the fixed switch inside the visible sidebar box: on mobile the
+      // drawer starts below the system status bar, and the brand row can be
+      // scrolled above it. Clamping to the logo row's own parent (the sidebar
+      // root) keeps the row beside the collapse toggle in both cases.
+      const sidebarRoot = logoRow.parentElement ?? logoRow
+      const sidebarRect = sidebarRoot.getBoundingClientRect()
+      const center = rect.top + rect.height / 2
+      const minCenter = sidebarRect.top + 30
+      const maxCenter = sidebarRect.bottom - 30
+      element.style.top = `${Math.round(Math.min(Math.max(center, minCenter), Math.max(minCenter, maxCenter)))}px`
       element.style.width = `${Math.max(0, Math.round(width))}px`
       element.style.visibility = rect.width > 0 && rect.height > 0 ? 'visible' : 'hidden'
     }
