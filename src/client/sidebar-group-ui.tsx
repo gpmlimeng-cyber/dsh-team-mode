@@ -286,11 +286,11 @@ export function SidebarGroupPartition({
             onToggle()
           }}
         >
+          <span className={css.sidebarPartitionLabel}>{label}</span>
           <IconChevronRightOutlineRegular
             size={11}
             className={`${css.sidebarPartitionChevron} ${collapsed ? '' : css.sidebarPartitionChevronOpen}`}
           />
-          <span className={css.sidebarPartitionLabel}>{label}</span>
           <span className={css.sidebarPartitionCount}>{count}</span>
         </button>
         {(onAddEntries !== undefined || hasMenu) && (
