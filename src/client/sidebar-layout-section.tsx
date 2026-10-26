@@ -4,16 +4,14 @@ import {
   EMPTY_LAYOUT,
   SLOT_LABELS,
   SLOT_ORDER,
-  deriveKey,
-  isToolLabel,
   parseLayoutConfig,
   serializeLayoutConfig,
   type EntryKey,
   type LayoutConfig,
   type LayoutEntry,
   type LayoutTarget,
-  type SlotId,
 } from './sidebar-layout-data.js'
+import { readSidebarEntries } from './sidebar-layout-dom.js'
 
 /** The only place the layout is persisted (spec: version 1, one key). */
 export const SIDEBAR_LAYOUT_STORAGE_KEY = 'dsh-team-mode:sidebar-layout'
@@ -66,44 +64,6 @@ function writeStoredLayout(config: LayoutConfig): void {
     return
   }
   window.dispatchEvent(new CustomEvent(SIDEBAR_LAYOUT_CHANGED_EVENT))
-}
-
-/** Native containers that hold navigable entries, mapped to their origin slot. */
-const ORIGIN_CONTAINERS: ReadonlyArray<{ selector: string, slot: SlotId }> = [
-  { selector: '[class*="_topStrip"]', slot: 'top' },
-  { selector: '[class*="_logoRow"]', slot: 'top' },
-  { selector: '[class*="_panelList"]', slot: 'panels' },
-  { selector: '[class*="_footerActions"]', slot: 'footer' },
-]
-
-const CANDIDATE_SELECTOR = 'button, [role="button"], a[tabindex]'
-
-/**
- * Read-only scan for the settings list. It never hides or moves anything; a
- * missing sidebar simply yields no rows. Task 4 can swap in the DOM layer's
- * `readSidebarEntries` once that module lands — the signature is identical.
- */
-export function readSidebarEntries(doc: Document = document): LayoutEntry[] {
-  const entries: LayoutEntry[] = []
-  const seen = new Set<EntryKey>()
-  for (const { selector, slot } of ORIGIN_CONTAINERS) {
-    const container = doc.querySelector(selector)
-    if (container === null) continue
-    let order = 0
-    for (const node of container.querySelectorAll<HTMLElement>(CANDIDATE_SELECTOR)) {
-      const label = (node.getAttribute('aria-label')?.trim()
-        || node.title.trim()
-        || node.textContent?.trim()
-        || '')
-      if (label === '') continue
-      const key = deriveKey(slot, label)
-      if (seen.has(key)) continue
-      seen.add(key)
-      entries.push({ key, label, originSlot: slot, order, movable: !isToolLabel(label) })
-      order += 1
-    }
-  }
-  return entries
 }
 
 function selectedChoice(entry: LayoutEntry, config: LayoutConfig): EntryChoice {

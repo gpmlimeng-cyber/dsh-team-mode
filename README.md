@@ -113,6 +113,7 @@ Build output: `lib/index.js` (host), `lib/client.js` (browser bundle).
 - A team workspace’s member sessions also remain visible in the native Workspace list (the team group is the shortcut); collapse that Workspace if you want the team group to be the only entry.
 - `team_read_messages` marks read when the tool executes; direct messages use `deliveryState`, broadcasts use `readBy`.
 - Pending shutdown handshakes are in-memory and not restored after a restart.
+- Custom sidebar layout keeps the native row in place and only hides it; mirrors forward clicks. Mirrored buttons follow selection, active state, badges and `disabled`, but not hover/transition details or third-party custom state. Assignments are keyed by the accessible label, so switching the interface language drops the old assignment and the entry falls back to its original position.
 
 ## License
 

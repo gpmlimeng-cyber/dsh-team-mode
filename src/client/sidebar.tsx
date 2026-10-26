@@ -51,6 +51,16 @@ import {
   writeSurfaceMode,
   type SurfaceMode,
 } from './surface-mode.js'
+import { planLayout } from './sidebar-layout-data.js'
+import {
+  applyLayout,
+  discoverEntries,
+  ensureSlotHosts,
+  restoreNative,
+  syncMirrorState,
+  type SlotHosts,
+} from './sidebar-layout-dom.js'
+import { SIDEBAR_LAYOUT_CHANGED_EVENT, readStoredLayout } from './sidebar-layout-section.js'
 import css from './AgentTeam.module.css'
 import type { TeamView } from '../transport/contracts.js'
 
@@ -1211,6 +1221,31 @@ export function SidebarPortal({
     let scheduled = false
     let scrollTimer: number | undefined
     let scrollBound: HTMLDivElement | undefined
+    let hosts: SlotHosts | undefined
+    let appliedLayout = ''
+
+    /**
+     * Re-derive the entry list and apply the stored layout.
+     *
+     * Re-applying is gated on a signature because `applyLayout` rewrites the
+     * hosts, and this runs from a MutationObserver: without the gate every round
+     * would trigger the next one. Native nodes are hidden only after their
+     * mirrors rendered (`applyLayout`), so a failed round leaves them visible.
+     */
+    const applySidebarLayout = (nextRoot: HTMLElement): void => {
+      hosts = ensureSlotHosts(nextRoot)
+      const { entries, nodes } = discoverEntries(hosts, document)
+      const plan = planLayout(entries, readStoredLayout())
+      const signature = `${plan.mirrors.map(mirror => `${mirror.slot}:${mirror.key}`).join(',')}|${plan.hide.join(',')}`
+      // A React re-render can replace the native rows; apply again then, or the
+      // mirrors would point at detached nodes.
+      const stale = !Array.from(nodes.values()).every(node => node.isConnected)
+      if (signature !== appliedLayout || stale) {
+        applyLayout(hosts, plan, key => { nodes.get(key)?.click() })
+        appliedLayout = signature
+      }
+      syncMirrorState(hosts, nodes)
+    }
 
     const showScrollbar = (): void => {
       if (wrapper === undefined) return
@@ -1262,6 +1297,7 @@ export function SidebarPortal({
       for (const child of [newSession, nav, region]) {
         if (child.parentElement !== scrollWrapper) scrollWrapper.append(child)
       }
+      applySidebarLayout(nextRoot)
     }
 
     const schedule = (): void => {
@@ -1270,11 +1306,21 @@ export function SidebarPortal({
       window.requestAnimationFrame(() => { scheduled = false; ensure() })
     }
 
+    // The settings section writes localStorage and announces it; force one
+    // re-apply instead of waiting for the next DOM mutation.
+    const onLayoutChange = (): void => {
+      appliedLayout = ''
+      schedule()
+    }
+
     ensure()
+    window.addEventListener(SIDEBAR_LAYOUT_CHANGED_EVENT, onLayoutChange)
     const observer = new MutationObserver(schedule)
     observer.observe(document.body, { childList: true, subtree: true })
     return () => {
       observer.disconnect()
+      window.removeEventListener(SIDEBAR_LAYOUT_CHANGED_EVENT, onLayoutChange)
+      if (hosts !== undefined) restoreNative(hosts, document)
       if (scrollTimer !== undefined) window.clearTimeout(scrollTimer)
       scrollBound?.removeEventListener('scroll', showScrollbar)
       scrollBound?.removeEventListener('wheel', showScrollbar)

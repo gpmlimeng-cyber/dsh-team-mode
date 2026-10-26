@@ -144,6 +144,9 @@ export function ensureSlotHosts(root: HTMLElement): SlotHosts {
   return hosts
 }
 
+/** Last non-empty scan, shared with the settings list (see `readSidebarEntries`). */
+let lastEntries: LayoutEntry[] = []
+
 /**
  * Collect navigation entries from the native containers. Only those containers
  * are scanned: the workspace region, the foot's account row and this module's
@@ -176,6 +179,7 @@ export function discoverEntries(hosts: SlotHosts, doc: Document): DiscoveredEntr
   }
 
   hosts.nodes = nodes
+  if (entries.length > 0) lastEntries = entries
   return { entries, nodes }
 }
 
@@ -275,11 +279,15 @@ export function restoreNative(hosts: SlotHosts, doc: Document): void {
 /**
  * Read-only entry list for the settings section. It has to build the hosts as
  * a side effect so that discovery skips them (a mirror is not an entry).
+ *
+ * The settings page can render while the sidebar is not (drawer closed, route
+ * switch), so an empty scan falls back to the last snapshot this module saw
+ * rather than showing an empty list. One scan implementation, one cache.
  */
 export function readSidebarEntries(doc: Document = document): LayoutEntry[] {
   const root = readSidebarRoot(doc)
-  if (root === undefined) return []
-  return discoverEntries(ensureSlotHosts(root), doc).entries
+  const entries = root === undefined ? [] : discoverEntries(ensureSlotHosts(root), doc).entries
+  return entries.length > 0 ? entries : lastEntries
 }
 
 function slotOf(container: Element): SlotId | undefined {
