@@ -3004,6 +3004,10 @@ textarea.input {
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
+  /* The host floats over the scrolling sidebar; keep it opaque so rows cannot
+     show through the mode row while the user scrolls. */
+  background: var(--dsw-specific-sidebar-fill);
+  border-radius: 6px;
 }
 
 /* Right-aligned icon actions on the brand row: 搜索 / 筛选 / 新建. */
