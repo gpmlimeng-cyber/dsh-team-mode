@@ -55,6 +55,8 @@ import {
 } from './surface-mode.js'
 import css from './AgentTeam.module.css'
 import type { TeamView } from '../transport/contracts.js'
+import type { AssistantInstance } from '../domain/types.js'
+import { LeaderMark } from './team-member-chrome.js'
 
 const SIDEBAR_TEAM_EXPANDED_KEY = 'dsh-team-mode:sidebar-expanded'
 
@@ -163,6 +165,69 @@ async function startStewardSession(open: (sessionId: string) => void): Promise<v
     // Opening a session is user-visible when it fails; a silent retry is worse
     // than leaving the sidebar untouched.
   }
+}
+
+/**
+ * The default bot of the DeepBot surface: one pinned row under the mode control,
+ * the way MausBot pins its namesake bot above the chat groups. It opens the
+ * steward assistant's main Session.
+ */
+function StewardEntry({
+  openSession,
+}: {
+  openSession: (sessionId: string) => void
+}): JSX.Element | null {
+  const [steward, setSteward] = useState<AssistantInstance>()
+  const [opening, setOpening] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void callAgentTeam('assistant.instance.list').then((value) => {
+      if (cancelled) return
+      const items = value.items
+      setSteward(
+        items.find(entry => (entry.assistantSnapshot.name ?? '').includes('管家'))
+        ?? items.find(entry => entry.templateId === 'builtin-chief')
+        ?? items[0],
+      )
+    }, () => {
+      // No assistant catalog is a valid state: the row simply stays hidden.
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  if (steward === undefined) return null
+  const snapshot = steward.assistantSnapshot
+  const initial = (snapshot.name || '?').slice(0, 1)
+  // The snapshot carries no description, so the row shows its opening line.
+  const hint = (snapshot.instructions.split('\n').map(line => line.trim()).find(line => line !== '')
+    ?? `${snapshot.provider} · ${snapshot.model}`).slice(0, 42)
+
+  return (
+    <button
+      type="button"
+      className={css.stewardEntry}
+      disabled={opening}
+      title={snapshot.name}
+      onClick={() => {
+        if (opening) return
+        setOpening(true)
+        void callAgentTeam('assistant.instance.ensure', { id: steward.id })
+          .then(result => { openSession(result.sessionId) })
+          .catch(() => {})
+          .finally(() => { setOpening(false) })
+      }}
+    >
+      <span className={css.stewardAvatar} aria-hidden="true">{initial}</span>
+      <span className={css.stewardText}>
+        <span className={css.stewardName}>
+          {snapshot.name}
+          <LeaderMark size={12} />
+        </span>
+        <span className={css.stewardHint}>{hint}</span>
+      </span>
+    </button>
+  )
 }
 
 /**
@@ -1709,6 +1774,7 @@ export function SidebarPortal({
         <>
           {mode === 'team' && (
             <>
+              <StewardEntry openSession={openSession} />
               <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
               <AssistantSidebarSection openSession={openSession} />
             </>

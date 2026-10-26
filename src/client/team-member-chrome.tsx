@@ -20,7 +20,7 @@ function initial(name: string): string {
   return name.trim().slice(0, 1).toLocaleUpperCase() || '?'
 }
 
-function LeaderMark({ size = 13 }: { size?: number }): JSX.Element {
+export function LeaderMark({ size = 13 }: { size?: number }): JSX.Element {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} role="presentation" focusable="false" xmlns="http://www.w3.org/2000/svg">
       <path d="M3 7.4 8.2 11 12 4l3.8 7L21 7.4 19.1 18H4.9L3 7.4Zm1.1 12.4h15.8V22H4.1v-2.2Z" fill="currentColor" />
