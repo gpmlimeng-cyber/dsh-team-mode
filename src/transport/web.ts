@@ -686,6 +686,12 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       }).strict().parse(request.payload)
       return service.getWorkspaceDiff(payload.teamId, payload.path, payload.scope, payload.layout, payload.theme)
     }
+    case 'escalation.list': {
+      // Leader-agnostic read: every row is persisted, and the client filters
+      // `open` for the badge. No payload, so nothing to parse.
+      const items = service.listEscalations()
+      return { items, total: items.length }
+    }
     case 'team.dissolve': {
       const payload = z.object({ teamId: z.string().min(1), confirmation: z.string() }).strict().parse(request.payload)
       await service.dissolveTeam(payload.teamId, payload.confirmation, options)

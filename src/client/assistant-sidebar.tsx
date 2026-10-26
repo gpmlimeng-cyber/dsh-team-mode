@@ -49,6 +49,7 @@ import {
   assistantThreadTasks,
   coordinatorAssistant,
   coordinatorAssistantId,
+  coordinatorEscalationBadge,
   relativeAssistantTime,
   visibleAssistantInstances,
 } from './assistant-instances.js'
@@ -61,7 +62,7 @@ import {
 import { MemberAvatar } from './member-avatar.js'
 import css from './AgentTeam.module.css'
 import { isCoordinatorInstance } from '../domain/types.js'
-import type { AssistantInstance, AssistantSession } from '../domain/types.js'
+import type { AssistantInstance, AssistantSession, Escalation } from '../domain/types.js'
 import type { AssistantInstanceView, PendingInteractionView } from '../transport/contracts.js'
 
 const ASSISTANT_EXPANDED_KEY = 'dsh-team-mode:assistant-expanded'
@@ -184,6 +185,9 @@ export function AssistantSidebarSection({
   const browserNotificationsRef = useRef<Map<string, Notification>>(new Map())
   const knownWaitingRef = useRef<Set<string> | undefined>(undefined)
   const [tasks, setTasks] = useState<AssistantSession[]>([])
+  // Workspace-wide escalation rows; the coordinator row owns the only badge that
+  // reads them, and every other row ignores the list.
+  const [escalations, setEscalations] = useState<Escalation[]>([])
   const mode = useAssistantDisplayMode()
   const [expanded, setExpanded] = useState(readAssistantExpanded)
   const [searchExpanded, setSearchExpanded] = useState(false)
@@ -223,12 +227,16 @@ export function AssistantSidebarSection({
 
   const load = useCallback(async (): Promise<void> => {
     try {
-      const [instancePage, taskPage] = await Promise.all([
+      const [instancePage, taskPage, escalationPage] = await Promise.all([
         callAgentTeam('assistant.instance.list'),
         callAgentTeam('assistant.task.list', undefined),
+        // The badge is decoration: an older Host that does not answer this read
+        // must not blank the assistant list it shares a request with.
+        callAgentTeam('escalation.list').catch(() => ({ items: [] as Escalation[], total: 0 })),
       ])
       setInstances(instancePage.items)
       setTasks(taskPage.items)
+      setEscalations(escalationPage.items)
       setListError(undefined)
     } catch (cause) {
       setListError(cause instanceof Error ? cause.message : String(cause))
@@ -504,6 +512,9 @@ export function AssistantSidebarSection({
     // not more important than "this assistant is broken".
     const activeStatus = state !== 'none'
     const unread = isAssistantUnread(instance, readState)
+    // Only the coordinator row ever gets a number; every other row reads
+    // undefined and renders nothing at all.
+    const escalationBadge = coordinatorEscalationBadge(instance, escalations)
     const secondLine = activeStatus ? statusText : hasPreview ? previewText : statusText
     const secondLineTitle = activeStatus
       ? statusTitle
@@ -619,6 +630,16 @@ export function AssistantSidebarSection({
                     data-dsh-assistant-coordinator
                   >
                     <LeaderMark size={11} />
+                  </span>
+                )}
+                {escalationBadge !== undefined && (
+                  <span
+                    className={css.sidebarTeamBadge}
+                    title={`${escalationBadge} 个待处理升级`}
+                    aria-label={`${escalationBadge} 个待处理升级`}
+                    data-dsh-escalation-count={escalationBadge}
+                  >
+                    {escalationBadge > 99 ? '99+' : escalationBadge}
                   </span>
                 )}
                 {instance.pinned === true && (

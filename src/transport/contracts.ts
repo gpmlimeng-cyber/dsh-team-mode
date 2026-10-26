@@ -10,6 +10,7 @@ import type {
   CreateAssistantInput,
   CreateAssistantInstanceInput,
   CreateTeamDraftInput,
+  Escalation,
   MemoryEntry,
   TeamAggregate,
   TeamGoal,
@@ -70,6 +71,8 @@ export const AGENT_TEAM_METHODS = [
   'assistant.builder.interaction.respond',
   'assistant.builder.stop',
   'assistant.builder.archive',
+  /** Workspace-wide escalation rows; the coordinator row badge reads this. */
+  'escalation.list',
   'team.list',
   'team.get',
   'team.createDraft',
@@ -489,6 +492,11 @@ export interface AgentTeamRequestMap {
   }
   'assistant.builder.stop': { payload: { sessionId: string }; result: { accepted: boolean } }
   'assistant.builder.archive': { payload: { sessionId: string }; result: { archived: boolean } }
+  /**
+   * Every persisted escalation row, open and lifted. The coordinator row badge
+   * counts `open` only, so the client never needs a second filtered read.
+   */
+  'escalation.list': { payload: undefined; result: PageView<Escalation> }
   'team.list': { payload: undefined; result: PageView<TeamView> }
   'team.get': { payload: { id: string }; result: TeamView }
   'team.createDraft': { payload: CreateTeamDraftInput; result: TeamView }
