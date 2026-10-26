@@ -12,7 +12,6 @@ export interface ResetMemberContextTarget {
 export type TeamDialog =
   | { kind: 'create' }
   | { kind: 'manage'; teamId: string }
-  | ({ kind: 'reset-member' } & ResetMemberContextTarget)
 
 export interface AgentTeamUiState {
   visible: boolean
@@ -86,11 +85,6 @@ export function openCreateTeamDialog(): void {
 
 export function openManageTeamDialog(teamId: string): void {
   update({ ...state, selectedTeamId: teamId, dialog: { kind: 'manage', teamId } })
-}
-
-/** The row menu's clear-context gate; `TeamModeDialogs` owns the confirmation. */
-export function openResetMemberContextDialog(target: ResetMemberContextTarget): void {
-  update({ ...state, dialog: { kind: 'reset-member', ...target } })
 }
 
 export function closeTeamDialog(): void {

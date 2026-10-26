@@ -41,10 +41,6 @@ export function TeamModeDialogs({
 
   if (dialog === undefined) return null
 
-  if (dialog.kind === 'reset-member') {
-    return <ResetMemberContextDialog target={dialog} />
-  }
-
   if (dialog.kind === 'manage') {
     if (team === undefined) {
       return (
@@ -129,57 +125,5 @@ export function TeamModeDialogs({
         onCreated={async teamId => { await openTeam(teamId) }}
       />
     </AnimatedModal>
-  )
-}
-
-/**
- * Clear-context gate for one member Session, opened from the native row menu.
- * The write is the same `team.member.contextReset` the management dialog
- * already calls; only the entry point differs. A rejected write stays in this
- * dialog as its description, so the failure is visible without a second surface.
- */
-function ResetMemberContextDialog({ target }: { target: ResetMemberContextTarget }): JSX.Element {
-  const [acknowledged, setAcknowledged] = useState(false)
-  const [busy, setBusy] = useState(false)
-  const [failure, setFailure] = useState<string>()
-
-  const clearContext = async (): Promise<void> => {
-    setBusy(true)
-    try {
-      const team = await callAgentTeam('team.get', { id: target.teamId })
-      // The row knows a Session, not a slot: resolve the slot from the live team
-      // so a member replaced since the menu opened cannot be cleared by mistake.
-      const member = Object.values(team.members)
-        .find(entry => entry.sessionId === target.sessionId)
-      if (member === undefined) throw new Error('该成员已不在团队中，无法清空上下文')
-      await callAgentTeam(
-        'team.member.contextReset',
-        { teamId: target.teamId, slotId: member.id },
-        team.revision,
-      )
-      closeTeamDialog()
-    } catch (cause) {
-      setFailure(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <RiskConfirmation
-      open
-      title="清空该成员上下文"
-      description={failure
-        ?? `把「${target.memberName}」的 Session 换成全新的一份，${target.teamName} 的任务板、成员配置和工作区文件不变。`}
-      acknowledgeLabel="我已了解该成员当前的上下文会被丢弃"
-      cancelLabel="取消"
-      closeLabel="关闭"
-      confirmLabel={busy ? '清空中…' : '清空上下文'}
-      acknowledged={acknowledged}
-      disabled={busy}
-      onAcknowledgedChange={setAcknowledged}
-      onCancel={() => { if (!busy) closeTeamDialog() }}
-      onConfirm={() => { void clearContext() }}
-    />
   )
 }

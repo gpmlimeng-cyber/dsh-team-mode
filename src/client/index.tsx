@@ -12,7 +12,6 @@ import { SidebarPortal, useSurfaceMode } from './sidebar.js'
 import { TeamMainAgentPanel } from './team-main-agent.js'
 import {
   closeTeamPanel,
-  openResetMemberContextDialog,
   panelToggleAvailable,
   reportNavigationError,
   toggleTeamPanel,
