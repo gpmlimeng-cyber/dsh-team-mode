@@ -11599,3 +11599,70 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 .sidebarPartition[data-dsh-drop-marker='after']::after {
   bottom: -1px;
 }
+
+/* ── Assistant detail (native right pane) ─────────────────────────────────
+   The pane's width, position and close control belong to the host's frame;
+   this only styles its content. Four collapsible fact blocks, read-only. */
+.assistantDetail {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  height: 100%;
+  min-height: 0;
+  padding: 8px 12px 12px;
+  overflow: auto;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.assistantDetailEmpty {
+  margin: 0;
+  padding: 24px 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font-weight: 400;
+  text-align: center;
+}
+
+.assistantDetailFacts {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 2px 0 10px 24px;
+}
+
+.assistantDetailFact {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  gap: 8px;
+}
+
+.assistantDetailFactLabel {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-weight: 400;
+}
+
+.assistantDetailFactValue {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.assistantDetailIdentity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0 8px 24px;
+}
+
+.assistantDetailAvatar {
+  flex: none;
+}
+
+.assistantDetailAvatarNote {
+  color: var(--dsw-alias-label-tertiary);
+  font-weight: 400;
+}

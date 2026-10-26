@@ -9,6 +9,7 @@ import {
   IconFolderOpenOutlineRegular,
   IconNewChatOutlineRegular,
   IconPinFillRegular,
+  IconPanelLeftOutlineRegular,
   IconPinOutlineRegular,
   IconPlusOutlineRegular,
   IconProjectAddOutlineRegular,
@@ -106,6 +107,7 @@ export interface AssistantMenuEntry {
     | 'new-thread-folder'
     | 'checkpoint'
     | 'settings'
+    | 'detail'
     | 'pin'
     | 'group'
     | 'coordinator'
@@ -140,6 +142,9 @@ export function assistantMenuEntries(
     },
     { id: 'checkpoint', label: '检查点与交接', icon: <IconChecklistOutlineRegular size={14} /> },
     { id: 'settings', label: '助手设置', icon: <IconEditOutlineRegular size={14} /> },
+    // Coexists with the dialog above: the same row can open as a right-Sidebar
+    // page, and 助手设置 keeps working exactly as before.
+    { id: 'detail', label: '在面板中打开', icon: <IconPanelLeftOutlineRegular size={14} /> },
     {
       id: 'pin',
       label: pinned ? '取消置顶' : '置顶',
@@ -190,9 +195,12 @@ function useStewardHost(): HTMLElement | undefined {
 export function AssistantSidebarSection({
   openSession,
   pickWorkspace,
+  onOpenDetail,
 }: {
   openSession: (sessionId: string) => void
   pickWorkspace: () => Promise<WorkspaceChoice | null>
+  /** Open the row's detail on the host's right Sidebar; false when it refused. */
+  onOpenDetail?: (assistantId: string) => boolean
 }): JSX.Element {
   const { selectedAssistantId } = useAgentTeamUi()
   const [instances, setInstances] = useState<AssistantInstanceView[]>([])
@@ -842,6 +850,13 @@ export function AssistantSidebarSection({
               setMenuOpenId(undefined)
               if (id === 'checkpoint') openCheckpoint(instance)
               else if (id === 'settings') openSettings(instance)
+              else if (id === 'detail') {
+                // The pane is the host's; refusing means no Session surface is
+                // mounted, which the row reports instead of going quietly dead.
+                if (onOpenDetail?.(instance.id) === false) {
+                  setError('右侧面板只能在会话中打开：请先打开一个助手会话')
+                }
+              }
               else if (id === 'pin') void togglePin(instance)
               else if (id === 'group') {
                 setGroupDialog({

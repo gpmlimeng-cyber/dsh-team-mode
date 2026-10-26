@@ -9,6 +9,14 @@ import {
   type WorkspaceChoice,
 } from './components.js'
 import { SidebarPortal, useSurfaceMode } from './sidebar.js'
+import {
+  AssistantDetailBody,
+  DETAIL_TAB_ID,
+  DETAIL_TAB_KIND,
+  DETAIL_TAB_TITLE,
+  openAssistantDetail,
+  type DetailSidebar,
+} from './assistant-detail.js'
 import { TeamMainAgentPanel } from './team-main-agent.js'
 import {
   closeTeamPanel,
@@ -96,6 +104,25 @@ function useConversationSessionId(): string | undefined {
 
 export function apply(ctx: AgentTeamClientContext): void {
   installTeamLocale(ctx as unknown as TeamLocaleContext)
+  // The assistant detail lives on the host's native right Sidebar: one page
+  // type plus its body. Both registrations are optional-scoped — a build without
+  // `sidebarRightTabs` contributes nothing and the settings dialog stays the only
+  // entry — and the service reference is captured here so the row menu can open
+  // the tab without importing the host's package at run time.
+  let sidebarRight: DetailSidebar | undefined
+  ctx.inject(['sidebarRight', 'sidebarRightTabs'], native => {
+    sidebarRight = native.sidebarRight
+    native.effect(() => native.sidebarRightTabs.register({
+      id: DETAIL_TAB_ID,
+      kind: DETAIL_TAB_KIND,
+      title: () => DETAIL_TAB_TITLE,
+    }), 'assistant detail tab type')
+    native.slots.inject('sidebar.right.pane.tab', () => native.slots.register({
+      name: 'sidebar.right.pane.tab',
+      // The seat dispatches by the type's `id`, not by `kind`.
+      key: DETAIL_TAB_ID,
+    }, AssistantDetailBody))
+  })
   // Slot names for the conversation package are shipped without .d.ts in this
   // installation; the runtime catalog still validates them. Keep the loose
   // face local to the two conversation-view registrations.
@@ -174,6 +201,7 @@ export function apply(ctx: AgentTeamClientContext): void {
         openTeamPage={openTeamPage}
         onOpenNativeLanding={openNativeLanding}
         pickWorkspace={pickWorkspace}
+        openAssistantDetail={assistantId => openAssistantDetail(sidebarRight, assistantId)}
       />
     </>
   )
