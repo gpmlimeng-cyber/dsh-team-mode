@@ -1276,7 +1276,7 @@ export function SidebarPortal({
       let width = columnWidth
         ?? (rect.width > 32 ? rect.width - 32 : Math.min(240, window.innerWidth - 32))
       if (toggleRect !== undefined && toggleRect.width > 0) {
-        width = Math.min(width, toggleRect.left - left - 8)
+        width = Math.min(width, toggleRect.left - left - 20)
       }
       element.style.left = `${left}px`
       // Keep the fixed switch inside the visible sidebar box: on mobile the
@@ -1301,11 +1301,13 @@ export function SidebarPortal({
       element.style.visibility = 'visible'
     }
 
-    /** Lay the pinned BOT row exactly over the shipped 新会话 button box. */
+    /** Lay the pinned BOT row over 新会话, or over the visible team column when
+     * the mobile shell hides that button. */
     const ensureSteward = (): void => {
       const newSession = document.querySelector<HTMLElement>('[class*="_newSession"]')
+      const teamHost = document.getElementById(SIDEBAR_HOST_ID)
       let element = document.getElementById(STEWARD_HOST_ID)
-      if (getSurfaceMode() !== 'team' || newSession === null) {
+      if (getSurfaceMode() !== 'team' || (newSession === null && teamHost === null)) {
         element?.remove()
         return
       }
@@ -1317,10 +1319,20 @@ export function SidebarPortal({
         element.style.zIndex = '5'
         document.body.append(element)
       }
-      const rect = newSession.getBoundingClientRect()
-      element.style.left = `${Math.round(rect.left)}px`
-      element.style.top = `${Math.round(rect.top)}px`
-      element.style.width = `${Math.round(rect.width)}px`
+      const newSessionRect = newSession?.getBoundingClientRect()
+      if (newSessionRect !== undefined && newSessionRect.width > 0) {
+        element.style.left = `${Math.round(newSessionRect.left)}px`
+        element.style.top = `${Math.round(newSessionRect.top)}px`
+        element.style.width = `${Math.round(newSessionRect.width)}px`
+      } else if (teamHost !== null) {
+        const teamRect = teamHost.getBoundingClientRect()
+        const visibleLogo = Array.from(document.querySelectorAll<HTMLElement>('[class*="_logoRow"]'))
+          .map(row => row.getBoundingClientRect())
+          .find(box => box.width > 0 && box.height > 0)
+        element.style.left = `${Math.round(teamRect.left)}px`
+        element.style.top = `${Math.round(visibleLogo === undefined ? Math.max(64, teamRect.top - 48) : visibleLogo.bottom + 8)}px`
+        element.style.width = `${Math.round(teamRect.width)}px`
+      }
       // Height is the row's own: it has to read like a 单聊 assistant row, not
       // like the 新会话 button it is pinned over.
       element.style.height = ''
