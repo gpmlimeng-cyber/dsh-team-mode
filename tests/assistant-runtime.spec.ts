@@ -749,7 +749,8 @@ describe('AssistantRuntime', () => {
     expect(mainPrompt).toContain('assistant_memory_write')
     expect(mainPrompt).toContain('Compare vendors')
 
-    // Only the memory and task sections differ; identity and coordinator match.
+    // Only the memory and task sections differ; identity matches, and a
+    // non-coordinator's coordinator section is empty on both.
     const mainSections = sectionsOf(h.handles[0])
     const threadSections = sectionsOf(h.handles[1])
     for (const suffix of ['assistant-identity', 'assistant-coordinator']) {
@@ -757,6 +758,50 @@ describe('AssistantRuntime', () => {
       const thread = [...threadSections].find(([name]) => name.endsWith(suffix))?.[1]
       expect(thread).toBe(main)
     }
+  })
+
+  it('keeps coordinator duties on the main Session only', async () => {
+    const h = createHarness({ coordinator: true })
+    h.teamRows.push(coordinatorTeam())
+
+    await h.runtime.ensureInstance('instance-1')
+    await h.runtime.createAssistantThread('instance-1')
+
+    const coordinatorPrompt = (record: AgentRecord | undefined): string => {
+      const section = (record?.section.mock.calls ?? [])
+        .map(call => call[0] as { name: string; text: () => string })
+        .find(candidate => candidate.name.includes('assistant-coordinator'))
+      return section?.text() ?? ''
+    }
+
+    const main = coordinatorPrompt(h.handles[0])
+    expect(main).toContain('Alpha [active]: Leader Alice')
+    expect(main).toContain('Coordinator duties:')
+    expect(main).toContain('team_send_message')
+
+    // The thread names no team tool and repeats no duty: it cannot run either.
+    const thread = coordinatorPrompt(h.handles[1])
+    expect(thread).not.toContain('team_mode_')
+    expect(thread).not.toContain('team_send_message')
+    expect(thread).not.toContain('Coordinator duties:')
+    expect(thread).not.toContain('Leader Alice')
+    expect(thread).toBe(
+      'You are the workspace coordinator, but coordinator duties run in your main Session. '
+      + 'This is an additional conversation of the same assistant.',
+    )
+  })
+
+  it('leaves the coordinator section empty on a non-coordinator thread', async () => {
+    const h = createHarness()
+    h.teamRows.push(coordinatorTeam())
+
+    await h.runtime.ensureInstance('instance-1')
+    await h.runtime.createAssistantThread('instance-1')
+
+    const coordinatorSection = (h.handles[1]?.section.mock.calls ?? [])
+      .map(call => call[0] as { name: string; text: () => string })
+      .find(candidate => candidate.name.includes('assistant-coordinator'))
+    expect(coordinatorSection?.text()).toBe('')
   })
 
   it('binds an explicit working directory to a thread Session', async () => {

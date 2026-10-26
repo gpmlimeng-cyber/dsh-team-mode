@@ -1145,10 +1145,16 @@ export class AssistantRuntime {
    * empty section contributes nothing to the rendered prompt, so a
    * non-coordinator Session assembles exactly what it did before, while a
    * coordinator handover reaches the next turn without a Session restart.
+   *
+   * A thread gets no roster or duties: those duties name team tools a thread
+   * does not register, so it carries one line of fact instead.
    */
-  private coordinatorPromptFor(assistantId: string): string {
+  private coordinatorPromptFor(assistantId: string, role: 'main' | 'thread'): string {
     const instance = this.service.getAssistantInstance(assistantId)
     if (!isCoordinatorInstance(instance)) return ''
+    if (role === 'thread') {
+      return 'You are the workspace coordinator, but coordinator duties run in your main Session. This is an additional conversation of the same assistant.'
+    }
     return coordinatorPrompt(
       this.service.listTeams().items
         .filter(team => team.workspaceId === instance.workspaceId),
@@ -1297,7 +1303,7 @@ export class AssistantRuntime {
       agentCtx.systemPrompt.section({
         name: `dsh-team-mode:assistant-coordinator:${instance.id}`,
         order: 12,
-        text: () => this.coordinatorPromptFor(id),
+        text: () => this.coordinatorPromptFor(id, role),
       })
       this.ctx.permissionPresets.set(agent.session, snapshot.permissionPresetId)
       // Task and memory tools act as the main Session; a thread has no identity
