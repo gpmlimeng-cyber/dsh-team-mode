@@ -625,11 +625,11 @@ export function SidebarTeamSection({
               return (
                 <div key={team.id} className={css.sidebarTeamGroup}>
                   <div
-                    className={`${css.sidebarTeamRowWrap} ${teamActive ? css.sidebarTeamRowWrapActive : ''} ${rowMenuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
+                    className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamRowWrapTwoLine} ${teamActive ? css.sidebarTeamRowWrapActive : ''} ${rowMenuOpen ? css.sidebarTeamRowWrapMenuOpen : ''}`}
                   >
                     <button
                       type="button"
-                      className={css.sidebarTeamRow}
+                      className={`${css.sidebarTeamRow} ${css.sidebarTeamRowTwoLine}`}
                       onClick={() => { openTeam(team) }}
                       aria-current={teamCurrent ? 'page' : undefined}
                       title={`${team.name} · ${statusText}`}
@@ -659,6 +659,7 @@ export function SidebarTeamSection({
                           )}
                           <span className={css.sidebarTeamTime}>{relativeTime(team.updatedAt)}</span>
                         </span>
+                        <span className={css.sidebarTeamSubtitle} title={statusText}>{statusText}</span>
                       </span>
                       {summary.waiting > 0
                         ? (
