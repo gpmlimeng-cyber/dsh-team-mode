@@ -519,7 +519,7 @@ export function SidebarTeamSection({
             onClick={() => { toggleRoster(team.id) }}
           >
             <IconChevronRightOutlineRegular
-              size={12}
+              size={14}
               className={`${css.sidebarTeamExpandChevron} ${rosterOpen ? css.sidebarTeamExpandChevronOpen : ''}`}
             />
           </button>
