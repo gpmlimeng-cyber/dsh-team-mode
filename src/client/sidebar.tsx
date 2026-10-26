@@ -6,6 +6,7 @@ import {
   IconChecklistOutlineRegular,
   IconChevronRightOutlineRegular,
   IconCheckOutlineRegular,
+  IconChevronDownOutlineRegular,
   IconChevronsUpDownOutlineRegular,
   IconClockOutlineRegular,
   IconCloseFillRegular,
@@ -127,9 +128,9 @@ export function useSurfaceMode(): SurfaceMode {
 }
 
 /**
- * Brand-shaped mode control, modelled on Codex: the current surface is plain
- * bold text with a caret, and choosing happens in a small card with two-line
- * rows and a check on the active one.
+ * Brand-shaped mode control: the current surface is plain text with a caret, so
+ * the brand row reads as one wordmark rather than as a form control. Choosing a
+ * mode happens in a small popover list.
  */
 function SurfaceModeSwitch({
   mode,
@@ -158,8 +159,8 @@ function SurfaceModeSwitch({
   }, [open])
 
   const options = [
-    { value: 'native' as const, label: 'DSH', hint: '原生界面' },
-    { value: 'team' as const, label: 'BOT', hint: '团队模式' },
+    { value: 'native' as const, label: 'DSH', hint: 'DSH 原生界面' },
+    { value: 'team' as const, label: 'BOT', hint: 'BOT 团队模式' },
   ]
   const current = options.find(option => option.value === mode) ?? options[0]!
 
@@ -175,7 +176,7 @@ function SurfaceModeSwitch({
         onClick={() => { setOpen(value => !value) }}
       >
         <span className={css.brandModeLabel}>{current.label}</span>
-        <IconChevronsUpDownOutlineRegular className={css.brandModeCaret} />
+        <IconChevronDownOutlineRegular className={css.brandModeCaret} />
       </button>
       {open && (
         <div className={css.brandModeMenu} role="listbox" aria-label="界面模式">
@@ -808,9 +809,160 @@ export function SidebarTeamSection({
 
 
 const SIDEBAR_HOST_ID = 'dsh-team-mode-sidebar-host'
-/** Body-level mount for the mode control pinned over the shipped brand row. */
+/** Mount point for the DSH/BOT switch that replaces the shipped brand row. */
 const BRAND_HOST_ID = 'dsh-team-mode-brand-host'
+/** Mount point for the BOT footer actions that replace native sidebar entries. */
+const BOT_FOOTER_HOST_ID = 'dsh-team-mode-footer-host'
+/** Marks a native node this plugin hid for the BOT surface. */
+const BOT_HIDDEN_ATTR = 'data-dsh-bot-hidden'
+/** Marks the account row this plugin stretched to fill the footer. */
+const BOT_GROWN_ATTR = 'data-dsh-bot-grow'
 
+/** One top-menu row of the shipped panel list, matched by its accessible name. */
+function findPanelRow(label: string): HTMLElement | null {
+  const list = document.querySelector<HTMLElement>('[class*="_panelList"]')
+  if (list === null) return null
+  return Array.from(list.querySelectorAll<HTMLElement>('button, [role="button"]'))
+    .find(node => (node.getAttribute('aria-label') ?? node.textContent ?? '').trim() === label)
+    ?? null
+}
+
+/** Sidebar entries that move into the BOT footer instead of staying in the list. */
+const BOT_FOOTER_ENTRIES = [
+  { key: 'plugins', title: '插件', find: (): HTMLElement | null => findPanelRow('插件') },
+  { key: 'schedules', title: '自动化任务', find: (): HTMLElement | null => findPanelRow('自动化任务') },
+] as const
+
+/** Entries the BOT surface drops entirely (no footer replacement). */
+const BOT_DROPPED_ENTRIES = [
+  { key: 'new-session', find: (): HTMLElement | null => document.querySelector<HTMLElement>('[class*="_newSession"]') },
+] as const
+
+/** The shipped market entry that the BOT footer replaces. */
+function findMarketEntry(foot: HTMLElement): HTMLElement | null {
+  const nodes = Array.from(foot.querySelectorAll<HTMLElement>('button, [role="button"]'))
+  return nodes.find((node) => {
+    if (node.closest(`#${BOT_FOOTER_HOST_ID}`) !== null) return false
+    const name = [
+      node.getAttribute('aria-label') ?? '',
+      node.getAttribute('title') ?? '',
+      (node.textContent ?? '').trim(),
+    ].join(' ')
+    return /插件广场|市场|market/i.test(name)
+  }) ?? null
+}
+
+function restoreBotSidebar(): void {
+  for (const node of Array.from(document.querySelectorAll<HTMLElement>(`[${BOT_HIDDEN_ATTR}]`))) {
+    node.style.display = ''
+    node.removeAttribute(BOT_HIDDEN_ATTR)
+  }
+  for (const node of Array.from(document.querySelectorAll<HTMLElement>(`[${BOT_GROWN_ATTR}]`))) {
+    node.style.flex = ''
+    node.style.minWidth = ''
+    node.removeAttribute(BOT_GROWN_ATTR)
+  }
+  document.getElementById(BOT_FOOTER_HOST_ID)?.remove()
+}
+
+/**
+ * BOT surface: the native "新会话" and "自动化任务" entries leave the list and
+ * become footer actions next to the account row, and the shipped market entry is
+ * dropped. DSH surface restores every node exactly as it was.
+ *
+ * Proxy buttons forward a real `.click()` to the native control, so no plugin
+ * logic is duplicated and nothing here can break the native action itself.
+ */
+function syncBotSidebar(mode: SurfaceMode): void {
+  if (mode !== 'team') {
+    restoreBotSidebar()
+    return
+  }
+  // Account row first, actions last: the account stays where the shipped UI puts
+  // it (left) and the BOT actions take the free space on the right. Appending to
+  // the account row makes the order deterministic instead of depending on where
+  // the market entry happens to sit.
+  const foot = document.querySelector<HTMLElement>('[class*="_footArea"]')
+  const market = foot === null ? null : findMarketEntry(foot)
+  const row = document.querySelector<HTMLElement>('[class*="_settingsArea"]')
+    ?? market?.parentElement
+    ?? document.querySelector<HTMLElement>('[class*="_footerActions"]')
+  if (row === null) return
+
+  let host = document.getElementById(BOT_FOOTER_HOST_ID)
+  if (host === null || !host.isConnected) {
+    host = document.createElement('div')
+    host.id = BOT_FOOTER_HOST_ID
+    host.className = css.botFooterHost ?? ''
+    row.append(host)
+  } else if (host.parentElement !== row) {
+    row.append(host)
+  }
+
+  // The account center takes the row's remaining width; the actions keep their
+  // intrinsic size at the right edge.
+  const account = Array.from(row.children)
+    .find(child => (child as HTMLElement).id !== BOT_FOOTER_HOST_ID) as HTMLElement | undefined
+  if (account !== undefined) {
+    account.style.flex = '1 1 auto'
+    account.style.minWidth = '0'
+    account.setAttribute(BOT_GROWN_ATTR, '')
+  }
+
+  for (const entry of BOT_FOOTER_ENTRIES) {
+    const native = entry.find()
+    if (native === null) continue
+    if (host.querySelector(`[data-dsh-bot-action="${entry.key}"]`) === null) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = css.botFooterAction ?? ''
+      button.setAttribute('data-dsh-bot-action', entry.key)
+      button.title = entry.title
+      button.setAttribute('aria-label', entry.title)
+      const icon = native.querySelector('svg')
+      if (icon !== null) {
+        try {
+          button.append(icon.cloneNode(true))
+        } catch {
+          // An unclonable icon degrades to a text button.
+          button.textContent = entry.title
+        }
+      } else {
+        button.textContent = entry.title
+      }
+      button.addEventListener('click', () => { native.click() })
+      host.append(button)
+    }
+    native.style.display = 'none'
+    native.setAttribute(BOT_HIDDEN_ATTR, '')
+  }
+
+  for (const entry of BOT_DROPPED_ENTRIES) {
+    const native = entry.find()
+    if (native === null) continue
+    native.style.display = 'none'
+    native.setAttribute(BOT_HIDDEN_ATTR, '')
+  }
+
+  if (market !== null) {
+    market.style.display = 'none'
+    market.setAttribute(BOT_HIDDEN_ATTR, '')
+  }
+
+  // One bottom line: the shipped foot stacks `_footerActions` above the account
+  // row, so an emptied actions row would leave a second, blank line behind.
+  const actions = document.querySelector<HTMLElement>('[class*="_footerActions"]')
+  if (actions !== null && actions.childElementCount > 0) {
+    const visible = Array.from(actions.children).some((child) => {
+      const element = child as HTMLElement
+      return element.style.display !== 'none' && (element.textContent ?? '').trim() !== ''
+    })
+    if (!visible) {
+      actions.style.display = 'none'
+      actions.setAttribute(BOT_HIDDEN_ATTR, '')
+    }
+  }
+}
 /**
  * Additive mount for the “群聊” and “单聊” sections above the shipped Workspace
  * browser. The `sidebar.workspaces` slot is single and its occupant owns a
@@ -835,6 +987,10 @@ export function SidebarPortal({
   // without remounting the plugin or touching Team data.
   useEffect(() => {
     document.documentElement.dataset.dshSurfaceMode = mode
+    // BOT mode moves two native entries into the footer and drops the shipped
+    // market entry; DSH mode restores them. Runs on every switch, and again from
+    // the sidebar observer in case a React render rewrites the footer.
+    syncBotSidebar(mode)
     return () => {
       if (document.documentElement.dataset.dshSurfaceMode === mode) {
         delete document.documentElement.dataset.dshSurfaceMode
@@ -890,17 +1046,20 @@ export function SidebarPortal({
     )
 
     /**
-     * Pin the mode control over the shipped brand row.
+     * Replace the shipped brand row content with the DSH/BOT switch.
      *
-     * The row is React-owned: a node inserted into it is dropped on the next
-     * render, taking the control with it. The mount lives on <body> and is
-     * positioned over the empty row instead.
+     * The row itself stays — it carries the fixed-header spacing above the
+     * scrolling region. Only the original brand button is hidden, and our host
+     * is mounting point for the switch.
      */
     const ensureBrand = (): void => {
       const logoRow = document.querySelector<HTMLElement>('[class*="_logoRow"]')
       if (logoRow === null) return
       const brand = logoRow.querySelector<HTMLElement>('[class*="_brand"]')
       if (brand !== null) brand.style.display = 'none'
+      // The shipped brand row is React-owned: a node inserted into it is removed
+      // on its next render, taking the portalled control with it. The host lives
+      // on <body> instead and is positioned over the empty row.
       let element = document.getElementById(BRAND_HOST_ID)
       if (element === null || !element.isConnected) {
         element = document.createElement('div')
@@ -920,6 +1079,7 @@ export function SidebarPortal({
 
     const ensure = (): void => {
       ensureBrand()
+      syncBotSidebar(getSurfaceMode())
       const anchor = anchorElement()
       if (anchor === null) return
       // The team section belongs inside the shipped WorkspaceBrowser root,
