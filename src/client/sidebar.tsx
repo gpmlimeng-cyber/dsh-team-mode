@@ -127,6 +127,44 @@ export function useSurfaceMode(): SurfaceMode {
   return useSyncExternalStore(subscribeSurfaceMode, getSurfaceMode, () => 'team' as const)
 }
 
+/** Click the shipped control whose accessible name matches, so DeepSeek mode
+ *  behaves exactly like the native UI instead of reimplementing it. */
+function clickNativeAction(pattern: RegExp): boolean {
+  const scope = document.querySelector<HTMLElement>('[class*="_regionArea"]')
+    ?? document.querySelector<HTMLElement>('[class*="_root"]')
+  if (scope === null) return false
+  const target = Array.from(scope.querySelectorAll<HTMLElement>('button, [role="button"]'))
+    .find((node) => {
+      const name = `${node.getAttribute('aria-label') ?? ''} ${node.getAttribute('title') ?? ''}`
+      return pattern.test(name)
+    })
+  if (target === undefined) return false
+  target.click()
+  return true
+}
+
+/** DeepSeek mode: start a native 新会话. */
+function startNativeSession(): void {
+  document.querySelector<HTMLElement>('[class*="_newSession"]')?.click()
+}
+
+/** DeepBot mode: open the steward (大管家) assistant's session. */
+async function startStewardSession(open: (sessionId: string) => void): Promise<void> {
+  try {
+    const value = await callAgentTeam('assistant.instance.list')
+    const instances = value.items
+    const steward = instances.find(entry => (entry.assistantSnapshot.name ?? '').includes('管家'))
+      ?? instances.find(entry => entry.templateId === 'builtin-chief')
+      ?? instances[0]
+    if (steward === undefined) return
+    const result = await callAgentTeam('assistant.instance.ensure', { id: steward.id })
+    open(result.sessionId)
+  } catch {
+    // Opening a session is user-visible when it fails; a silent retry is worse
+    // than leaving the sidebar untouched.
+  }
+}
+
 /**
  * Brand-shaped mode control: the current surface is bold text with a caret, so
  * the row reads as the product mark. The popover is the shipped `Menu`
@@ -1610,7 +1648,11 @@ export function SidebarPortal({
                 className={css.brandAction}
                 aria-label="搜索"
                 title="搜索"
-                onClick={() => { setSearchOpen(true) }}
+                onClick={() => {
+                  // DeepSeek mode forwards to the shipped search; DeepBot expands ours.
+                  if (mode === 'native' && clickNativeAction(/搜索|search/i)) return
+                  setSearchOpen(true)
+                }}
               >
                 <IconSearchOutlineRegular />
               </button>
@@ -1620,6 +1662,8 @@ export function SidebarPortal({
                 aria-label="筛选"
                 title="筛选"
                 onClick={() => {
+                  // DeepSeek mode opens the shipped grouping/sort/filter menu.
+                  if (mode === 'native' && clickNativeAction(/筛选|排序|分组|filter|sort/i)) return
                   window.dispatchEvent(new CustomEvent(SIDEBAR_MENU_EVENT))
                 }}
               >
@@ -1630,7 +1674,13 @@ export function SidebarPortal({
                 className={css.brandAction}
                 aria-label="新建"
                 title="新建"
-                onClick={openCreateTeamDialog}
+                onClick={() => {
+                  if (mode === 'native') {
+                    startNativeSession()
+                    return
+                  }
+                  void startStewardSession(openSession)
+                }}
               >
                 <IconPlusOutlineRegular />
               </button>
