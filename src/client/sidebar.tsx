@@ -1316,9 +1316,14 @@ export function SidebarPortal({
       }
       const shadeTop = element.getBoundingClientRect()
       shade.style.left = `${Math.round(sidebarRect.left)}px`
-      shade.style.top = '0px'
+      shade.style.top = `${Math.round(Math.max(0, shadeTop.top - 8))}px`
       shade.style.width = `${Math.round(sidebarRect.width)}px`
-      shade.style.height = `${Math.max(0, Math.round(shadeTop.bottom + 8))}px`
+      shade.style.height = `${Math.round(shadeTop.height + 16)}px`
+      // The native collapse control must sit above the header band too.
+      row.style.position = 'relative'
+      row.style.zIndex = '2147483002'
+      row.style.pointerEvents = 'none'
+      if (toggle !== null) toggle.style.pointerEvents = 'auto'
     }
 
     /** Lay the pinned BOT row over 新会话, or over the visible team column when
