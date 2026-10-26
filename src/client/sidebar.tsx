@@ -1251,9 +1251,21 @@ export function SidebarPortal({
           columnWidth = Math.max(0, teamRect.width - brandColumnOffset)
         }
       }
-      element.style.left = `${Math.round(columnLeft ?? rect.left + 16)}px`
-      element.style.top = `${Math.round(rect.top + rect.height / 2)}px`
-      element.style.width = `${Math.round(columnWidth ?? Math.max(0, rect.width - 32))}px`
+      const left = Math.round(columnLeft ?? rect.left + 16)
+      // Keep the collapse toggle on the same row usable: reserve its box plus
+      // a gap instead of letting the switch overlay it (mobile especially).
+      const toggle = logoRow.querySelector<HTMLElement>('[class*="_toggle"]')
+      const toggleRect = toggle?.getBoundingClientRect()
+      let width = columnWidth ?? Math.max(0, rect.width - 32)
+      if (toggleRect !== undefined && toggleRect.width > 0) {
+        width = Math.min(width, toggleRect.left - left - 8)
+      }
+      element.style.left = `${left}px`
+      // The sidebar can scroll its middle region; the brand row scrolls with
+      // it. Pin the fixed switch to the top so it cannot disappear above the
+      // viewport while the list is scrolled.
+      element.style.top = `${Math.max(36, Math.round(rect.top + rect.height / 2))}px`
+      element.style.width = `${Math.max(0, Math.round(width))}px`
       element.style.visibility = rect.width > 0 && rect.height > 0 ? 'visible' : 'hidden'
     }
 

@@ -119,6 +119,8 @@ describe('sidebar surface switch', () => {
     // The rail is narrow on mobile and widens into the drawer without a
     // window resize; the brand row itself must be observed.
     expect(sidebar).toContain('brandResize.observe(logoRow)')
+    expect(sidebar).toContain('Math.max(36, Math.round(rect.top + rect.height / 2))')
+    expect(sidebar).toContain('toggleRect.left - left - 8')
   })
 
   it('renders the pinned coordinator with the real assistant row', () => {
