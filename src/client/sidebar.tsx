@@ -125,7 +125,7 @@ export function useSurfaceMode(): SurfaceMode {
   return useSyncExternalStore(subscribeSurfaceMode, getSurfaceMode, () => 'team' as const)
 }
 
-/** Compact always-visible switch; native mode must still be able to return to team. */
+/** Compact always-visible switch; DSH mode must still be able to return to BOT. */
 function SurfaceModeSwitch({
   mode,
   onChange,
@@ -134,24 +134,26 @@ function SurfaceModeSwitch({
   onChange: (mode: SurfaceMode) => void
 }): JSX.Element {
   return (
-    <div className={css.surfaceModeSwitch} role="group" aria-label="界面模式" data-dsh-surface-switch>
+    <div className={css.surfaceModeSwitch} role="group" aria-label="DSH / BOT" data-dsh-surface-switch>
       <button
         type="button"
         className={`${css.surfaceModeButton} ${mode === 'native' ? css.surfaceModeButtonActive : ''}`}
         aria-pressed={mode === 'native'}
         data-dsh-surface-mode="native"
+        title="DSH 原生界面"
         onClick={() => { onChange('native') }}
       >
-        原生
+        DSH
       </button>
       <button
         type="button"
         className={`${css.surfaceModeButton} ${mode === 'team' ? css.surfaceModeButtonActive : ''}`}
         aria-pressed={mode === 'team'}
         data-dsh-surface-mode="team"
+        title="BOT 团队模式"
         onClick={() => { onChange('team') }}
       >
-        团队
+        BOT
       </button>
     </div>
   )
@@ -760,6 +762,108 @@ export function SidebarTeamSection({
 
 
 const SIDEBAR_HOST_ID = 'dsh-team-mode-sidebar-host'
+/** Mount point for the DSH/BOT switch that replaces the shipped brand row. */
+const BRAND_HOST_ID = 'dsh-team-mode-brand-host'
+/** Mount point for the BOT footer actions that replace native sidebar entries. */
+const BOT_FOOTER_HOST_ID = 'dsh-team-mode-footer-host'
+/** Marks a native node this plugin hid for the BOT surface. */
+const BOT_HIDDEN_ATTR = 'data-dsh-bot-hidden'
+
+/** Sidebar entries that move into the BOT footer instead of staying in the list. */
+const BOT_FOOTER_ENTRIES = [
+  {
+    key: 'new-session',
+    title: '新会话',
+    find: (): HTMLElement | null => document.querySelector<HTMLElement>('[class*="_newSession"]'),
+  },
+  {
+    key: 'schedules',
+    title: '自动化任务',
+    find: (): HTMLElement | null => {
+      const list = document.querySelector<HTMLElement>('[class*="_panelList"]')
+      if (list === null) return null
+      return Array.from(list.querySelectorAll<HTMLElement>('button, [role="button"]'))
+        .find(node => (node.getAttribute('aria-label') ?? node.textContent ?? '').trim() === '自动化任务')
+        ?? null
+    },
+  },
+] as const
+
+/** The shipped market entry that the BOT footer replaces. */
+function findMarketEntry(footer: HTMLElement): HTMLElement | null {
+  return Array.from(footer.querySelectorAll<HTMLElement>('button, [role="button"]'))
+    .find(node => /插件广场|市场|market/i.test(
+      `${node.getAttribute('aria-label') ?? ''} ${node.getAttribute('title') ?? ''}`,
+    ))
+    ?? null
+}
+
+function restoreBotSidebar(): void {
+  for (const node of Array.from(document.querySelectorAll<HTMLElement>(`[${BOT_HIDDEN_ATTR}]`))) {
+    node.style.display = ''
+    node.removeAttribute(BOT_HIDDEN_ATTR)
+  }
+  document.getElementById(BOT_FOOTER_HOST_ID)?.remove()
+}
+
+/**
+ * BOT surface: the native "新会话" and "自动化任务" entries leave the list and
+ * become footer actions next to the account row, and the shipped market entry is
+ * dropped. DSH surface restores every node exactly as it was.
+ *
+ * Proxy buttons forward a real `.click()` to the native control, so no plugin
+ * logic is duplicated and nothing here can break the native action itself.
+ */
+function syncBotSidebar(mode: SurfaceMode): void {
+  if (mode !== 'team') {
+    restoreBotSidebar()
+    return
+  }
+  const footer = document.querySelector<HTMLElement>('[class*="_footerActions"]')
+  if (footer === null) return
+
+  let host = document.getElementById(BOT_FOOTER_HOST_ID)
+  if (host === null || !host.isConnected) {
+    host = document.createElement('div')
+    host.id = BOT_FOOTER_HOST_ID
+    host.className = css.botFooterHost ?? ''
+    footer.insertBefore(host, footer.firstChild)
+  }
+
+  for (const entry of BOT_FOOTER_ENTRIES) {
+    const native = entry.find()
+    if (native === null) continue
+    if (host.querySelector(`[data-dsh-bot-action="${entry.key}"]`) === null) {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = css.botFooterAction ?? ''
+      button.setAttribute('data-dsh-bot-action', entry.key)
+      button.title = entry.title
+      button.setAttribute('aria-label', entry.title)
+      const icon = native.querySelector('svg')
+      if (icon !== null) {
+        try {
+          button.append(icon.cloneNode(true))
+        } catch {
+          // An unclonable icon degrades to a text button.
+          button.textContent = entry.title
+        }
+      } else {
+        button.textContent = entry.title
+      }
+      button.addEventListener('click', () => { native.click() })
+      host.append(button)
+    }
+    native.style.display = 'none'
+    native.setAttribute(BOT_HIDDEN_ATTR, '')
+  }
+
+  const market = findMarketEntry(footer)
+  if (market !== null && !market.closest(`#${BOT_FOOTER_HOST_ID}`)) {
+    market.style.display = 'none'
+    market.setAttribute(BOT_HIDDEN_ATTR, '')
+  }
+}
 
 /**
  * Additive mount for the “群聊” and “单聊” sections above the shipped Workspace
@@ -778,12 +882,17 @@ export function SidebarPortal({
   onOpenNativeLanding?: () => void
 }): JSX.Element | null {
   const [host, setHost] = useState<HTMLElement>()
+  const [brandHost, setBrandHost] = useState<HTMLElement>()
   const mode = useSurfaceMode()
 
   // Expose the mode on <html> so CSS and DOM-level helpers can follow it
   // without remounting the plugin or touching Team data.
   useEffect(() => {
     document.documentElement.dataset.dshSurfaceMode = mode
+    // BOT mode moves two native entries into the footer and drops the shipped
+    // market entry; DSH mode restores them. Runs on every switch, and again from
+    // the sidebar observer in case a React render rewrites the footer.
+    syncBotSidebar(mode)
     return () => {
       if (document.documentElement.dataset.dshSurfaceMode === mode) {
         delete document.documentElement.dataset.dshSurfaceMode
@@ -838,7 +947,33 @@ export function SidebarPortal({
       document.querySelector('[data-slot="sidebar.workspaces"]') as HTMLElement | null
     )
 
+    /**
+     * Replace the shipped brand row content with the DSH/BOT switch.
+     *
+     * The row itself stays — it carries the fixed-header spacing above the
+     * scrolling region. Only the original brand button is hidden, and our host
+     * is mounting point for the switch.
+     */
+    const ensureBrand = (): void => {
+      const logoRow = document.querySelector<HTMLElement>('[class*="_logoRow"]')
+      if (logoRow === null) return
+      const brand = logoRow.querySelector<HTMLElement>('[class*="_brand"]')
+      if (brand !== null) brand.style.display = 'none'
+      const existing = document.getElementById(BRAND_HOST_ID)
+      if (existing !== null && existing.isConnected) {
+        if (existing.parentElement !== logoRow) logoRow.insertBefore(existing, logoRow.firstChild)
+        return
+      }
+      const element = document.createElement('div')
+      element.id = BRAND_HOST_ID
+      element.className = css.sidebarBrandHost ?? ''
+      logoRow.insertBefore(element, logoRow.firstChild)
+      setBrandHost(element)
+    }
+
     const ensure = (): void => {
+      ensureBrand()
+      syncBotSidebar(getSurfaceMode())
       const anchor = anchorElement()
       if (anchor === null) return
       // The team section belongs inside the shipped WorkspaceBrowser root,
@@ -1291,16 +1426,23 @@ export function SidebarPortal({
     }
   }, [])
 
-  return host === undefined ? null : createPortal(
+  return (
     <>
-      <SurfaceModeSwitch mode={mode} onChange={switchMode} />
-      {mode === 'team' && (
-        <>
-          <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
-          <AssistantSidebarSection openSession={openSession} />
-        </>
+      {brandHost !== undefined && createPortal(
+        <SurfaceModeSwitch mode={mode} onChange={switchMode} />,
+        brandHost,
       )}
-    </>,
-    host,
+      {host !== undefined && createPortal(
+        <>
+          {mode === 'team' && (
+            <>
+              <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
+              <AssistantSidebarSection openSession={openSession} />
+            </>
+          )}
+        </>,
+        host,
+      )}
+    </>
   )
 }

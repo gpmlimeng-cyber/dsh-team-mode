@@ -2993,8 +2993,71 @@ textarea.input {
   overflow: hidden;
 }
 
-/* Compact, always-visible 原生/团队 switch. It must stay usable in native
-   mode, which is the only plugin UI left on the sidebar in that mode. */
+/* Host for the DSH/BOT switch, mounted where the shipped brand row was. The
+   row keeps its own height so the fixed header spacing is unchanged. */
+.sidebarBrandHost {
+  box-sizing: border-box;
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+}
+
+.sidebarBrandHost .surfaceModeSwitch {
+  flex: 1 1 auto;
+  margin: 0;
+}
+
+/* BOT footer: 新会话 and 自动化任务 as icon actions, modelled on the shipped
+   market entry they sit next to. */
+.botFooterHost {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.botFooterAction {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+
+.botFooterAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.botFooterAction:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+.botFooterAction > svg {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* BOT mode shows the team sections only: the shipped Workspace browser keeps
+   its slot but its own header and session rows are hidden. The team host is the
+   WorkspaceBrowser root's first child, so every sibling after it is native. */
+html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
+  display: none;
+}
+
+/* Compact, always-visible DSH/BOT switch. It must stay usable in DSH mode,
+   which is the only plugin UI left on the sidebar in that mode. */
 .surfaceModeSwitch {
   box-sizing: border-box;
   display: flex;
