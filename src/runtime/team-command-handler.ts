@@ -361,6 +361,42 @@ export interface InboxInput {
 }
 
 /**
+ * Coordinator-only digest of one team other than the caller's. Counts only:
+ * the cross-team section summarizes, it never copies another team's rows.
+ */
+export interface TeamInboxTeamSummary {
+  team_id: string
+  team_name: string
+  /** Unowned, unblocked tasks: claimable work nobody is handling yet. */
+  ready: number
+  approvals: number
+  questions: number
+}
+
+export interface TeamInboxCrossTeamItem {
+  team_id: string
+  team_name: string
+  kind: 'ready_task' | 'approval' | 'question'
+  /** Task id for ready_task, interaction id otherwise. */
+  id: string
+  /** One-line label, truncated; never the full body. */
+  summary: string
+}
+
+/**
+ * The coordinator's view of the other teams' pending confirmations: approvals,
+ * questions and unowned ready tasks, with the source team and counts.
+ */
+export interface TeamInboxCrossTeam {
+  /** Teams with at least one pending item, sorted by name. */
+  teams: TeamInboxTeamSummary[]
+  /** Bounded one-line items across those teams, in the listed team order. */
+  items: TeamInboxCrossTeamItem[]
+  /** Matching items before the per-section cap. */
+  total: number
+}
+
+/**
  * Read-only member view over existing aggregates and the durable message log.
  * Sections are filled in this listed order; the 50-row budget is consumed in
  * the same order, so a full earlier section shrinks the later ones.
@@ -372,6 +408,12 @@ export interface TeamInboxResult {
   approvals: TeamInboxApproval[]
   /** Unread messages for this member beyond the ones returned above. */
   remaining_unread: number
+  /**
+   * Present only for the workspace coordinator: the other teams' pending
+   * confirmations, summarized. Absent for everyone else, so the member inbox
+   * keeps its single-team scope and shape.
+   */
+  cross_team?: TeamInboxCrossTeam
 }
 
 export interface SendMessageInput {
@@ -1580,13 +1622,91 @@ export class TeamCommandHandler {
     const unreadView = unread
       .slice(0, sizes.get('unread'))
       .map(message => this.messageView(team, message, slotId))
+    const crossTeam = this.crossTeamInbox(team, member, perSection)
     return {
       assigned: assignedView,
       ready: readyView,
       unread: unreadView,
       approvals: approvals.slice(0, sizes.get('approvals')),
       remaining_unread: Math.max(0, unread.length - unreadView.length),
+      ...(crossTeam === undefined ? {} : { cross_team: crossTeam }),
     }
+  }
+
+  /**
+   * The coordinator aggregates the other teams' pending confirmations; every
+   * other member keeps the single-team inbox. Identity comes from the caller's
+   * explicit Assistant instance link read live, so clearing or reassigning the
+   * coordinator narrows the very next inbox without restarting the Session.
+   * Summaries stay one line per item: the point is to see that another team is
+   * waiting, not to pull its mail, task bodies, or interaction text across.
+   */
+  private crossTeamInbox(
+    own: TeamAggregate,
+    member: TeamMemberSlot,
+    perSection: number,
+  ): TeamInboxCrossTeam | undefined {
+    const linked = member.assistantInstanceId
+    if (linked === undefined || this.service.getCoordinatorInstance()?.id !== linked) return undefined
+    const teams: TeamInboxTeamSummary[] = []
+    const items: TeamInboxCrossTeamItem[] = []
+    let total = 0
+    const others = this.service.listTeams().items
+      .filter(team => team.id !== own.id)
+      .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+    for (const team of others) {
+      // Same definition as the own-team ready section and team_mode_task_claim.
+      const ready = Object.values(team.tasks)
+        .filter(task => task.status === 'pending'
+          && task.ownerSlotId === undefined
+          && task.dependencyIds.length === 0)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
+      const approvals: Array<{ member: TeamMemberSlot; view: TeamInboxApproval }> = []
+      const questions: Array<{ member: TeamMemberSlot; view: Extract<PendingInteractionView, { kind: 'question' }> }> = []
+      for (const candidate of Object.values(team.members)) {
+        for (const view of this.port.pendingInteractions?.(candidate.sessionId) ?? []) {
+          if (view.kind === 'approval') approvals.push({ member: candidate, view })
+          else questions.push({ member: candidate, view })
+        }
+      }
+      const byId = <T extends { view: { id: string }; member: TeamMemberSlot }>(left: T, right: T): number =>
+        left.view.id.localeCompare(right.view.id) || left.member.id.localeCompare(right.member.id)
+      approvals.sort(byId)
+      questions.sort(byId)
+      const pending = ready.length + approvals.length + questions.length
+      if (pending === 0) continue
+      total += pending
+      teams.push({
+        team_id: team.id,
+        team_name: team.name,
+        ready: ready.length,
+        approvals: approvals.length,
+        questions: questions.length,
+      })
+      const base = { team_id: team.id, team_name: team.name }
+      for (const task of ready) {
+        items.push({ ...base, kind: 'ready_task', id: task.id, summary: inboxSummaryLine(task.title) })
+      }
+      for (const { member: owner, view } of approvals) {
+        items.push({
+          ...base,
+          kind: 'approval',
+          id: view.id,
+          summary: inboxSummaryLine(`${owner.displayName}: ${view.toolName}`),
+        })
+      }
+      for (const { member: asker, view } of questions) {
+        const asked = view.questions[0]
+        items.push({
+          ...base,
+          kind: 'question',
+          id: view.id,
+          summary: inboxSummaryLine(`${asker.displayName}: ${asked?.header ?? asked?.question ?? 'question'}`),
+        })
+      }
+    }
+    // The cross-team section is its own budget, capped like one inbox section.
+    return { teams, items: items.slice(0, perSection), total }
   }
 
   private messageView(team: TeamAggregate, message: TeamMessage, readerSlotId: string): TeamMessageView {
@@ -2129,6 +2249,12 @@ function shutdownKey(teamId: string, slotId: string): string {
 function isReadBy(message: TeamMessage, slotId: string): boolean {
   if ((message.readBy ?? []).includes(slotId)) return true
   return message.recipient.kind !== 'broadcast' && message.deliveryState === 'read'
+}
+
+/** Collapse one cross-team row to a single bounded line; never full text. */
+function inboxSummaryLine(value: string): string {
+  const line = value.replace(/\s+/g, ' ').trim()
+  return line.length > 120 ? `${line.slice(0, 120)}…` : line
 }
 
 function toAionTaskStatus(status: InternalTaskStatus): AionTaskStatus {

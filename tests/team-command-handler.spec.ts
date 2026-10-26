@@ -104,6 +104,10 @@ function harness() {
   const service = {
     config: { maxTeamTasks: 256, maxTeamMessageBytes: 64 * 1024 },
     getTeam: vi.fn((teamId: string) => requireAggregate(teamId)),
+    listTeams: vi.fn(() => ({ items: [...aggregates().values()], total: aggregates().size })),
+    // No coordinator by default: the last opener of the flag is on the service,
+    // so the harness models it here instead of on the member row.
+    getCoordinatorInstance: vi.fn((): { id: string; coordinator: boolean } | undefined => undefined),
     listMessages: vi.fn(() => ({
       items: messages.filter(message => message.teamId === team.id),
       total: messages.filter(message => message.teamId === team.id).length,
@@ -232,6 +236,11 @@ function harness() {
     mutate: (next: TeamAggregate) => {
       if (next.id === other.id) other = next
       else team = next
+    },
+    /** Point the workspace coordinator at one Assistant instance id. */
+    setCoordinator: (instanceId: string | undefined) => {
+      ;(service.getCoordinatorInstance as unknown as { mockReturnValue: (value: unknown) => void })
+        .mockReturnValue(instanceId === undefined ? undefined : { id: instanceId, coordinator: true })
     },
     messages,
     followup,
@@ -927,6 +936,146 @@ describe('TeamCommandHandler AionUi semantics', () => {
     )
     // No approvals provider (or a restarted runtime) degrades to an empty list.
     expect(commands.inbox(team().id, 'a').approvals).toEqual([])
+  })
+
+  it('keeps a non-coordinator inbox single-team even when other teams are waiting', async () => {
+    const { commands, team, otherTeam, port, mutate, setCoordinator } = harness()
+    const current = team()
+    mutate({
+      ...current,
+      members: {
+        ...current.members,
+        a: { ...current.members['a']!, assistantInstanceId: 'instance-a' },
+      },
+    })
+    // The linked instance exists, but a different one is the coordinator.
+    setCoordinator('instance-someone-else')
+    await commands.createTask(otherTeam().id, 'leader-2', { subject: 'Other team ready' })
+    ;(port as { pendingInteractions?: TeamCommandPort['pendingInteractions'] }).pendingInteractions =
+      sessionId => sessionId === 'session-leader-2'
+        ? [{ id: 'i1', kind: 'approval', approvalId: 'ap-1', toolName: 'bash' }]
+        : []
+
+    const inbox = commands.inbox(team().id, 'a')
+    // Compatibility: the four existing sections and the counter keep their shape.
+    expect(Object.keys(inbox).sort())
+      .toEqual(['approvals', 'assigned', 'ready', 'remaining_unread', 'unread'])
+    // Another team's pending work is invisible to a plain member.
+    expect(inbox.ready).toEqual([])
+    expect(inbox.approvals).toEqual([])
+  })
+
+  it('aggregates every other team\'s pending confirmations for the coordinator', async () => {
+    const { commands, team, otherTeam, messages, port, mutate, setCoordinator } = harness()
+    // The coordinator instance is linked to exactly one member of one team.
+    const linkCoordinator = () => {
+      const current = team()
+      mutate({
+        ...current,
+        members: {
+          ...current.members,
+          a: { ...current.members['a']!, assistantInstanceId: 'instance-coordinator' },
+        },
+      })
+      setCoordinator('instance-coordinator')
+    }
+    linkCoordinator()
+
+    // An empty digest is still present, so the coordinator can tell "nothing is
+    // waiting anywhere" apart from "this inbox is not aggregated".
+    expect(commands.inbox(team().id, 'a').cross_team).toEqual({ teams: [], items: [], total: 0 })
+
+    const mine = await commands.createTask(team().id, 'leader', { subject: 'Own team ready' })
+    const otherReady = await commands.createTask('team-2', 'leader-2', { subject: 'Other team ready' })
+    const otherOwned = await commands.createTask('team-2', 'leader-2', {
+      subject: 'Owned elsewhere',
+      owner: 'a2',
+    })
+    const otherBlocked = await commands.createTask('team-2', 'leader-2', {
+      subject: 'Blocked elsewhere',
+      blocked_by: [otherOwned.taskId],
+    })
+    messages.length = 0
+    await commands.sendMessage(team().id, 'leader', { to: 'a', message: 'own mail' })
+    ;(port as { pendingInteractions?: TeamCommandPort['pendingInteractions'] }).pendingInteractions =
+      sessionId => {
+        if (sessionId === 'session-a') {
+          return [{ id: 'own-approval', kind: 'approval', approvalId: 'ap-own', toolName: 'write' }]
+        }
+        if (sessionId === 'session-leader-2') {
+          return [
+            { id: 'i-2a', kind: 'approval', approvalId: 'ap-2', toolName: 'bash' },
+            {
+              id: 'i-0q',
+              kind: 'question',
+              questions: [{ id: 'q1', question: `deploy?\n${'x'.repeat(300)}` }],
+            },
+          ]
+        }
+        if (sessionId === 'session-a2') {
+          return [{ id: 'i-2a2', kind: 'approval', approvalId: 'ap-3', toolName: 'edit' }]
+        }
+        return []
+      }
+
+    const inbox = commands.inbox(team().id, 'a')
+
+    // The caller's own team keeps the ordinary member projection.
+    expect(inbox.assigned).toEqual([])
+    expect(inbox.ready.map(task => task.task_id)).toEqual([mine.taskId])
+    expect(inbox.unread.map(message => message.message)).toEqual(['own mail'])
+    expect(inbox.approvals.map(view => view.id)).toEqual(['own-approval'])
+    expect(inbox.remaining_unread).toBe(0)
+    // Read-only: the coordinator's inbox does not consume its own mail either.
+    expect(messages.filter(message => message.recipient.slotId === 'a'))
+      .toEqual([expect.objectContaining({ readBy: [] })])
+
+    // Counts carry the source team; owned or blocked work is not "pending".
+    expect(inbox.cross_team?.teams).toEqual([
+      { team_id: 'team-2', team_name: 'Other Team', ready: 1, approvals: 2, questions: 1 },
+    ])
+    expect(inbox.cross_team?.total).toBe(4)
+    expect(inbox.cross_team?.items.map(item => [item.team_id, item.kind, item.id])).toEqual([
+      ['team-2', 'ready_task', otherReady.taskId],
+      ['team-2', 'approval', 'i-2a'],
+      ['team-2', 'approval', 'i-2a2'],
+      ['team-2', 'question', 'i-0q'],
+    ])
+    // Cross-team attribution: every row names its source team.
+    for (const item of inbox.cross_team?.items ?? []) {
+      expect(item.team_id).toBe('team-2')
+      expect(item.team_name).toBe('Other Team')
+    }
+    // The caller's own team is never repeated in the digest.
+    const ids = inbox.cross_team?.items.map(item => item.id) ?? []
+    expect(ids).not.toContain(mine.taskId)
+    expect(ids).not.toContain(otherOwned.taskId)
+    expect(ids).not.toContain(otherBlocked.taskId)
+    expect(ids).not.toContain('own-approval')
+
+    // Summaries are one bounded line: the question body is not carried over.
+    const question = inbox.cross_team!.items.find(item => item.kind === 'question')!
+    expect(question.summary.startsWith('Other Lead: deploy?')).toBe(true)
+    expect(question.summary).not.toContain('\n')
+    expect(question.summary.length).toBe(121)
+    expect(question.summary.endsWith('…')).toBe(true)
+    expect(question.summary).not.toContain('x'.repeat(200))
+
+    // The cross-team digest obeys the per-section cap without losing counts.
+    const capped = commands.inbox(team().id, 'a', { limit: 2 })
+    expect(capped.cross_team?.items).toHaveLength(2)
+    expect(capped.cross_team?.total).toBe(4)
+    expect(capped.cross_team?.teams).toEqual(inbox.cross_team?.teams)
+
+    // Identity is read live: clearing the coordinator narrows the next inbox.
+    setCoordinator(undefined)
+    expect(commands.inbox(team().id, 'a')).not.toHaveProperty('cross_team')
+    // A different instance being the coordinator does not grant this member it.
+    setCoordinator('instance-someone-else')
+    expect(commands.inbox(team().id, 'a')).not.toHaveProperty('cross_team')
+    // Restoring the link restores the digest without a Session restart.
+    linkCoordinator()
+    expect(commands.inbox(team().id, 'a').cross_team?.total).toBe(4)
   })
 
   it('broadcasts to every active member except the sender', async () => {

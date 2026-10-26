@@ -385,6 +385,11 @@ describe('Team Mode tool surface', () => {
       unread: [],
       approvals: [{ id: 'i1', kind: 'approval', approvalId: 'ap-1', toolName: 'bash' }],
       remaining_unread: 3,
+      cross_team: {
+        teams: [{ team_id: 'team-2', team_name: 'Other', ready: 1, approvals: 0, questions: 0 }],
+        items: [{ team_id: 'team-2', team_name: 'Other', kind: 'ready_task', id: 't9', summary: 'Ready' }],
+        total: 1,
+      },
     })
     const result = await inbox.execute({ limit: 5 }, exec)
     expect(handlers.assertIdentity).toHaveBeenCalledWith(exec.agent)
@@ -395,6 +400,12 @@ describe('Team Mode tool surface', () => {
       unread: [],
       approvals: [{ approvalId: 'ap-1' }],
       remaining_unread: 3,
+      // Coordinator fields are additive: the tool name and existing shape hold.
+      cross_team: {
+        teams: [{ team_id: 'team-2', ready: 1 }],
+        items: [{ team_id: 'team-2', kind: 'ready_task' }],
+        total: 1,
+      },
     })
 
     // An omitted limit is forwarded as an empty input, not as limit: undefined.
