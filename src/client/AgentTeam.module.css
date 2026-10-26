@@ -3046,12 +3046,6 @@ textarea.input {
   height: 16px;
 }
 
-/* The expanded search keeps the shipped Input primitive, only narrower. */
-.brandSearch {
-  flex: 0 1 auto;
-  width: 152px;
-  min-width: 96px;
-}
 
 /* BOT footer: the account row stretches over the free space and these actions
    keep their intrinsic size at the right edge, modelled on the shipped market

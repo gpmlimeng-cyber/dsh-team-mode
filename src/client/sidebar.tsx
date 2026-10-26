@@ -19,7 +19,6 @@ import {
   IconSettingsOutlineRegular,
   IconSlidersTwoOutlineRegular,
   IconWarningOutlineRegular,
-  Input,
   Menu,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -274,12 +273,12 @@ export function SidebarTeamSection({
     const onSearch = (event: Event): void => {
       setQuery((event as CustomEvent<string>).detail ?? '')
     }
-    const onFilter = (): void => { setOnlyPending(value => !value) }
+    const onMenu = (): void => { setMenuOpen(true) }
     window.addEventListener(SIDEBAR_SEARCH_EVENT, onSearch)
-    window.addEventListener(SIDEBAR_FILTER_EVENT, onFilter)
+    window.addEventListener(SIDEBAR_MENU_EVENT, onMenu)
     return () => {
       window.removeEventListener(SIDEBAR_SEARCH_EVENT, onSearch)
-      window.removeEventListener(SIDEBAR_FILTER_EVENT, onFilter)
+      window.removeEventListener(SIDEBAR_MENU_EVENT, onMenu)
     }
   }, [])
 
@@ -805,8 +804,8 @@ export function SidebarTeamSection({
 const SIDEBAR_HOST_ID = 'dsh-team-mode-sidebar-host'
 /** Brand-row search drives every plugin section through one window event. */
 const SIDEBAR_SEARCH_EVENT = 'dsh-team-mode:sidebar-search'
-/** Brand-row 筛选 button asks the team section to toggle pending-only. */
-const SIDEBAR_FILTER_EVENT = 'dsh-team-mode:sidebar-filter'
+/** Brand-row 筛选 button opens the section's own filter/sort menu. */
+const SIDEBAR_MENU_EVENT = 'dsh-team-mode:sidebar-menu'
 /** Measured indentation from the plugin host to its section titles. */
 let brandColumnOffset = 4
 /** Mount point for the DSH/BOT switch that replaces the shipped brand row. */
@@ -1567,30 +1566,43 @@ export function SidebarPortal({
         <>
           <SurfaceModeSwitch mode={mode} onChange={switchMode} />
           {searchOpen ? (
-            <Input
-              className={css.brandSearch ?? ''}
-              icon={<IconSearchOutlineRegular />}
-              type="search"
-              placeholder="搜索"
-              aria-label="搜索侧栏"
-              autoFocus
-              value={search}
-              onChange={(event) => {
-                const value = event.target.value
-                setSearch(value)
-                window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: value }))
-              }}
-              onBlur={() => {
-                if (search !== '') return
-                setSearchOpen(false)
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== 'Escape') return
-                setSearch('')
-                setSearchOpen(false)
-                window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
-              }}
-            />
+            <div className={css.sidebarTeamSearch}>
+              <IconSearchOutlineRegular size={14} />
+              <input
+                autoFocus
+                type="search"
+                value={search}
+                placeholder="搜索"
+                aria-label="搜索侧栏"
+                onChange={(event) => {
+                  const value = event.target.value
+                  setSearch(value)
+                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: value }))
+                }}
+                onBlur={() => {
+                  if (search !== '') return
+                  setSearchOpen(false)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape') return
+                  setSearch('')
+                  setSearchOpen(false)
+                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
+                }}
+              />
+              <button
+                type="button"
+                className={css.sidebarTeamSearchClear}
+                aria-label="清除搜索"
+                onClick={() => {
+                  setSearch('')
+                  setSearchOpen(false)
+                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
+                }}
+              >
+                <IconCloseFillRegular size={14} />
+              </button>
+            </div>
           ) : (
             <div className={css.brandActions}>
               <button
@@ -1608,7 +1620,7 @@ export function SidebarPortal({
                 aria-label="筛选"
                 title="筛选"
                 onClick={() => {
-                  window.dispatchEvent(new CustomEvent(SIDEBAR_FILTER_EVENT))
+                  window.dispatchEvent(new CustomEvent(SIDEBAR_MENU_EVENT))
                 }}
               >
                 <IconSlidersTwoOutlineRegular />

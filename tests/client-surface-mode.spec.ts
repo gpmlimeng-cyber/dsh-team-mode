@@ -123,11 +123,13 @@ describe('sidebar surface switch', () => {
     expect(sidebar).toContain('aria-label="新建"')
     // 新建 reuses the existing dialog action instead of a second flow.
     expect(sidebar).toContain('onClick={openCreateTeamDialog}')
-    // 筛选 asks the team section to toggle pending-only.
-    expect(sidebar).toContain('dsh-team-mode:sidebar-filter')
-    // 搜索 expands the shipped Input primitive and drives both sections.
-    expect(sidebar).toContain('<Input')
+    // 筛选 opens the section's own filter/sort menu instead of a second menu.
+    expect(sidebar).toContain('dsh-team-mode:sidebar-menu')
+    // 搜索 expands in place with the section's own search shell, filling the row.
+    expect(sidebar).toContain('css.sidebarTeamSearch')
     expect(sidebar).toContain('dsh-team-mode:sidebar-search')
+    // 筛选 opens the section's own filter/sort menu instead of a second menu.
+    expect(sidebar).toContain('dsh-team-mode:sidebar-menu')
     const assistant = readClientSource('assistant-sidebar.tsx')
     expect(assistant).toContain('dsh-team-mode:sidebar-search')
   })
