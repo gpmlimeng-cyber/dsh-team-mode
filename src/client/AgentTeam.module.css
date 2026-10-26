@@ -11566,6 +11566,72 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   white-space: nowrap;
 }
 
+/* Create-group picker: one roster line per team/assistant with the shipped
+   checkbox on its right, and the row's current group as a second line. The
+   checkbox's own label is row-reversed so its name cell leads and the control
+   trails, exactly as the requirement reads. */
+.groupCreateList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.groupCreateRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 6px;
+  border-radius: var(--dsw-radius-sm);
+}
+
+.groupCreateRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.groupCreateCopy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.groupCreateIntro {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.groupCreateCheckbox {
+  width: 100%;
+  flex: 0 0 auto;
+  flex-direction: row-reverse;
+  justify-content: space-between;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+/* A long row label ellipsizes instead of pushing the checkbox off the row. */
+.groupCreateCheckbox span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupCreateNote {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 15px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Sidebar drag & drop ──────────────────────────────────────────────────
    The same affordances the native list draws: the source row dims, the header
    under the pointer highlights, and a dragged group header shows a 1px

@@ -117,6 +117,65 @@ export function groupMembershipChanges(
 }
 
 /**
+ * One pickable row of the create-group dialog. `group` is the group the row
+ * sits in today, not a target: a row already in another group stays listed and
+ * the dialog moves it.
+ */
+export interface GroupCreateRow extends SidebarGroupCandidate {
+  /** Which checklist the row belongs to; the two kinds are written differently. */
+  kind: 'team' | 'assistant'
+  /** Bounded inline avatar; absent rows fall back to the initial. */
+  avatar?: string
+}
+
+export interface GroupCreateRows {
+  teams: GroupCreateRow[]
+  assistants: GroupCreateRow[]
+}
+
+/**
+ * Everything a new group can receive: every team and every assistant, grouped
+ * or not. Nothing is filtered out — the picker is a move, and a row that
+ * already belongs somewhere keeps that label as its subtitle.
+ */
+export function groupCreateRows<T, A>(
+  teams: readonly T[],
+  assistants: readonly A[],
+  projectTeam: (item: T) => Omit<GroupCreateRow, 'kind'>,
+  projectAssistant: (item: A) => Omit<GroupCreateRow, 'kind'>,
+): GroupCreateRows {
+  return {
+    teams: teams.map(item => ({ ...projectTeam(item), kind: 'team' })),
+    assistants: assistants.map(item => ({ ...projectAssistant(item), kind: 'assistant' })),
+  }
+}
+
+/** One row flips; a fresh Set keeps the dialog's state a value, not a mutation. */
+export function toggleGroupCreateSelection(
+  selected: ReadonlySet<string>,
+  id: string,
+): Set<string> {
+  const next = new Set(selected)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  return next
+}
+
+/**
+ * The rows a create moves in, teams first. An empty selection is a complete
+ * answer: the group is created empty and can be filled later from its header.
+ */
+export function groupCreateSelection(
+  rows: GroupCreateRows,
+  selected: ReadonlySet<string>,
+): { teamIds: string[]; assistantIds: string[] } {
+  return {
+    teamIds: rows.teams.filter(row => selected.has(row.id)).map(row => row.id),
+    assistantIds: rows.assistants.filter(row => selected.has(row.id)).map(row => row.id),
+  }
+}
+
+/**
  * Why a typed group name cannot be saved, or undefined when it can. Mirrors the
  * Host's rules so the dialog answers without a round trip; the Host still owns
  * the final decision and its message is shown as-is when it refuses.

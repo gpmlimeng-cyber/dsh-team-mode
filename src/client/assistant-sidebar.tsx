@@ -1239,19 +1239,24 @@ export function AssistantSidebarSection({
                 : query.trim() !== ''
                   ? <div className={css.sidebarTeamEmpty}>没有匹配的助手</div>
                   : (
-                    <div className={css.sidebarAssistantEmpty}>
-                      <div className={css.sidebarTeamEmpty}>还没有助手</div>
-                      <button
-                        type="button"
-                        className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
-                        onClick={openCreate}
-                      >
-                        <span className={css.sidebarTeamSlot} aria-hidden="true">
-                          <IconPlusOutlineRegular size={16} />
-                        </span>
-                        <span className={css.sidebarTeamEmptyTitle}>新建助手</span>
-                      </button>
-                    </div>
+                    <>
+                      <div className={css.sidebarAssistantEmpty}>
+                        <div className={css.sidebarTeamEmpty}>还没有助手</div>
+                        <button
+                          type="button"
+                          className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
+                          onClick={openCreate}
+                        >
+                          <span className={css.sidebarTeamSlot} aria-hidden="true">
+                            <IconPlusOutlineRegular size={16} />
+                          </span>
+                          <span className={css.sidebarTeamEmptyTitle}>新建助手</span>
+                        </button>
+                      </div>
+                      {/* The one 新建分组 entry for the whole workspace; the team
+                          section above leaves it here so it is not offered twice. */}
+                      <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
+                    </>
                     )
               : (
                 <>

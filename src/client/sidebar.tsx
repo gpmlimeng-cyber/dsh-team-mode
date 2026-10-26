@@ -61,7 +61,6 @@ import { LeaderMark } from './team-member-chrome.js'
 import { assistantAvatarSource, assistantInstanceName, coordinatorAssistant } from './assistant-instances.js'
 import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-groups.js'
 import {
-  SidebarGroupCreateRow,
   SidebarGroupDialogs,
   SidebarGroupPartition,
   sidebarDragSwallowsClick,
@@ -923,7 +922,6 @@ export function SidebarTeamSection({
                         )
                       })
                     : visibleTeams.map(renderTeamRow)}
-                  <SidebarGroupCreateRow onCreate={() => { openGroupDialog({ kind: 'create' }) }} />
                 </>
               )}
         </div>

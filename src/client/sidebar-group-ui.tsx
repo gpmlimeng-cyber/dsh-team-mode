@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { DragEvent, ReactNode } from 'react'
 import {
   Button,
+  Checkbox,
   IconChevronDownOutlineRegular,
   IconChevronRightOutlineRegular,
   IconChevronUpOutlineRegular,
@@ -16,16 +17,21 @@ import {
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
-import { assistantInstanceName } from './assistant-instances.js'
+import { assistantAvatarSource, assistantInstanceName } from './assistant-instances.js'
+import { MemberAvatar } from './member-avatar.js'
 import { AnimatedModal } from './shared.js'
 import {
   SIDEBAR_GROUP_MAX_CHARS,
   UNGROUPED_PARTITION_ID,
+  groupCreateRows,
+  groupCreateSelection,
   groupMembershipCandidates,
   groupMembershipChanges,
   insertGroupOrder,
   resolveDropTarget,
   sidebarGroupNameError,
+  toggleGroupCreateSelection,
+  type GroupCreateRow,
   type SidebarDropHalf,
   type SidebarDropOverKind,
   type SidebarGroupCandidate,
@@ -397,10 +403,20 @@ export function SidebarGroupDialogs({
   onChanged: () => void
 }): JSX.Element | null {
   if (dialog === undefined) return null
-  if (dialog.kind === 'create' || dialog.kind === 'rename') {
+  if (dialog.kind === 'create') {
+    return (
+      <GroupCreateDialog
+        groups={groups}
+        onClose={onClose}
+        onListChanged={list => { onListChanged(list); onChanged() }}
+        onChanged={onChanged}
+      />
+    )
+  }
+  if (dialog.kind === 'rename') {
     return (
       <GroupNameDialog
-        {...(dialog.kind === 'rename' ? { initial: dialog.from } : {})}
+        initial={dialog.from}
         groups={groups}
         onClose={onClose}
         onListChanged={list => { onListChanged(list); onChanged() }}
@@ -461,24 +477,23 @@ export function sidebarGroupMenuItems(
   ]
 }
 
+/** Renaming keeps the one-field dialog: only creation also fills the group. */
 function GroupNameDialog({
   initial,
   groups,
   onClose,
   onListChanged,
 }: {
-  initial?: string
+  initial: string
   groups: string[]
   onClose: () => void
   onListChanged: (groups: string[]) => void
 }): JSX.Element {
-  const renaming = initial !== undefined
-  const [value, setValue] = useState(initial ?? '')
+  const [value, setValue] = useState(initial)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
   // Renaming to the current name is a no-op, not a duplicate.
-  const taken = renaming ? groups.filter(group => group !== initial) : groups
-  const nameError = sidebarGroupNameError(value, taken)
+  const nameError = sidebarGroupNameError(value, groups.filter(group => group !== initial))
   const formId = 'dsh-team-mode-group-name-form'
 
   const save = async (): Promise<void> => {
@@ -491,10 +506,7 @@ function GroupNameDialog({
     setError(undefined)
     try {
       // The Host trims; sending the typed value keeps one normalization point.
-      const list = renaming
-        ? await callAgentTeam('sidebar.groups.rename', { from: initial, to: value })
-        : await callAgentTeam('sidebar.groups.create', { name: value })
-      onListChanged(list)
+      onListChanged(await callAgentTeam('sidebar.groups.rename', { from: initial, to: value }))
       onClose()
     } catch (cause) {
       setError(messageOf(cause))
@@ -507,7 +519,7 @@ function GroupNameDialog({
     <AnimatedModal
       open
       onClose={() => { if (!busy) onClose() }}
-      title={renaming ? '重命名分组' : '新建分组'}
+      title="重命名分组"
       description="分组只影响侧栏的排列，不改变团队和助手本身。"
       closeLabel="关闭"
       className={css.sidebarGroupDialog ?? ''}
@@ -539,6 +551,229 @@ function GroupNameDialog({
           onChange={event => { setValue(event.target.value) }}
         />
         {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
+      </form>
+    </AnimatedModal>
+  )
+}
+
+interface GroupCreateFailure {
+  name: string
+  message: string
+}
+
+/**
+ * Creating a group is also the moment to fill it: both checklists offer every
+ * existing team and assistant, grouped or not, because the write is a move and
+ * nothing else. The group is created first (the Host owns its name and order);
+ * the moves follow one by one, so a failed row names itself and the moves that
+ * already succeeded stay put.
+ */
+function GroupCreateDialog({
+  groups,
+  onClose,
+  onListChanged,
+  onChanged,
+}: {
+  groups: string[]
+  onClose: () => void
+  onListChanged: (groups: string[]) => void
+  onChanged: () => void
+}): JSX.Element {
+  const [value, setValue] = useState('')
+  const [teams, setTeams] = useState<TeamView[]>([])
+  const [assistants, setAssistants] = useState<AssistantInstanceView[]>([])
+  const [selected, setSelected] = useState<Set<string>>(() => new Set())
+  const [loaded, setLoaded] = useState(false)
+  const [created, setCreated] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  const [failures, setFailures] = useState<GroupCreateFailure[]>()
+  const formId = 'dsh-team-mode-group-create-form'
+  const nameError = sidebarGroupNameError(value, groups)
+
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([
+      callAgentTeam('team.list'),
+      callAgentTeam('assistant.instance.list'),
+    ]).then(([teamPage, assistantPage]) => {
+      if (cancelled) return
+      setTeams(teamPage.items.filter(team => team.archivedAt === undefined))
+      setAssistants(assistantPage.items.filter(item => item.status !== 'archived'))
+    }).catch(cause => {
+      if (!cancelled) setError(messageOf(cause))
+    }).finally(() => {
+      if (!cancelled) setLoaded(true)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const rows = useMemo(() => groupCreateRows(
+    teams,
+    assistants,
+    team => ({
+      id: team.id,
+      name: team.name,
+      ...(team.group === undefined ? {} : { group: team.group }),
+    }),
+    item => {
+      const avatar = assistantAvatarSource(item)
+      return {
+        id: item.id,
+        name: assistantInstanceName(item),
+        ...(item.group === undefined ? {} : { group: item.group }),
+        ...(avatar === undefined || avatar === '' ? {} : { avatar }),
+      }
+    },
+  ), [assistants, teams])
+
+  const toggle = useCallback((id: string): void => {
+    setSelected(current => toggleGroupCreateSelection(current, id))
+  }, [])
+
+  const save = async (): Promise<void> => {
+    if (busy || created) return
+    if (nameError !== undefined) {
+      setError(nameError)
+      return
+    }
+    setBusy(true)
+    setError(undefined)
+    setFailures(undefined)
+    const group = value.trim()
+    const plan = groupCreateSelection(rows, selected)
+    const nameOf = new Map(
+      [...rows.teams, ...rows.assistants].map(row => [row.id, row.name] as const),
+    )
+    try {
+      onListChanged(await callAgentTeam('sidebar.groups.create', { name: value }))
+      setCreated(true)
+    } catch (cause) {
+      // A refused name (already taken) is the Host's decision: show it as-is.
+      setError(messageOf(cause))
+      setBusy(false)
+      return
+    }
+    const failed: GroupCreateFailure[] = []
+    const move = async (id: string, write: () => Promise<unknown>): Promise<void> => {
+      try {
+        await write()
+      } catch (cause) {
+        failed.push({ name: nameOf.get(id) ?? id, message: messageOf(cause) })
+      }
+    }
+    for (const teamId of plan.teamIds) {
+      await move(teamId, () => callAgentTeam('team.group.set', { teamId, group }))
+    }
+    for (const assistantId of plan.assistantIds) {
+      await move(assistantId, () => callAgentTeam('assistant.instance.update', {
+        id: assistantId,
+        value: { group },
+      }))
+    }
+    onChanged()
+    setBusy(false)
+    if (failed.length === 0) {
+      onClose()
+      return
+    }
+    setFailures(failed)
+  }
+
+  /** One checklist row: avatar, name, and the shipped checkbox on the right. */
+  const renderPicker = (list: readonly GroupCreateRow[], empty: string): JSX.Element => (
+    list.length === 0
+      ? <div className={css.sidebarPartitionEmpty}>{empty}</div>
+      : (
+        <div className={css.groupCreateList}>
+          {list.map(row => (
+            <div key={row.id} className={css.groupCreateRow} data-dsh-group-create-row={row.id}>
+              <MemberAvatar name={row.name} avatar={row.avatar} size={22} />
+              <span className={css.groupCreateCopy}>
+                <Checkbox
+                  checked={selected.has(row.id)}
+                  onChange={() => { toggle(row.id) }}
+                  label={row.name}
+                  disabled={busy || created}
+                  {...(row.group === undefined ? {} : { title: `当前分组：${row.group}` })}
+                  className={css.groupCreateCheckbox ?? ''}
+                />
+                {row.group !== undefined && (
+                  <span className={css.groupCreateNote}>当前分组：{row.group}</span>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      )
+  )
+
+  return (
+    <AnimatedModal
+      open
+      onClose={() => { if (!busy) onClose() }}
+      title="新建分组"
+      closeLabel="关闭"
+      className={css.sidebarGroupDialog ?? ''}
+      contentClassName={css.sidebarGroupDialogContent ?? ''}
+      footer={created
+        ? <Button variant="primary" type="button" onClick={onClose}>关闭</Button>
+        : (
+          <>
+            <Button variant="outline" type="button" disabled={busy} onClick={onClose}>取消</Button>
+            <Button variant="primary" type="submit" form={formId} disabled={busy}>
+              {busy ? '创建中…' : '创建分组'}
+            </Button>
+          </>
+        )}
+    >
+      <form
+        id={formId}
+        className={css.sidebarGroupNameForm}
+        onSubmit={event => {
+          event.preventDefault()
+          void save()
+        }}
+      >
+        <input
+          className={css.input}
+          data-modal-autofocus
+          value={value}
+          maxLength={120}
+          placeholder={`分组名，最多 ${SIDEBAR_GROUP_MAX_CHARS} 个字`}
+          aria-label="分组名"
+          aria-invalid={nameError !== undefined && value !== ''}
+          disabled={busy || created}
+          onChange={event => { setValue(event.target.value) }}
+        />
+        {/* The intro follows the name field, the order MausBot's create dialog
+            reads: name, then what the dialog does, then the two pickers. */}
+        <p className={css.groupCreateIntro}>
+          创建空分组，或把现有的团队/助手移进来。移动只影响侧栏排列，不影响它们本身。
+        </p>
+        {!loaded
+          ? <div className={css.dialogEmpty}>正在读取现有团队和助手…</div>
+          : (
+            <div className={css.sidebarGroupSegments}>
+              <section className={css.sidebarGroupSegment}>
+                <h4 className={css.sidebarGroupSegmentTitle}>现有团队</h4>
+                {renderPicker(rows.teams, '还没有团队')}
+              </section>
+              <section className={css.sidebarGroupSegment}>
+                <h4 className={css.sidebarGroupSegmentTitle}>现有助手</h4>
+                {renderPicker(rows.assistants, '还没有助手')}
+              </section>
+            </div>
+          )}
+        {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
+        {failures !== undefined && (
+          <div className={css.inlineError} role="alert">
+            <div>分组已创建，以下条目没有移动成功：</div>
+            {failures.map(failure => (
+              <div key={failure.name}>「{failure.name}」：{failure.message}</div>
+            ))}
+          </div>
+        )}
       </form>
     </AnimatedModal>
   )
