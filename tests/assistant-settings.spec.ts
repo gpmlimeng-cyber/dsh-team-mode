@@ -89,6 +89,10 @@ const CREATE_DRAFT: AssistantCreateDraft = {
   agentPresetId: 'standard',
   permissionPresetId: 'workspace-write',
   group: '',
+  mascotSeed: 'seed-1',
+  mascotShape: '',
+  mascotEyes: '',
+  mascotColor: '',
 }
 
 function baseCreateBodyProps(): AssistantCreateBodyProps {
@@ -267,7 +271,7 @@ describe('assistant create dialog sections', () => {
     const html = renderCreateBody({ roleError: '模板服务不可用' })
     const section = html.slice(html.indexOf('<section'), html.indexOf('</section>'))
     expect(section).toContain('读取助手模板失败：模板服务不可用')
-    expect(section).not.toContain('<select')
+    expect(section).not.toContain('起始角色')
   })
 })
 

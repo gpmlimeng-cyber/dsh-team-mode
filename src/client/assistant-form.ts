@@ -1,4 +1,4 @@
-import type { AssistantTemplate, CreateAssistantInstanceInput } from '../domain/types.js'
+import type { AssistantInstance, AssistantTemplate, CreateAssistantInstanceInput } from '../domain/types.js'
 import type { CatalogView } from '../transport/contracts.js'
 
 /**
@@ -87,6 +87,10 @@ export interface AssistantCreateDraft {
   agentPresetId: string
   permissionPresetId: string
   group: string
+  mascotSeed: string
+  mascotShape: string
+  mascotEyes: string
+  mascotColor: string
 }
 
 export function emptyAssistantCreateDraft(): AssistantCreateDraft {
@@ -101,6 +105,10 @@ export function emptyAssistantCreateDraft(): AssistantCreateDraft {
     agentPresetId: '',
     permissionPresetId: '',
     group: '',
+    mascotSeed: '',
+    mascotShape: '',
+    mascotEyes: '',
+    mascotColor: '',
   }
 }
 
@@ -176,7 +184,22 @@ export function applyStartingRole(
   }
 }
 
-/** The direct-create shape; `group` and `templateId` are never part of it. */
+/**
+ * The mascot is stored on the instance through the follow-up update, not the
+ * strict create payload. An empty seed means "let the instance fall back to its
+ * id"; the dialog seeds it when it opens.
+ */
+export function assistantCreateMascot(draft: AssistantCreateDraft): AssistantInstance['mascot'] {
+  if (draft.mascotSeed.trim() === '') return undefined
+  return {
+    seed: draft.mascotSeed.trim(),
+    ...(draft.mascotShape === '' ? {} : { shape: draft.mascotShape }),
+    ...(draft.mascotEyes === '' ? {} : { eyes: draft.mascotEyes }),
+    ...(draft.mascotColor === '' ? {} : { color: draft.mascotColor }),
+  }
+}
+
+/** The direct-create shape; `group`, `mascot` and `templateId` are never part of it. */
 export function assistantCreatePayload(draft: AssistantCreateDraft): CreateAssistantInstanceInput {
   return {
     name: draft.name.trim(),

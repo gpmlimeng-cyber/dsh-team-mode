@@ -822,7 +822,7 @@ describe('assistant create layout source contract', () => {
     expect(createAt).toBeLessThan(updateAt)
     expect(updateAt).toBeLessThan(ensureAt)
     expect(submit).toContain('setWarning(')
-    expect(submit).toContain('value: { group: draft.group }')
+    expect(submit).toContain('...(draft.group === \'\' ? {} : { group: draft.group })')
   })
 
   it('reads roles and groups from existing transports only', () => {
