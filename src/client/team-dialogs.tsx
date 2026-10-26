@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { RiskConfirmation } from '@deepseek-ai/dsh-client-ui-primitives'
 import { AnimatedModal } from './shared.js'
 import { useAgentTeamData, type WorkspaceChoice } from './components.js'
 import { TeamCard, TeamForm } from './teams/TeamPanel.js'
 import { TeamActivityBoard } from './team-activity.js'
 import { callAgentTeam } from './api.js'
-import { closeTeamDialog, useAgentTeamUi, type ResetMemberContextTarget } from './store.js'
+import { closeTeamDialog, useAgentTeamUi } from './store.js'
 import css from './AgentTeam.module.css'
 
 /**

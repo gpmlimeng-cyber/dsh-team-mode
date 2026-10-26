@@ -1,14 +1,6 @@
 import { useSyncExternalStore } from 'react'
 import type { SurfaceMode } from './surface-mode.js'
 
-/** One member a destructive row action targets; the Session id outlives a slot change. */
-export interface ResetMemberContextTarget {
-  teamId: string
-  teamName: string
-  sessionId: string
-  memberName: string
-}
-
 export type TeamDialog =
   | { kind: 'create' }
   | { kind: 'manage'; teamId: string }

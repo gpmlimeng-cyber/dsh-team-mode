@@ -372,6 +372,4 @@ export function apply(ctx: AgentTeamClientContext): void {
     order: 10,
     label: '团队',
   }, SidebarTeamHost))
-
-
 }
