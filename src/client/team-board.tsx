@@ -13,6 +13,7 @@ import { isTeamExecuting } from './team-status.js'
 import { teamIdentityColor } from './team-identity.js'
 import css from './TeamBoard.module.css'
 import overviewCss from './AgentTeam.module.css'
+import { taskScheduleSummary, taskVerdictLabel, taskVerdictTone, TEAM_TASK_CREATE_HINT } from './labels.js'
 import { TeamOverview } from './team-overview.js'
 import { defaultBoardMode, type BoardMode } from './team-overview-data.js'
 import { setTeamConversationView } from './team-view-presence.js'
@@ -663,6 +664,15 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
     writeStorageJson(VIEW_STORAGE_KEY, next)
   }, [])
 
+  /**
+   * A task card opens the real detail panel (看板 → 总览), not the owner's
+   * Session: the session stays one dedicated button away on the same card.
+   */
+  const selectTask = useCallback((taskId: string): void => {
+    setSelectedTaskId(taskId)
+    changeMode('overview')
+  }, [changeMode])
+
   const taskById = useMemo<ReadonlyMap<string, TeamTask>>(() => (
     new Map(tasks.map(task => [task.id, task]))
   ), [tasks])
@@ -1029,6 +1039,7 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
                           task={task}
                           taskById={taskById}
                           now={now}
+                          onSelect={selectTask}
                           onOpen={openTaskSession}
                         />
                       ))}
@@ -1039,6 +1050,7 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
           ))}
         </div>
         )}
+        <p className={css.tasksFootnote}>{TEAM_TASK_CREATE_HINT}</p>
       </div>
     </section>
   )
@@ -1133,11 +1145,12 @@ function TeamBoardPlaceholder({ known, loading, error, onRetry }: {
   )
 }
 
-function TaskCard({ team, task, taskById, now, onOpen }: {
+function TaskCard({ team, task, taskById, now, onSelect, onOpen }: {
   readonly team: TeamView
   readonly task: TeamTask
   readonly taskById: ReadonlyMap<string, TeamTask>
   readonly now: number
+  readonly onSelect: (taskId: string) => void
   readonly onOpen: (task: TeamTask) => void
 }): JSX.Element {
   const owner = task.ownerSlotId === undefined ? undefined : team.members[task.ownerSlotId]
@@ -1148,70 +1161,97 @@ function TaskCard({ team, task, taskById, now, onOpen }: {
   const target = taskSessionId(team, task)
   const actionTarget = owner?.displayName ?? (task.ownerSlotId === undefined ? 'Leader' : '成员')
   const updated = task.updatedAt
+  const verdictLabel = taskVerdictLabel(task)
+  const verdictTone = taskVerdictTone(task)
+  const schedule = taskScheduleSummary(task)
   const label = [
-    `打开任务「${task.title}」`,
+    `查看任务「${task.title}」的详情`,
     `状态：${TASK_STATUS_LABELS[task.status]}`,
     `所有者：${owner?.displayName ?? '未分配'}`,
-    target === undefined ? '无法定位成员会话' : `将打开 ${actionTarget} 的会话`,
+    ...(verdictLabel === undefined ? [] : [`审核结论：${verdictLabel}`]),
+    ...(schedule === '' ? [] : [schedule]),
   ].join('，')
+  const openLabel = target === undefined
+    ? `无法定位任务「${task.title}」成员的会话`
+    : `打开 ${actionTarget} 的会话（任务「${task.title}」）`
 
   return (
     <li className={css.taskItem}>
-      <button
-        type="button"
-        className={css.taskCard}
-        onClick={() => { onOpen(task) }}
-        aria-label={label}
-      >
-        <span className={css.taskCardTop}>
-          <span className={css.taskTitle}>{task.title}</span>
-          <span className={css.taskStatus} data-tone={taskTone(task.status)}>
-            {TASK_STATUS_LABELS[task.status]}
+      <div className={css.taskCard}>
+        <button
+          type="button"
+          className={overviewCss.taskCardMain}
+          onClick={() => { onSelect(task.id) }}
+          aria-label={label}
+        >
+          <span className={css.taskCardTop}>
+            <span className={css.taskTitle}>{task.title}</span>
+            <span className={css.taskStatus} data-tone={taskTone(task.status)}>
+              {TASK_STATUS_LABELS[task.status]}
+            </span>
           </span>
-        </span>
-        {task.description !== '' && (
-          <span className={css.taskDescription}>{task.description}</span>
-        )}
-        {task.error !== undefined && task.error !== '' && (
-          <span className={css.taskError}>
-            <IconWarningTriangleOutlineRegular size={12} />
-            {task.error}
-          </span>
-        )}
-        {task.status === 'completed' && task.result !== undefined && task.result !== '' && (
-          <span className={css.taskResult}>{task.result}</span>
-        )}
-        <span className={css.taskMeta}>
-          <span className={css.ownerChip}>
-            <span className={css.ownerDot} data-leader={owner?.role === 'leader' ? 'true' : undefined} aria-hidden="true" />
-            <span className={css.ownerName}>{owner?.displayName ?? '未分配'}</span>
-            {owner?.role === 'leader' && <span className={css.leaderMark}>Leader</span>}
-          </span>
-          {dependencies.length > 0 && (
-            <span className={css.dependencyChips}>
-              {dependencies.slice(0, 2).map(dependency => (
-                <span
-                  key={dependency.id}
-                  className={css.dependencyChip}
-                  title={`依赖：${dependency.title ?? dependency.id}`}
-                >
-                  依赖 · {dependency.title === undefined ? shortId(dependency.id) : dependency.title}
-                </span>
-              ))}
-              {dependencies.length > 2 && (
-                <span className={css.dependencyMore}>+{dependencies.length - 2}</span>
-              )}
+          {task.description !== '' && (
+            <span className={css.taskDescription}>{task.description}</span>
+          )}
+          {task.error !== undefined && task.error !== '' && (
+            <span className={css.taskError}>
+              <IconWarningTriangleOutlineRegular size={12} />
+              {task.error}
             </span>
           )}
-        </span>
-        <span className={css.taskFoot}>
-          <span className={css.taskTime} title={absoluteTime(updated)}>
-            <IconClockOutlineRegular size={12} />
-            {relativeTime(updated, now)}
+          {task.status === 'completed' && task.result !== undefined && task.result !== '' && (
+            <span className={css.taskResult}>{task.result}</span>
+          )}
+          {schedule !== '' && (
+            <span className={overviewCss.taskScheduleLine} title={schedule}>{schedule}</span>
+          )}
+          <span className={css.taskMeta}>
+            <span className={css.ownerChip}>
+              <span className={css.ownerDot} data-leader={owner?.role === 'leader' ? 'true' : undefined} aria-hidden="true" />
+              <span className={css.ownerName}>{owner?.displayName ?? '未分配'}</span>
+              {owner?.role === 'leader' && <span className={css.leaderMark}>Leader</span>}
+            </span>
+            {dependencies.length > 0 && (
+              <span className={css.dependencyChips}>
+                {dependencies.slice(0, 2).map(dependency => (
+                  <span
+                    key={dependency.id}
+                    className={css.dependencyChip}
+                    title={`依赖：${dependency.title ?? dependency.id}`}
+                  >
+                    依赖 · {dependency.title === undefined ? shortId(dependency.id) : dependency.title}
+                  </span>
+                ))}
+                {dependencies.length > 2 && (
+                  <span className={css.dependencyMore}>+{dependencies.length - 2}</span>
+                )}
+              </span>
+            )}
           </span>
-          <span className={css.taskOpenHint} aria-hidden="true">打开会话 →</span>
-        </span>
-      </button>
+          <span className={css.taskFoot}>
+            <span className={css.taskTime} title={absoluteTime(updated)}>
+              <IconClockOutlineRegular size={12} />
+              {relativeTime(updated, now)}
+            </span>
+            <span className={css.taskOpenHint} aria-hidden="true">查看详情 →</span>
+          </span>
+        </button>
+        <div className={overviewCss.taskCardActions}>
+          {verdictLabel !== undefined && (
+            <span className={overviewCss.overviewVerdict} data-tone={verdictTone}>
+              {verdictLabel}
+            </span>
+          )}
+          <button
+            type="button"
+            className={overviewCss.taskCardAction}
+            onClick={() => { onOpen(task) }}
+            aria-label={openLabel}
+          >
+            打开会话
+          </button>
+        </div>
+      </div>
     </li>
   )
 }

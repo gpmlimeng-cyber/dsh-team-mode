@@ -10,6 +10,8 @@ import {
   type AgentTeamResult,
   type AssistantBuilderConversationView,
   type MemberConversationView,
+  type PageView,
+  type TeamView,
   type WorkspaceUploadView,
 } from '../transport/contracts.js'
 
@@ -18,8 +20,7 @@ import {
  *
  * A page mount mounts several team hosts (sidebar, row hider, dialogs, overlays)
  * and each pulls the same read on its first render; sharing the in-flight request
- * keeps one mount at one Host read instead of a burst, without caching a
- * response, so a later read can never see stale data.
+ * keeps one mount at one Host read instead of a burst.
  */
 const SHARED_READ_METHODS = new Set<AgentTeamMethod>([
   'catalog.get',
@@ -32,6 +33,31 @@ const SHARED_READ_METHODS = new Set<AgentTeamMethod>([
 
 const sharedReads = new Map<string, Promise<unknown>>()
 
+/**
+ * How long a settled `team.list` stays reusable by the page mount's next reader.
+ *
+ * A fresh page mounts independent readers that start one after another rather
+ * than together — measured: `TeamTriggerEnhancer.loadColors` at ~1.2 s, then the
+ * Session row hider / sidebar `load` at ~1.7 s — so `sharedReads` (which only
+ * merges overlapping reads) cannot collapse them and the page issued two
+ * `team.list` POSTs (F4). One settle window covers that stagger and nothing
+ * more.
+ */
+const MOUNT_SNAPSHOT_TTL_MS = 1_500
+
+let teamListSnapshot: { at: number; value: PageView<TeamView> } | undefined
+
+/**
+ * Drop the settled `team.list`.
+ *
+ * Every team change event and every mutation calls this, so a later read can
+ * never reuse an answer older than something the page already knows changed;
+ * `MOUNT_SNAPSHOT_TTL_MS` bounds whatever a missed event could leave behind.
+ */
+export function invalidateTeamListSnapshot(): void {
+  teamListSnapshot = undefined
+}
+
 export function callAgentTeam<M extends AgentTeamMethod>(
   method: M,
   ...args: AgentTeamPayload<M> extends undefined
@@ -40,14 +66,32 @@ export function callAgentTeam<M extends AgentTeamMethod>(
 ): Promise<AgentTeamResult<M>> {
   const [payload, expectedRevision] = args
   if (expectedRevision !== undefined || !SHARED_READ_METHODS.has(method)) {
+    // A write can change any read: never leave a pre-write snapshot behind.
+    if (!SHARED_READ_METHODS.has(method)) invalidateTeamListSnapshot()
     return requestAgentTeam<M>(method, payload, expectedRevision)
+  }
+  if (method === 'team.list' && payload === undefined) {
+    const snapshot = teamListSnapshot
+    if (snapshot !== undefined && Date.now() - snapshot.at <= MOUNT_SNAPSHOT_TTL_MS) {
+      return Promise.resolve(snapshot.value as AgentTeamResult<M>)
+    }
+    teamListSnapshot = undefined
   }
   const key = `${method}:${payload === undefined ? '' : JSON.stringify(payload)}`
   const running = sharedReads.get(key)
+  // Started before this read, and inside the settle window: join it instead of
+  // paying for a second round trip.
   if (running !== undefined) return running as Promise<AgentTeamResult<M>>
   const shared = requestAgentTeam<M>(method, payload, expectedRevision)
+    .then(value => {
+      if (method === 'team.list' && payload === undefined) {
+        teamListSnapshot = { at: Date.now(), value: value as PageView<TeamView> }
+      }
+      return value
+    })
     .finally(() => {
-      // Only the owner clears the entry: a settled response is never reused.
+      // Only the owner clears the in-flight entry; the settled snapshot above is
+      // what a later reader may reuse, and only for the mount window.
       if (sharedReads.get(key) === shared) sharedReads.delete(key)
     })
   sharedReads.set(key, shared)
@@ -108,8 +152,23 @@ export function isUnknownSessionError(cause: unknown): boolean {
   return cause instanceof Error && cause.message.includes('unknown session')
 }
 
+/**
+ * Whether the Host no longer holds the team (dissolved elsewhere, or a row left
+ * over from before a reload). The Host raises `TEAM_NOT_FOUND` with
+ * `Unknown team '<uuid>'`; both the code and that wording are recognised so a
+ * renamed message cannot leak the id back into user-facing copy.
+ */
+export function isUnknownTeamError(cause: unknown): boolean {
+  if (!(cause instanceof Error)) return false
+  const code = (cause as { code?: unknown }).code
+  return code === 'TEAM_NOT_FOUND' || /unknown team/i.test(cause.message)
+}
+
 /** The words a failed navigation is reported in; a shell refusal keeps its text. */
 export function navigationErrorMessage(cause: unknown): string {
+  // F8: a missing team is reported in one sentence. The Host's message carries
+  // the team id, which a person must never see.
+  if (isUnknownTeamError(cause)) return '该团队已不存在。'
   if (isUnknownSessionError(cause)) return '无法打开该会话：会话尚未同步到本地，请重新加载页面后再试'
   const message = cause instanceof Error ? cause.message : String(cause)
   return `无法打开该会话：${message}`
@@ -215,6 +274,8 @@ function eventSource(): EventSource {
   if (sharedEventSource !== undefined) return sharedEventSource
   const source = new EventSource(AGENT_TEAM_EVENTS_PATH)
   source.addEventListener('change', () => {
+    // A team changed: the mount snapshot is stale from this instant on.
+    invalidateTeamListSnapshot()
     for (const subscription of changeSubscriptions) subscription.onChange()
   })
   source.addEventListener('conversation', ((event: MessageEvent<string>) => {
@@ -264,8 +325,25 @@ function eventSource(): EventSource {
     for (const subscription of assistantBuilderSubscriptions) subscription.onOpen?.()
     for (const subscription of workspaceSubscriptions) subscription.onOpen?.()
   }
+  // The server's explicit `resync` frame always notifies every kind: it is the
+  // "you may have missed events, read again" signal.
   source.addEventListener('resync', resync)
-  source.onopen = resync
+  let openedOnce = false
+  source.onopen = (): void => {
+    // F4: the FIRST open is not a recovery. Every change subscriber already read
+    // while mounting, so resyncing it here would double the mount read (team.list
+    // fired twice per page). A RE-open means the stream may have missed events,
+    // which is exactly when those subscribers must read again. Conversation,
+    // workspace and assistant-builder entries keep their previous first-open
+    // behaviour.
+    if (openedOnce) {
+      for (const subscription of changeSubscriptions) subscription.onOpen?.()
+    }
+    openedOnce = true
+    for (const subscription of conversationSubscriptions) subscription.onOpen?.()
+    for (const subscription of assistantBuilderSubscriptions) subscription.onOpen?.()
+    for (const subscription of workspaceSubscriptions) subscription.onOpen?.()
+  }
   sharedEventSource = source
   return source
 }

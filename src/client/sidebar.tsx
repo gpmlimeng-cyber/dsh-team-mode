@@ -41,6 +41,7 @@ import {
   type TeamRosterRow,
 } from './team-sidebar-data.js'
 import { useTeamText } from './team-i18n.js'
+import { TEAM_TASK_CREATE_HINT } from './labels.js'
 import { TEAM_AVATAR_TILE_COUNT, teamAvatarColor, teamAvatarTiles } from './team-avatar.js'
 import { AnimatedModal } from './shared.js'
 import {
@@ -741,12 +742,16 @@ export function SidebarTeamSection({
                     <span className={css.sidebarTeamTaskTitle}>{task.title}</span>
                     <span className={css.sidebarTeamTaskStatus}>{task.statusLabel}</span>
                   </span>
+                  {task.detail !== undefined && (
+                    <span className={css.sidebarTeamTaskDetail}>{task.detail}</span>
+                  )}
                   {waiting !== undefined && (
                     <span className={css.sidebarTeamTaskWaiting} title={waiting}>{waiting}</span>
                   )}
                 </button>
               )
             })}
+          <p className={css.sidebarTeamTaskHint}>{TEAM_TASK_CREATE_HINT}</p>
         </div>
       </AnimatedModal>
     </section>

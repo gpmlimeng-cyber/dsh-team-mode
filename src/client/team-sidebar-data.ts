@@ -1,7 +1,14 @@
 import type { TeamTask } from '../domain/types.js'
 import type { TeamView } from '../transport/contracts.js'
 import { isAssistantAvatarDataUrl } from './assistant-instances.js'
-import { memberStatusLabel, taskStatusLabel } from './labels.js'
+import {
+  memberStatusLabel,
+  taskCarriesVerdict,
+  taskKindLabel,
+  taskScheduleSummary,
+  taskStatusLabel,
+  taskVerdictLabel,
+} from './labels.js'
 import { taskWaitsOnDependency, teamPanelView, unresolvedDependency } from './team-main-agent-data.js'
 
 /**
@@ -40,6 +47,12 @@ export interface TeamSidebarTask {
   statusLabel: string
   updatedAt: string
   blockedBy?: TeamSidebarBlockedBy
+  /**
+   * One line of stored facts the board's detail panel also shows — owner, kind,
+   * review verdict and due/reminder times. Absent when the task carries none,
+   * so a legacy row renders exactly as before and nothing is invented.
+   */
+  detail?: string
 }
 
 export interface TeamScopeCounts {
@@ -165,12 +178,14 @@ export function recentTeamTasks(team: TaskSource, limit = RECENT_TASK_LIMIT): Te
       const ownerName = dependency?.ownerSlotId === undefined
         ? undefined
         : members[dependency.ownerSlotId]?.displayName
+      const detail = taskDetailLine(task, members)
       return {
         id: task.id,
         title: taskTitle(task.title),
         status: task.status,
         statusLabel: taskStatusLabel(task.status),
         updatedAt: task.updatedAt,
+        ...(detail === undefined ? {} : { detail }),
         ...(dependency === undefined
           ? {}
           : {
@@ -182,6 +197,33 @@ export function recentTeamTasks(team: TaskSource, limit = RECENT_TASK_LIMIT): Te
             }),
       }
     })
+}
+
+/**
+ * The read-only facts the board's detail panel also prints. Only stored fields
+ * appear: an unassigned task adds no owner word, a work task adds no verdict,
+ * and a task with no times adds no schedule.
+ */
+function taskDetailLine(
+  task: TeamTask,
+  members: Partial<TeamView['members']>,
+): string | undefined {
+  const parts: string[] = []
+  const ownerName = task.ownerSlotId === undefined
+    ? undefined
+    : members[task.ownerSlotId]?.displayName
+  if (ownerName !== undefined) parts.push(ownerName)
+  // A review/verification row prints its kind together with the decision
+  // (审核：待结论); every other row prints the bare kind (实现).
+  if (taskCarriesVerdict(task)) {
+    const verdict = taskVerdictLabel(task)
+    if (verdict !== undefined) parts.push(`${taskKindLabel(task.kind)}：${verdict}`)
+  } else if (task.kind !== undefined) {
+    parts.push(taskKindLabel(task.kind))
+  }
+  const schedule = taskScheduleSummary(task)
+  if (schedule !== '') parts.push(schedule)
+  return parts.length === 0 ? undefined : parts.join(' · ')
 }
 
 export type TeamRosterTone = 'running' | 'waiting' | 'error' | 'starting' | 'idle' | 'offline'

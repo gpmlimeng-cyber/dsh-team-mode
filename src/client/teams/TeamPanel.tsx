@@ -45,6 +45,11 @@ import {
   memoryVisibilityLabel,
   TASK_STATE_LABELS,
   taskDependencyView,
+  taskKindLabel,
+  taskScheduleSummary,
+  taskVerdictLabel,
+  taskVerdictTone,
+  TEAM_TASK_CREATE_HINT,
   teamCheckpointStatusLabel,
   teamCheckpointSummary,
   teamGoalGroups,
@@ -2000,6 +2005,7 @@ export function GoalTaskBoard({
               </section>
             )
           })}
+      <p className={css.overviewDetailHint}>{TEAM_TASK_CREATE_HINT}</p>
     </div>
   )
 }
@@ -2013,14 +2019,24 @@ function GoalTaskRow({ team, task }: { team: TeamView; task: TeamTask }): JSX.El
   const waitingLabel = dependencies.waitingOn.length > DEPENDENCY_PREVIEW
     ? `${waitingNames} 等 ${dependencies.waitingOn.length} 项`
     : waitingNames
+  const verdictLabel = taskVerdictLabel(task)
+  const schedule = taskScheduleSummary(task)
   return (
     <div className={css.taskBoardRow}>
       <div className={css.taskBoardRowMain}>
         <span className={css.goalTaskTitleLine}>
           <strong>{task.title}</strong>
+          {task.kind !== undefined && <span className={css.muted}>{taskKindLabel(task.kind)}</span>}
+          {verdictLabel !== undefined && (
+            <span className={css.overviewVerdict} data-tone={taskVerdictTone(task)}>{verdictLabel}</span>
+          )}
           {dependencies.isBlocked && <span className={css.goalBlockedBadge}>阻塞</span>}
         </span>
         {task.description !== '' && <span className={css.taskBoardDescription}>{task.description}</span>}
+        {task.acceptance !== undefined && task.acceptance.trim() !== '' && (
+          <span className={css.taskBoardDescription}>验收：{task.acceptance}</span>
+        )}
+        {schedule !== '' && <span className={css.taskScheduleLine} title={schedule}>{schedule}</span>}
         {(dependencies.waitingOn.length > 0 || dependencies.blocks.length > 0) && (
           <span className={css.goalDependencyRow}>
             {dependencies.waitingOn.length > 0 && (

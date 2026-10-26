@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // The primitives bundle ships without its own runtime dependencies in this
 // checkout; the guards below only need the element shape, not the styling.
@@ -28,8 +28,15 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
 
 import type { TeamMemberSlot, TeamTask } from '../src/domain/types.js'
 import type { CatalogView, TeamView } from '../src/transport/contracts.js'
-import { callAgentTeam } from '../src/client/api.js'
+import { callAgentTeam, invalidateTeamListSnapshot } from '../src/client/api.js'
 import { TeamForm } from '../src/client/teams/TeamPanel.js'
+import { teamMentionInsertion, teamMentionText } from '../src/client/labels.js'
+import {
+  TeamMentionAction,
+  TeamMentionContext,
+  teamMentionCandidates,
+} from '../src/client/team-parallel.js'
+import { resolveTeamTarget } from '../src/runtime/team-turn-routing.js'
 import {
   compareTeamSidebar,
   recentTeamTasks,
@@ -539,6 +546,46 @@ describe('recentTeamTasks', () => {
     expect(rows.find(item => item.id === 'review')?.blockedBy).toBeUndefined()
     expect(rows.find(item => item.id === 'plain')?.blockedBy).toBeUndefined()
   })
+
+  it('leaves a task without stored extras with no detail line', () => {
+    // Same rule as the board: a legacy row must not grow words it never stored.
+    const rows = recentTeamTasks(team({ tasks: { plain: task({ id: 'plain' }) } }))
+    expect(rows[0]?.detail).toBeUndefined()
+  })
+
+  it('reports the owner, kind and due/reminder facts the board detail shows', () => {
+    const tasks = {
+      impl: task({
+        id: 'impl',
+        status: 'running',
+        ownerSlotId: 'engineer',
+        kind: 'implementation',
+        dueAt: '2026-01-02T09:00:00.000Z',
+        remindAt: '2026-01-02T08:00:00.000Z',
+        remindedAt: '2026-01-02T08:00:00.000Z',
+      }),
+    }
+    const members = { engineer: { displayName: '实现者' } } as unknown as TeamView['members']
+    const detail = recentTeamTasks(team({ tasks, members }))[0]?.detail
+    expect(detail).toContain('实现者')
+    expect(detail).toContain('实现')
+    expect(detail).toContain('截止')
+    expect(detail).toContain('提醒')
+    expect(detail).toContain('已提醒')
+  })
+
+  it('reads an undecided review as 待结论 and never invents a verdict', () => {
+    const tasks = {
+      review: task({ id: 'review', status: 'running', kind: 'review' }),
+      verdict: task({ id: 'verdict', status: 'completed', kind: 'review', verdict: 'reject' }),
+      work: task({ id: 'work', status: 'running', kind: 'implementation' }),
+    }
+    const rows = recentTeamTasks(team({ tasks }))
+    expect(rows.find(item => item.id === 'review')?.detail).toBe('审核：待结论')
+    expect(rows.find(item => item.id === 'verdict')?.detail).toBe('审核：驳回')
+    // Only review/verification tasks carry a verdict word at all.
+    expect(rows.find(item => item.id === 'work')?.detail).toBe('实现')
+  })
 })
 
 describe('teamScopeCounts', () => {
@@ -940,6 +987,9 @@ describe('read requests are shared across one mount', () => {
 
   afterEach(() => { vi.unstubAllGlobals() })
 
+  // The settled mount snapshot is module state; start every case without one.
+  beforeEach(() => { invalidateTeamListSnapshot() })
+
   it('shares one team.list between the hosts that mount together', async () => {
     const calls = stubFetch()
     await Promise.all([
@@ -950,9 +1000,15 @@ describe('read requests are shared across one mount', () => {
     expect(calls).toEqual(['team.list'])
   })
 
-  it('pulls again once the shared request settled instead of caching it', async () => {
+  it('reuses a settled team.list only inside the page-mount window', async () => {
     const calls = stubFetch()
     await callAgentTeam('team.list')
+    // F4: the mount's second reader starts ~450 ms after the first and joins
+    // the settled answer instead of POSTing its own team.list.
+    await callAgentTeam('team.list')
+    expect(calls).toEqual(['team.list'])
+    // A team change (or mutation) drops it, so the next read is a real one.
+    invalidateTeamListSnapshot()
     await callAgentTeam('team.list')
     expect(calls).toEqual(['team.list', 'team.list'])
   })
@@ -1044,3 +1100,141 @@ describe('创建默认成员 waits for the catalog', () => {
     expect(panel).toContain("当前没有可用的 Provider")
   })
 })
+
+/**
+ * The runtime grammar (`resolveTeamTarget`/`findMentions`) is the authority for
+ * what a mention means. These tests feed the picker's own output into it, so the
+ * affordance cannot drift into writing tokens the router ignores.
+ */
+describe('@member affordance mirrors the runtime mention grammar', () => {
+  const routingTeam = {
+    leaderSlotId: 'leader',
+    members: {
+      leader: { id: 'leader', displayName: 'Leader', role: 'leader' as const },
+      alpha: { id: 'alpha', displayName: 'Alpha', role: 'member' as const },
+      beta: { id: 'beta', displayName: 'Beta', role: 'member' as const },
+    },
+  }
+
+  it('writes one token per member and the runtime routes it to that member', () => {
+    for (const member of Object.values(routingTeam.members)) {
+      const mention = teamMentionText(member.displayName)
+      expect(mention).toBe(`@${member.displayName} `)
+      expect(resolveTeamTarget({ team: routingTeam, content: `${mention}please take this` }))
+        .toEqual({ slotId: member.id, reason: 'mention' })
+    }
+  })
+
+  it('trims a display name and refuses a blank one', () => {
+    expect(teamMentionText('  Alpha  ')).toBe('@Alpha ')
+    expect(teamMentionText('')).toBeUndefined()
+    expect(teamMentionText('   ')).toBeUndefined()
+  })
+
+  it('keeps plain text and unresolvable mentions on the Leader default path', () => {
+    expect(resolveTeamTarget({ team: routingTeam, content: 'hello team' }))
+      .toEqual({ slotId: 'leader', reason: 'default' })
+    // An unknown/blank mention is just text: the runtime must not fail the send.
+    expect(resolveTeamTarget({ team: routingTeam, content: '@Ghost hello' }))
+      .toEqual({ slotId: 'leader', reason: 'default' })
+    expect(resolveTeamTarget({ team: routingTeam, content: '@ hello' }))
+      .toEqual({ slotId: 'leader', reason: 'default' })
+  })
+
+  it('separates a token inserted right after a word', () => {
+    expect(teamMentionInsertion('@Alpha ', '')).toBe('@Alpha ')
+    expect(teamMentionInsertion('@Alpha ', 'hello ')).toBe('@Alpha ')
+    expect(teamMentionInsertion('@Alpha ', 'hello')).toBe(' @Alpha ')
+    // Mirrored end to end: what the picker writes after a word still routes.
+    expect(resolveTeamTarget({
+      team: routingTeam,
+      content: `hello${teamMentionInsertion('@Alpha ', 'hello')}take this`,
+    })).toEqual({ slotId: 'alpha', reason: 'mention' })
+  })
+
+  it('offers every other member, in roster order, and never the pane itself', () => {
+    const team = teamFixture({ members: mentionMembers(), memberOrder: ['beta', 'leader', 'alpha', 'blank'] })
+    expect(teamMentionCandidates(team, 'alpha')).toEqual([
+      { id: 'beta', name: 'Beta', role: 'member', mention: '@Beta ' },
+      { id: 'leader', name: 'Leader', role: 'leader', mention: '@Leader ' },
+    ])
+    // A blank display name has no routable token, so it is not offered at all.
+    expect(teamMentionCandidates(team, 'leader').map(row => row.id)).toEqual(['beta', 'alpha'])
+  })
+})
+
+describe('@member affordance is an additive composer entry', () => {
+  const team = teamFixture({ members: mentionMembers(), memberOrder: ['leader', 'alpha', 'beta'] })
+
+  function renderMention(scope: { team: TeamView; selfSlotId: string } | undefined): string {
+    return renderToStaticMarkup(createElement(TeamMentionContext.Provider, { value: scope },
+      createElement(TeamMentionAction, {
+        inputActions: {
+          captureInsertion: () => ({ start: 0, end: 0, draftRev: 1 }),
+          insertText: () => true,
+          setDraft: () => undefined,
+        },
+      })))
+  }
+
+  it('renders one @ button that opens a listbox inside a group-chat pane', () => {
+    const markup = renderMention({ team, selfSlotId: 'leader' })
+    expect(markup).toContain('aria-label="提及成员"')
+    expect(markup).toContain('aria-haspopup="listbox"')
+    expect(markup).toContain('aria-expanded="false"')
+    expect(markup).toContain('>@<')
+    // Closed by default: the native composer keeps its own surface.
+    expect(markup).not.toContain('role="listbox"')
+  })
+
+  it('renders nothing outside a group-chat pane, or with no one to mention', () => {
+    expect(renderMention(undefined)).toBe('')
+    const solo = teamFixture({ members: { alpha: mentionMembers().alpha! }, memberOrder: ['alpha'] })
+    expect(renderMention({ team: solo, selfSlotId: 'alpha' })).toBe('')
+  })
+})
+
+function mentionMembers(): TeamView['members'] {
+  return {
+    leader: {
+      id: 'leader',
+      displayName: 'Leader',
+      role: 'leader',
+      sessionId: 'session-leader',
+      joinedAt: '2026-01-01T00:00:00.000Z',
+    },
+    alpha: {
+      id: 'alpha',
+      displayName: 'Alpha',
+      role: 'member',
+      sessionId: 'session-alpha',
+      joinedAt: '2026-01-01T00:01:00.000Z',
+    },
+    beta: {
+      id: 'beta',
+      displayName: 'Beta',
+      role: 'member',
+      sessionId: 'session-beta',
+      joinedAt: '2026-01-01T00:02:00.000Z',
+    },
+    // A member whose name is only spaces has no routable mention token.
+    blank: {
+      id: 'blank',
+      displayName: '   ',
+      role: 'member',
+      sessionId: 'session-blank',
+      joinedAt: '2026-01-01T00:03:00.000Z',
+    },
+  } as unknown as TeamView['members']
+}
+
+function teamFixture(overrides: Partial<TeamView> & Pick<TeamView, 'members'>): TeamView {
+  return {
+    id: 'team-mention',
+    name: '提及团队',
+    leaderSlotId: 'leader',
+    tasks: {},
+    memberOrder: Object.keys(overrides.members),
+    ...overrides,
+  } as unknown as TeamView
+}

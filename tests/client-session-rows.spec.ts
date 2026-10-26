@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   isUnknownSessionError,
+  isUnknownTeamError,
   navigationErrorMessage,
   openSessionInCatalog,
   teamLeaderSessionId,
@@ -212,5 +213,154 @@ describe('team and member row navigation', () => {
     expect(source).toContain("callAgentTeam('team.get'")
     expect(source).toContain('openSessionInCatalog')
     expect(source).toContain('reportNavigationError')
+  })
+})
+
+describe('F8: a missing team is reported without its internal id', () => {
+  // The Host raises TEAM_NOT_FOUND with `Unknown team '<uuid>'`; the id is an
+  // implementation detail a person must never read.
+  const unknownTeamByCode = (): Error => Object.assign(
+    new Error("Unknown team 'a5d3f549-ad2c-40c5-a1fe-12c1c35d569b'"),
+    { code: 'TEAM_NOT_FOUND' },
+  )
+
+  it('maps TEAM_NOT_FOUND to exactly one sentence', () => {
+    const message = navigationErrorMessage(unknownTeamByCode())
+    expect(message).toBe('该团队已不存在。')
+    expect(message).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}/)
+    expect(message).not.toContain('TEAM_NOT_FOUND')
+    expect(message).not.toContain('Unknown team')
+  })
+
+  it('recognises the bare wording when no code survived the boundary', () => {
+    expect(isUnknownTeamError(new Error("Unknown team 'id-1'"))).toBe(true)
+    expect(navigationErrorMessage(new Error("Unknown team 'id-1'"))).toBe('该团队已不存在。')
+    expect(isUnknownTeamError(unknownTeamByCode())).toBe(true)
+  })
+
+  it('leaves every other failure, including the session refusal, untouched', () => {
+    expect(isUnknownTeamError(new Error('boom'))).toBe(false)
+    expect(isUnknownTeamError('Unknown team')).toBe(false)
+    expect(isUnknownTeamError(undefined)).toBe(false)
+    expect(navigationErrorMessage(new Error('boom'))).toBe('无法打开该会话：boom')
+    expect(navigationErrorMessage(new Error('sessions.retain: unknown session x')))
+      .toBe('无法打开该会话：会话尚未同步到本地，请重新加载页面后再试')
+  })
+})
+
+class FakeEventSource {
+  static readonly OPEN = 1
+  static instances: FakeEventSource[] = []
+
+  readonly listeners = new Map<string, Array<(event: unknown) => void>>()
+  readyState = 0
+  onerror: (() => void) | null = null
+  onopen: (() => void) | null = null
+
+  constructor(readonly url: string) {
+    FakeEventSource.instances.push(this)
+  }
+
+  addEventListener(type: string, listener: EventListener): void {
+    const listeners = this.listeners.get(type) ?? []
+    listeners.push(listener as (event: unknown) => void)
+    this.listeners.set(type, listeners)
+  }
+
+  emit(type: string): void {
+    for (const listener of this.listeners.get(type) ?? []) listener({ data: '{}' })
+  }
+
+  open(): void {
+    this.readyState = FakeEventSource.OPEN
+    this.onopen?.()
+  }
+
+  close(): void {
+    this.readyState = 2
+  }
+}
+
+describe('F4: the event hub does not double the mount read', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    FakeEventSource.instances = []
+    vi.stubGlobal('EventSource', FakeEventSource)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  async function subscribeAll(): Promise<{
+    listResync: ReturnType<typeof vi.fn>
+    conversationOpen: ReturnType<typeof vi.fn>
+    workspaceOpen: ReturnType<typeof vi.fn>
+    builderOpen: ReturnType<typeof vi.fn>
+    dispose: () => void
+  }> {
+    const {
+      subscribeAgentTeam,
+      subscribeAgentTeamConversation,
+      subscribeAgentTeamWorkspace,
+      subscribeAssistantBuilderConversation,
+    } = await import('../src/client/api.js')
+    const listResync = vi.fn()
+    const conversationOpen = vi.fn()
+    const workspaceOpen = vi.fn()
+    const builderOpen = vi.fn()
+    const disposers = [
+      subscribeAgentTeam(vi.fn(), vi.fn(), listResync),
+      subscribeAgentTeamConversation('team-1', vi.fn(), vi.fn(), conversationOpen),
+      subscribeAgentTeamWorkspace('team-1', vi.fn(), vi.fn(), workspaceOpen),
+      subscribeAssistantBuilderConversation(vi.fn(), vi.fn(), builderOpen),
+    ]
+    return {
+      listResync,
+      conversationOpen,
+      workspaceOpen,
+      builderOpen,
+      dispose: () => { for (const dispose of disposers) dispose() },
+    }
+  }
+
+  it('skips the change resync on the first open, which the mount read covers', async () => {
+    const hub = await subscribeAll()
+    FakeEventSource.instances[0]!.open()
+    // One page mount already read; a first open must not add a second team.list.
+    expect(hub.listResync).not.toHaveBeenCalled()
+    // The other subscription kinds keep their first-open behaviour.
+    expect(hub.conversationOpen).toHaveBeenCalledOnce()
+    expect(hub.workspaceOpen).toHaveBeenCalledOnce()
+    expect(hub.builderOpen).toHaveBeenCalledOnce()
+    hub.dispose()
+  })
+
+  it('resyncs change subscribers when the stream re-opens after a drop', async () => {
+    const hub = await subscribeAll()
+    const source = FakeEventSource.instances[0]!
+    source.open()
+    expect(hub.listResync).not.toHaveBeenCalled()
+    // EventSource re-opens after its own reconnect: events may be missing now.
+    source.open()
+    expect(hub.listResync).toHaveBeenCalledOnce()
+    source.open()
+    expect(hub.listResync).toHaveBeenCalledTimes(2)
+    hub.dispose()
+  })
+
+  it('always honours the explicit server resync frame', async () => {
+    const hub = await subscribeAll()
+    const source = FakeEventSource.instances[0]!
+    source.open()
+    source.emit('resync')
+    expect(hub.listResync).toHaveBeenCalledOnce()
+    hub.dispose()
+  })
+
+  it('shares one EventSource for every subscriber of the mount', async () => {
+    const hub = await subscribeAll()
+    expect(FakeEventSource.instances).toHaveLength(1)
+    hub.dispose()
   })
 })

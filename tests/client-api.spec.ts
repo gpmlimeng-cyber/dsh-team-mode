@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   AGENT_TEAM_FILE_NAME_HEADER,
   AGENT_TEAM_REQUEST_ID_HEADER,
@@ -314,5 +314,86 @@ describe('Agent Team client requests', () => {
         value: { name: 'Updated Assistant' },
       },
     })
+  })
+})
+
+/**
+ * F4: a fresh page mounts independent readers that start ~450 ms apart
+ * (`TeamTriggerEnhancer.loadColors`, then the Session row hider / sidebar
+ * `load`), so the in-flight sharing above cannot merge them. One settled
+ * `team.list` snapshot covers that stagger and nothing more.
+ */
+describe('Agent Team mount snapshot (one team.list per fresh mount)', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    FakeEventSource.instances = []
+    vi.stubGlobal('EventSource', FakeEventSource)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  const stubFetch = (): string[] => {
+    const calls: string[] = []
+    vi.stubGlobal('crypto', { randomUUID: () => 'request-1' })
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init: { body: string }) => {
+      const request = JSON.parse(init.body) as { method: string }
+      calls.push(request.method)
+      return { json: async () => ({ requestId: 'request-1', ok: true, value: { items: [], total: 0 } }) }
+    }))
+    return calls
+  }
+
+  it('lets the mount\'s second reader join the settled answer', async () => {
+    const calls = stubFetch()
+    const { callAgentTeam } = await import('../src/client/api.js')
+    await callAgentTeam('team.list')
+    await callAgentTeam('team.list')
+    expect(calls).toEqual(['team.list'])
+  })
+
+  it('stops reusing it after the settle window', async () => {
+    const calls = stubFetch()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    const { callAgentTeam } = await import('../src/client/api.js')
+    await callAgentTeam('team.list')
+    await callAgentTeam('team.list')
+    expect(calls).toEqual(['team.list'])
+    now.mockReturnValue(1_000_000 + 1_501)
+    await callAgentTeam('team.list')
+    expect(calls).toEqual(['team.list', 'team.list'])
+  })
+
+  it('drops the snapshot on any mutation, so a later read is fresh', async () => {
+    const calls = stubFetch()
+    const { callAgentTeam } = await import('../src/client/api.js')
+    await callAgentTeam('team.list')
+    await callAgentTeam('team.pin', { teamId: 'team-1', pinned: true }, 1)
+    await callAgentTeam('team.list')
+    expect(calls).toEqual(['team.list', 'team.pin', 'team.list'])
+  })
+
+  it('drops the snapshot when a team change event arrives', async () => {
+    const calls = stubFetch()
+    const { callAgentTeam, subscribeAgentTeam } = await import('../src/client/api.js')
+    const unsubscribe = subscribeAgentTeam(vi.fn(), vi.fn())
+    await callAgentTeam('team.list')
+    await callAgentTeam('team.list')
+    expect(calls).toEqual(['team.list'])
+    FakeEventSource.instances[0]!.open()
+    FakeEventSource.instances[0]!.emit('change', { entityId: 'team-1' })
+    await callAgentTeam('team.list')
+    expect(calls).toEqual(['team.list', 'team.list'])
+    unsubscribe()
+  })
+
+  it('never reuses other reads', async () => {
+    const calls = stubFetch()
+    const { callAgentTeam } = await import('../src/client/api.js')
+    await callAgentTeam('team.get', { id: 'team-a' })
+    await callAgentTeam('team.get', { id: 'team-a' })
+    expect(calls).toEqual(['team.get', 'team.get'])
   })
 })

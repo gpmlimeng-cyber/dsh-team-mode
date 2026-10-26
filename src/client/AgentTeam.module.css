@@ -6611,6 +6611,148 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   }
 }
 
+/* Team mention entry, mounted by the composer's own `conversation.input.left`
+   list slot: one round `@` button and a popover that writes into the native
+   editor. It is positioned against the composer row, never over the send
+   button, and stays inside the pane's width on a phone. */
+.teamMentionRoot {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+}
+
+.teamMentionTrigger {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.teamMentionTrigger:hover,
+.teamMentionTrigger[aria-expanded='true'] {
+  border-color: var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.teamMentionTrigger:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.teamMentionPopover {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 12rem;
+  max-height: 15rem;
+  padding: 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-shadow-l2, 0 6px 20px rgb(0 0 0 / 18%));
+  overflow-y: auto;
+}
+
+.teamMentionTitle {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.teamMentionList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.teamMentionOption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  padding: 4px 5px;
+  border: 0;
+  border-radius: var(--dsw-radius-xs);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.teamMentionOption:hover,
+.teamMentionOption:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  outline: none;
+}
+
+.teamMentionOption:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--dsw-alias-brand-primary);
+}
+
+.teamMentionName {
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teamMentionLeader {
+  flex: none;
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-warn-primary) 30%, transparent);
+  border-radius: 999px;
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 8px;
+  line-height: 12px;
+}
+
+.teamMentionToken {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.teamMentionHint,
+.teamMentionNotice {
+  margin: 0;
+  padding: 2px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+  overflow-wrap: anywhere;
+}
+
+.teamMentionNotice {
+  color: var(--dsw-alias-state-warn-label);
+}
+
 /* The native hero composer seat paints a white fade over the top 36px; in a
    team pane that hides the member gradient behind the guide. Keep it clear. */
 [data-team-pane] [data-composer-seat] {
@@ -8714,6 +8856,25 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   line-height: 16px;
 }
 
+.sidebarTeamTaskDetail {
+  display: block;
+  min-width: 0;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 10px;
+  line-height: 14px;
+  overflow-wrap: anywhere;
+}
+
+.sidebarTeamTaskHint {
+  margin: 6px 0 0;
+  padding: 6px 8px 0;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 10px;
+  line-height: 15px;
+  overflow-wrap: anywhere;
+}
+
 /* Bot roster: one navigation row per member under its team row. Names ellipsize
    inside the 320px drawer, so no child may claim a fixed width. */
 .sidebarRosterList {
@@ -10043,6 +10204,115 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 .overviewStatus[data-tone='danger'] {
   color: var(--dsw-alias-state-error-primary);
+}
+
+.overviewVerdict {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.overviewVerdict[data-tone='success'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-success-primary) 40%, transparent);
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.overviewVerdict[data-tone='warn'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 40%, transparent);
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.overviewVerdict[data-tone='danger'] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-error-primary) 40%, transparent);
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.overviewDetailRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.overviewDetailHint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 15px;
+  overflow-wrap: anywhere;
+}
+
+/* Task card split: the surface owns the frame, an inner button owns the click
+   target, and the session action is a sibling so no button nests a button. */
+.taskCardMain {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.taskCardMain:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.taskCardActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  margin-top: 2px;
+}
+
+.taskCardAction {
+  flex: none;
+  padding: 0 7px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.taskCardAction:hover {
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+}
+
+.taskCardAction:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+
+.taskScheduleLine {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 14px;
+  overflow-wrap: anywhere;
 }
 
 .overviewDetailGrid {

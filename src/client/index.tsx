@@ -20,7 +20,7 @@ import {
 import { SessionRowHider } from './session-row-hider.js'
 import { AssistantSessionTitle, AssistantSessionTitleHost } from './assistant-session-title.js'
 import { TeamModeDialogs } from './team-dialogs.js'
-import { TeamParallelHost, TeamParallelView } from './team-parallel.js'
+import { TeamParallelHost, TeamMentionAction, TeamParallelView } from './team-parallel.js'
 import { TeamTriggerEnhancer } from './team-trigger-enhancer.js'
 import { TEAM_MANAGE_VIEW_ID, TEAM_MANAGE_VIEW_LABEL, TEAM_MANAGE_VIEW_ORDER, TeamManageView } from './team-manage.js'
 import { TeamParallelPane } from './team-pane.js'
@@ -315,6 +315,17 @@ export function apply(ctx: AgentTeamClientContext): void {
     order: 90,
     label: '团队视图',
   }, TeamViewTabs))
+
+  // `conversation.input.left` is a list slot inside the official composer bar.
+  // This entry renders only where the 群聊 pane provides its mention scope, so
+  // the native composer is reused in place — never replaced, re-mounted or
+  // submitted from here.
+  slotApi.inject('conversation.input.left', () => slotApi.register({
+    name: 'conversation.input.left',
+    id: 'dsh-team-mode-mention',
+    order: 60,
+    label: '提及成员',
+  }, TeamMentionAction))
 
   // Register the lineage title only while the active Session is an Assistant
   // main Session. The host below is always mounted in the utilities list slot;

@@ -77,6 +77,134 @@ export function taskStatusLabel(status: string): string {
   return TASK_STATE_LABELS[status] ?? status
 }
 
+/** Composer entry that opens the team mention picker; not a custom composer. */
+export const TEAM_MENTION_LABEL = '提及成员'
+
+/**
+ * The affordance only writes the mention token. Whether a turn reaches a
+ * member is decided by the team message pipeline, so the hint must not promise
+ * that a native pane turn is re-routed.
+ */
+export const TEAM_MENTION_HINT = '插入 @成员；原生会话仍发给该成员的会话，不改派'
+export const TEAM_MENTION_BUSY = '输入框正忙，稍后再试'
+export const TEAM_MENTION_EMPTY = '没有可提及的其他成员'
+
+/**
+ * The one mention token the runtime grammar accepts: `@` + display name.
+ * `findMentions` (runtime/team-turn-routing.ts) trims the display name, matches
+ * case-insensitively, and requires the token to end at a space, `@`, or the end
+ * of the message — hence the trailing space. A blank name yields no token.
+ */
+export function teamMentionText(displayName: string): string | undefined {
+  const name = displayName.trim()
+  return name === '' ? undefined : `@${name} `
+}
+
+/**
+ * Insert the token at a caret whose preceding text is `before`. The runtime
+ * only sees `@` at the message start or after whitespace, so the token gets one
+ * leading space when the caret follows a visible character.
+ */
+export function teamMentionInsertion(mention: string, before: string): string {
+  return before === '' || /\s$/.test(before) ? mention : ` ${mention}`
+}
+
+/**
+ * F7: the board and the task dialog are read-only for a human. Tasks arrive
+ * from the Leader or from team tools, so every task surface says so instead of
+ * offering a create control that would post nothing.
+ */
+export const TEAM_TASK_CREATE_HINT = '任务由 Leader 或团队工具创建，界面不提供人工新建入口。'
+
+/** Task protocol vocabulary; a legacy row has no `kind` and reads as `work`. */
+export const TASK_KIND_LABELS: Readonly<Record<string, string>> = {
+  work: '工作',
+  implementation: '实现',
+  repair: '修复',
+  verification: '验证',
+  review: '审核',
+}
+
+export function taskKindLabel(kind: string | undefined): string {
+  return TASK_KIND_LABELS[kind ?? 'work'] ?? (kind ?? 'work')
+}
+
+export const TASK_VERDICT_LABELS: Readonly<Record<string, string>> = {
+  pass: '通过',
+  needs_revision: '需修订',
+  reject: '驳回',
+}
+
+/**
+ * A review/verification task that has not been decided yet reads 待结论. The
+ * word is a state of the row, never a verdict: nothing is invented for it.
+ */
+export const TASK_VERDICT_PENDING = '待结论'
+
+/** Only review and verification tasks carry a verdict (schemas.ts). */
+export function taskCarriesVerdict(task: Pick<TeamTask, 'kind'>): boolean {
+  return task.kind === 'review' || task.kind === 'verification'
+}
+
+/** Absent for a work/implementation/repair task; 待结论 when still undecided. */
+export function taskVerdictLabel(task: Pick<TeamTask, 'kind' | 'verdict'>): string | undefined {
+  if (!taskCarriesVerdict(task)) return undefined
+  return task.verdict === undefined
+    ? TASK_VERDICT_PENDING
+    : TASK_VERDICT_LABELS[task.verdict] ?? task.verdict
+}
+
+export type TaskVerdictTone = 'success' | 'warn' | 'danger' | 'neutral'
+
+/** Pending is neutral: an undecided review is not a failing one. */
+export function taskVerdictTone(task: Pick<TeamTask, 'kind' | 'verdict'>): TaskVerdictTone | undefined {
+  if (!taskCarriesVerdict(task)) return undefined
+  switch (task.verdict) {
+    case 'pass':
+      return 'success'
+    case 'needs_revision':
+      return 'warn'
+    case 'reject':
+      return 'danger'
+    default:
+      return 'neutral'
+  }
+}
+
+export interface TaskScheduleEntry {
+  /** 截止 / 提醒 / 已提醒. */
+  label: string
+  value: string
+}
+
+function taskTimeStamp(value: string): string {
+  const at = Date.parse(value)
+  if (Number.isNaN(at)) return value
+  return new Date(at).toLocaleString('zh-CN')
+}
+
+/**
+ * Due/reminder facts exactly as stored. A task without `dueAt`/`remindAt` (or
+ * stored before reminders existed) yields no entry, so no surface can print a
+ * deadline the team never set. `remindedAt` is the reminder already emitted.
+ */
+export function taskScheduleEntries(
+  task: Pick<TeamTask, 'dueAt' | 'remindAt' | 'remindedAt'>,
+): TaskScheduleEntry[] {
+  const entries: TaskScheduleEntry[] = []
+  if (task.dueAt !== undefined) entries.push({ label: '截止', value: taskTimeStamp(task.dueAt) })
+  if (task.remindAt !== undefined) entries.push({ label: '提醒', value: taskTimeStamp(task.remindAt) })
+  if (task.remindedAt !== undefined) entries.push({ label: '已提醒', value: taskTimeStamp(task.remindedAt) })
+  return entries
+}
+
+/** One bounded line for the task card; empty when the task carries no times. */
+export function taskScheduleSummary(
+  task: Pick<TeamTask, 'dueAt' | 'remindAt' | 'remindedAt'>,
+): string {
+  return taskScheduleEntries(task).map(entry => `${entry.label} ${entry.value}`).join(' · ')
+}
+
 export const TEAM_CHECKPOINT_STATUS_LABELS: Readonly<Record<string, string>> = {
   ready: '可交接',
   consumed: '已交接',

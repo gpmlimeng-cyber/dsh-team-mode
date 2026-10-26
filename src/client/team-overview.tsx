@@ -1,5 +1,13 @@
 import { useState, type CSSProperties } from 'react'
 import css from './AgentTeam.module.css'
+import {
+  TEAM_TASK_CREATE_HINT,
+  taskCarriesVerdict,
+  taskKindLabel,
+  taskScheduleEntries,
+  taskVerdictLabel,
+  taskVerdictTone,
+} from './labels.js'
 import { dependencyGraph, leaderInbox, pickOverviewTask } from './team-overview-data.js'
 import type { TeamMemberSlot, TeamMessage, TeamTask } from '../domain/types.js'
 import type { TeamView } from '../transport/contracts.js'
@@ -365,6 +373,9 @@ function TaskDetail({ team, tasks, selectedId, selectedTaskId, visibleTaskIds, o
         <p className={css.overviewEmpty}>
           {tasks.length === 0 ? '暂无任务可查看' : '选择任务后查看详情'}
         </p>
+        {tasks.length === 0 && (
+          <p className={css.overviewDetailHint}>{TEAM_TASK_CREATE_HINT}</p>
+        )}
       </section>
     )
   }
@@ -378,6 +389,22 @@ function TaskDetail({ team, tasks, selectedId, selectedTaskId, visibleTaskIds, o
   const removed = selectedTaskId !== undefined && !selectedExists
   const hidden = !removed && !visibleTaskIds.has(selected.id)
   const title = taskTitle(selected.title)
+  const carriesVerdict = taskCarriesVerdict(selected)
+  const verdictLabel = taskVerdictLabel(selected)
+  const verdictTone = taskVerdictTone(selected)
+  const reviewed = selected.reviewedTaskId === undefined
+    ? undefined
+    : byId.get(selected.reviewedTaskId)
+  // Findings for a failing verdict live in `error`; a review/verification row
+  // shows them under 审核结论 so they are never lost or printed twice.
+  const findings = carriesVerdict && selected.error !== undefined && selected.error !== ''
+    ? selected.error
+    : undefined
+  const goal = selected.goalId === undefined ? undefined : team.goals?.[selected.goalId]
+  const goalLabel = selected.goalId === undefined
+    ? '未归入目标'
+    : goal?.title ?? `未知目标（${shortId(selected.goalId)}）`
+  const schedule = taskScheduleEntries(selected)
 
   return (
     <section className={css.overviewPanel} aria-label="任务详情" data-overview-region="task-detail">
@@ -400,12 +427,66 @@ function TaskDetail({ team, tasks, selectedId, selectedTaskId, visibleTaskIds, o
             <dd>{ownerName(team, selected)}</dd>
           </div>
           <div>
+            <dt>任务类型</dt>
+            <dd>{taskKindLabel(selected.kind)}</dd>
+          </div>
+          <div>
+            <dt>尝试 ID</dt>
+            <dd title={selected.attemptId}>
+              {selected.attemptId === undefined ? '未分配' : shortId(selected.attemptId)}
+            </dd>
+          </div>
+          <div>
+            <dt>所属目标</dt>
+            <dd>{goalLabel}</dd>
+          </div>
+          <div>
             <dt>更新时间</dt>
             <dd>{formatTime(selected.updatedAt)}</dd>
           </div>
+          {schedule.map(entry => (
+            <div key={entry.label}>
+              <dt>{entry.label}</dt>
+              <dd>{entry.value}</dd>
+            </div>
+          ))}
         </dl>
         {selected.description !== '' && (
           <p className={css.overviewDetailText}>{selected.description}</p>
+        )}
+        {selected.acceptance !== undefined && selected.acceptance.trim() !== '' && (
+          <p className={css.overviewDetailText}>
+            <strong className={css.overviewDetailGroupTitle}>验收：</strong>
+            {selected.acceptance}
+          </p>
+        )}
+        {carriesVerdict && (
+          <div className={css.overviewDetailGroup} data-overview-region="task-verdict">
+            <h5 className={css.overviewDetailGroupTitle}>审核结论</h5>
+            <div className={css.overviewDetailRow}>
+              <span className={css.overviewVerdict} data-tone={verdictTone}>{verdictLabel}</span>
+              {selected.reviewedTaskId !== undefined && (
+                reviewed === undefined
+                  ? <span className={css.overviewDetailMuted}>
+                      审核对象：未知任务（{shortId(selected.reviewedTaskId)}）
+                    </span>
+                  : (
+                    <button
+                      type="button"
+                      className={css.overviewRefButton}
+                      onClick={() => { onSelectTask(reviewed.id) }}
+                    >
+                      审核对象：{taskTitle(reviewed.title)}
+                    </button>
+                  )
+              )}
+            </div>
+            {findings !== undefined
+              ? <p className={css.overviewErrorText}><strong>问题：</strong>{findings}</p>
+              : selected.verdict === 'pass'
+                ? <span className={css.overviewDetailMuted}>审核已通过。</span>
+                : undefined}
+          </div>
         )}
         <div className={css.overviewDetailGroup}>
           <h5 className={css.overviewDetailGroupTitle}>依赖</h5>
@@ -446,7 +527,7 @@ function TaskDetail({ team, tasks, selectedId, selectedTaskId, visibleTaskIds, o
         {selected.result !== undefined && selected.result !== '' && (
           <p className={css.overviewResult}><strong>结果</strong>{selected.result}</p>
         )}
-        {selected.error !== undefined && selected.error !== '' && (
+        {findings === undefined && selected.error !== undefined && selected.error !== '' && (
           <p className={css.overviewErrorText}><strong>异常</strong>{selected.error}</p>
         )}
         {owner !== undefined && (
@@ -458,6 +539,7 @@ function TaskDetail({ team, tasks, selectedId, selectedTaskId, visibleTaskIds, o
             打开成员会话
           </button>
         )}
+        <p className={css.overviewDetailHint}>{TEAM_TASK_CREATE_HINT}</p>
       </div>
     </section>
   )
