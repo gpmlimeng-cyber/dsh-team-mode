@@ -3009,8 +3009,9 @@ textarea.input {
 /* The search is the shipped Input primitive; only its width is ours, so the row
    keeps room for the mode control. */
 .brandSearch {
-  flex: 0 0 auto;
-  width: 168px;
+  flex: 0 1 auto;
+  width: 152px;
+  min-width: 96px;
 }
 
 /* BOT footer: the account row stretches over the free space and these actions
