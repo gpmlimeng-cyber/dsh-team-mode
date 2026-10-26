@@ -12,6 +12,7 @@ import { SidebarPortal, useSurfaceMode } from './sidebar.js'
 import { TeamMainAgentPanel } from './team-main-agent.js'
 import {
   closeTeamPanel,
+  openResetMemberContextDialog,
   panelToggleAvailable,
   reportNavigationError,
   toggleTeamPanel,
@@ -21,7 +22,7 @@ import { SessionRowHider } from './session-row-hider.js'
 import { LineLeading } from './session-row-leading.js'
 import { RowHover } from './session-row-hover.js'
 import { RowOpenParallel } from './session-row-action.js'
-import { TeamDetailMenuItem } from './session-row-menu.js'
+import { TeamDetailMenuItem, TeamResetContextMenuItem } from './session-row-menu.js'
 import { AssistantSessionTitle, AssistantSessionTitleHost } from './assistant-session-title.js'
 import { TeamModeDialogs } from './team-dialogs.js'
 import { TeamParallelHost, TeamMentionAction, TeamParallelView } from './team-parallel.js'
@@ -417,6 +418,18 @@ export function apply(ctx: AgentTeamClientContext): void {
     id: 'dsh-team-mode-row-team-detail',
     order: 500,
     label: '打开团队详情',
-    inject: () => ({ openTeamPage }),
+    inject: () => ({ openTeamPage, openResetMemberContext: openResetMemberContextDialog }),
   }, TeamDetailMenuItem as never))
+
+  // Destructive row menu entry: clear this member's context. The confirmation
+  // is the primitive RiskConfirmation hosted by the always-mounted dialog
+  // surface, and the write is the same `team.member.contextReset` the
+  // management dialog already calls.
+  ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
+    name: 'sidebar.workspaces.session.menu.item',
+    id: 'dsh-team-mode-row-reset-context',
+    order: 600,
+    label: '清空该成员上下文',
+    inject: () => ({ openTeamPage, openResetMemberContext: openResetMemberContextDialog }),
+  }, TeamResetContextMenuItem as never))
 }

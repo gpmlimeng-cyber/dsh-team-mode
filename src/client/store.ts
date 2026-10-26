@@ -1,9 +1,18 @@
 import { useSyncExternalStore } from 'react'
 import type { SurfaceMode } from './surface-mode.js'
 
+/** One member a destructive row action targets; the Session id outlives a slot change. */
+export interface ResetMemberContextTarget {
+  teamId: string
+  teamName: string
+  sessionId: string
+  memberName: string
+}
+
 export type TeamDialog =
   | { kind: 'create' }
   | { kind: 'manage'; teamId: string }
+  | ({ kind: 'reset-member' } & ResetMemberContextTarget)
 
 export interface AgentTeamUiState {
   visible: boolean
@@ -77,6 +86,11 @@ export function openCreateTeamDialog(): void {
 
 export function openManageTeamDialog(teamId: string): void {
   update({ ...state, selectedTeamId: teamId, dialog: { kind: 'manage', teamId } })
+}
+
+/** The row menu's clear-context gate; `TeamModeDialogs` owns the confirmation. */
+export function openResetMemberContextDialog(target: ResetMemberContextTarget): void {
+  update({ ...state, dialog: { kind: 'reset-member', ...target } })
 }
 
 export function closeTeamDialog(): void {
