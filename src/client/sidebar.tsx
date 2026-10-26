@@ -175,16 +175,7 @@ function SurfaceModeSwitch({
         onClick={() => { setOpen(value => !value) }}
       >
         <span className={css.brandModeLabel}>{current.label}</span>
-        <svg className={css.brandModeCaret} viewBox="0 0 12 12" aria-hidden="true">
-          <path
-            d="M3 4.75 6 7.5l3-2.75"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.4"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <IconChevronsUpDownOutlineRegular className={css.brandModeCaret} />
       </button>
       {open && (
         <div className={css.brandModeMenu} role="listbox" aria-label="界面模式">
