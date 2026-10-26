@@ -547,6 +547,15 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       }).strict().parse(request.payload)
       return service.setTeamArchived(payload.teamId, payload.archived, options)
     }
+    case 'team.group.set': {
+      // The length/whitespace rule stays in the service: its rejection carries the
+      // limit, whereas a transport-side cap would answer with a bare validation error.
+      const payload = z.object({
+        teamId: z.string().trim().min(1).max(200),
+        group: z.string().nullable(),
+      }).strict().parse(request.payload)
+      return service.setTeamGroup(payload.teamId, payload.group, options)
+    }
     case 'team.memory.write': {
       const payload = z.object({
         teamId: z.string().trim().min(1).max(200),

@@ -98,6 +98,7 @@ export const AGENT_TEAM_METHODS = [
   'team.members.reorder',
   'team.pin',
   'team.archive',
+  'team.group.set',
   'team.memory.write',
   'team.memory.decide',
   'team.memory.undo',
@@ -539,6 +540,8 @@ export interface AgentTeamRequestMap {
   'team.members.reorder': { payload: { teamId: string; order: string[] }; result: TeamView }
   'team.pin': { payload: { teamId: string; pinned: boolean }; result: TeamView }
   'team.archive': { payload: { teamId: string; archived: boolean }; result: TeamView }
+  /** Sidebar group move; `null` (or a blank string) puts the team back to ungrouped. */
+  'team.group.set': { payload: { teamId: string; group: string | null }; result: TeamView }
   /** User-authority team memory write; the fence is the memory revision, not the aggregate revision. */
   'team.memory.write': {
     payload: {

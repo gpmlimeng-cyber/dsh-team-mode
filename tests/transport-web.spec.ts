@@ -103,6 +103,7 @@ function harness(overrides: {
       task: { id: taskId, status: 'completed' },
       sessionId: 'session-worker',
     })),
+    setTeamGroup: vi.fn(async (teamId: string, group: string | null) => ({ id: teamId, group })),
   } as unknown as AgentTeamService
   const transport = registerWebTransport(
     ctx,
@@ -241,6 +242,24 @@ describe('web transport authentication and upload contract', () => {
       },
     })
     expect(service.openAssistantTask).toHaveBeenCalledWith('task-1')
+  })
+
+  it('dispatches team.group.set for a named group and for null', async () => {
+    const { call, service } = harness()
+    const post = (payload: unknown) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ requestId: 'team.group.set', method: 'team.group.set', payload }),
+    }))
+
+    const moved = await post({ teamId: 'team-1', group: '工作' })
+    expect(moved.status).toBe(200)
+    expect(JSON.parse(moved.body)).toMatchObject({ ok: true, value: { id: 'team-1', group: '工作' } })
+    expect(service.setTeamGroup).toHaveBeenCalledWith('team-1', '工作', {})
+
+    const cleared = await post({ teamId: 'team-1', group: null })
+    expect(cleared.status).toBe(200)
+    expect(JSON.parse(cleared.body)).toMatchObject({ ok: true, value: { id: 'team-1', group: null } })
+    expect(service.setTeamGroup).toHaveBeenCalledWith('team-1', null, {})
   })
 
   it('returns a typed error for an unknown method', async () => {

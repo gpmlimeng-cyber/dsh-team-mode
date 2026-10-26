@@ -172,6 +172,15 @@ describe('Agent Team transport contracts', () => {
     }>()
     expectTypeOf<AgentTeamResult<'team.updateGoal'>>().toEqualTypeOf<TeamGoal>()
   })
+
+  it('maps the sidebar group move as a nullable-label team write', () => {
+    expect(AGENT_TEAM_METHODS).toContain('team.group.set')
+    expectTypeOf<AgentTeamPayload<'team.group.set'>>().toEqualTypeOf<{
+      teamId: string
+      group: string | null
+    }>()
+    expectTypeOf<AgentTeamResult<'team.group.set'>>().toEqualTypeOf<TeamView>()
+  })
 })
 
 interface FakeResponse extends ServerResponse {
