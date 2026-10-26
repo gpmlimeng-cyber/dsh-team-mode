@@ -19,6 +19,7 @@ import {
   IconSettingsOutlineRegular,
   IconSlidersTwoOutlineRegular,
   IconWarningOutlineRegular,
+  Input,
   Menu,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -1531,26 +1532,24 @@ export function SidebarPortal({
       {brandHost !== undefined && createPortal(
         <>
           <SurfaceModeSwitch mode={mode} onChange={switchMode} />
-          <label className={css.brandSearch}>
-            <IconSearchOutlineRegular className={css.brandSearchIcon} />
-            <input
-              type="search"
-              className={css.brandSearchInput}
-              placeholder="搜索"
-              aria-label="搜索侧栏"
-              value={search}
-              onChange={(event) => {
-                const value = event.target.value
-                setSearch(value)
-                window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: value }))
-              }}
-              onKeyDown={(event) => {
-                if (event.key !== 'Escape') return
-                setSearch('')
-                window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
-              }}
-            />
-          </label>
+          <Input
+            className={css.brandSearch ?? ''}
+            icon={<IconSearchOutlineRegular />}
+            type="search"
+            placeholder="搜索"
+            aria-label="搜索侧栏"
+            value={search}
+            onChange={(event) => {
+              const value = event.target.value
+              setSearch(value)
+              window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: value }))
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== 'Escape') return
+              setSearch('')
+              window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
+            }}
+          />
         </>,
         brandHost,
       )}

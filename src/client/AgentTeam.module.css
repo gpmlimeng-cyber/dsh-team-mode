@@ -2995,15 +2995,25 @@ textarea.input {
 
 /* Host for the DSH/BOT switch, mounted where the shipped brand row was. The
    row keeps its own height so the fixed header spacing is unchanged. */
+/* Body-level overlay pinned over the shipped brand row: mode control on the
+   left, search on the right. Width and position come from the row's rect. */
 .sidebarBrandHost {
   box-sizing: border-box;
   display: flex;
-  flex: 1 1 auto;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   min-width: 0;
 }
 
-.sidebarBrandHost /* BOT footer: the account row stretches over the free space and these actions
+/* The search is the shipped Input primitive; only its width is ours, so the row
+   keeps room for the mode control. */
+.brandSearch {
+  flex: 0 0 auto;
+  width: 168px;
+}
+
+/* BOT footer: the account row stretches over the free space and these actions
    keep their intrinsic size at the right edge, modelled on the shipped market
    entry. */
 .botFooterHost {

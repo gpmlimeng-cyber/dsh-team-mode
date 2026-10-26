@@ -118,7 +118,9 @@ describe('sidebar surface switch', () => {
 
   it('puts a sidebar search at the right end of the brand row', () => {
     expect(sidebar).toContain('dsh-team-mode:sidebar-search')
-    expect(sidebar).toContain('brandSearchInput')
+    // The field is the shipped Input primitive, not a hand-rolled <input>.
+    expect(sidebar).toContain('<Input')
+    expect(sidebar).toContain('icon={<IconSearchOutlineRegular />}')
     expect(sidebar).toContain('aria-label="搜索侧栏"')
     // Both plugin sections answer the same query.
     const assistant = readClientSource('assistant-sidebar.tsx')
