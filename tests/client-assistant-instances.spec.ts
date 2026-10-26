@@ -20,6 +20,8 @@ import {
   assistantTaskStatusLabel,
   assistantTasksFor,
   assistantThreadTasks,
+  coordinatorAssistant,
+  coordinatorAssistantId,
   relativeAssistantTime,
   visibleAssistantInstances,
 } from '../src/client/assistant-instances.js'
@@ -328,6 +330,49 @@ describe('visibleAssistantInstances', () => {
     ]
     visibleAssistantInstances(values)
     expect(values.map(item => item.id)).toEqual(['a', 'b'])
+  })
+})
+
+describe('coordinatorAssistant', () => {
+  it('picks the row whose coordinator field is true', () => {
+    const value = [
+      instance('a', '论文助手', '2026-01-01T00:00:00Z'),
+      instance('b', '数据助手', '2026-01-02T00:00:00Z', { coordinator: true }),
+    ]
+    expect(coordinatorAssistant(value)?.id).toBe('b')
+    expect(coordinatorAssistantId(value)).toBe('b')
+  })
+
+  it('reads a missing field as "no coordinator"', () => {
+    const value = [
+      instance('a', '论文助手', '2026-01-01T00:00:00Z'),
+      instance('b', '数据助手', '2026-01-02T00:00:00Z'),
+    ]
+    expect(coordinatorAssistant(value)).toBeUndefined()
+    expect(coordinatorAssistantId(value)).toBeUndefined()
+  })
+
+  it('never infers the role from a name or the shipped chief template', () => {
+    // The field is the only source of truth: guessing would resurrect a ghost
+    // pinned row whenever no coordinator is set.
+    const value = [
+      instance('named', '大管家', '2026-01-01T00:00:00Z'),
+      instance('chief', 'Chief', '2026-01-02T00:00:00Z', { templateId: 'builtin-chief' }),
+    ]
+    expect(coordinatorAssistant(value)).toBeUndefined()
+    expect(coordinatorAssistantId(value)).toBeUndefined()
+  })
+
+  it('pins only the field-marked row out of the 单聊 list', () => {
+    const value = [
+      instance('named', '大管家', '2026-01-03T00:00:00Z'),
+      instance('chief', 'Chief', '2026-01-02T00:00:00Z', { templateId: 'builtin-chief' }),
+      instance('coordinator', '总协调', '2026-01-01T00:00:00Z', { coordinator: true }),
+    ]
+    const coordinatorId = coordinatorAssistantId(value)
+    expect(coordinatorId).toBe('coordinator')
+    expect(visibleAssistantInstances(value).map(item => item.id).filter(id => id !== coordinatorId))
+      .toEqual(['named', 'chief'])
   })
 })
 

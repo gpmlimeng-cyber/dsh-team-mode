@@ -57,7 +57,7 @@ import css from './AgentTeam.module.css'
 import type { TeamView } from '../transport/contracts.js'
 import type { AssistantInstance } from '../domain/types.js'
 import { LeaderMark } from './team-member-chrome.js'
-import { assistantAvatarSource, assistantInstanceName, coordinatorAssistantId } from './assistant-instances.js'
+import { assistantAvatarSource, assistantInstanceName, coordinatorAssistant } from './assistant-instances.js'
 
 const SIDEBAR_TEAM_EXPANDED_KEY = 'dsh-team-mode:sidebar-expanded'
 
@@ -151,14 +151,12 @@ function startNativeSession(): void {
   document.querySelector<HTMLElement>('[class*="_newSession"]')?.click()
 }
 
-/** DeepBot mode: open the steward (大管家) assistant's session. */
+/** DeepBot mode: open the coordinator's session, else the first assistant's. */
 async function startStewardSession(open: (sessionId: string) => void): Promise<void> {
   try {
     const value = await callAgentTeam('assistant.instance.list')
     const instances = value.items
-    const steward = instances.find(entry => (entry.assistantSnapshot.name ?? '').includes('管家'))
-      ?? instances.find(entry => entry.templateId === 'builtin-chief')
-      ?? instances[0]
+    const steward = coordinatorAssistant(instances) ?? instances[0]
     if (steward === undefined) return
     const result = await callAgentTeam('assistant.instance.ensure', { id: steward.id })
     open(result.sessionId)

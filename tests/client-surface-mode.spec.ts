@@ -122,9 +122,22 @@ describe('sidebar surface switch', () => {
     const assistant = readClientSource('assistant-sidebar.tsx')
     expect(assistant).toContain('renderAssistantRow')
     expect(assistant).toContain('createPortal(renderAssistantRow(coordinator)')
-    expect(assistant).toContain('coordinatorAssistantId')
+    expect(assistant).toContain('coordinatorAssistant')
     // The row is removed from the list, not duplicated.
     expect(assistant).toMatch(/filter\(instance => instance\.id !== coordinatorId\)/)
+  })
+
+  it('drives the pinned row and the DeepBot entry from the coordinator field only', () => {
+    const assistant = readClientSource('assistant-sidebar.tsx')
+    // No name/template guessing survives: an empty field means no pinned row.
+    expect(assistant).not.toContain('管家')
+    expect(assistant).not.toContain('builtin-chief')
+    expect(sidebar).not.toContain('管家')
+    expect(sidebar).not.toContain('builtin-chief')
+    expect(sidebar).toContain('coordinatorAssistant(instances)')
+    // 设为/取消总协调 goes through the one host write.
+    expect(assistant).toContain("callAgentTeam('assistant.coordinator.set'")
+    expect(assistant).toContain('assistantId: isCoordinatorInstance(instance) ? null : instance.id')
   })
 
   it('puts a right-aligned 搜索 / 筛选 / 新建 group on the brand row', () => {

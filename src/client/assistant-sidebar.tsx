@@ -11,6 +11,7 @@ import {
   IconPlusOutlineRegular,
   IconSearchOutlineRegular,
   IconSlidersTwoOutlineRegular,
+  IconSparkleRegular,
   Menu,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -46,6 +47,7 @@ import {
   assistantSidebarSummary,
   assistantTaskStatusLabel,
   assistantThreadTasks,
+  coordinatorAssistant,
   coordinatorAssistantId,
   relativeAssistantTime,
   visibleAssistantInstances,
@@ -58,6 +60,7 @@ import {
 } from './assistant-thread-state.js'
 import { MemberAvatar } from './member-avatar.js'
 import css from './AgentTeam.module.css'
+import { isCoordinatorInstance } from '../domain/types.js'
 import type { AssistantInstance, AssistantSession } from '../domain/types.js'
 import type { AssistantInstanceView, PendingInteractionView } from '../transport/contracts.js'
 
@@ -98,7 +101,7 @@ function taskStatusClass(status: AssistantSession['status']): string {
 }
 
 export interface AssistantMenuEntry {
-  id: 'checkpoint' | 'settings' | 'pin' | 'tasks' | 'mark-read' | 'mark-unread' | 'open-main'
+  id: 'checkpoint' | 'settings' | 'pin' | 'coordinator' | 'tasks' | 'mark-read' | 'mark-unread' | 'open-main'
   label: string
   icon: JSX.Element
 }
@@ -106,13 +109,15 @@ export interface AssistantMenuEntry {
 /**
  * Row menu of one Assistant. `checkpoint` is the single entry for both
  * creating a checkpoint and handing off; there is deliberately no second
- * handoff item, so the dialog owns that flow end to end.
+ * handoff item, so the dialog owns that flow end to end. The coordinator item
+ * flips to 取消总协调 purely from the row's own field.
  */
 export function assistantMenuEntries(
   instance: AssistantInstance,
   unread: boolean,
 ): AssistantMenuEntry[] {
   const pinned = instance.pinned === true
+  const coordinator = isCoordinatorInstance(instance)
   return [
     { id: 'checkpoint', label: '检查点与交接', icon: <IconChecklistOutlineRegular size={14} /> },
     { id: 'settings', label: '助手设置', icon: <IconEditOutlineRegular size={14} /> },
@@ -120,6 +125,11 @@ export function assistantMenuEntries(
       id: 'pin',
       label: pinned ? '取消置顶' : '置顶',
       icon: pinned ? <IconPinFillRegular size={14} /> : <IconPinOutlineRegular size={14} />,
+    },
+    {
+      id: 'coordinator',
+      label: coordinator ? '取消总协调' : '设为总协调',
+      icon: <IconSparkleRegular size={14} />,
     },
     { id: 'tasks', label: '查看任务', icon: <IconChecklistOutlineRegular size={14} /> },
     unread
@@ -392,6 +402,22 @@ export function AssistantSidebarSection({
     }
   }
 
+  /**
+   * Set or clear the workspace's one coordinator. The host enforces uniqueness,
+   * so this owns no local state: the reload moves the pinned row.
+   */
+  async function toggleCoordinator(instance: AssistantInstance): Promise<void> {
+    setError(undefined)
+    try {
+      await callAgentTeam('assistant.coordinator.set', {
+        assistantId: isCoordinatorInstance(instance) ? null : instance.id,
+      })
+      await load()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
   function toggleThreads(instance: AssistantInstance, open: boolean): void {
     const next = !open
     writeAssistantThreadExpanded(instance.id, next)
@@ -641,6 +667,7 @@ export function AssistantSidebarSection({
               if (id === 'checkpoint') openCheckpoint(instance)
               else if (id === 'settings') openSettings(instance)
               else if (id === 'pin') void togglePin(instance)
+              else if (id === 'coordinator') void toggleCoordinator(instance)
               else if (id === 'tasks') openTasks(instance)
               else if (id === 'mark-read') setReadState(markAssistantRead(instance.id))
               else if (id === 'mark-unread') setReadState(markAssistantUnread(instance.id))
@@ -711,10 +738,8 @@ export function AssistantSidebarSection({
   }
 
   const stewardHost = useStewardHost()
-  const coordinator = useMemo(() => {
-    const id = coordinatorAssistantId(instances)
-    return id === undefined ? undefined : instances.find(entry => entry.id === id)
-  }, [instances])
+  // The pinned row exists only when the field says so; no name or template guess.
+  const coordinator = useMemo(() => coordinatorAssistant(instances), [instances])
   const stewardRow = coordinator === undefined || stewardHost === undefined
     ? null
     : createPortal(renderAssistantRow(coordinator), stewardHost)

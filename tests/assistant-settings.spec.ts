@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { AssistantMemory, MemoryEntry } from '../src/domain/types.js'
@@ -45,5 +46,18 @@ describe('assistant settings memory panel', () => {
     expect(next.content).toBe('Restored note.')
     expect(next.revision).toBe(4)
     expect(next.entries?.[0]?.body).toBe('Be terse.')
+  })
+})
+
+describe('assistant settings coordinator marker', () => {
+  const source = readFileSync(
+    new URL('../src/client/assistant-settings-dialog.tsx', import.meta.url),
+    'utf8',
+  )
+
+  it('shows 总协调 for every assistant, so 否 does not read as "unsupported"', () => {
+    expect(source).toContain('>总协调<')
+    expect(source).toContain("isCoordinatorInstance(assistant) ? '是' : '否'")
+    expect(source).toContain('data-dsh-assistant-settings-coordinator')
   })
 })

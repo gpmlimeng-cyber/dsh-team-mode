@@ -1,3 +1,4 @@
+import { isCoordinatorInstance } from '../domain/types.js'
 import type { AssistantInstance, AssistantSession } from '../domain/types.js'
 import type { AssistantInstanceView } from '../transport/contracts.js'
 import { isAssistantUnread } from './assistant-read-state.js'
@@ -44,14 +45,21 @@ export function assistantInstanceName(instance: AssistantInstance): string {
 
 /**
  * The coordinating assistant (总协调机器人): pinned at the top of the DeepBot
- * sidebar instead of sitting in the 单聊 list. Matched by name first so a renamed
- * coordinator still wins, then by the shipped chief template.
+ * sidebar instead of sitting in the 单聊 list. Only the `coordinator` field
+ * decides — a name or a shipped template is never evidence of the role, because
+ * guessing would resurrect a ghost pinned row whenever the field is empty.
  */
+export function coordinatorAssistant<T extends Pick<AssistantInstance, 'coordinator'>>(
+  instances: readonly T[],
+): T | undefined {
+  return instances.find(isCoordinatorInstance)
+}
+
+/** Its id, for the 单聊 list that keeps the pinned row out of the list. */
 export function coordinatorAssistantId(
-  instances: readonly AssistantInstance[],
+  instances: readonly Pick<AssistantInstance, 'id' | 'coordinator'>[],
 ): string | undefined {
-  return (instances.find(entry => (entry.assistantSnapshot.name ?? '').includes('管家'))
-    ?? instances.find(entry => entry.templateId === 'builtin-chief'))?.id
+  return coordinatorAssistant(instances)?.id
 }
 
 /** Fallback glyph for an assistant without a usable avatar. */

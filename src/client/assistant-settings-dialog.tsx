@@ -19,6 +19,7 @@ import { MemberAvatar } from './member-avatar.js'
 import { defaultReasoningLabel, useModelCapabilities } from './model-reasoning.js'
 import { AnimatedModal, Field } from './shared.js'
 import css from './AgentTeam.module.css'
+import { isCoordinatorInstance } from '../domain/types.js'
 import type {
   AssistantInstance,
   AssistantMemory,
@@ -415,6 +416,16 @@ export function AssistantSettingsDialog({
           <div className={css.assistantSettingsSummaryRow}>
             <span className={css.assistantSettingsSummaryLabel}>Workspace</span>
             <span className={css.assistantSettingsSummaryValue} title={assistant.workspacePath}>{workspaceLabel}</span>
+          </div>
+          {/* Always shown, so 否 states the role is off instead of the row missing. */}
+          <div className={css.assistantSettingsSummaryRow}>
+            <span className={css.assistantSettingsSummaryLabel}>总协调</span>
+            <span
+              className={css.assistantSettingsSummaryValue}
+              data-dsh-assistant-settings-coordinator={String(isCoordinatorInstance(assistant))}
+            >
+              {isCoordinatorInstance(assistant) ? '是' : '否'}
+            </span>
           </div>
           <div className={css.assistantSettingsSummaryRow}>
             <span className={css.assistantSettingsSummaryLabel}>状态</span>

@@ -21,7 +21,8 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     'IconChecklistOutlineRegular', 'IconChevronRightOutlineRegular', 'IconCloseFillRegular',
     'IconEditOutlineRegular', 'IconEllipsisOutlineRegular', 'IconNewChatOutlineRegular',
     'IconPinFillRegular', 'IconPinOutlineRegular', 'IconPlusOutlineRegular',
-    'IconSearchOutlineRegular', 'IconSlidersTwoOutlineRegular', 'IconWarningOutlineRegular',
+    'IconSearchOutlineRegular', 'IconSlidersTwoOutlineRegular', 'IconSparkleRegular',
+    'IconWarningOutlineRegular',
     'IconLoadingOutlineRegular',
   ]
   return Object.fromEntries(names.map(name => [name, Stub]))
@@ -56,7 +57,7 @@ function checkpoint(overrides: Partial<ContextCheckpoint> = {}): ContextCheckpoi
   }
 }
 
-function instance(): AssistantInstance {
+function instance(overrides: Partial<AssistantInstance> = {}): AssistantInstance {
   return {
     schemaVersion: 1,
     id: 'instance-1',
@@ -80,6 +81,7 @@ function instance(): AssistantInstance {
     revision: 1,
     createdAt: NOW,
     updatedAt: NOW,
+    ...overrides,
   }
 }
 
@@ -177,8 +179,19 @@ describe('assistant menu entries', () => {
 
   it('keeps the read/unread entry and the full menu order', () => {
     expect(assistantMenuEntries(instance(), false).map(entry => entry.id))
-      .toEqual(['checkpoint', 'settings', 'pin', 'tasks', 'mark-unread', 'open-main'])
+      .toEqual(['checkpoint', 'settings', 'pin', 'coordinator', 'tasks', 'mark-unread', 'open-main'])
     expect(assistantMenuEntries(instance(), true).map(entry => entry.id))
       .toContain('mark-read')
+  })
+
+  it('offers 设为总协调 and flips to 取消总协调 from the field', () => {
+    const labelOf = (value: AssistantInstance): string | undefined =>
+      assistantMenuEntries(value, false).find(entry => entry.id === 'coordinator')?.label
+
+    expect(labelOf(instance())).toBe('设为总协调')
+    expect(labelOf(instance({ coordinator: true }))).toBe('取消总协调')
+    // A coordinator-looking name is not evidence of the role.
+    expect(labelOf(instance({ assistantSnapshot: { ...instance().assistantSnapshot, name: '大管家' } })))
+      .toBe('设为总协调')
   })
 })
