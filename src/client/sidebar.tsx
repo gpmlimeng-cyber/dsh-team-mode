@@ -21,9 +21,18 @@ import {
   IconWarningOutlineRegular,
   Menu,
   Tooltip,
+  type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
-import { AssistantSidebarSection } from './assistant-sidebar.js'
+import {
+  AssistantSidebarSection,
+  SIDEBAR_ASSISTANT_CREATE_EVENT,
+  SIDEBAR_SEARCH_EVENT,
+} from './assistant-sidebar.js'
+import {
+  setAssistantDisplayMode,
+  useAssistantDisplayMode,
+} from './assistant-display-mode.js'
 import { MemberAvatar } from './member-avatar.js'
 import {
   openCreateTeamDialog,
@@ -55,21 +64,18 @@ import {
 } from './surface-mode.js'
 import css from './AgentTeam.module.css'
 import type { TeamView } from '../transport/contracts.js'
-import type { AssistantInstance } from '../domain/types.js'
 import type { WorkspaceChoice } from './types.js'
 import { LeaderMark } from './team-member-chrome.js'
-import { assistantAvatarSource, assistantInstanceName, coordinatorAssistant } from './assistant-instances.js'
 import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-groups.js'
 import {
   SidebarGroupDialogs,
   SidebarGroupPartition,
   sidebarDragSwallowsClick,
   sidebarGroupMenuItems,
+  sidebarPartitionLabel,
   useSidebarDrag,
   type SidebarGroupDialog,
 } from './sidebar-group-ui.js'
-
-const SIDEBAR_TEAM_EXPANDED_KEY = 'dsh-team-mode:sidebar-expanded'
 
 const SURFACE_MODE_EVENT = 'dsh-team-mode:surface-mode-change'
 
@@ -161,21 +167,6 @@ function startNativeSession(): void {
   document.querySelector<HTMLElement>('[class*="_newSession"]')?.click()
 }
 
-/** DeepBot mode: open the coordinator's session, else the first assistant's. */
-async function startStewardSession(open: (sessionId: string) => void): Promise<void> {
-  try {
-    const value = await callAgentTeam('assistant.instance.list')
-    const instances = value.items
-    const steward = coordinatorAssistant(instances) ?? instances[0]
-    if (steward === undefined) return
-    const result = await callAgentTeam('assistant.instance.ensure', { id: steward.id })
-    open(result.sessionId)
-  } catch {
-    // Opening a session is user-visible when it fails; a silent retry is worse
-    // than leaving the sidebar untouched.
-  }
-}
-
 /**
  * Brand-shaped mode control: the current surface is bold text with a caret, so
  * the row reads as the product mark. The popover is the shipped `Menu`
@@ -235,23 +226,6 @@ function SurfaceModeSwitch({
   )
 }
 
-
-function readExpanded(): boolean {
-  try {
-    return window.localStorage.getItem(SIDEBAR_TEAM_EXPANDED_KEY) !== 'false'
-  } catch {
-    return true
-  }
-}
-
-function writeExpanded(expanded: boolean): void {
-  try {
-    window.localStorage.setItem(SIDEBAR_TEAM_EXPANDED_KEY, String(expanded))
-  } catch {
-    // Restricted WebViews may reject storage; the current session still works.
-  }
-}
-
 const SIDEBAR_ROSTER_KEY = 'dsh-team-mode:roster-expanded'
 
 /** One stored roster disclosure per team; phones start collapsed. */
@@ -300,15 +274,13 @@ export function SidebarTeamSection({
   openSession: (sessionId: string) => void
   openTeamPage: (teamId: string) => void
 }): JSX.Element {
-  const { selectedTeamId, navigationError } = useAgentTeamUi()
+  const { selectedTeamId, selectedAssistantId, navigationError } = useAgentTeamUi()
   const t = useTeamText()
   const [teams, setTeams] = useState<TeamView[]>([])
   const [loaded, setLoaded] = useState(false)
-  const [expanded, setExpanded] = useState(readExpanded)
   const [activeSessionId, setActiveSessionId] = useState<string>()
   const [rosterDefault] = useState(rosterExpandedDefault)
   const [rosterExpanded, setRosterExpanded] = useState<Record<string, boolean>>({})
-  const [searchExpanded, setSearchExpanded] = useState(false)
   const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   /** Set when the brand row opens this menu, so it drops from there. */
@@ -316,6 +288,7 @@ export function SidebarTeamSection({
   const [onlyPending, setOnlyPending] = useState(false)
   const [scope, setScope] = useState<'active' | 'archived'>('active')
   const [sortMode, setSortMode] = useState<'updated' | 'name'>('updated')
+  const assistantMode = useAssistantDisplayMode()
   const [menuTeamId, setMenuTeamId] = useState<string>()
   const [taskDialogTeamId, setTaskDialogTeamId] = useState<string>()
   const [error, setError] = useState<string>()
@@ -384,14 +357,6 @@ export function SidebarTeamSection({
     })
     return () => { observer.disconnect() }
   }, [])
-
-  const toggle = (): void => {
-    setExpanded(current => {
-      const next = !current
-      writeExpanded(next)
-      return next
-    })
-  }
 
   const scopeCounts = teamScopeCounts(teams)
 
@@ -705,227 +670,156 @@ export function SidebarTeamSection({
     )
   }
 
+  /**
+   * One ⚙ menu for both lists. Every row names its scope, and the list that
+   * currently has focus comes first — 群聊 is the fallback when neither does.
+   */
+  const teamFilterItems: MenuEntry[] = [
+    { id: 'only-pending', label: '团队 · 只看待确认', icon: <IconWarningOutlineRegular /> },
+    { type: 'separator', id: 'team-sort-separator' },
+    { id: 'sort-updated', label: '团队 · 最近更新', icon: <IconClockOutlineRegular /> },
+    { id: 'sort-name', label: '团队 · 按名称排序', icon: <IconChevronsUpDownOutlineRegular /> },
+  ]
+  const assistantFilterItems: MenuEntry[] = [
+    { id: 'assistant-mode-simple', label: '助手 · 简洁：每个助手一行' },
+    { id: 'assistant-mode-advanced', label: '助手 · 进阶：显示任务线程' },
+  ]
+  const filterItems: MenuEntry[] = selectedTeamId === undefined && selectedAssistantId !== undefined
+    ? [...assistantFilterItems, { type: 'separator', id: 'scope-separator' }, ...teamFilterItems]
+    : [...teamFilterItems, { type: 'separator', id: 'scope-separator' }, ...assistantFilterItems]
+
   return (
     <section className={css.sidebarTeamSection} aria-label="群聊" data-dsh-team-mode-section>
-      <div className={css.sidebarTeamHeader} data-dsh-team-mode-header>
-        {searchExpanded ? (
-          <div className={css.sidebarTeamSearch}>
-            <IconSearchOutlineRegular size={14} />
-            <input
-              autoFocus
-              type="search"
-              value={query}
-              placeholder="搜索团队或成员"
-              aria-label="搜索团队或成员"
-              onChange={event => { setQuery(event.target.value) }}
-              onKeyDown={event => {
-                if (event.key !== 'Escape') return
-                setQuery('')
-                setSearchExpanded(false)
-              }}
-            />
-            <button
-              type="button"
-              className={css.sidebarTeamSearchClear}
-              aria-label="清除搜索"
-              onClick={() => { setQuery(''); setSearchExpanded(false) }}
-            >
-              <IconCloseFillRegular size={12} />
-            </button>
-          </div>
-        ) : (
-          <>
-            <button
-              type="button"
-              className={css.sidebarTeamToggle}
-              onClick={toggle}
-              aria-expanded={expanded}
-              aria-controls="dsh-team-mode-sidebar-list"
-            >
-              <span className={css.sidebarTeamTitle} data-dsh-team-mode-title>{t('sidebar.title')}</span>
-              <IconChevronRightOutlineRegular
-                size={12}
-                className={`${css.sidebarTeamChevron} ${expanded ? css.sidebarTeamChevronOpen : ''}`}
-              />
-            </button>
-            <div className={css.sidebarTeamSearchSlot}>
-              <Tooltip label={t('sidebar.search')} delayMs={400}>
-                <button
-                  type="button"
-                  className={`${css.sidebarTeamIconButton} ${css.sidebarTeamSearchButton}`}
-                  onClick={() => { setSearchExpanded(true) }}
-                  aria-label={t('sidebar.search')}
-                >
-                  <IconSearchOutlineRegular size={14} />
-                </button>
-              </Tooltip>
-            </div>
-            <div className={css.sidebarTeamHeaderActions}>
-              <Menu
-                open={menuOpen}
-                onClose={() => {
-                  setMenuOpen(false)
-                  setMenuAnchorEl(undefined)
-                }}
-                {...(menuAnchorEl === undefined
-                  ? {}
-                  : { getAnchorRect: () => menuAnchorEl.getBoundingClientRect() })}
-                align="end"
-                dense
-                portal
-                items={[
-                  { type: 'label', id: 'filter-label', text: t('sidebar.filter') },
-                  { id: 'only-pending', label: t('sidebar.onlyPending'), icon: <IconWarningOutlineRegular /> },
-                  { type: 'separator', id: 'sort-separator' },
-                  { type: 'label', id: 'sort-label', text: t('sidebar.sort') },
-                  { id: 'sort-updated', label: t('sidebar.sortUpdated'), icon: <IconClockOutlineRegular /> },
-                  { id: 'sort-name', label: t('sidebar.sortName'), icon: <IconChevronsUpDownOutlineRegular /> },
-                ]}
-                selectedIds={[
-                  onlyPending ? 'only-pending' : undefined,
-                  sortMode === 'name' ? 'sort-name' : 'sort-updated',
-                ].filter((id): id is string => id !== undefined)}
-                onSelect={id => {
-                  if (id === 'only-pending') setOnlyPending(value => !value)
-                  else if (id === 'sort-updated' || id === 'sort-name') setSortMode(id === 'sort-name' ? 'name' : 'updated')
-                  setMenuOpen(false)
-                }}
-                anchor={(
-                  <Tooltip label={t('sidebar.viewOptions')} delayMs={400}>
-                    <button
-                      type="button"
-                      className={css.sidebarTeamIconButton}
-                      aria-label={t('sidebar.viewOptions')}
-                      onClick={() => { setMenuOpen(value => !value) }}
-                    >
-                      <IconSlidersTwoOutlineRegular />
-                    </button>
-                  </Tooltip>
-                )}
-              />
-              <Tooltip label={t('sidebar.add')} delayMs={400}>
-                <button
-                  type="button"
-                  className={css.sidebarTeamIconButton}
-                  onClick={openCreateTeamDialog}
-                  aria-label={t('sidebar.add')}
-                  data-dsh-team-mode-add
-                >
-                  <IconPlusOutlineRegular size={16} />
-                </button>
-              </Tooltip>
-            </div>
-          </>
-        )}
-      </div>
-      {expanded && (
-        <div id="dsh-team-mode-sidebar-list" className={css.sidebarTeamList}>
-          {error !== undefined && (
-            <div className={css.sidebarTeamError} role="alert">
-              <span>{teams.length === 0 ? `团队数据加载失败：${error}` : error}</span>
-              {teams.length === 0 && (
-                <button
-                  type="button"
-                  className={css.sidebarTeamRetry}
-                  onClick={() => { void load() }}
-                >
-                  重试
-                </button>
-              )}
-            </div>
-          )}
-          {navigationError !== undefined && (
-            <div className={css.sidebarTeamError} role="alert" data-dsh-team-navigation-error>
-              <span>{navigationError}</span>
+      <div id="dsh-team-mode-sidebar-list" className={css.sidebarTeamList}>
+        {error !== undefined && (
+          <div className={css.sidebarTeamError} role="alert">
+            <span>{teams.length === 0 ? `团队数据加载失败：${error}` : error}</span>
+            {teams.length === 0 && (
               <button
                 type="button"
                 className={css.sidebarTeamRetry}
-                onClick={() => { reportNavigationError(undefined) }}
+                onClick={() => { void load() }}
               >
-                关闭
+                重试
               </button>
-            </div>
-          )}
-          {scopeCounts.archived > 0 && (
-            <div className={css.sidebarTeamScope} role="group" aria-label="团队范围">
-              <button
-                type="button"
-                className={`${css.sidebarTeamScopeButton} ${scope === 'active' ? css.sidebarTeamScopeButtonActive : ''}`}
-                aria-pressed={scope === 'active'}
-                onClick={() => { setScope('active') }}
-              >
-                团队<span className={css.sidebarTeamScopeCount}>{scopeCounts.active}</span>
-              </button>
-              <button
-                type="button"
-                className={`${css.sidebarTeamScopeButton} ${scope === 'archived' ? css.sidebarTeamScopeButtonActive : ''}`}
-                aria-pressed={scope === 'archived'}
-                onClick={() => { setScope('archived') }}
-              >
-                历史<span className={css.sidebarTeamScopeCount}>{scopeCounts.archived}</span>
-              </button>
-            </div>
-          )}
-          {teams.length === 0
-            ? !loaded
-              ? (
-                  <div className={css.sidebarTeamEmpty} role="status" data-dsh-team-loading>
-                    正在加载团队…
-                  </div>
-                )
-              : error !== undefined
-                ? null
-                : (
-                    <button
-                      type="button"
-                      className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
-                      onClick={openCreateTeamDialog}
-                      aria-label="新建团队"
-                    >
-                      <span className={css.sidebarTeamSlot} aria-hidden="true">
-                        <IconPlusOutlineRegular size={16} />
-                      </span>
-                      <span className={css.sidebarTeamEmptyTitle}>{t('sidebar.add')}</span>
-                    </button>
-                  )
-            : visibleTeams.length === 0
-              ? (
-                  <div className={css.sidebarTeamEmpty}>
-                    {query.trim() !== ''
-                      ? t('sidebar.noMatches')
-                      : scope === 'archived' ? '暂无历史团队' : '暂无进行中的团队'}
-                  </div>
-                )
+            )}
+          </div>
+        )}
+        {navigationError !== undefined && (
+          <div className={css.sidebarTeamError} role="alert" data-dsh-team-navigation-error>
+            <span>{navigationError}</span>
+            <button
+              type="button"
+              className={css.sidebarTeamRetry}
+              onClick={() => { reportNavigationError(undefined) }}
+            >
+              关闭
+            </button>
+          </div>
+        )}
+        {scopeCounts.archived > 0 && (
+          <div className={css.sidebarTeamScope} role="group" aria-label="团队范围">
+            <button
+              type="button"
+              className={`${css.sidebarTeamScopeButton} ${scope === 'active' ? css.sidebarTeamScopeButtonActive : ''}`}
+              aria-pressed={scope === 'active'}
+              onClick={() => { setScope('active') }}
+            >
+              团队<span className={css.sidebarTeamScopeCount}>{scopeCounts.active}</span>
+            </button>
+            <button
+              type="button"
+              className={`${css.sidebarTeamScopeButton} ${scope === 'archived' ? css.sidebarTeamScopeButtonActive : ''}`}
+              aria-pressed={scope === 'archived'}
+              onClick={() => { setScope('archived') }}
+            >
+              历史<span className={css.sidebarTeamScopeCount}>{scopeCounts.archived}</span>
+            </button>
+          </div>
+        )}
+        {teams.length === 0
+          ? !loaded
+            ? (
+                <div className={css.sidebarTeamEmpty} role="status" data-dsh-team-loading>
+                  正在加载团队…
+                </div>
+              )
+            : error !== undefined
+              ? null
               : (
-                <>
-                  {partitioned
-                    ? partitions.map(partition => {
-                        const group = partition.group
-                        return (
-                          <SidebarGroupPartition
-                            key={partition.id}
-                            label={group ?? '未分组'}
-                            count={partition.items.length}
-                            collapsed={collapsedPartitions[partition.id] === true}
-                            onToggle={() => { togglePartition(partition.id) }}
-                            drag={drag.partition({ ...(group === undefined ? {} : { group }) })}
-                            {...(group === undefined
-                              ? {}
-                              : {
-                                  onAddEntries: () => { openGroupDialog({ kind: 'members', group }) },
-                                  menuItems: sidebarGroupMenuItems(groups, group),
-                                  onSelect: (id: string) => { void selectGroupMenu(group, id) },
-                                })}
-                          >
-                            {partition.items.map(renderTeamRow)}
-                          </SidebarGroupPartition>
-                        )
-                      })
-                    : visibleTeams.map(renderTeamRow)}
-                </>
-              )}
-        </div>
-      )}
+                  <button
+                    type="button"
+                    className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
+                    onClick={openCreateTeamDialog}
+                    aria-label="新建团队"
+                  >
+                    <span className={css.sidebarTeamSlot} aria-hidden="true">
+                      <IconPlusOutlineRegular size={16} />
+                    </span>
+                    <span className={css.sidebarTeamEmptyTitle}>{t('sidebar.add')}</span>
+                  </button>
+                )
+          : visibleTeams.length === 0
+            ? (
+                <div className={css.sidebarTeamEmpty}>
+                  {query.trim() !== ''
+                    ? t('sidebar.noMatches')
+                    : scope === 'archived' ? '暂无历史团队' : '暂无进行中的团队'}
+                </div>
+              )
+            : (
+              partitions.map(partition => {
+                const group = partition.group
+                return (
+                  <SidebarGroupPartition
+                    key={partition.id}
+                    label={sidebarPartitionLabel(group, partitioned, '团队群聊')}
+                    count={partition.items.length}
+                    collapsed={collapsedPartitions[partition.id] === true}
+                    onToggle={() => { togglePartition(partition.id) }}
+                    drag={drag.partition({ ...(group === undefined ? {} : { group }) })}
+                    {...(group === undefined
+                      ? {}
+                      : {
+                          onAddEntries: () => { openGroupDialog({ kind: 'members', group }) },
+                          menuItems: sidebarGroupMenuItems(groups, group),
+                          onSelect: (id: string) => { void selectGroupMenu(group, id) },
+                        })}
+                  >
+                    {partition.items.map(renderTeamRow)}
+                  </SidebarGroupPartition>
+                )
+              })
+            )}
+      </div>
+      <Menu
+        open={menuOpen}
+        onClose={() => {
+          setMenuOpen(false)
+          setMenuAnchorEl(undefined)
+        }}
+        {...(menuAnchorEl === undefined
+          ? {}
+          : { getAnchorRect: () => menuAnchorEl.getBoundingClientRect() })}
+        align="end"
+        dense
+        portal
+        items={filterItems}
+        selectedIds={[
+          onlyPending ? 'only-pending' : undefined,
+          sortMode === 'name' ? 'sort-name' : 'sort-updated',
+          assistantMode === 'advanced' ? 'assistant-mode-advanced' : 'assistant-mode-simple',
+        ].filter((id): id is string => id !== undefined)}
+        onSelect={id => {
+          if (id === 'only-pending') setOnlyPending(value => !value)
+          else if (id === 'sort-updated' || id === 'sort-name') {
+            setSortMode(id === 'sort-name' ? 'name' : 'updated')
+          } else if (id === 'assistant-mode-simple') setAssistantDisplayMode('simple')
+          else if (id === 'assistant-mode-advanced') setAssistantDisplayMode('advanced')
+          setMenuOpen(false)
+        }}
+        anchor={<span hidden data-dsh-team-mode-filter-anchor />}
+      />
       <AnimatedModal
         open={taskDialogTeam !== undefined}
         onClose={() => { setTaskDialogTeamId(undefined) }}
@@ -982,8 +876,6 @@ export function SidebarTeamSection({
 
 import { BRAND_HOST_ID, SIDEBAR_HOST_ID, STEWARD_HOST_ID } from './sidebar-hosts.js'
 
-/** Brand-row search drives every plugin section through one window event. */
-const SIDEBAR_SEARCH_EVENT = 'dsh-team-mode:sidebar-search'
 /** Brand-row 筛选 button opens the section's own filter/sort menu. */
 const SIDEBAR_MENU_EVENT = 'dsh-team-mode:sidebar-menu'
 /** Measured indentation from the plugin host to its section titles. */
@@ -1166,6 +1058,7 @@ export function SidebarPortal({
   const [brandHost, setBrandHost] = useState<HTMLElement>()
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
+  const [createMenuOpen, setCreateMenuOpen] = useState(false)
   const mode = useSurfaceMode()
 
   // Expose the mode on <html> so CSS and DOM-level helpers can follow it
@@ -1258,9 +1151,9 @@ export function SidebarPortal({
       }
       const rect = logoRow.getBoundingClientRect()
       // One column for both modes: the plugin host exists in DeepSeek and DeepBot
-      // alike, while the section titles only exist in DeepBot. The offset from
-      // host to title is measured where a title is present and then reused, so
-      // the control does not jump sideways when the mode changes.
+      // alike, while the group headers only exist in DeepBot. The offset from
+      // host to the first header is measured where one is present and then
+      // reused, so the control does not jump sideways when the mode changes.
       const teamHost = document.getElementById(SIDEBAR_HOST_ID)
       const teamRect = teamHost?.getBoundingClientRect()
       let columnLeft: number | undefined
@@ -1268,7 +1161,7 @@ export function SidebarPortal({
       if (teamHost !== null && teamRect !== undefined) {
         const hostLeft = teamRect.left
         const titleLeft = document
-          .querySelector<HTMLElement>('[data-dsh-team-mode-title]')
+          .querySelector<HTMLElement>('[data-dsh-sidebar-title]')
           ?.getBoundingClientRect().left
         if (titleLeft !== undefined && titleLeft > 0 && hostLeft > 0) {
           brandColumnOffset = Math.round(titleLeft - hostLeft)
@@ -1833,6 +1726,7 @@ export function SidebarPortal({
                 className={css.brandAction}
                 aria-label="筛选"
                 title="筛选"
+                aria-haspopup="menu"
                 onClick={(event) => {
                   // DeepSeek mode opens the shipped grouping/sort/filter menu.
                   if (mode === 'native' && clickNativeAction(/筛选|排序|分组|filter|sort/i)) return
@@ -1845,21 +1739,45 @@ export function SidebarPortal({
               >
                 <IconSlidersTwoOutlineRegular />
               </button>
-              <button
-                type="button"
-                className={css.brandAction}
-                aria-label="新建"
-                title="新建"
-                onClick={() => {
-                  if (mode === 'native') {
-                    startNativeSession()
-                    return
+              {/* 新建 is a choice, not a guess: the two lists own different dialogs. */}
+              <Menu
+                open={createMenuOpen}
+                onClose={() => { setCreateMenuOpen(false) }}
+                align="end"
+                dense
+                portal
+                items={[
+                  { id: 'new-team', label: '新建团队' },
+                  { id: 'new-assistant', label: '新建助手' },
+                ]}
+                onSelect={id => {
+                  setCreateMenuOpen(false)
+                  if (id === 'new-team') openCreateTeamDialog()
+                  else if (id === 'new-assistant') {
+                    // The assistant section owns its own dialog; it answers this.
+                    window.dispatchEvent(new CustomEvent(SIDEBAR_ASSISTANT_CREATE_EVENT))
                   }
-                  void startStewardSession(openSession)
                 }}
-              >
-                <IconPlusOutlineRegular />
-              </button>
+                anchor={(
+                  <button
+                    type="button"
+                    className={css.brandAction}
+                    aria-label="新建"
+                    title="新建"
+                    aria-haspopup="menu"
+                    aria-expanded={createMenuOpen}
+                    onClick={() => {
+                      if (mode === 'native') {
+                        startNativeSession()
+                        return
+                      }
+                      setCreateMenuOpen(value => !value)
+                    }}
+                  >
+                    <IconPlusOutlineRegular />
+                  </button>
+                )}
+              />
             </div>
           )}
         </>,

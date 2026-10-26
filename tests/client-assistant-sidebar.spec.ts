@@ -133,12 +133,15 @@ describe('assistant sidebar source contract', () => {
   it('builds 待你处理 from the workspace instead of the filtered rows', () => {
     expect(source).toContain('assistantPendingDecisions(instances, tasks)')
     expect(source).not.toContain('visible.some(instance => instance.id === item.instance.id)')
-    expect(source).toContain('{expanded && attentionItems.length > 0 && (')
+    expect(source).toContain('{attentionItems.length > 0 && (')
     expect(source).toContain('{attentionItems.length}')
   })
 
-  it('keeps the header counts off the filtered list too', () => {
-    expect(source).toContain('assistantSidebarSummary(instances, tasks, readState)')
+  it('has no section header left to carry counts', () => {
+    // The header row is gone: no title, no summary line, no section-level fold.
+    expect(source).not.toContain('data-dsh-assistant-title')
+    expect(source).not.toContain('sidebarAssistantSummary')
+    expect(source).toContain('aria-label="单聊"')
     expect(source).not.toContain('for (const instance of visible)')
   })
 

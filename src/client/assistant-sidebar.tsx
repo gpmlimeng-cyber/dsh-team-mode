@@ -12,8 +12,6 @@ import {
   IconPinOutlineRegular,
   IconPlusOutlineRegular,
   IconProjectAddOutlineRegular,
-  IconSearchOutlineRegular,
-  IconSlidersTwoOutlineRegular,
   Menu,
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -21,10 +19,7 @@ import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import { selectAssistant, useAgentTeamUi } from './store.js'
 import { AssistantCheckpointDialog } from './assistant-checkpoint-dialog.js'
 import { AssistantCreateDialog } from './assistant-dialogs.js'
-import {
-  setAssistantDisplayMode,
-  useAssistantDisplayMode,
-} from './assistant-display-mode.js'
+import { useAssistantDisplayMode } from './assistant-display-mode.js'
 import { AssistantSettingsDialog } from './assistant-settings-dialog.js'
 import {
   approvalDecisionLabel,
@@ -46,7 +41,6 @@ import {
   assistantRowState,
   assistantRowStatusText,
   assistantRowStatusTitle,
-  assistantSidebarSummary,
   assistantTaskStatusLabel,
   assistantThreadTasks,
   coordinatorAssistant,
@@ -73,6 +67,7 @@ import {
   SidebarGroupPartition,
   sidebarDragSwallowsClick,
   sidebarGroupMenuItems,
+  sidebarPartitionLabel,
   useSidebarDrag,
   type SidebarGroupDialog,
 } from './sidebar-group-ui.js'
@@ -82,23 +77,10 @@ import { isCoordinatorInstance } from '../domain/types.js'
 import type { AssistantInstance, AssistantSession, Escalation } from '../domain/types.js'
 import type { AssistantInstanceView, PendingInteractionView } from '../transport/contracts.js'
 
-const ASSISTANT_EXPANDED_KEY = 'dsh-team-mode:assistant-expanded'
-
-function readAssistantExpanded(): boolean {
-  try {
-    return window.localStorage.getItem(ASSISTANT_EXPANDED_KEY) !== 'false'
-  } catch {
-    return true
-  }
-}
-
-function writeAssistantExpanded(expanded: boolean): void {
-  try {
-    window.localStorage.setItem(ASSISTANT_EXPANDED_KEY, String(expanded))
-  } catch {
-    // Restricted WebViews may reject storage; the current session still works.
-  }
-}
+/** Brand-row 搜索 filters both lists through one window event. */
+export const SIDEBAR_SEARCH_EVENT = 'dsh-team-mode:sidebar-search'
+/** Brand-row ＋ → 新建助手; the dialog itself still lives in this section. */
+export const SIDEBAR_ASSISTANT_CREATE_EVENT = 'dsh-team-mode:assistant-create'
 
 /** Three tiny dots used while an Assistant is thinking, not a static count. */
 function AssistantWorkingDots(): JSX.Element {
@@ -229,19 +211,24 @@ export function AssistantSidebarSection({
   // reads them, and every other row ignores the list.
   const [escalations, setEscalations] = useState<Escalation[]>([])
   const mode = useAssistantDisplayMode()
-  const [expanded, setExpanded] = useState(readAssistantExpanded)
-  const [searchExpanded, setSearchExpanded] = useState(false)
   const [query, setQuery] = useState('')
-  const [modeMenuOpen, setModeMenuOpen] = useState(false)
 
-  // The brand-row search drives this list too, so both plugin sections answer
-  // the same query instead of each keeping a private one.
+  // The brand-row search drives both lists, and its ＋ menu owns 新建助手, so
+  // this section answers events instead of rendering a header of its own.
   useEffect(() => {
     const onSearch = (event: Event): void => {
       setQuery((event as CustomEvent<string>).detail ?? '')
     }
-    window.addEventListener('dsh-team-mode:sidebar-search', onSearch)
-    return () => window.removeEventListener('dsh-team-mode:sidebar-search', onSearch)
+    const onCreate = (): void => {
+      setError(undefined)
+      setCreateOpen(true)
+    }
+    window.addEventListener(SIDEBAR_SEARCH_EVENT, onSearch)
+    window.addEventListener(SIDEBAR_ASSISTANT_CREATE_EVENT, onCreate)
+    return () => {
+      window.removeEventListener(SIDEBAR_SEARCH_EVENT, onSearch)
+      window.removeEventListener(SIDEBAR_ASSISTANT_CREATE_EVENT, onCreate)
+    }
   }, [])
   const [threadOpenById, setThreadOpenById] = useState<Record<string, boolean>>({})
   const [openingId, setOpeningId] = useState<string>()
@@ -340,11 +327,6 @@ export function AssistantSidebarSection({
     return () => { cancelled = true }
   }, [attentionItems])
 
-  const attentionSummary = useMemo(
-    () => assistantSidebarSummary(instances, tasks, readState),
-    [instances, tasks, readState],
-  )
-
   useEffect(() => {
     if (knownWaitingRef.current === undefined) {
       knownWaitingRef.current = new Set(allPending.map(item => item.task.id))
@@ -383,27 +365,12 @@ export function AssistantSidebarSection({
     }
   }, [allPending])
 
-  const summaryText = [
-    attentionSummary.waiting > 0 ? `${attentionSummary.waiting} 待处理` : '',
-    attentionSummary.working > 0 ? `${attentionSummary.working} 思考中` : '',
-    attentionSummary.queued > 0 ? `${attentionSummary.queued} 排队` : '',
-    attentionSummary.unread > 0 ? `${attentionSummary.unread} 未读` : '',
-  ].filter(Boolean).join(' · ')
-
   const taskAssistant = useMemo(
     () => (taskAssistantId === undefined
       ? undefined
       : instances.find(item => item.id === taskAssistantId)),
     [instances, taskAssistantId],
   )
-
-  const toggle = (): void => {
-    setExpanded(current => {
-      const next = !current
-      writeAssistantExpanded(next)
-      return next
-    })
-  }
 
   const openCreate = (): void => {
     setError(undefined)
@@ -994,121 +961,7 @@ export function AssistantSidebarSection({
       data-dsh-assistant-section
       data-dsh-assistant-display-mode={mode}
     >
-      <div className={css.sidebarTeamHeader} data-dsh-assistant-header>
-        {searchExpanded
-          ? (
-            <div className={css.sidebarTeamSearch}>
-              <IconSearchOutlineRegular size={14} />
-              <input
-                autoFocus
-                type="search"
-                value={query}
-                placeholder="搜索助手"
-                aria-label="搜索助手"
-                onChange={event => { setQuery(event.target.value) }}
-                onKeyDown={event => {
-                  if (event.key !== 'Escape') return
-                  setQuery('')
-                  setSearchExpanded(false)
-                }}
-              />
-              <button
-                type="button"
-                className={css.sidebarTeamSearchClear}
-                aria-label="清除搜索"
-                onClick={() => { setQuery(''); setSearchExpanded(false) }}
-              >
-                <IconCloseFillRegular size={12} />
-              </button>
-            </div>
-            )
-          : (
-            <>
-              <button
-                type="button"
-                className={css.sidebarTeamToggle}
-                onClick={toggle}
-                aria-expanded={expanded}
-                aria-controls="dsh-team-mode-assistant-list"
-              >
-                <span className={css.sidebarTeamTitle} data-dsh-assistant-title>单聊</span>
-                <IconChevronRightOutlineRegular
-                  size={12}
-                  className={`${css.sidebarTeamChevron} ${expanded ? css.sidebarTeamChevronOpen : ''}`}
-                />
-              </button>
-              {summaryText !== '' && (
-                <span
-                  className={css.sidebarAssistantSummary}
-                  aria-live="polite"
-                  aria-label={summaryText}
-                  title={summaryText}
-                >
-                  {summaryText}
-                </span>
-              )}
-              <div className={css.sidebarTeamSearchSlot}>
-                <Tooltip label="搜索助手" delayMs={400}>
-                  <button
-                    type="button"
-                    className={`${css.sidebarTeamIconButton} ${css.sidebarTeamSearchButton}`}
-                    onClick={() => { setSearchExpanded(true) }}
-                    aria-label="搜索助手"
-                  >
-                    <IconSearchOutlineRegular size={14} />
-                  </button>
-                </Tooltip>
-              </div>
-              <div className={css.sidebarTeamHeaderActions}>
-                <Menu
-                  open={modeMenuOpen}
-                  onClose={() => { setModeMenuOpen(false) }}
-                  align="end"
-                  dense
-                  portal
-                  items={[
-                    { type: 'label', id: 'display-mode-label', text: '显示方式' },
-                    { id: 'mode-simple', label: '简洁：每个助手一行' },
-                    { id: 'mode-advanced', label: '进阶：显示任务线程' },
-                  ]}
-                  selectedIds={[mode === 'simple' ? 'mode-simple' : 'mode-advanced']}
-                  onSelect={id => {
-                    setModeMenuOpen(false)
-                    if (id === 'mode-simple') setAssistantDisplayMode('simple')
-                    else if (id === 'mode-advanced') setAssistantDisplayMode('advanced')
-                  }}
-                  anchor={(
-                    <Tooltip label="显示方式" delayMs={400}>
-                      <button
-                        type="button"
-                        className={css.sidebarTeamIconButton}
-                        aria-label="显示方式"
-                        aria-haspopup="menu"
-                        aria-expanded={modeMenuOpen}
-                        data-dsh-assistant-display-options
-                        onClick={() => { setModeMenuOpen(current => !current) }}
-                      >
-                        <IconSlidersTwoOutlineRegular size={14} />
-                      </button>
-                    </Tooltip>
-                  )}
-                />
-                <Tooltip label="新建单聊助手" delayMs={400}>
-                  <button
-                    type="button"
-                    className={css.sidebarTeamIconButton}
-                    onClick={openCreate}
-                    aria-label="新建单聊助手"
-                    data-dsh-assistant-add
-                  >
-                    <IconPlusOutlineRegular size={16} />
-                  </button>
-                </Tooltip>
-              </div>
-            </>
-            )}
-      </div>
-      {expanded && notice !== undefined && (
+      {notice !== undefined && (
         <div className={css.sidebarAssistantNotice} role="status" data-dsh-assistant-notice>
           <span className={css.sidebarAssistantNoticeBadge} aria-hidden="true">!</span>
           <button
@@ -1137,7 +990,7 @@ export function AssistantSidebarSection({
           </button>
         </div>
       )}
-      {expanded && attentionItems.length > 0 && (
+      {attentionItems.length > 0 && (
         <div
           className={css.sidebarAssistantAttention}
           role="region"
@@ -1211,84 +1064,80 @@ export function AssistantSidebarSection({
           )}
         </div>
       )}
-      {expanded && (
-        <div id="dsh-team-mode-assistant-list" className={css.sidebarTeamList}>
-          {message !== undefined && (
-            <div className={css.sidebarTeamError} role="alert">
-              <span>{instances.length === 0 ? `助手数据加载失败：${message}` : message}</span>
-              {instances.length === 0 && (
-                <button
-                  type="button"
-                  className={css.sidebarTeamRetry}
-                  onClick={() => { void load() }}
-                >
-                  重试
-                </button>
-              )}
+      <div id="dsh-team-mode-assistant-list" className={css.sidebarTeamList}>
+        {message !== undefined && (
+          <div className={css.sidebarTeamError} role="alert">
+            <span>{instances.length === 0 ? `助手数据加载失败：${message}` : message}</span>
+            {instances.length === 0 && (
+              <button
+                type="button"
+                className={css.sidebarTeamRetry}
+                onClick={() => { void load() }}
+              >
+                重试
+              </button>
+            )}
+          </div>
+        )}
+        {!loaded
+          ? (
+            <div className={css.sidebarTeamEmpty} role="status" data-dsh-assistant-loading>
+              正在加载助手…
             </div>
-          )}
-          {!loaded
-            ? (
-              <div className={css.sidebarTeamEmpty} role="status" data-dsh-assistant-loading>
-                正在加载助手…
-              </div>
-              )
-            : visible.length === 0
-              ? message !== undefined && instances.length === 0
-                ? null
-                : query.trim() !== ''
-                  ? <div className={css.sidebarTeamEmpty}>没有匹配的助手</div>
-                  : (
-                    <>
-                      <div className={css.sidebarAssistantEmpty}>
-                        <div className={css.sidebarTeamEmpty}>还没有助手</div>
-                        <button
-                          type="button"
-                          className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
-                          onClick={openCreate}
-                        >
-                          <span className={css.sidebarTeamSlot} aria-hidden="true">
-                            <IconPlusOutlineRegular size={16} />
-                          </span>
-                          <span className={css.sidebarTeamEmptyTitle}>新建助手</span>
-                        </button>
-                      </div>
-                      {/* The one 新建分组 entry for the whole workspace; the team
-                          section above leaves it here so it is not offered twice. */}
-                      <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
-                    </>
-                    )
-              : (
-                <>
-                  {partitioned
-                    ? partitions.map(partition => {
-                        const group = partition.group
-                        return (
-                          <SidebarGroupPartition
-                            key={partition.id}
-                            label={group ?? '未分组'}
-                            count={partition.items.length}
-                            collapsed={collapsedPartitions[partition.id] === true}
-                            onToggle={() => { togglePartition(partition.id) }}
-                            drag={drag.partition({ ...(group === undefined ? {} : { group }) })}
-                            {...(group === undefined
-                              ? {}
-                              : {
-                                  onAddEntries: () => { setGroupDialog({ kind: 'members', group }) },
-                                  menuItems: sidebarGroupMenuItems(groups, group),
-                                  onSelect: (id: string) => { void selectGroupMenu(group, id) },
-                                })}
-                          >
-                            {partition.items.map(renderAssistantRow)}
-                          </SidebarGroupPartition>
-                        )
-                      })
-                    : visible.map(renderAssistantRow)}
-                  <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
-                </>
-              )}
-        </div>
-      )}
+            )
+          : visible.length === 0
+            ? message !== undefined && instances.length === 0
+              ? null
+              : query.trim() !== ''
+                ? <div className={css.sidebarTeamEmpty}>没有匹配的助手</div>
+                : (
+                  <>
+                    <div className={css.sidebarAssistantEmpty}>
+                      <div className={css.sidebarTeamEmpty}>还没有助手</div>
+                      <button
+                        type="button"
+                        className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
+                        onClick={openCreate}
+                      >
+                        <span className={css.sidebarTeamSlot} aria-hidden="true">
+                          <IconPlusOutlineRegular size={16} />
+                        </span>
+                        <span className={css.sidebarTeamEmptyTitle}>新建助手</span>
+                      </button>
+                    </div>
+                    {/* The one 新建分组 entry for the whole workspace; the team
+                        section above leaves it here so it is not offered twice. */}
+                    <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
+                  </>
+                  )
+            : (
+              <>
+                {partitions.map(partition => {
+                  const group = partition.group
+                  return (
+                    <SidebarGroupPartition
+                      key={partition.id}
+                      label={sidebarPartitionLabel(group, partitioned, '默认分组')}
+                      count={partition.items.length}
+                      collapsed={collapsedPartitions[partition.id] === true}
+                      onToggle={() => { togglePartition(partition.id) }}
+                      drag={drag.partition({ ...(group === undefined ? {} : { group }) })}
+                      {...(group === undefined
+                        ? {}
+                        : {
+                            onAddEntries: () => { setGroupDialog({ kind: 'members', group }) },
+                            menuItems: sidebarGroupMenuItems(groups, group),
+                            onSelect: (id: string) => { void selectGroupMenu(group, id) },
+                          })}
+                    >
+                      {partition.items.map(renderAssistantRow)}
+                    </SidebarGroupPartition>
+                  )
+                })}
+                <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
+              </>
+            )}
+      </div>
       <AssistantCreateDialog
         open={createOpen}
         onClose={() => { setCreateOpen(false) }}

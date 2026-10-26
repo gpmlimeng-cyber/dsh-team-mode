@@ -134,7 +134,8 @@ describe('sidebar surface switch', () => {
     expect(assistant).not.toContain('builtin-chief')
     expect(sidebar).not.toContain('管家')
     expect(sidebar).not.toContain('builtin-chief')
-    expect(sidebar).toContain('coordinatorAssistant(instances)')
+    // The brand row no longer guesses a coordinator Session from the list.
+    expect(sidebar).not.toContain('coordinatorAssistant(')
     // 设为/取消总协调 goes through the one host write.
     expect(assistant).toContain("callAgentTeam('assistant.coordinator.set'")
     expect(assistant).toContain('assistantId: isCoordinatorInstance(instance) ? null : instance.id')
@@ -148,16 +149,20 @@ describe('sidebar surface switch', () => {
     // DeepSeek mode forwards to the shipped controls; DeepBot uses our own.
     expect(sidebar).toContain('clickNativeAction')
     expect(sidebar).toContain('startNativeSession')
-    expect(sidebar).toContain('startStewardSession')
     // 筛选 opens the section's own filter/sort menu instead of a second menu.
     expect(sidebar).toContain('dsh-team-mode:sidebar-menu')
     // 搜索 expands in place with the section's own search shell, filling the row.
     expect(sidebar).toContain('css.sidebarTeamSearch')
-    expect(sidebar).toContain('dsh-team-mode:sidebar-search')
-    // 筛选 opens the section's own filter/sort menu instead of a second menu.
-    expect(sidebar).toContain('dsh-team-mode:sidebar-menu')
+    expect(sidebar).toContain('SIDEBAR_SEARCH_EVENT')
+    // 新建 is a menu, because which list to create in cannot be guessed.
+    expect(sidebar).toContain("label: '新建团队'")
+    expect(sidebar).toContain("label: '新建助手'")
+    expect(sidebar).toContain('openCreateTeamDialog()')
+    expect(sidebar).toContain('SIDEBAR_ASSISTANT_CREATE_EVENT')
     const assistant = readClientSource('assistant-sidebar.tsx')
-    expect(assistant).toContain('dsh-team-mode:sidebar-search')
+    // Both lists answer the one brand search, and the assistant owns 新建助手.
+    expect(assistant).toContain('SIDEBAR_SEARCH_EVENT')
+    expect(assistant).toContain('window.addEventListener(SIDEBAR_ASSISTANT_CREATE_EVENT, onCreate)')
   })
 
   it('persists the switch through the surface-mode helper', () => {

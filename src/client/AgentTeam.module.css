@@ -3193,22 +3193,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   padding: 0;
 }
 
-/* Matches WorkspaceBrowser's `.sectionHeader` (36px, 4px left, -4px right). */
-.sidebarTeamHeader {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px;
-  height: 36px;
-  margin-top: 2px;
-  margin-bottom: 4px;
-  margin-right: -4px;
-  padding-left: 4px;
-  padding-right: 4px;
-  overflow: hidden;
-}
-
 .sidebarTeamToggle {
   position: relative;
   display: flex;
@@ -3277,49 +3261,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   white-space: nowrap;
 }
 
-.sidebarTeamSearchSlot {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex: 1;
-  max-width: 28px;
-  min-width: 0;
-  margin-left: auto;
-}
-
-.sidebarTeamHeaderActions {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex: none;
-  max-width: 60px;
-}
-
-.sidebarTeamIconButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  flex: none;
-  padding: 0;
-  border: 0;
-  border-radius: var(--dsw-radius-sm);
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
-
-.sidebarTeamSearchButton {
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.sidebarTeamIconButton:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.sidebarTeamIconButton:focus-visible,
 .sidebarTeamSearchClear:focus-visible {
   outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: -2px;
@@ -7757,17 +7698,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
     animation: none;
     opacity: 0.7;
   }
-}
-
-.sidebarAssistantSummary {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 10px;
-  line-height: 16px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .sidebarAssistantUnread {

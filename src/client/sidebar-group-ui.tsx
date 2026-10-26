@@ -286,7 +286,7 @@ export function SidebarGroupPartition({
             onToggle()
           }}
         >
-          <span className={css.sidebarPartitionLabel}>{label}</span>
+          <span className={css.sidebarPartitionLabel} data-dsh-sidebar-title>{label}</span>
           <IconChevronRightOutlineRegular
             size={11}
             className={`${css.sidebarPartitionChevron} ${collapsed ? '' : css.sidebarPartitionChevronOpen}`}
@@ -350,6 +350,20 @@ export function SidebarGroupPartition({
       )}
     </div>
   )
+}
+
+/**
+ * Header text for one partition. With groups defined, leftovers are 未分组;
+ * with none, the single section is named after the list it holds, so the list
+ * still starts with a normal collapsible group header.
+ */
+export function sidebarPartitionLabel(
+  group: string | undefined,
+  partitioned: boolean,
+  fallback: string,
+): string {
+  if (group !== undefined) return group
+  return partitioned ? '未分组' : fallback
 }
 
 /** Trailing list row that creates the first (or next) group. */
