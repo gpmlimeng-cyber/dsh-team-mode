@@ -116,6 +116,15 @@ describe('sidebar surface switch', () => {
     expect(sidebar).toContain('brand.style.display')
   })
 
+  it('puts a sidebar search at the right end of the brand row', () => {
+    expect(sidebar).toContain('dsh-team-mode:sidebar-search')
+    expect(sidebar).toContain('brandSearchInput')
+    expect(sidebar).toContain('aria-label="搜索侧栏"')
+    // Both plugin sections answer the same query.
+    const assistant = readClientSource('assistant-sidebar.tsx')
+    expect(assistant).toContain('dsh-team-mode:sidebar-search')
+  })
+
   it('persists the switch through the surface-mode helper', () => {
     expect(sidebar).toContain('readSurfaceMode(surfaceStorage())')
     expect(sidebar).toContain('writeSurfaceMode(surfaceStorage(), next)')
