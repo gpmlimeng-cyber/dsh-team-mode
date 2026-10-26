@@ -1302,6 +1302,23 @@ export function SidebarPortal({
       // can report a temporary zero rect, and the next layout pass would not
       // necessarily run. It is removed only when the sidebar unmounts.
       element.style.visibility = 'visible'
+      // A full-width opaque band behind the fixed row: scrolling rows must pass
+      // under it, not above the mode switch.
+      let shade = document.getElementById('dsh-team-mode-header-shade')
+      if (shade === null || !shade.isConnected) {
+        shade = document.createElement('div')
+        shade.id = 'dsh-team-mode-header-shade'
+        shade.style.position = 'fixed'
+        shade.style.zIndex = '2147483000'
+        shade.style.pointerEvents = 'none'
+        shade.style.background = 'var(--dsw-specific-sidebar-fill)'
+        document.body.append(shade)
+      }
+      const shadeTop = element.getBoundingClientRect()
+      shade.style.left = `${Math.round(sidebarRect.left)}px`
+      shade.style.top = '0px'
+      shade.style.width = `${Math.round(sidebarRect.width)}px`
+      shade.style.height = `${Math.max(0, Math.round(shadeTop.bottom + 8))}px`
     }
 
     /** Lay the pinned BOT row over 新会话, or over the visible team column when
@@ -1322,22 +1339,19 @@ export function SidebarPortal({
         element.style.zIndex = '2147483000'
         document.body.append(element)
       }
-      const newSessionRect = newSession?.getBoundingClientRect()
-      if (newSessionRect !== undefined && newSessionRect.width > 0) {
-        element.style.left = `${Math.round(newSessionRect.left)}px`
-        element.style.top = `${Math.round(newSessionRect.top)}px`
-        element.style.width = `${Math.round(newSessionRect.width)}px`
-      } else if (teamHost !== null) {
-        const teamRect = teamHost.getBoundingClientRect()
-        const visibleLogo = Array.from(document.querySelectorAll<HTMLElement>('[class*="_logoRow"]'))
-          .map(row => row.getBoundingClientRect())
-          .find(box => box.width > 0 && box.height > 0)
-        element.style.left = `${Math.round(teamRect.left)}px`
-        element.style.top = `${Math.round(visibleLogo === undefined ? Math.max(64, teamRect.top - 48) : visibleLogo.bottom + 8)}px`
-        element.style.width = `${Math.round(teamRect.width)}px`
+      // The coordinator is the first row of the team column, not a floating
+      // overlay: it scrolls like every other row and passes under the fixed
+      // mode band.
+      if (teamHost !== null) {
+        if (element.parentElement !== teamHost) teamHost.insertBefore(element, teamHost.firstChild)
+        element.style.position = 'static'
+        element.style.zIndex = ''
+        element.style.left = ''
+        element.style.top = ''
+        element.style.width = '100%'
+        element.style.marginBottom = '6px'
+        element.style.background = 'var(--dsw-specific-sidebar-fill)'
       }
-      // Height is the row's own: it has to read like a 单聊 assistant row, not
-      // like the 新会话 button it is pinned over.
       element.style.height = ''
     }
 
