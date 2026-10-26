@@ -223,7 +223,11 @@ export function applyLayout(hosts: SlotHosts, plan: LayoutPlan, onActivate: (key
   for (const key of hidesAfterRender(plan, rendered)) {
     const node = hosts.nodes.get(key)
     if (node === undefined) continue
-    node.style.visibility = 'hidden'
+    // `display: none` rather than `visibility: hidden`: a hidden row that keeps
+    // its box leaves an empty gap where the entry used to be, which reads as
+    // "the item vanished". Programmatic `.click()` still works on a node that is
+    // not rendered, so the mirror keeps forwarding to the real control.
+    node.style.display = 'none'
     node.setAttribute('aria-hidden', 'true')
     node.setAttribute(HIDDEN_ATTR, '')
   }
@@ -261,10 +265,24 @@ export function syncMirrorState(hosts: SlotHosts, nodes: ReadonlyMap<EntryKey, H
   }
 }
 
+/**
+ * True when every planned mirror is still mounted.
+ *
+ * A React re-render can wipe a foreign host while the native rows keep their
+ * inline hiding, which reads to the user as "the entry disappeared". Callers
+ * re-apply the layout when this goes false, and fall back to restoring the
+ * native rows when a re-apply still cannot keep the mirrors mounted.
+ */
+export function mirrorsAlive(doc: Document, plan: LayoutPlan): boolean {
+  const mounted = doc.querySelectorAll(`button[${KEY_ATTR}]`)
+  if (mounted.length !== plan.mirrors.length) return false
+  return Array.from(mounted).every(node => node.isConnected)
+}
+
 /** Un-hide every native node and empty the slots. Safe to call when nothing was applied. */
 export function restoreNative(hosts: SlotHosts, doc: Document): void {
   for (const node of Array.from(doc.querySelectorAll<HTMLElement>(`[${HIDDEN_ATTR}]`))) {
-    node.style.visibility = ''
+    node.style.display = ''
     node.removeAttribute('aria-hidden')
     node.removeAttribute(HIDDEN_ATTR)
   }

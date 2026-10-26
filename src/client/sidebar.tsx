@@ -56,6 +56,7 @@ import {
   applyLayout,
   discoverEntries,
   ensureSlotHosts,
+  mirrorsAlive,
   restoreNative,
   syncMirrorState,
   type SlotHosts,
@@ -1223,6 +1224,8 @@ export function SidebarPortal({
     let scrollBound: HTMLDivElement | undefined
     let hosts: SlotHosts | undefined
     let appliedLayout = ''
+    /** Signature whose mirrors could not be kept mounted; do not retry it. */
+    let failedLayout = ''
 
     /**
      * Re-derive the entry list and apply the stored layout.
@@ -1240,9 +1243,21 @@ export function SidebarPortal({
       // A React re-render can replace the native rows; apply again then, or the
       // mirrors would point at detached nodes.
       const stale = !Array.from(nodes.values()).every(node => node.isConnected)
-      if (signature !== appliedLayout || stale) {
+      // The host itself can be wiped by a React re-render while the native rows
+      // keep their inline hiding — the entry would vanish with no replacement.
+      const lost = !mirrorsAlive(document, plan)
+      if (signature !== appliedLayout || stale || (lost && failedLayout !== signature)) {
         applyLayout(hosts, plan, key => { nodes.get(key)?.click() })
         appliedLayout = signature
+        // Fail open: a round that cannot keep its mirrors mounted gives the
+        // native rows back instead of leaving an entry hidden forever. One
+        // attempt per signature, so a self-healing loop cannot flicker.
+        if (!mirrorsAlive(document, plan)) {
+          restoreNative(hosts, document)
+          failedLayout = signature
+        } else {
+          failedLayout = ''
+        }
       }
       syncMirrorState(hosts, nodes)
     }
@@ -1310,6 +1325,7 @@ export function SidebarPortal({
     // re-apply instead of waiting for the next DOM mutation.
     const onLayoutChange = (): void => {
       appliedLayout = ''
+      failedLayout = ''
       schedule()
     }
 
