@@ -1526,6 +1526,18 @@ export class AgentTeamService extends Service {
   }
 
   /**
+   * Create one extra visible Session in the instance's workspace and list it as
+   * a thread, through the attached runtime.
+   */
+  async createAssistantThread(assistantId: string, cwd?: string): Promise<AssistantEnsureResult> {
+    const id = assistantId.trim()
+    if (id === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Assistant instance id cannot be empty')
+    }
+    return this.requireAssistantRuntime().createAssistantThread(id, cwd)
+  }
+
+  /**
    * Capture one checkpoint from the instance's current main Session. The note
    * is trimmed and bounded here; the facts themselves are built deterministically
    * by the runtime (no model call, no tool output).

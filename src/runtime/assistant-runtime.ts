@@ -304,6 +304,69 @@ export class AssistantRuntime {
   }
 
   /**
+   * Create one additional visible Session for an instance and attach it as a
+   * thread. It goes through the same create → attach → flush path as the main
+   * Session, so the Host owns it natively before the instance lists it. `cwd`
+   * defaults to the instance workspace; an explicit directory becomes the
+   * thread's working folder.
+   *
+   * The thread reuses the main Session setup, so the same assistant answers in
+   * it. Its task and memory tools stay bound to the main Session by their
+   * identity check (threads do not participate in team roles).
+   */
+  async createAssistantThread(
+    rawAssistantId: string,
+    cwd?: string,
+  ): Promise<AssistantEnsureResult> {
+    if (this.closing) throw new AgentTeamError('INVALID_REQUEST', 'Assistant runtime is closing')
+    const id = requireText(rawAssistantId, 'Assistant instance id')
+    const instance = this.service.getAssistantInstance(id)
+    if (instance.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${id}' is archived`,
+      )
+    }
+    const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(instance.workspaceId))
+    if (workspace === undefined || await workspace.status() !== 'ok') {
+      throw new AgentTeamError(
+        'WORKSPACE_UNAVAILABLE',
+        `Workspace '${instance.workspaceId}' is unavailable`,
+      )
+    }
+
+    const directory = cwd?.trim() ?? ''
+    const sessionId = `session-${randomUUID()}`
+    let handle: AgentHandle
+    try {
+      handle = await this.ctx.agents.create({
+        sessionId: SessionId(sessionId),
+        meta: {
+          cwd: directory === '' ? instance.workspacePath : directory,
+          agentPreset: instance.assistantSnapshot.agentPresetId,
+        },
+        agentOptions: agentOptionsFor(instance.assistantSnapshot),
+        setup: this.mainSetup(id, instance),
+      })
+    } catch (error) {
+      throw this.startupError(instance, error)
+    }
+
+    try {
+      await workspace.attachSession(SessionId(sessionId))
+      // Flush the empty header first: a thread the Host never wrote is not
+      // openable from the native session browser.
+      await this.ctx.sessions.flush(handle.agent.session)
+      const bound = await this.service.attachAssistantThread(id, sessionId)
+      this.owned.set(sessionId, handle)
+      return { instance: bound, sessionId }
+    } catch (error) {
+      await this.disposeQuietly(handle, `thread Session '${sessionId}' failed to attach`)
+      throw this.startupError(instance, error)
+    }
+  }
+
+  /**
    * Open one stored task's worker Session by task id. The worker is resumed when
    * it is no longer live, so opening a completed or restarted task reattaches
    * instead of failing. Task status is intentionally left untouched.

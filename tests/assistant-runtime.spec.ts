@@ -270,6 +270,21 @@ function createHarness(
     }
     return current
   })
+  const attachAssistantThread = vi.fn(async (id: string, sessionId: string) => {
+    if (id !== current.id) {
+      throw new AgentTeamError('ASSISTANT_INSTANCE_NOT_FOUND', `Unknown assistant instance '${id}'`)
+    }
+    if (current.status === 'archived') {
+      throw new AgentTeamError('ASSISTANT_INSTANCE_ARCHIVED', `Assistant instance '${id}' is archived`)
+    }
+    current = {
+      ...current,
+      threadSessionIds: [...(current.threadSessionIds ?? []), sessionId],
+      revision: current.revision + 1,
+      updatedAt: NOW,
+    }
+    return current
+  })
 
   const tasks = new Map<string, AssistantSession>()
   let nextTaskNumber = 1
@@ -492,6 +507,7 @@ function createHarness(
     listTeams,
     bindAssistantMainSession,
     persistAssistantArchived,
+    attachAssistantThread,
     getContextCheckpoint,
     advanceAssistantMainSession,
     consumeContextCheckpoint,
@@ -516,6 +532,7 @@ function createHarness(
     getAssistantInstance,
     bindAssistantMainSession,
     persistAssistantArchived,
+    attachAssistantThread,
     getContextCheckpoint,
     advanceAssistantMainSession,
     consumeContextCheckpoint,
@@ -654,6 +671,56 @@ describe('AssistantRuntime', () => {
 
     expect(toolsRegistered(h.handles[0]).sort())
       .toEqual([...TASK_TOOL_NAMES, ...MEMORY_TOOL_NAMES].sort())
+  })
+
+  it('creates a real Session in the workspace and attaches it as a thread', async () => {
+    const h = createHarness()
+    const main = await h.runtime.ensureInstance('instance-1')
+
+    const thread = await h.runtime.createAssistantThread('instance-1')
+
+    expect(thread.sessionId).toMatch(/^session-/)
+    expect(thread.sessionId).not.toBe(main.sessionId)
+    // The main Session keeps its id; the new Session only joins the thread list.
+    expect(h.current().mainSessionId).toBe(main.sessionId)
+    expect(h.current().threadSessionIds).toEqual([thread.sessionId])
+    expect(h.bindAssistantMainSession).toHaveBeenCalledTimes(1)
+    expect(h.attachAssistantThread).toHaveBeenCalledWith('instance-1', thread.sessionId)
+
+    expect(h.createMock).toHaveBeenCalledTimes(2)
+    const options = h.createMock.mock.calls[1]?.[0] as CreateAgentOptions
+    expect(String(options.sessionId)).toBe(thread.sessionId)
+    expect(options.meta).toEqual({ cwd: WORKSPACE_PATH, agentPreset: 'default' })
+    expect(h.attachSession).toHaveBeenCalledWith(thread.sessionId)
+    expect(h.flush).toHaveBeenCalledWith(h.handles[1]?.agent.session)
+    // Same assistant, same identity prompt as the main Session.
+    const sections = h.handles[1]?.section.mock.calls.map(
+      call => call[0] as { name: string; text: () => string },
+    ) ?? []
+    expect(sections.find(section => section.name.includes('assistant-identity'))?.text())
+      .toContain('You are Researcher')
+  })
+
+  it('binds an explicit working directory to a thread Session', async () => {
+    const h = createHarness()
+
+    const thread = await h.runtime.createAssistantThread('instance-1', '  /tmp/other-project  ')
+
+    const options = h.createMock.mock.calls[0]?.[0] as CreateAgentOptions
+    expect(String(options.sessionId)).toBe(thread.sessionId)
+    expect(options.meta).toEqual({ cwd: '/tmp/other-project', agentPreset: 'default' })
+    expect(h.current().threadSessionIds).toEqual([thread.sessionId])
+  })
+
+  it('refuses to create a thread on an archived instance', async () => {
+    const h = createHarness()
+    await h.runtime.ensureInstance('instance-1')
+    h.setInstanceStatus('archived')
+
+    await expect(h.runtime.createAssistantThread('instance-1'))
+      .rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+    expect(h.createMock).toHaveBeenCalledTimes(1)
+    expect(h.attachAssistantThread).not.toHaveBeenCalled()
   })
 
   it('injects the coordinator roster only while the instance is the coordinator', async () => {
