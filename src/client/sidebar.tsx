@@ -128,9 +128,10 @@ export function useSurfaceMode(): SurfaceMode {
 }
 
 /**
- * Brand-shaped mode control: the current surface is plain text with a caret, so
- * the brand row reads as one wordmark rather than as a form control. Choosing a
- * mode happens in a small popover list.
+ * Brand-shaped mode control: the current surface is bold text with a caret, so
+ * the row reads as the product mark. The popover is the shipped `Menu`
+ * primitive, which keeps its colours and metrics identical to the rest of the
+ * sidebar instead of introducing a second menu style.
  */
 function SurfaceModeSwitch({
   mode,
@@ -140,69 +141,48 @@ function SurfaceModeSwitch({
   onChange: (mode: SurfaceMode) => void
 }): JSX.Element {
   const [open, setOpen] = useState(false)
-  const root = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const close = (event: MouseEvent): void => {
-      if (root.current !== null && !root.current.contains(event.target as Node)) setOpen(false)
-    }
-    const escape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setOpen(false)
-    }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', escape)
-    return () => {
-      document.removeEventListener('mousedown', close)
-      document.removeEventListener('keydown', escape)
-    }
-  }, [open])
-
   const options = [
-    { value: 'native' as const, label: 'DSH', hint: 'DSH 原生界面' },
-    { value: 'team' as const, label: 'BOT', hint: 'BOT 团队模式' },
+    { id: 'native' as const, label: 'DSH', hint: '原生界面' },
+    { id: 'team' as const, label: 'BOT', hint: '团队模式' },
   ]
-  const current = options.find(option => option.value === mode) ?? options[0]!
+  const current = options.find(option => option.id === mode) ?? options[0]!
 
   return (
-    <div className={css.brandMode} data-dsh-surface-switch ref={root}>
-      <button
-        type="button"
-        className={css.brandModeTrigger}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={`界面模式：${current.label}`}
-        data-dsh-surface-mode={mode}
-        onClick={() => { setOpen(value => !value) }}
-      >
-        <span className={css.brandModeLabel}>{current.label}</span>
-        <IconChevronDownOutlineRegular className={css.brandModeCaret} />
-      </button>
-      {open && (
-        <div className={css.brandModeMenu} role="listbox" aria-label="界面模式">
-          {options.map(option => (
-            <button
-              key={option.value}
-              type="button"
-              role="option"
-              aria-selected={mode === option.value}
-              title={option.hint}
-              className={`${css.brandModeItem} ${mode === option.value ? css.brandModeItemActive : ''}`}
-              onClick={() => {
-                onChange(option.value)
-                setOpen(false)
-              }}
-            >
-              <span className={css.brandModeItemText}>
-                <span className={css.brandModeItemLabel}>{option.label}</span>
-                <span className={css.brandModeItemHint}>{option.hint}</span>
-              </span>
-              {mode === option.value && <IconCheckOutlineRegular className={css.brandModeItemCheck} />}
-            </button>
-          ))}
-        </div>
+    <Menu
+      open={open}
+      onClose={() => { setOpen(false) }}
+      items={options.map(option => ({
+        id: option.id,
+        label: (
+          <span className={css.brandModeItem}>
+            <span className={css.brandModeItemLabel}>{option.label}</span>
+            <span className={css.brandModeItemHint}>{option.hint}</span>
+          </span>
+        ),
+      }))}
+      selectedId={mode}
+      onSelect={(id) => {
+        onChange(id as SurfaceMode)
+        setOpen(false)
+      }}
+      align="start"
+      side="bottom"
+      anchor={(
+        <button
+          type="button"
+          className={css.brandModeTrigger}
+          aria-label={`界面模式：${current.label}`}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          data-dsh-surface-switch
+          data-dsh-surface-mode={mode}
+          onClick={() => { setOpen(value => !value) }}
+        >
+          <span className={css.brandModeLabel}>{current.label}</span>
+          <IconChevronDownOutlineRegular className={css.brandModeCaret} />
+        </button>
       )}
-    </div>
+    />
   )
 }
 

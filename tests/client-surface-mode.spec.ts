@@ -98,10 +98,10 @@ describe('sidebar surface switch', () => {
     expect(sidebar).toContain('data-dsh-surface-switch')
     expect(sidebar).toContain("label: 'DSH'")
     expect(sidebar).toContain("label: 'BOT'")
-    // The trigger is a popover button, not two pressed toggles.
-    expect(sidebar).toContain('aria-haspopup="listbox"')
-    expect(sidebar).toContain('role="option"')
-    expect(sidebar).toContain('aria-selected={mode === option.value}')
+    // The popover is the shipped Menu primitive, not a hand-built list.
+    expect(sidebar).toContain('<Menu')
+    expect(sidebar).toContain('aria-haspopup="menu"')
+    expect(sidebar).toContain('selectedId={mode}')
     const switchAt = sidebar.indexOf('<SurfaceModeSwitch')
     const gateAt = sidebar.indexOf("{mode === 'team' && (")
     expect(switchAt).toBeGreaterThan(-1)
@@ -175,8 +175,9 @@ describe('surface switch styling', () => {
 
   it('uses semantic DSH tokens and a visible focus ring', () => {
     expect(styles).toContain('.brandModeTrigger')
-    expect(styles).toContain('.brandModeItemActive')
     expect(styles).toMatch(/\.brandModeTrigger:focus-visible/)
+    // No second popover style of our own: the menu is the primitive's.
+    expect(styles).not.toContain('.brandModeMenu')
     // The trigger carries no background or border of its own.
     expect(styles).toContain('background: transparent;')
     expect(styles).toContain('var(--dsw-alias-border-l1)')

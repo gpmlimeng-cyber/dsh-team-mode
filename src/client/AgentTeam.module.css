@@ -3095,75 +3095,22 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   outline-offset: 3px;
 }
 
-/* Menu: tight card, one line title + muted detail, check on the selected row. */
-.brandModeMenu {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 156px;
-  padding: 4px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 10px;
-  background: var(--dsw-alias-bg-layer-1);
-  box-shadow: 0 8px 20px rgb(0 0 0 / 0.12);
-}
-
+/* Rows inside the shipped Menu: label plus a muted detail, one line. */
 .brandModeItem {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 26px;
-  padding: 3px 6px;
-  border: none;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 120ms ease;
-}
-
-.brandModeItem:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.brandModeItemText {
-  display: flex;
-  flex: 1 1 auto;
+  display: inline-flex;
   align-items: baseline;
   gap: 6px;
   min-width: 0;
 }
 
 .brandModeItemLabel {
-  color: var(--dsw-alias-label-primary);
-  font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.02em;
-  line-height: 18px;
-}
-
-.brandModeItemActive .brandModeItemLabel {
-  font-weight: 600;
 }
 
 .brandModeItemHint {
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
-  line-height: 16px;
-  white-space: nowrap;
-}
-
-.brandModeItemCheck {
-  flex: none;
-  width: 13px;
-  height: 13px;
-  color: var(--dsw-alias-label-primary);
 }
 
 @media (prefers-reduced-motion: reduce) {
