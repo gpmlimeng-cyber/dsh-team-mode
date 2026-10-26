@@ -9,7 +9,6 @@ import {
   type WorkspaceChoice,
 } from './components.js'
 import { SidebarPortal, useSurfaceMode } from './sidebar.js'
-import { SidebarLayoutSection } from './sidebar-layout-section.js'
 import { TeamMainAgentPanel } from './team-main-agent.js'
 import {
   closeTeamPanel,
@@ -45,21 +44,6 @@ import type { TeamView } from '../transport/contracts.js'
 
 export const name = 'dsh-team-mode-client'
 export const inject = ['slots', 'workspaces', 'uiWorkspace', 'sessions', 'layout', 'locale']
-
-type SettingsSectionOwnerProps = Parameters<typeof AgentTeamSettingsSection>[0]
-
-/**
- * One `settings.section` occupant: the shipped 团队 section plus the 侧栏布局
- * editor below it, so the layout settings live under 设置 → 团队.
- */
-function TeamSettingsSection(props: SettingsSectionOwnerProps): JSX.Element {
-  return (
-    <>
-      <AgentTeamSettingsSection {...props} />
-      <SidebarLayoutSection />
-    </>
-  )
-}
 
 /** The team whose member Session is currently open, from the existing team list. */
 function useActiveTeam(sessionId: string | undefined): TeamView | undefined {
@@ -121,7 +105,7 @@ export function apply(ctx: AgentTeamClientContext): void {
   }
   ctx.slots.inject('settings.section', () => ctx.slots.register(
     { name: 'settings.section', id: 'dsh-team-mode', order: 40, label: '团队' },
-    TeamSettingsSection,
+    AgentTeamSettingsSection,
   ))
   // The shell's Session controller only opens Sessions its client catalog has
   // pulled. Team and Assistant Sessions are created on the Host, so a page that
