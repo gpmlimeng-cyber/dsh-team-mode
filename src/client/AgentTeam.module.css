@@ -3760,12 +3760,12 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   flex: none;
 }
 
-/* Assistant rows are people, so they keep the DSH profile-avatar circle.
-   Team rows use the rounded-square four-cell mark instead, and the two never
-   read alike. */
+/* One shape language for every sidebar identity: the assistant avatar is the
+   same rounded square as the team mark (radius matches .sidebarTeamAvatar), so
+   an app-icon-like squircle, not a profile picture. */
 .sidebarAssistantAvatar .sidebarAssistantAvatarShape {
   corner-shape: superellipse(1);
-  border-radius: 50% !important;
+  border-radius: 8px !important;
 }
 
 .sidebarAssistantAvatar .sidebarAssistantAvatarShape img {
