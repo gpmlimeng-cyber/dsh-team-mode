@@ -18,6 +18,8 @@ import {
   useTeamPanelOpen,
 } from './store.js'
 import { SessionRowHider } from './session-row-hider.js'
+import { LineLeading } from './session-row-leading.js'
+import { RowHover } from './session-row-hover.js'
 import { AssistantSessionTitle, AssistantSessionTitleHost } from './assistant-session-title.js'
 import { TeamModeDialogs } from './team-dialogs.js'
 import { TeamParallelHost, TeamMentionAction, TeamParallelView } from './team-parallel.js'
@@ -372,4 +374,20 @@ export function apply(ctx: AgentTeamClientContext): void {
     order: 10,
     label: '团队',
   }, SidebarTeamHost))
+
+  // The two native Session-row seats: a member identity dot in the row's 16px
+  // leading cell, and the team facts in the row's hover card. Both read the one
+  // derived lookup; neither binds a click nor activates a Session, and the host
+  // keeps its own status-dot precedence and archived-row blank.
+  ctx.slots.inject('sidebar.session.row.leading', () => ctx.slots.register({
+    name: 'sidebar.session.row.leading',
+    id: 'dsh-team-mode-row-leading',
+    order: 100,
+  }, LineLeading))
+
+  ctx.slots.inject('sidebar.session.row.hover', () => ctx.slots.register({
+    name: 'sidebar.session.row.hover',
+    id: 'dsh-team-mode-row-hover',
+    order: 100,
+  }, RowHover))
 }
