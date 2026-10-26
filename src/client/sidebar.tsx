@@ -1237,7 +1237,7 @@ export function SidebarPortal({
         element.id = STEWARD_HOST_ID
         element.className = css.stewardHost ?? ''
         element.style.position = 'fixed'
-        element.style.zIndex = '50'
+        element.style.zIndex = '5'
         document.body.append(element)
         setStewardHost(element)
       }
@@ -1245,7 +1245,9 @@ export function SidebarPortal({
       element.style.left = `${Math.round(rect.left)}px`
       element.style.top = `${Math.round(rect.top)}px`
       element.style.width = `${Math.round(rect.width)}px`
-      element.style.height = `${Math.round(rect.height)}px`
+      // Height is the row's own: it has to read like a 单聊 assistant row, not
+      // like the 新会话 button it is pinned over.
+      element.style.height = ''
     }
 
     const ensure = (): void => {

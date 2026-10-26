@@ -3154,9 +3154,8 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   align-items: center;
   gap: 8px;
   width: 100%;
-  height: 100%;
   margin: 0;
-  padding: 0 8px;
+  padding: 4px 8px;
   border: none;
   border-radius: var(--dsw-radius-md);
   background: transparent;
@@ -3181,12 +3180,12 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--dsw-radius-md);
+  width: 24px;
+  height: 24px;
+  border-radius: var(--dsw-radius-sm);
   background: var(--dsw-alias-bg-layer-2);
   color: var(--dsw-alias-label-primary);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
