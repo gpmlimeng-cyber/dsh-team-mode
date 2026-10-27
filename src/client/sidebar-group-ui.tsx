@@ -618,7 +618,7 @@ function GroupBriefDialog({
               }}
             />
             <p id={hintId} className={css.sidebarGroupBriefHint}>
-              最多 {SIDEBAR_GROUP_BRIEF_MAX_CHARS} 个字符（24 KB）。超出时不会截断，而是拒绝保存。
+              最多 {SIDEBAR_GROUP_BRIEF_MAX_CHARS.toLocaleString('en-US')} 个字符（约 24 KB）。超出时不会截断，而是拒绝保存。
             </p>
             {value === '' && (
               <p className={css.sidebarGroupBriefEmpty}>

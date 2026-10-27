@@ -1381,6 +1381,9 @@ export class AssistantRuntime {
       agentCtx.systemPrompt.section({
         name: `dsh-team-mode:assistant-worker:${taskId}`,
         order: 10,
+        // The worker prompt carries the user-authored group brief, so literal
+        // braces must stay literal instead of failing interpolation.
+        interpolate: false,
         text: () => {
           const current = this.service.getAssistantInstance(assistantId)
           return workerPrompt(
@@ -1606,6 +1609,9 @@ export class AssistantRuntime {
       agentCtx.systemPrompt.section({
         name: `dsh-team-mode:assistant-identity:${instance.id}`,
         order: 10,
+        // Shared by the main and thread Sessions, and the group brief it
+        // carries is user prose: keep literal braces literal.
+        interpolate: false,
         text: () => {
           const current = this.service.getAssistantInstance(id)
           return assistantPrompt(

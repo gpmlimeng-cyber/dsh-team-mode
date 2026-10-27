@@ -873,6 +873,9 @@ export class TeamRuntime {
           agentCtx.systemPrompt?.section({
             name: `dsh-team-mode:group-brief:${team.id}`,
             order: 9,
+            // The brief is user prose: a literal {{unknown}} must stay literal
+            // instead of failing Host prompt interpolation.
+            interpolate: false,
             text: () => {
               const latest = this.service.getTeam(team.id)
               return groupBriefPrompt(latest.group, serviceGroupBrief(this.service, latest.group))
@@ -1854,6 +1857,9 @@ export class TeamRuntime {
         agentCtx.systemPrompt.section({
           name: identitySection,
           order: 10,
+          // The member prompt carries the user-authored group brief and role
+          // instructions, so literal braces must never be interpolated.
+          interpolate: false,
           text: () => {
             const latest = this.service.getTeam(team.id)
             const latestMember = latest.members[member.id]

@@ -1,5 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
@@ -427,5 +428,35 @@ describe('Sidebar groups', () => {
     expect(registered.length).toBeGreaterThan(0)
     expect([...TEAM_TOOL_NAMES, ...registered].filter(name => /brief|group/i.test(name)))
       .toEqual([])
+  })
+
+  it('registers every group-brief prompt section as literal, uninterpolated text', () => {
+    const teamRuntime = readFileSync(new URL('../src/runtime/team-runtime.ts', import.meta.url), 'utf8')
+    const assistantRuntime = readFileSync(
+      new URL('../src/runtime/assistant-runtime.ts', import.meta.url),
+      'utf8',
+    )
+
+    // Both runtimes fold the group brief into a prompt section. Each of those
+    // registrations must preserve literal braces instead of letting the Host
+    // resolve {{...}} in user-authored text.
+    expect(teamRuntime).toMatch(
+      /systemPrompt\?\.section\(\{\s*name: `dsh-team-mode:group-brief:[^`]+`,[\s\S]*?interpolate: false,/,
+    )
+    expect(teamRuntime).toMatch(
+      /systemPrompt\.section\(\{\s*name: identitySection,[\s\S]*?interpolate: false,/,
+    )
+    expect(assistantRuntime).toMatch(
+      /systemPrompt\.section\(\{\s*name: `dsh-team-mode:assistant-worker:[^`]+`,[\s\S]*?interpolate: false,/,
+    )
+    expect(assistantRuntime).toMatch(
+      /systemPrompt\.section\(\{\s*name: `dsh-team-mode:assistant-identity:[^`]+`,[\s\S]*?interpolate: false,/,
+    )
+  })
+
+  it('labels the brief cap as characters, not bytes', () => {
+    const ui = readFileSync(new URL('../src/client/sidebar-group-ui.tsx', import.meta.url), 'utf8')
+    expect(ui).toContain("SIDEBAR_GROUP_BRIEF_MAX_CHARS.toLocaleString('en-US')")
+    expect(ui).toContain('个字符（约 24 KB）')
   })
 })

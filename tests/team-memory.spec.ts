@@ -12,6 +12,7 @@ import type {
   ContextCheckpoint,
   MemoryEntry,
   Operation,
+  SidebarGroups,
   TeamActivity,
   TeamAggregate,
   TeamMemberSlot,
@@ -24,6 +25,7 @@ import {
   memberPrompt,
   teamMemoryPrompt,
 } from '../src/runtime/team-prompts.js'
+import { TeamRuntime } from '../src/runtime/team-runtime.js'
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import type { AgentTeamStore } from '../src/storage/store.js'
 import { teamMemoryView } from '../src/client/labels.js'
@@ -337,6 +339,92 @@ describe('M2 team memory scope and UI', () => {
     expect(store.getTeam(team.id)!.memory?.entries).toHaveLength(1)
     expect(store.getTeam(team.id)!.memory?.entries[0]?.title).toBe('Fact v2')
   })
+
+  it('injects the owning group brief on the next runtime turn without leaking another group', async () => {
+    const h = createHarness()
+    const service = h.service
+    const assistant = await service.createAssistant({
+      name: 'Scope tester',
+      instructions: 'Follow the group brief.',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+      skillAllowlist: [],
+      mcpServers: [],
+    })
+    const makeTeam = async (name: string): Promise<TeamAggregate> => {
+      const draft = await service.createTeamDraft({
+        name,
+        workspaceId: 'workspace-1',
+        members: [{ assistantId: assistant.id, role: 'leader' }],
+      })
+      return service.updateRuntimeTeam(
+        draft.id,
+        current => ({ ...current, state: 'active' }),
+        'test.active',
+        'active for the runtime scope test',
+      )
+    }
+    const alphaTeam = await makeTeam('Alpha team')
+    const betaTeam = await makeTeam('Beta team')
+    await service.createGroup('A')
+    await service.createGroup('B')
+    await service.setGroupBrief('A', 'ALPHA-BRIEF literal {{unknown}}')
+    await service.setGroupBrief('B', 'BETA-BRIEF')
+    await service.setTeamGroup(alphaTeam.id, 'A')
+    await service.setTeamGroup(betaTeam.id, 'B')
+
+    const created: Array<{ sessionId: string; sections: Map<string, PromptSection> }> = []
+    h.setAgentFactory(async (options: any) => {
+      const sessionId = String(options.sessionId ?? options.resumeSessionId)
+      const sections = new Map<string, PromptSection>()
+      const session = { id: sessionId, snapshotEvents: () => [] }
+      const agent = {
+        id: sessionId,
+        session,
+        status: 'idle',
+        followup: vi.fn(),
+        cancel: vi.fn(),
+        whenIdle: vi.fn(async () => {}),
+      }
+      await options.setup(fakePromptAgentContext(sections), agent)
+      created.push({ sessionId, sections })
+      return { agent, dispose: vi.fn(async () => {}) }
+    })
+    const runtime = new TeamRuntime(h.ctx as never, config, service)
+    const internals = runtime as unknown as TeamRuntimeInternals
+    const identitySection = (team: TeamAggregate): PromptSection => {
+      const member = team.members[team.leaderSlotId]!
+      const record = created.find(value => value.sessionId === member.sessionId)
+      expect(record).toBeDefined()
+      const section = [...record!.sections.entries()]
+        .find(([name]) => name.startsWith('dsh-team-mode:identity'))?.[1]
+      expect(section).toBeDefined()
+      return section!
+    }
+
+    await internals.ensureMembersOnline(service.getTeam(alphaTeam.id))
+    const alpha = identitySection(service.getTeam(alphaTeam.id))
+    // The section carries user prose, so the Host must not interpolate it.
+    expect(alpha.interpolate).toBe(false)
+    expect(alpha.text()).toContain('ALPHA-BRIEF')
+    expect(alpha.text()).toContain('{{unknown}}')
+    expect(alpha.text()).not.toContain('BETA-BRIEF')
+
+    await internals.ensureMembersOnline(service.getTeam(betaTeam.id))
+    const beta = identitySection(service.getTeam(betaTeam.id))
+    expect(beta.interpolate).toBe(false)
+    expect(beta.text()).toContain('BETA-BRIEF')
+    expect(beta.text()).not.toContain('ALPHA-BRIEF')
+
+    // The section text is read live each turn, so a saved edit lands on the
+    // next turn without restarting the member Session.
+    await service.setGroupBrief('A', 'ALPHA-NEXT-TURN')
+    expect(alpha.text()).toContain('ALPHA-NEXT-TURN')
+    expect(alpha.text()).not.toContain('ALPHA-BRIEF')
+    expect(beta.text()).not.toContain('ALPHA-NEXT-TURN')
+  })
 })
 
 function createHarness() {
@@ -366,6 +454,7 @@ function createHarness() {
   ctx.provide('agentPresets', {
     list: async () => [{ id: 'default', name: 'Default' }],
     resolve: async (id: string) => ({ id, name: id }),
+    mount: async () => {},
     acquireScope: async () => ({ key: { kind: 'preset-scope' }, [Symbol.asyncDispose]: async () => {} }),
   } as never)
   ctx.provide('tools', { get: () => undefined, schemas: () => [] } as never)
@@ -375,7 +464,14 @@ function createHarness() {
     optionOf: (name: string) => ({ value: name, name }),
     set: () => {},
   } as never)
-  ctx.provide('agents', { get: () => undefined } as never)
+  // Runtime-level tests install a factory; service-only tests never start an
+  // Agent, so an unset factory must fail loudly here instead of silently.
+  let agentFactory: ((options: any) => Promise<any>) | undefined
+  ctx.provide('agents', {
+    get: () => undefined,
+    create: async (options: any) => agentFactory!(options),
+    resume: async (options: any) => agentFactory!(options),
+  } as never)
   ctx.provide('sessions', { flush: async () => {} } as never)
   ctx.provide('sessionPersistence', { list: async () => [] } as never)
   const workspace = {
@@ -391,7 +487,12 @@ function createHarness() {
     list: () => [workspace],
   } as never)
   const store = new MemoryStore()
-  return { ctx, store, service: new AgentTeamService(ctx as never, config, store) }
+  return {
+    ctx,
+    store,
+    service: new AgentTeamService(ctx as never, config, store),
+    setAgentFactory(factory: (options: any) => Promise<any>) { agentFactory = factory },
+  }
 }
 
 class MemoryStore implements AgentTeamStore {
@@ -403,6 +504,7 @@ class MemoryStore implements AgentTeamStore {
   private messages = new Map<string, TeamMessage>()
   private activities = new Map<string, TeamActivity>()
   private operations = new Map<string, Operation>()
+  private sidebarGroups: SidebarGroups | undefined
 
   getAssistant(id: string) { return this.assistants.get(id) }
   listAssistants() { return [...this.assistants.values()] }
@@ -469,6 +571,52 @@ class MemoryStore implements AgentTeamStore {
     return updateMap(this.operations, id, update)
   }
   async deleteOperation(id: string) { return this.operations.delete(id) }
+
+  getSidebarGroups() { return this.sidebarGroups }
+  async putSidebarGroups(value: SidebarGroups) { this.sidebarGroups = value }
+}
+
+/** Prompt sections registered by the runtime, read lazily like the Host does. */
+interface PromptSection {
+  order: number
+  interpolate?: boolean
+  text: () => string
+}
+
+/**
+ * A minimal Agent-scoped context for TeamRuntime member setup. It records the
+ * sections so a test can assert the assembled member prompt and its
+ * interpolate flag, and satisfies the tool/skill hooks the runtime touches.
+ */
+function fakePromptAgentContext(sections: Map<string, PromptSection>): any {
+  const agentCtx: any = {
+    on: () => () => {},
+    effect: () => {},
+    inject: async (_deps: string[], callback: (scope: unknown) => void) => { callback(agentCtx) },
+    skills: { registerProvider: () => {} },
+    tools: {
+      schemas: () => [],
+      register: () => {},
+      restrict: () => {},
+      guard: () => {},
+      get: () => undefined,
+    },
+    systemPrompt: {
+      section: (spec: { name: string; order: number; interpolate?: boolean; text: () => string }) => {
+        sections.set(spec.name, {
+          order: spec.order,
+          ...(spec.interpolate === undefined ? {} : { interpolate: spec.interpolate }),
+          text: spec.text,
+        })
+      },
+      assemble: async () => ({ sections: [...sections.keys()].map(name => ({ name })) }),
+    },
+  }
+  return agentCtx
+}
+
+type TeamRuntimeInternals = {
+  ensureMembersOnline(team: TeamAggregate): Promise<void>
 }
 
 async function updateMap<T>(map: Map<string, T>, id: string, update: (current: T) => T): Promise<T> {
