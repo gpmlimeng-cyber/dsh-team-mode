@@ -4628,14 +4628,14 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 .mascotPicker {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
   min-width: 0;
 }
 
 .mascotPickerSection {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   min-width: 0;
   margin: 0;
   padding: 0;
@@ -12261,8 +12261,8 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 .mascotEditor {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 6px;
+  padding: 10px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
@@ -12293,7 +12293,9 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 132px;
+  /* The preview hugs its 112px mascot instead of reserving a tall band. */
+  min-height: 0;
+  padding: 4px 0;
   border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-2);
 }
