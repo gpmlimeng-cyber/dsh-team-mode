@@ -11,6 +11,10 @@ import {
   IconChevronsUpDownOutlineRegular,
   IconClockOutlineRegular,
   IconCloseFillRegular,
+  IconFolderOpenOutlineRegular,
+  IconFlatListOutlineRegular,
+  IconUserOutlineRegular,
+  IconUsersOutlineRegular,
   IconEllipsisOutlineRegular,
   IconPinFillRegular,
   IconPinOutlineRegular,
@@ -71,6 +75,7 @@ import type { TeamView } from '../transport/contracts.js'
 import type { WorkspaceChoice } from './types.js'
 import { LeaderMark } from './team-member-chrome.js'
 import { AssistantLibraryDialog } from './assistant-library-dialog.js'
+import { NewChatPanel } from './new-chat-panel.js'
 import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-groups.js'
 import {
   SidebarGroupDialogs,
@@ -221,6 +226,8 @@ function useStewardAvailable(): boolean {
 export interface BrandChatEntry {
   id: string
   name: string
+  /** Portrait for the row; the picker renders the same avatar as the list. */
+  avatar?: string
   icon?: ReactNode
 }
 
@@ -235,23 +242,19 @@ export function brandCreateItems(hasSteward: boolean, chats: readonly BrandChatE
     ...(chat.icon === undefined ? {} : { icon: chat.icon }),
   }))
   return [
-    {
-      id: 'new-chat',
-      label: '新对话',
-      ...(chatItems.length === 0 ? {} : { submenu: chatItems }),
-      ...(chatItems.length === 0 ? { disabled: true } : {}),
-    },
+    { id: 'new-chat', label: '新对话', icon: <IconPlusOutlineRegular size={14} /> },
     { type: 'separator', id: 'new-chat-separator' },
-    { id: 'new-assistant', label: '新建助手' },
-    { id: 'new-team', label: '新建团队' },
-    { id: 'create-group', label: '创建分组' },
-    { id: 'library', label: '模板库' },
+    { id: 'new-assistant', label: '新建助手', icon: <IconUserOutlineRegular size={14} /> },
+    { id: 'new-team', label: '新建团队', icon: <IconUsersOutlineRegular size={14} /> },
+    { id: 'create-group', label: '创建分组', icon: <IconFolderOpenOutlineRegular size={14} /> },
+    { id: 'library', label: '模板库', icon: <IconFlatListOutlineRegular size={14} /> },
     { type: 'separator', id: 'steward-separator' },
     hasSteward
-      ? { id: 'open-steward', label: '打开管家会话' }
+      ? { id: 'open-steward', label: '打开管家会话', icon: <LeaderMark size={14} /> }
       : {
           id: 'open-steward',
           label: <span title="还没有总协调助手">打开管家会话</span>,
+          icon: <LeaderMark size={14} />,
           disabled: true,
         },
   ]
@@ -1257,6 +1260,8 @@ export function SidebarPortal({
   const stewardAvailable = useStewardAvailable()
   const chats = useAssistantChats()
   const [libraryOpen, setLibraryOpen] = useState(false)
+  const [newChatAnchor, setNewChatAnchor] = useState<HTMLElement | null>(null)
+  const [newChatOpen, setNewChatOpen] = useState(false)
   const mode = useSurfaceMode()
 
   // Expose the mode on <html> so CSS and DOM-level helpers can follow it
@@ -1951,6 +1956,9 @@ export function SidebarPortal({
                   else if (id === 'new-assistant') {
                     // The assistant section owns its own dialog; it answers this.
                     window.dispatchEvent(new CustomEvent(SIDEBAR_ASSISTANT_CREATE_EVENT))
+                  } else if (id === 'new-chat') {
+                    setNewChatAnchor(current => current ?? document.querySelector<HTMLElement>('[data-dsh-create-trigger]'))
+                    setNewChatOpen(true)
                   } else if (id === 'create-group') {
                     // The group dialogs live with the lists they reorder.
                     window.dispatchEvent(new CustomEvent(SIDEBAR_GROUP_CREATE_EVENT))
@@ -1968,11 +1976,13 @@ export function SidebarPortal({
                     title="新建"
                     aria-haspopup="menu"
                     aria-expanded={createMenuOpen}
-                    onClick={() => {
+                    data-dsh-create-trigger
+                    onClick={(event) => {
                       if (mode === 'native') {
                         startNativeSession()
                         return
                       }
+                      setNewChatAnchor(event.currentTarget)
                       setCreateMenuOpen(value => !value)
                     }}
                   >
@@ -1986,6 +1996,16 @@ export function SidebarPortal({
         brandHost,
       )}
       <AssistantLibraryDialog open={libraryOpen} onClose={() => { setLibraryOpen(false) }} />
+      {newChatOpen && (
+        <NewChatPanel
+          anchor={newChatAnchor}
+          entries={chats}
+          onClose={() => { setNewChatOpen(false) }}
+          onNewAssistant={() => { window.dispatchEvent(new CustomEvent(SIDEBAR_ASSISTANT_CREATE_EVENT)) }}
+          onNewTeam={() => { openCreateTeamDialog() }}
+          onPick={id => { void startAssistantChat(id, openSession) }}
+        />
+      )}
       {host !== undefined && createPortal(
         <>
           {mode === 'team' && (

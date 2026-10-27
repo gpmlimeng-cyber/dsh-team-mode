@@ -18,11 +18,11 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     'IconChevronUpOutlineRegular', 'IconChevronsUpDownOutlineRegular', 'IconClockOutlineRegular',
     'IconCloseFillRegular', 'IconCloseOutlineRegular', 'IconEditOutlineRegular',
     'IconEllipsisOutlineRegular', 'IconFolderCloseRegular', 'IconFolderOpenOutlineRegular',
-    'IconFolderOpenRegular', 'IconLoadingOutlineRegular', 'IconNewChatOutlineRegular',
+    'IconFolderOpenRegular', 'IconFlatListOutlineRegular', 'IconLoadingOutlineRegular', 'IconNewChatOutlineRegular',
     'IconPaperclipOutlineRegular', 'IconPinFillRegular', 'IconPinOutlineRegular',
     'IconPlusOutlineRegular', 'IconProjectAddOutlineRegular', 'IconRefreshOutlineRegular',
     'IconRightUpOutlineRegular', 'IconSearchOutlineRegular', 'IconSendOutlineRegular',
-    'IconSettingsOutlineRegular', 'IconSlidersTwoOutlineRegular', 'IconSparkleRegular',
+    'IconSettingsOutlineRegular', 'IconSlidersTwoOutlineRegular', 'IconSparkleRegular', 'IconUserOutlineRegular', 'IconUsersOutlineRegular',
     'IconStopFillRegular', 'IconThinkOutlineRegular', 'IconTrashOutlineRegular',
     'IconUsersOutlineRegular', 'IconWarningOutlineRegular', 'IconWarningTriangleOutlineRegular',
   ]
@@ -118,16 +118,25 @@ describe('the brand row carries the three actions', () => {
       'steward-separator',
       'open-steward',
     ])
-    // MausBot's shape: one row opens a picker of who to talk to, coordinator first.
+    // MausBot's shape: one row opens the picker; every row carries an icon.
     const newChat = items[0] as MenuItem
     expect(newChat.label).toBe('新对话')
-    expect(newChat.submenu?.map(entry => entry.id)).toEqual(['chat:chief', 'chat:other'])
+    expect(newChat.icon).toBeDefined()
+    for (const item of items) {
+      if ('type' in item) continue
+      expect((item as MenuItem).icon).toBeDefined()
+    }
+    // 新对话 opens the floating panel, so the picker lives outside the menu.
+    expect(sidebar).toContain('NewChatPanel')
+    expect(sidebar).toContain('new-chat-panel')
+    expect(sidebar).toContain('setNewChatOpen(true)')
     expect((items.at(-1) as MenuItem).label).toBe('打开管家会话')
     expect((items.at(-1) as MenuItem).disabled).toBeUndefined()
   })
 
   it('disables the steward row without a coordinator and says why', () => {
     const steward = brandCreateItems(false).at(-1) as MenuItem
+    expect(steward.icon).toBeDefined()
     expect(steward.disabled).toBe(true)
     expect((steward.label as unknown as { props: { title?: string } }).props.title)
       .toBe('还没有总协调助手')
