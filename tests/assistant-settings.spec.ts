@@ -222,7 +222,7 @@ describe('assistant create dialog shell', () => {
     expect(nav).toContain('aria-label="创建助手的区块"')
     expect((nav.match(/<button/g) ?? [])).toHaveLength(3)
     expect((nav.match(/aria-current="page"/g) ?? [])).toHaveLength(1)
-    for (const label of ['人设与形象', '模型与权限', '技能与MCP']) {
+    for (const label of ['设定与形象', '模型与权限', '技能与MCP']) {
       expect(nav).toContain(`>${label}<`)
     }
     for (const label of ['记忆', '技能', '例程', '访问', '语音与通知']) {
