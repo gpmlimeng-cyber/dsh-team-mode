@@ -7,6 +7,14 @@ import { callAgentTeam } from './api.js'
  */
 export const SIDEBAR_GROUP_MAX_CHARS = 40
 
+/**
+ * The Host's brief cap (`SIDEBAR_GROUP_BRIEF_MAX_CHARS` in the domain schemas),
+ * repeated so the editor can count against it without shipping zod to the
+ * client. The Host still refuses over-long text; the counter only warns first.
+ * `tests/client-sidebar-groups.spec.ts` pins the two numbers together.
+ */
+export const SIDEBAR_GROUP_BRIEF_MAX_CHARS = 24_576
+
 /** Id of the trailing partition that owns every row without a usable group. */
 export const UNGROUPED_PARTITION_ID = 'ungrouped'
 
@@ -189,6 +197,21 @@ export function sidebarGroupNameError(
   if (label.length > SIDEBAR_GROUP_MAX_CHARS) return `分组名最多 ${SIDEBAR_GROUP_MAX_CHARS} 个字`
   if (groups.includes(label)) return '已存在同名分组'
   return undefined
+}
+
+/** The editor's counter: characters used against the Host's cap. */
+export function sidebarGroupBriefUsage(brief: string): string {
+  return `${brief.length} / ${SIDEBAR_GROUP_BRIEF_MAX_CHARS}`
+}
+
+/**
+ * Why a typed brief cannot be saved, or undefined when it can. Mirrors the
+ * Host's rule: too-long text is refused, never silently truncated, so the
+ * counter turns red and the save button stays disabled before the round trip.
+ */
+export function sidebarGroupBriefError(brief: string): string | undefined {
+  if (brief.length <= SIDEBAR_GROUP_BRIEF_MAX_CHARS) return undefined
+  return `简报最多 ${SIDEBAR_GROUP_BRIEF_MAX_CHARS} 个字符，请删减 ${brief.length - SIDEBAR_GROUP_BRIEF_MAX_CHARS} 个字符`
 }
 
 /**

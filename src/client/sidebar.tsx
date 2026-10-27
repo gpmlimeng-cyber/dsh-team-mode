@@ -698,8 +698,12 @@ export function SidebarTeamSection({
 
   const openGroupDialog = (dialog: SidebarGroupDialog): void => { setGroupDialog(dialog) }
 
-  /** One group header's `⋯`: rename, delete, or move the group itself. */
+  /** One group header's `⋯`: brief, rename, delete, or move the group itself. */
   const selectGroupMenu = async (group: string, id: string): Promise<void> => {
+    if (id === 'brief') {
+      openGroupDialog({ kind: 'brief', name: group })
+      return
+    }
     if (id === 'rename') {
       openGroupDialog({ kind: 'rename', from: group })
       return

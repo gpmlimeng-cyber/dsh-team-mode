@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { SIDEBAR_GROUP_BRIEF_MAX_CHARS as HOST_BRIEF_MAX_CHARS } from '../src/domain/schemas.js'
 import {
+  SIDEBAR_GROUP_BRIEF_MAX_CHARS,
   SIDEBAR_GROUP_MAX_CHARS,
   UNGROUPED_PARTITION_ID,
   groupMembershipCandidates,
@@ -7,6 +10,8 @@ import {
   insertGroupOrder,
   movedGroupOrder,
   resolveDropTarget,
+  sidebarGroupBriefError,
+  sidebarGroupBriefUsage,
   sidebarGroupNameError,
   sidebarPartitions,
   type SidebarGroupCandidate,
@@ -177,5 +182,91 @@ describe('sidebarGroupNameError', () => {
     expect(sidebarGroupNameError('工作', ['别的'])).toBeUndefined()
     // The bound itself is allowed.
     expect(sidebarGroupNameError('x'.repeat(SIDEBAR_GROUP_MAX_CHARS), [])).toBeUndefined()
+  })
+})
+
+describe('sidebarGroupBriefUsage', () => {
+  it('counts characters against the Host cap', () => {
+    expect(sidebarGroupBriefUsage('')).toBe(`0 / ${SIDEBAR_GROUP_BRIEF_MAX_CHARS}`)
+    expect(sidebarGroupBriefUsage('分组')).toBe(`2 / ${SIDEBAR_GROUP_BRIEF_MAX_CHARS}`)
+  })
+
+  it('mirrors the Host constant instead of drifting from it', () => {
+    expect(SIDEBAR_GROUP_BRIEF_MAX_CHARS).toBe(HOST_BRIEF_MAX_CHARS)
+    expect(SIDEBAR_GROUP_BRIEF_MAX_CHARS).toBe(24_576)
+  })
+})
+
+describe('sidebarGroupBriefError', () => {
+  it('allows an empty brief and text exactly at the cap', () => {
+    expect(sidebarGroupBriefError('')).toBeUndefined()
+    expect(sidebarGroupBriefError('x'.repeat(SIDEBAR_GROUP_BRIEF_MAX_CHARS))).toBeUndefined()
+  })
+
+  it('refuses one character over the cap and names how much to remove', () => {
+    const error = sidebarGroupBriefError('x'.repeat(SIDEBAR_GROUP_BRIEF_MAX_CHARS + 3))
+
+    expect(error).toContain(String(SIDEBAR_GROUP_BRIEF_MAX_CHARS))
+    expect(error).toContain('3')
+  })
+})
+
+describe('group brief editor source contract', () => {
+  const ui = readFileSync(new URL('../src/client/sidebar-group-ui.tsx', import.meta.url), 'utf8')
+  const dialog = ui.slice(
+    ui.indexOf('function GroupBriefDialog'),
+    ui.indexOf('function GroupNameDialog'),
+  )
+  const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+  const briefCss = css.slice(
+    css.indexOf('.sidebarGroupBriefForm'),
+    css.indexOf('/* ── Sidebar drag & drop'),
+  )
+
+  it('opens from the existing group ⋯ menu as one more Menu row', () => {
+    expect(ui).toContain("{ id: 'brief', label: '编辑分组简报'")
+  })
+
+  it('loads one brief on open and writes only through the user-only transport', () => {
+    expect(dialog).toContain("callAgentTeam('sidebar.groups.briefs')")
+    expect(dialog).toContain("callAgentTeam('sidebar.groups.brief.set', { name, brief: value })")
+    // The sidebar keeps reading names only; this dialog never reads that list.
+    expect(dialog).not.toContain("'sidebar.groups.list'")
+  })
+
+  it('shows the textarea, the counter, the 24 KB limit and the three states', () => {
+    expect(dialog).toContain('<textarea')
+    expect(dialog).toContain('sidebarGroupBriefUsage(value)')
+    expect(dialog).toContain('SIDEBAR_GROUP_BRIEF_MAX_CHARS')
+    expect(dialog).toContain('还没有简报')
+    expect(dialog).toContain('已保存')
+    expect(dialog).toContain('role="alert"')
+    expect(dialog).toContain('role="status"')
+    expect(dialog).toContain('overLimit')
+  })
+
+  it('stays on the native modal and text control, with no body host', () => {
+    expect(dialog).toContain('<AnimatedModal')
+    expect(ui).not.toContain('document.body')
+    expect(ui).not.toContain('createPortal')
+    expect(briefCss.length).toBeGreaterThan(0)
+    expect(briefCss).not.toContain('position: fixed')
+    expect(briefCss).not.toContain('z-index')
+    // Theme tokens only; no colour system of its own.
+    expect(briefCss).toContain('var(--dsw-')
+    expect(briefCss).not.toMatch(/#[0-9a-f]{3,8}\b/i)
+  })
+
+  it('is wired into both sidebars through the existing dialog host', () => {
+    const team = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
+    const assistant = readFileSync(
+      new URL('../src/client/assistant-sidebar.tsx', import.meta.url),
+      'utf8',
+    )
+
+    expect(team).toContain("{ kind: 'brief', name: group }")
+    expect(assistant).toContain("{ kind: 'brief', name: group }")
+    expect(team).toContain('<SidebarGroupDialogs')
+    expect(assistant).toContain('<SidebarGroupDialogs')
   })
 })

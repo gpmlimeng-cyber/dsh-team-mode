@@ -9,6 +9,7 @@ import {
   IconCheckOutlineRegular,
   IconEditOutlineRegular,
   IconEllipsisOutlineRegular,
+  IconListPenOutlineRegular,
   IconPlusOutlineRegular,
   IconTrashOutlineRegular,
   IconWarningOutlineRegular,
@@ -21,6 +22,7 @@ import { assistantAvatarSource, assistantInstanceName } from './assistant-instan
 import { MemberAvatar } from './member-avatar.js'
 import { AnimatedModal } from './shared.js'
 import {
+  SIDEBAR_GROUP_BRIEF_MAX_CHARS,
   SIDEBAR_GROUP_MAX_CHARS,
   UNGROUPED_PARTITION_ID,
   groupCreateRows,
@@ -29,6 +31,8 @@ import {
   groupMembershipChanges,
   insertGroupOrder,
   resolveDropTarget,
+  sidebarGroupBriefError,
+  sidebarGroupBriefUsage,
   sidebarGroupNameError,
   toggleGroupCreateSelection,
   type GroupCreateRow,
@@ -390,6 +394,7 @@ export function SidebarGroupCreateRow({ onCreate }: { onCreate: () => void }): J
  */
 export type SidebarGroupDialog =
   | { kind: 'create' }
+  | { kind: 'brief'; name: string }
   | { kind: 'rename'; from: string }
   | { kind: 'delete'; name: string }
   | { kind: 'members'; group: string }
@@ -426,6 +431,9 @@ export function SidebarGroupDialogs({
         onChanged={onChanged}
       />
     )
+  }
+  if (dialog.kind === 'brief') {
+    return <GroupBriefDialog name={dialog.name} onClose={onClose} />
   }
   if (dialog.kind === 'rename') {
     return (
@@ -466,13 +474,14 @@ export function SidebarGroupDialogs({
   )
 }
 
-/** Header menu of one group: rename, delete, and the two order moves. */
+/** Header menu of one group: its brief, rename, delete, and the two order moves. */
 export function sidebarGroupMenuItems(
   groups: readonly string[],
   group: string,
 ): MenuEntry[] {
   const index = groups.indexOf(group)
   return [
+    { id: 'brief', label: '编辑分组简报', icon: <IconListPenOutlineRegular size={14} /> },
     { id: 'rename', label: '重命名', icon: <IconEditOutlineRegular size={14} /> },
     { id: 'delete', label: '删除分组', icon: <IconTrashOutlineRegular size={14} />, danger: true },
     { type: 'separator', id: 'order-separator' },
@@ -489,6 +498,144 @@ export function sidebarGroupMenuItems(
       disabled: index < 0 || index >= groups.length - 1,
     },
   ]
+}
+
+/**
+ * The group's shared brief. It is loaded per open from the record list (the
+ * sidebar's own list stays names-only), edited locally, and written only by the
+ * explicit save. The dialog says who reads it and that only the user writes it;
+ * its three states — empty, saved, and the Host's refusal — are inline.
+ */
+function GroupBriefDialog({
+  name,
+  onClose,
+}: {
+  name: string
+  onClose: () => void
+}): JSX.Element {
+  const [value, setValue] = useState('')
+  const [initial, setInitial] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string>()
+  const fieldId = 'dsh-team-mode-group-brief'
+  const hintId = 'dsh-team-mode-group-brief-hint'
+  const overLimit = sidebarGroupBriefError(value)
+  // The Host answers an unchanged brief without a write; no need to offer one.
+  const dirty = value !== initial
+
+  useEffect(() => {
+    let cancelled = false
+    void callAgentTeam('sidebar.groups.briefs').then(records => {
+      if (cancelled) return
+      const record = records.find(item => item.name === name)
+      if (record === undefined) {
+        setError(`分组「${name}」已不存在，请关闭后重新打开侧栏。`)
+        return
+      }
+      setValue(record.brief)
+      setInitial(record.brief)
+    }).catch(cause => {
+      if (!cancelled) setError(messageOf(cause))
+    }).finally(() => {
+      if (!cancelled) setLoaded(true)
+    })
+    return () => { cancelled = true }
+  }, [name])
+
+  const save = async (): Promise<void> => {
+    if (busy || !dirty || overLimit !== undefined) return
+    setBusy(true)
+    setError(undefined)
+    setSaved(false)
+    try {
+      const record = await callAgentTeam('sidebar.groups.brief.set', { name, brief: value })
+      // Adopt the Host's copy so the counter and the dirty flag follow it.
+      setValue(record.brief)
+      setInitial(record.brief)
+      setSaved(true)
+    } catch (cause) {
+      setError(messageOf(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AnimatedModal
+      open
+      onClose={() => { if (!busy) onClose() }}
+      title={`「${name}」的分组简报`}
+      description="组内团队和助手的下一轮对话都会读到这段简报；它只由你编辑，Agent 没有写入入口。"
+      closeLabel="关闭"
+      className={css.sidebarGroupDialog ?? ''}
+      contentClassName={css.sidebarGroupDialogContent ?? ''}
+      footer={(
+        <>
+          <Button variant="outline" type="button" disabled={busy} onClick={onClose}>
+            {saved ? '关闭' : '取消'}
+          </Button>
+          <Button
+            variant="primary"
+            type="button"
+            disabled={!loaded || busy || !dirty || overLimit !== undefined}
+            onClick={() => { void save() }}
+          >
+            {busy ? '保存中…' : '保存简报'}
+          </Button>
+        </>
+      )}
+    >
+      {!loaded
+        ? <div className={css.dialogEmpty}>正在读取分组简报…</div>
+        : (
+          <div className={css.sidebarGroupBriefForm}>
+            <div className={css.sidebarGroupBriefHead}>
+              <label className={css.sidebarGroupBriefLabel} htmlFor={fieldId}>共享简报</label>
+              <span
+                className={`${css.sidebarGroupBriefCount} ${overLimit === undefined ? '' : css.sidebarGroupBriefCountOver}`}
+                data-dsh-group-brief-count
+              >
+                {sidebarGroupBriefUsage(value)}
+              </span>
+            </div>
+            <textarea
+              id={fieldId}
+              className={`${css.input} ${css.sidebarGroupBriefInput}`}
+              data-modal-autofocus
+              data-dsh-group-brief
+              rows={9}
+              value={value}
+              placeholder="写下这个分组共享的背景、约定或注意事项…"
+              aria-label="分组简报"
+              aria-describedby={hintId}
+              aria-invalid={overLimit !== undefined}
+              disabled={busy}
+              onChange={event => {
+                setValue(event.target.value)
+                setSaved(false)
+              }}
+            />
+            <p id={hintId} className={css.sidebarGroupBriefHint}>
+              最多 {SIDEBAR_GROUP_BRIEF_MAX_CHARS} 个字符（24 KB）。超出时不会截断，而是拒绝保存。
+            </p>
+            {value === '' && (
+              <p className={css.sidebarGroupBriefEmpty}>
+                还没有简报。留空保存会清除这个分组的简报。
+              </p>
+            )}
+            {overLimit !== undefined && <div className={css.inlineError} role="alert">{overLimit}</div>}
+            {saved && (
+              <div className={css.sidebarGroupBriefSaved} role="status">
+                已保存。组内成员下一次组建提示词时就会读到这段简报。
+              </div>
+            )}
+            {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
+          </div>
+        )}
+    </AnimatedModal>
+  )
 }
 
 /** Renaming keeps the one-field dialog: only creation also fills the group. */

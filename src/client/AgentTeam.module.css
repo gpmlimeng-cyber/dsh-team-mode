@@ -12021,6 +12021,70 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   gap: 8px;
 }
 
+/* ── Group brief editor ───────────────────────────────────────────────────
+   One text field and its counter; the counter turns red past the Host's cap
+   instead of silently truncating, and the saved/empty notes sit under it. */
+.sidebarGroupBriefForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebarGroupBriefHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sidebarGroupBriefLabel {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.sidebarGroupBriefCount {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebarGroupBriefCountOver {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+textarea.sidebarGroupBriefInput {
+  min-height: 150px;
+  padding: 8px 10px;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.sidebarGroupBriefHint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.sidebarGroupBriefEmpty {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.sidebarGroupBriefSaved {
+  padding: 7px 9px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-state-success-tertiary);
+  color: var(--dsw-alias-state-success-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 .sidebarGroupConfirm {
   display: grid;
   grid-template-columns: 40px minmax(0, 1fr);
