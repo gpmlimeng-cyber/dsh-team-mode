@@ -4,6 +4,7 @@ import {
   TEAM_AVATAR_TILE_COUNT,
   teamAvatarColor,
   teamAvatarIndex,
+  teamAvatarStack,
   teamAvatarTiles,
 } from '../src/client/team-avatar.js'
 
@@ -51,5 +52,33 @@ describe('team avatar identity', () => {
       ['team-1', 'team-2', 'team-3', 'team-4', 'team-5'].map(teamAvatarIndex),
     )
     expect(values.size).toBeGreaterThan(1)
+  })
+
+  it('stacks the leader first, then members, and counts the rest', () => {
+    const stack = teamAvatarStack({
+      b: { id: 'b', displayName: '成员二', role: 'member', assistantSnapshot: { name: '二' } },
+      lead: { id: 'lead', displayName: '队长', role: 'leader', assistantSnapshot: { name: '队' } },
+      c: { id: 'c', displayName: '成员三', role: 'member', assistantSnapshot: { name: '三' } },
+    })
+    // Leader leads; only two faces are drawn and the third becomes +1.
+    expect(stack.faces.map(face => face.id)).toEqual(['lead', 'b'])
+    expect(stack.extra).toBe(1)
+  })
+
+  it('keeps an uploaded picture and ignores a non-data avatar', () => {
+    const stack = teamAvatarStack({
+      a: { id: 'a', displayName: '甲', role: 'leader', assistantSnapshot: { avatar: 'data:image/png;base64,AA' } },
+      b: { id: 'b', displayName: '乙', role: 'member', assistantSnapshot: { avatar: 'https://example.com/x.png' } },
+    })
+    expect(stack.faces[0]?.avatar).toBe('data:image/png;base64,AA')
+    expect(stack.faces[1]?.avatar).toBeUndefined()
+    expect(stack.extra).toBe(0)
+  })
+
+  it('falls back to a label when a member has no usable name', () => {
+    const stack = teamAvatarStack({
+      a: { id: 'a', displayName: '   ', role: 'leader', assistantSnapshot: { name: '  ' } },
+    })
+    expect(stack.faces[0]?.name).toBe('助手')
   })
 })

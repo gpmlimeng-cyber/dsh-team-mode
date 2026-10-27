@@ -11732,6 +11732,40 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   color: var(--dsw-alias-label-quaternary);
 }
 
+/* A team row shows the people in it: the first two faces overlap, the rest
+   collapse into a +N chip (the shape OpenMausBot uses). */
+.sidebarTeamAvatarStack {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  width: 36px;
+}
+
+.sidebarTeamAvatarFace {
+  position: relative;
+  box-shadow: 0 0 0 2px var(--dsw-alias-bg-layer-1);
+}
+
+.sidebarTeamAvatarFace + .sidebarTeamAvatarFace {
+  margin-left: -8px;
+}
+
+.sidebarTeamAvatarChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: -6px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-module-platform);
+  box-shadow: 0 0 0 2px var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 9px;
+  font-weight: 500;
+}
+
 .sidebarTeamAvatarTile {
   display: flex;
   min-width: 0;

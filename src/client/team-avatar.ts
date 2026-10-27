@@ -37,3 +37,41 @@ export function teamAvatarIndex(teamId: string): number {
 export function teamAvatarColor(teamId: string): string {
   return teamIdentityColor(teamAvatarIndex(teamId))
 }
+
+/** One face in a team's stacked avatar: the member's own picture, or initials. */
+export interface TeamAvatarFace {
+  id: string
+  name: string
+  avatar?: string
+}
+
+/**
+ * The faces a team row stacks, in the order the sidebar lists them: the Leader
+ * first, then members. Only the first two are drawn; the rest collapse into a
+ * `+N` chip — the shape OpenMausBot uses for a group row.
+ */
+export function teamAvatarStack(
+  members: Readonly<Record<string, {
+    id: string
+    displayName: string
+    role: string
+    assistantSnapshot?: { name?: string; avatar?: string | undefined }
+  }>>,
+): { faces: TeamAvatarFace[]; extra: number } {
+  const ordered = Object.values(members)
+    .slice()
+    .sort((left, right) => {
+      if (left.role !== right.role) return left.role === 'leader' ? -1 : 1
+      return left.id.localeCompare(right.id)
+    })
+  const faces = ordered.map(member => {
+    const avatar = member.assistantSnapshot?.avatar
+    const named = member.displayName.trim() === '' ? member.assistantSnapshot?.name ?? '' : member.displayName
+    return {
+      id: member.id,
+      name: named.trim() === '' ? '助手' : named.trim(),
+      ...(avatar !== undefined && avatar.startsWith('data:') ? { avatar } : {}),
+    }
+  })
+  return { faces: faces.slice(0, 2), extra: Math.max(0, faces.length - 2) }
+}

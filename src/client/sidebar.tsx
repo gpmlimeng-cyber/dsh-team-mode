@@ -63,7 +63,7 @@ import {
 } from './team-sidebar-data.js'
 import { useTeamText } from './team-i18n.js'
 import { TEAM_TASK_CREATE_HINT } from './labels.js'
-import { TEAM_AVATAR_TILE_COUNT, teamAvatarColor, teamAvatarTiles } from './team-avatar.js'
+import { teamAvatarStack } from './team-avatar.js'
 import { AnimatedModal } from './shared.js'
 import {
   SURFACE_MODE_KEY,
@@ -554,7 +554,7 @@ export function SidebarTeamSection({
       && team.state !== 'active'
       && team.state !== 'starting'
     const rowMenuOpen = menuTeamId === team.id
-    const avatarTiles = teamAvatarTiles(team.name)
+    const avatarStack = teamAvatarStack(team.members)
     const rosterOpen = rosterIsOpen(team.id)
     const rosterId = `dsh-team-mode-roster-${team.id}`
     const roster = rosterOpen ? teamRosterRows(team) : []
@@ -594,20 +594,19 @@ export function SidebarTeamSection({
             aria-current={teamCurrent ? 'page' : undefined}
             title={`${team.name} · ${statusText}`}
           >
-            <span
-              className={css.sidebarTeamAvatar}
-              data-team-avatar={team.id}
-              aria-hidden="true"
-              style={{ '--team-avatar-ink': teamAvatarColor(team.id) } as CSSProperties}
-            >
-              {Array.from({ length: TEAM_AVATAR_TILE_COUNT }, (_, index) => (
-                <span
-                  key={index}
-                  className={`${css.sidebarTeamAvatarTile} ${avatarTiles[index] === undefined ? css.sidebarTeamAvatarTileEmpty : ''}`}
-                >
-                  {avatarTiles[index] ?? ''}
-                </span>
+            <span className={css.sidebarTeamAvatarStack} data-team-avatar={team.id} aria-hidden="true">
+              {avatarStack.faces.map(face => (
+                <MemberAvatar
+                  key={face.id}
+                  name={face.name}
+                  avatar={face.avatar}
+                  size={20}
+                  className={css.sidebarTeamAvatarFace ?? ''}
+                />
               ))}
+              {avatarStack.extra > 0 && (
+                <span className={css.sidebarTeamAvatarChip}>+{avatarStack.extra}</span>
+              )}
             </span>
             <span className={css.sidebarTeamCopy}>
               <span className={css.sidebarAssistantTop}>
