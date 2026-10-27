@@ -7,15 +7,19 @@ import {
   IconChevronRightOutlineRegular,
   IconChevronUpOutlineRegular,
   IconCheckOutlineRegular,
+  IconCopyOutlineRegular,
+  IconDownloadOutlineRegular,
   IconEditOutlineRegular,
   IconEllipsisOutlineRegular,
   IconListPenOutlineRegular,
   IconPlusOutlineRegular,
   IconSlidersTwoOutlineRegular,
   IconTrashOutlineRegular,
+  IconUnarchiveOutlineRegular,
   IconWarningOutlineRegular,
   Menu,
   Tooltip,
+  writeClipboard,
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
@@ -35,6 +39,7 @@ import {
   SIDEBAR_GROUP_BRIEF_MAX_CHARS,
   SIDEBAR_GROUP_MAX_CHARS,
   UNGROUPED_PARTITION_ID,
+  GROUP_SHARE_MAX_DOCUMENT_BYTES,
   applyGroupBatch,
   groupBatchLevels,
   groupBatchMembers,
@@ -42,9 +47,12 @@ import {
   groupBatchPatch,
   groupCreateRows,
   groupCreateSelection,
+  groupExportFileName,
+  groupImportPlanLines,
   groupMembershipCandidates,
   groupMembershipChanges,
   insertGroupOrder,
+  parseGroupExportText,
   resolveDropTarget,
   sidebarGroupBriefError,
   sidebarGroupBriefUsage,
@@ -54,6 +62,7 @@ import {
   type GroupBatchMember,
   type GroupBatchResult,
   type GroupCreateRow,
+  type GroupImportPlanLine,
   type SidebarDropHalf,
   type SidebarDropOverKind,
   type SidebarGroupCandidate,
@@ -64,6 +73,11 @@ import type {
   CatalogView,
   TeamView,
 } from '../transport/contracts.js'
+import type {
+  GroupImportPreview,
+  GroupImportResult,
+  GroupImportRowStatus,
+} from '../domain/group-share.js'
 
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
@@ -418,6 +432,8 @@ export type SidebarGroupDialog =
   | { kind: 'create' }
   | { kind: 'brief'; name: string }
   | { kind: 'batch'; group: string }
+  | { kind: 'export'; name: string }
+  | { kind: 'import' }
   | { kind: 'rename'; from: string }
   | { kind: 'delete'; name: string }
   | { kind: 'members'; group: string }
@@ -467,6 +483,18 @@ export function SidebarGroupDialogs({
       />
     )
   }
+  if (dialog.kind === 'export') {
+    return <GroupExportDialog name={dialog.name} onClose={onClose} />
+  }
+  if (dialog.kind === 'import') {
+    return (
+      <GroupImportDialog
+        onClose={onClose}
+        onListChanged={onListChanged}
+        onChanged={onChanged}
+      />
+    )
+  }
   if (dialog.kind === 'rename') {
     return (
       <GroupNameDialog
@@ -506,7 +534,7 @@ export function SidebarGroupDialogs({
   )
 }
 
-/** Header menu of one group: its brief, the batch settings, rename, delete, and the two order moves. */
+/** Header menu of one group: its brief, the batch settings, export/import, rename, delete, and the two order moves. */
 export function sidebarGroupMenuItems(
   groups: readonly string[],
   group: string,
@@ -515,6 +543,8 @@ export function sidebarGroupMenuItems(
   return [
     { id: 'brief', label: '编辑分组简报', icon: <IconListPenOutlineRegular size={14} /> },
     { id: 'batch', label: '批量设置…', icon: <IconSlidersTwoOutlineRegular size={14} /> },
+    { id: 'export', label: '导出分组', icon: <IconDownloadOutlineRegular size={14} /> },
+    { id: 'import', label: '导入分组', icon: <IconUnarchiveOutlineRegular size={14} /> },
     { id: 'rename', label: '重命名', icon: <IconEditOutlineRegular size={14} /> },
     { id: 'delete', label: '删除分组', icon: <IconTrashOutlineRegular size={14} />, danger: true },
     { type: 'separator', id: 'order-separator' },
@@ -930,7 +960,7 @@ function GroupBatchDialog({
                       ariaLabel="模型"
                       value={modelRow}
                       options={modelOptions}
-                      disabled={locked}
+                      disabled={busy}
                       onChange={setModelRow}
                     />
                   </GroupBatchField>
@@ -951,7 +981,7 @@ function GroupBatchDialog({
                       ariaLabel="思考模式"
                       value={thinkingRow}
                       options={thinkingOptions}
-                      disabled={locked}
+                      disabled={busy}
                       onChange={setThinkingRow}
                     />
                   </GroupBatchField>
@@ -963,7 +993,7 @@ function GroupBatchDialog({
                       ariaLabel="权限"
                       value={permission}
                       options={permissionOptions}
-                      disabled={locked}
+                      disabled={busy}
                       onChange={setPermission}
                     />
                   </GroupBatchField>
@@ -1634,3 +1664,505 @@ function GroupMembersDialog({
     </AnimatedModal>
   )
 }
+
+const GROUP_IMPORT_FIELD_ID = 'dsh-team-mode-group-import-source'
+
+const GROUP_SHARE_KIND_LABELS: Record<GroupImportPlanLine['kind'], string> = {
+  group: '分组',
+  assistant: '助手',
+  template: '模板',
+  team: '团队',
+}
+
+const GROUP_SHARE_ACTION_LABELS: Record<GroupImportPlanLine['action'], string> = {
+  create: '新建',
+  reuse: '复用',
+  skip: '跳过',
+}
+
+const GROUP_SHARE_STATUS_LABELS: Record<GroupImportRowStatus, string> = {
+  created: '已创建',
+  reused: '已复用',
+  skipped: '已跳过',
+  rejected: '已拒绝',
+}
+
+const GROUP_SHARE_ACTION_CLASS: Record<GroupImportPlanLine['action'], string> = {
+  create: css.groupShareStateCreated ?? '',
+  reuse: css.groupShareStateReused ?? '',
+  skip: css.groupShareStateSkipped ?? '',
+}
+
+const GROUP_SHARE_STATUS_CLASS: Record<GroupImportRowStatus, string> = {
+  created: css.groupShareStateCreated ?? '',
+  reused: css.groupShareStateReused ?? '',
+  skipped: css.groupShareStateSkipped ?? '',
+  rejected: css.groupShareStateRejected ?? '',
+}
+
+/**
+ * 导出分组: one read-only transport call and the portable JSON itself, with copy
+ * and download. The notes above the document say what the format leaves out
+ * (avatar photos, prompts) before the user wonders why the file is smaller than
+ * the group looks; nothing here writes anything.
+ */
+function GroupExportDialog({
+  name,
+  onClose,
+}: {
+  name: string
+  onClose: () => void
+}): JSX.Element {
+  const [text, setText] = useState('')
+  const [loaded, setLoaded] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    let cancelled = false
+    setText('')
+    setLoaded(false)
+    setCopied(false)
+    setError(undefined)
+    void callAgentTeam('sidebar.groups.export', { name }).then(value => {
+      if (cancelled) return
+      setText(JSON.stringify(value, null, 2))
+    }).catch(cause => {
+      if (!cancelled) setError(messageOf(cause))
+    }).finally(() => {
+      if (!cancelled) setLoaded(true)
+    })
+    return () => { cancelled = true }
+  }, [name])
+
+  const copy = async (): Promise<void> => {
+    try {
+      // The shipped helper falls back to the legacy path and reports whether the
+      // text landed, so the button can say so instead of pretending.
+      setCopied(await writeClipboard(text))
+    } catch (cause) {
+      setError(messageOf(cause))
+    }
+  }
+
+  const download = (): void => {
+    const url = URL.createObjectURL(new Blob([text], { type: 'application/json' }))
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = groupExportFileName(name)
+    anchor.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const ready = loaded && text !== ''
+  return (
+    <AnimatedModal
+      open
+      onClose={onClose}
+      title={`导出分组「${name}」`}
+      description="导出可移植的分组 JSON：分组名称、简报和助手的可移植设定，不含任何会话、记忆或密钥。"
+      closeLabel="关闭"
+      className={css.sidebarGroupDialog ?? ''}
+      contentClassName={css.sidebarGroupDialogContent ?? ''}
+      footer={(
+        <>
+          <Button
+            variant="outline"
+            type="button"
+            icon={<IconDownloadOutlineRegular size={14} />}
+            disabled={!ready}
+            onClick={download}
+          >
+            下载文件
+          </Button>
+          <Button
+            variant="primary"
+            type="button"
+            icon={<IconCopyOutlineRegular size={14} />}
+            disabled={!ready}
+            onClick={() => { void copy() }}
+          >
+            {copied ? '已复制' : '复制 JSON'}
+          </Button>
+        </>
+      )}
+    >
+      <div className={css.groupShareForm}>
+        <p className={css.groupShareIntro}>
+          这段 JSON 可以粘贴给别人，也可以保存成文件；导入时会在写入前先预览。
+        </p>
+        {!loaded
+          ? <div className={css.dialogEmpty}>正在导出分组…</div>
+          : text === ''
+            ? (error === undefined
+              ? <div className={css.dialogEmpty}>这个分组导出为空。</div>
+              : null)
+            : (
+              <textarea
+                className={`${css.input} ${css.groupShareJson}`}
+                data-dsh-group-export-json
+                readOnly
+                rows={14}
+                value={text}
+                aria-label="分组导出 JSON"
+                spellCheck={false}
+                onFocus={event => { event.currentTarget.select() }}
+              />
+            )}
+        <div className={css.groupShareNotes} data-dsh-group-export-omitted>
+          <p>头像照片不会导出：导入的助手会回退到它的吉祥物或首字母。</p>
+          <p>助手提示词（prompts）是本机记录，不随分组导出。</p>
+          <p>会话、记忆、工作区路径和密钥从不写入这份文档。</p>
+        </div>
+        {copied && <div className={css.groupShareStatus} role="status">已复制到剪贴板。</div>}
+        {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
+      </div>
+    </AnimatedModal>
+  )
+}
+
+/**
+ * 导入分组: paste a portable document or read one from a file, review the plan
+ * (conflict suffixes, skipped rows and their reasons), then apply it.
+ *
+ * The preview and the apply send the exact same parsed object, and the apply
+ * carries the previewed `planHash`: editing the text or switching the target
+ * workspace drops the preview, so a write can never run against a plan the user
+ * did not see.
+ */
+function GroupImportDialog({
+  onClose,
+  onListChanged,
+  onChanged,
+}: {
+  onClose: () => void
+  onListChanged: (groups: string[]) => void
+  onChanged: () => void
+}): JSX.Element {
+  const [text, setText] = useState('')
+  const [fileName, setFileName] = useState<string>()
+  const [workspaces, setWorkspaces] = useState<Array<{ id: string, title: string, path: string }>>([])
+  const [workspaceId, setWorkspaceId] = useState('')
+  const [workspaceError, setWorkspaceError] = useState<string>()
+  const [loaded, setLoaded] = useState(false)
+  const [preview, setPreview] = useState<{
+    value: GroupImportPreview
+    document: Record<string, unknown>
+    workspaceId: string
+  }>()
+  const [result, setResult] = useState<GroupImportResult>()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    let cancelled = false
+    void callAgentTeam('catalog.get').then(catalog => {
+      if (cancelled) return
+      const usable = catalog.workspaces
+        .filter(workspace => workspace.status === 'ok')
+        .map(workspace => ({ id: workspace.id, title: workspace.title, path: workspace.path }))
+      setWorkspaces(usable)
+      setWorkspaceId(current => (current === '' ? usable[0]?.id ?? '' : current))
+    }).catch(cause => {
+      if (!cancelled) setWorkspaceError(messageOf(cause))
+    }).finally(() => {
+      if (!cancelled) setLoaded(true)
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  const workspaceOptions: SelectControlOption[] = useMemo(
+    () => workspaces.map(workspace => ({
+      value: workspace.id,
+      label: workspace.title === '' ? workspace.path : workspace.title,
+      description: workspace.path,
+    })),
+    [workspaces],
+  )
+
+  // Any edit invalidates the reviewed plan: the fence only covers a document
+  // and workspace the user actually looked at.
+  const edit = (next: string, source?: string): void => {
+    setText(next)
+    setPreview(undefined)
+    setError(undefined)
+    if (source !== undefined) setFileName(source)
+  }
+
+  const readFile = async (file: File): Promise<void> => {
+    setError(undefined)
+    if (file.size > GROUP_SHARE_MAX_DOCUMENT_BYTES) {
+      setError(`「${file.name}」有 ${file.size} 字节，超过 ${GROUP_SHARE_MAX_DOCUMENT_BYTES} 字节的导入上限`)
+      return
+    }
+    try {
+      edit(await file.text(), file.name)
+    } catch (cause) {
+      setError(messageOf(cause))
+    }
+  }
+
+  const runPreview = async (): Promise<void> => {
+    if (busy) return
+    const parsed = parseGroupExportText(text)
+    if (!parsed.ok) {
+      setPreview(undefined)
+      setError(parsed.error)
+      return
+    }
+    if (workspaceId === '') {
+      setError('请选择一个可用的 Workspace 作为导入目标')
+      return
+    }
+    setBusy(true)
+    setError(undefined)
+    setPreview(undefined)
+    try {
+      const value = await callAgentTeam('sidebar.groups.import.preview', {
+        document: parsed.document,
+        workspaceId,
+      })
+      setPreview({ value, document: parsed.document, workspaceId })
+    } catch (cause) {
+      setError(messageOf(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const runImport = async (): Promise<void> => {
+    if (busy || preview === undefined) return
+    setBusy(true)
+    setError(undefined)
+    try {
+      const value = await callAgentTeam('sidebar.groups.import', {
+        document: preview.document,
+        workspaceId: preview.workspaceId,
+        expectedPlanHash: preview.value.planHash,
+      })
+      setResult(value)
+      // The import created a group, teams and Assistants: re-read the sections,
+      // and adopt the Host's new group list instead of guessing where it went.
+      onChanged()
+      try {
+        onListChanged(await callAgentTeam('sidebar.groups.list'))
+      } catch {
+        // The import already landed; the group shows up on the next read.
+      }
+    } catch (cause) {
+      setError(messageOf(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const sourceReady = text.trim() !== '' && workspaceId !== ''
+  const planned = preview?.value
+
+  const planRow = (line: GroupImportPlanLine): JSX.Element => (
+    <div
+      key={`${line.kind}:${line.name}`}
+      className={css.groupShareRow}
+      data-dsh-group-import-row={`${line.kind}:${line.name}`}
+    >
+      <span className={css.groupShareKind}>{GROUP_SHARE_KIND_LABELS[line.kind]}</span>
+      <span className={css.groupShareName}>{line.name}</span>
+      {line.plannedName !== line.name && (
+        <span className={css.groupSharePlanned}>→ {line.plannedName}</span>
+      )}
+      <span className={GROUP_SHARE_ACTION_CLASS[line.action]}>
+        {GROUP_SHARE_ACTION_LABELS[line.action]}
+      </span>
+      {line.detail !== undefined && <span className={css.groupShareDetail}>{line.detail}</span>}
+      {line.note !== undefined && <span className={css.groupShareNote}>{line.note}</span>}
+    </div>
+  )
+
+  return (
+    <AnimatedModal
+      open
+      onClose={() => { if (!busy) onClose() }}
+      title="导入分组"
+      description="粘贴分组导出的 JSON，或选择一个文件。写入前先预览：同名分组会自动改用带后缀的新名字，这台机器上没有的设定会跳过并说明原因。"
+      closeLabel="关闭"
+      className={css.sidebarGroupDialog ?? ''}
+      contentClassName={css.sidebarGroupDialogContent ?? ''}
+      footer={result !== undefined
+        ? <Button variant="primary" type="button" onClick={onClose}>关闭</Button>
+        : (
+          <>
+            <Button variant="outline" type="button" disabled={busy} onClick={onClose}>取消</Button>
+            {planned !== undefined && (
+              <Button variant="outline" type="button" disabled={busy} onClick={() => { void runPreview() }}>
+                重新预览
+              </Button>
+            )}
+            <Button
+              variant="primary"
+              type="button"
+              disabled={busy || !sourceReady || (!loaded && workspaceError === undefined)}
+              onClick={() => { void (planned === undefined ? runPreview() : runImport()) }}
+            >
+              {busy
+                ? (planned === undefined ? '预览中…' : '导入中…')
+                : planned === undefined ? '预览导入' : '开始导入'}
+            </Button>
+          </>
+        )}
+    >
+      <div className={css.groupShareForm}>
+        {result === undefined
+          ? (
+            <>
+              <div className={css.groupShareField}>
+                <label className={css.groupShareLabel} htmlFor={GROUP_IMPORT_FIELD_ID}>
+                  分组导出 JSON
+                </label>
+                <textarea
+                  id={GROUP_IMPORT_FIELD_ID}
+                  className={`${css.input} ${css.groupShareJson}`}
+                  data-dsh-group-import-source
+                  data-modal-autofocus
+                  rows={8}
+                  value={text}
+                  placeholder="把导出的 JSON 粘贴到这里…"
+                  aria-label="分组导出 JSON"
+                  spellCheck={false}
+                  disabled={busy}
+                  onChange={event => { edit(event.target.value) }}
+                />
+              </div>
+              <div className={css.groupShareActions}>
+                <input
+                  className={css.groupShareFile}
+                  data-dsh-group-import-file
+                  type="file"
+                  accept=".json,application/json"
+                  aria-label="选择分组导出文件"
+                  disabled={busy}
+                  onChange={event => {
+                    const file = event.currentTarget.files?.[0]
+                    // Reset first, so choosing the same file twice still fires.
+                    event.currentTarget.value = ''
+                    if (file !== undefined) void readFile(file)
+                  }}
+                />
+                {fileName !== undefined && (
+                  <span className={css.groupShareHint}>已读入「{fileName}」</span>
+                )}
+              </div>
+              <p className={css.groupShareNote}>
+                提示词（prompts）、会话、记忆和头像照片都不在导入范围内；导入只读取你提供的这份 JSON。
+              </p>
+              {!loaded
+                ? <div className={css.dialogEmpty}>正在读取可用的 Workspace…</div>
+                : workspaceError !== undefined
+                  ? <div className={css.inlineError} role="alert">{workspaceError}</div>
+                  : workspaces.length === 0
+                    ? (
+                      <div className={css.groupShareHint} data-dsh-group-import-no-workspace>
+                        没有可用的 Workspace：导入需要先打开或新建一个工作区。
+                      </div>
+                    )
+                    : (
+                      <div className={css.groupShareField}>
+                        <span className={css.groupShareLabel}>导入到 Workspace</span>
+                        <SelectControl
+                          value={workspaceId}
+                          options={workspaceOptions}
+                          ariaLabel="导入到 Workspace"
+                          disabled={busy}
+                          onChange={next => {
+                            setWorkspaceId(next)
+                            setPreview(undefined)
+                          }}
+                        />
+                      </div>
+                    )}
+              {planned !== undefined && (
+                <section className={css.groupShareSection} data-dsh-group-import-preview>
+                  <h4 className={css.groupShareTitle}>导入预览</h4>
+                  <p className={css.groupShareMeta}>
+                    分组「{planned.group.requested}」→「<span data-dsh-group-import-planned>{planned.group.plannedName}</span>」
+                    {planned.group.renamed && (
+                      <span className={css.groupShareSuffix} data-dsh-group-import-renamed>
+                        同名冲突，改用后缀名
+                      </span>
+                    )}
+                  </p>
+                  <p className={css.groupShareMeta} data-dsh-group-import-counts>
+                    助手 {planned.counts.assistants} · 模板 {planned.counts.templates}
+                    {' · '}团队 {planned.counts.teams}（成员 {planned.counts.members}）
+                    {' · '}跳过 {planned.counts.skipped}
+                  </p>
+                  <div className={css.groupShareRows}>
+                    {groupImportPlanLines(planned).map(planRow)}
+                  </div>
+                  {planned.warnings.length > 0 && (
+                    <ul className={css.groupShareWarnings} data-dsh-group-import-warnings>
+                      {planned.warnings.map(warning => <li key={warning}>{warning}</li>)}
+                    </ul>
+                  )}
+                  {[...planned.skills, ...planned.mcpServers]
+                    .filter(reference => !reference.available).length > 0 && (
+                    <p className={css.groupShareUnavailable} data-dsh-group-import-unavailable>
+                      这台机器上没有
+                      {' '}
+                      {[...planned.skills, ...planned.mcpServers]
+                        .filter(reference => !reference.available)
+                        .map(reference => reference.name)
+                        .join('、')}
+                      ，导入时会从相应助手上去掉。
+                    </p>
+                  )}
+                  <p className={css.groupShareHint}>
+                    点「开始导入」才会写入；取消不会改动任何分组、助手或团队。
+                  </p>
+                </section>
+              )}
+            </>
+          )
+          : (
+            <section className={css.groupShareSection} data-dsh-group-import-result>
+              <h4 className={css.groupShareTitle}>导入结果</h4>
+              <p className={css.groupShareMeta}>
+                分组「<span data-dsh-group-import-result-name>{result.groupName}</span>」
+              </p>
+              <p className={css.groupShareMeta} data-dsh-group-import-outcome>
+                已创建 {result.counts.created} · 已复用 {result.counts.reused}
+                {' · '}已跳过 {result.counts.skipped} · 已拒绝 {result.counts.rejected}
+              </p>
+              <div className={css.groupShareRows}>
+                {result.rows.map((row, index) => (
+                  <div
+                    key={`${row.kind}:${row.name}:${index}`}
+                    className={css.groupShareRow}
+                    data-dsh-group-import-result-row={`${row.kind}:${row.name}`}
+                  >
+                    <span className={css.groupShareKind}>{GROUP_SHARE_KIND_LABELS[row.kind]}</span>
+                    <span className={css.groupShareName}>{row.name}</span>
+                    {row.plannedName !== undefined && row.plannedName !== row.name && (
+                      <span className={css.groupSharePlanned}>→ {row.plannedName}</span>
+                    )}
+                    <span className={GROUP_SHARE_STATUS_CLASS[row.status]}>
+                      {GROUP_SHARE_STATUS_LABELS[row.status]}
+                    </span>
+                    {row.reason !== undefined && (
+                      <span className={css.groupShareNote}>{row.reason}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {result.warnings.length > 0 && (
+                <ul className={css.groupShareWarnings} data-dsh-group-import-result-warnings>
+                  {result.warnings.map(warning => <li key={warning}>{warning}</li>)}
+                </ul>
+              )}
+            </section>
+          )}
+        {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
+      </div>
+    </AnimatedModal>
+  )
+}
+

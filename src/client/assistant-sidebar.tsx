@@ -615,6 +615,14 @@ export function AssistantSidebarSection({
       setGroupDialog({ kind: 'batch', group })
       return
     }
+    if (id === 'export') {
+      setGroupDialog({ kind: 'export', name: group })
+      return
+    }
+    if (id === 'import') {
+      setGroupDialog({ kind: 'import' })
+      return
+    }
     if (id === 'rename') {
       setGroupDialog({ kind: 'rename', from: group })
       return

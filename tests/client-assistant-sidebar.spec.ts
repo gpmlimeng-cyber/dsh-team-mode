@@ -223,4 +223,13 @@ describe('assistant sidebar source contract', () => {
     expect(source).toContain('<SidebarGroupDialogs')
     expect(teamSidebar).toContain('<SidebarGroupDialogs')
   })
+
+  it('dispatches 导出分组 / 导入分组 from both group ⋯ menus', () => {
+    const teamSidebar = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
+
+    expect(source).toContain("setGroupDialog({ kind: 'export', name: group })")
+    expect(source).toContain("setGroupDialog({ kind: 'import' })")
+    expect(teamSidebar).toContain("openGroupDialog({ kind: 'export', name: group })")
+    expect(teamSidebar).toContain("openGroupDialog({ kind: 'import' })")
+  })
 })

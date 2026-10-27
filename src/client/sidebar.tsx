@@ -709,6 +709,14 @@ export function SidebarTeamSection({
       openGroupDialog({ kind: 'batch', group })
       return
     }
+    if (id === 'export') {
+      openGroupDialog({ kind: 'export', name: group })
+      return
+    }
+    if (id === 'import') {
+      openGroupDialog({ kind: 'import' })
+      return
+    }
     if (id === 'rename') {
       openGroupDialog({ kind: 'rename', from: group })
       return

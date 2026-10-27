@@ -12317,6 +12317,224 @@ textarea.sidebarGroupBriefInput {
   line-height: 18px;
 }
 
+/* ── Group export / import ────────────────────────────────────────────────
+   One JSON editor, a file picker and the plan/outcome rows. Spacing and colour
+   only: the dialog owns placement, so nothing here positions itself or raises
+   its own stacking order. Long Host messages stay on their own row instead of
+   pushing the name away. */
+.groupShareForm {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.groupShareIntro {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.groupShareJson {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 150px;
+  resize: vertical;
+  font-family: var(--ds-font-family-code, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.groupShareField {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.groupShareLabel {
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.groupShareHint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupShareActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.groupShareFile {
+  min-width: 0;
+  max-width: 100%;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.groupShareNotes,
+.groupShareWarnings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupShareNotes > p {
+  margin: 0;
+}
+
+.groupShareWarnings {
+  padding-left: 24px;
+}
+
+.groupShareStatus {
+  color: var(--dsw-alias-state-success-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupShareSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.groupShareTitle {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.groupShareMeta {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.groupShareSuffix {
+  margin-left: 6px;
+  color: var(--dsw-alias-state-business-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupShareRows {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.groupShareRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  min-height: 24px;
+  padding: 2px 6px;
+  border-radius: var(--dsw-radius-sm);
+}
+
+.groupShareRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.groupShareKind {
+  flex: none;
+  min-width: 32px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupShareName {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupSharePlanned {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupShareDetail {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupShareNote {
+  flex: 0 1 100%;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupShareStateCreated {
+  flex: none;
+  color: var(--dsw-alias-state-success-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupShareStateReused {
+  flex: none;
+  color: var(--dsw-alias-state-business-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupShareStateSkipped {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupShareStateRejected {
+  flex: none;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupShareUnavailable {
+  margin: 0;
+  color: var(--dsw-alias-state-warn-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
 /* ── Sidebar drag & drop ──────────────────────────────────────────────────
    The same affordances the native list draws: the source row dims, the header
    under the pointer highlights, and a dragged group header shows a 1px

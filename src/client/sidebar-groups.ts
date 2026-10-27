@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { GroupImportPreview } from '../domain/group-share.js'
 import { callAgentTeam } from './api.js'
 
 /**
@@ -464,6 +465,112 @@ export async function applyGroupBatch(
     }
   }
   return results
+}
+
+/**
+ * The Host's portable-document cap (`GROUP_SHARE_MAX_DOCUMENT_BYTES` in
+ * `domain/group-share.ts`), repeated so a chosen file is refused before it is
+ * read into memory. The Host still enforces the same number on both import
+ * methods; `tests/client-sidebar-groups.spec.ts` pins the two together.
+ */
+export const GROUP_SHARE_MAX_DOCUMENT_BYTES = 1024 * 1024
+
+/** One parsed group export, held by the import dialog from preview to apply. */
+export type GroupExportParse =
+  | { ok: true; document: Record<string, unknown> }
+  | { ok: false; error: string }
+
+/**
+ * Parse pasted or read portable JSON. Only the shape the transport carries is
+ * checked here (one JSON object, byte-for-byte untouched); the Host owns the
+ * document schema and answers a malformed one with its own field path, so the
+ * dialog never re-serialises what it was given.
+ */
+export function parseGroupExportText(text: string): GroupExportParse {
+  const trimmed = text.trim()
+  if (trimmed === '') return { ok: false, error: '请粘贴分组导出的 JSON，或选择一个文件' }
+  let value: unknown
+  try {
+    value = JSON.parse(trimmed)
+  } catch (cause) {
+    const reason = cause instanceof Error ? cause.message : String(cause)
+    return { ok: false, error: `这不是合法的 JSON：${reason}` }
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return { ok: false, error: '分组导出应该是一个 JSON 对象' }
+  }
+  return { ok: true, document: value as Record<string, unknown> }
+}
+
+/** The download name for one export: unsafe filename characters become '-'. */
+export function groupExportFileName(group: string): string {
+  const base = group.trim()
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-')
+    .slice(0, 60)
+    .replace(/[. ]+$/, '')
+  return `${base === '' ? 'group' : base}.group.json`
+}
+
+/** One reviewable row of an import plan; presentation-neutral on purpose. */
+export interface GroupImportPlanLine {
+  kind: 'group' | 'assistant' | 'template' | 'team'
+  /** The name as written in the document. */
+  name: string
+  /** The name this machine will use (a conflict earns a ` (2)` suffix). */
+  plannedName: string
+  action: 'create' | 'reuse' | 'skip'
+  /** Why the row is skipped, or why the planned name differs. */
+  note?: string
+  /** A short fact about the row: member count, reused library entry. */
+  detail?: string
+}
+
+/**
+ * Flatten one preview into the rows the dialog lists: the group first, then its
+ * assistants, the Assistant templates the teams need, and the teams. Nothing is
+ * filtered — a skipped row keeps its reason so the user sees what will not come
+ * across instead of finding it missing after the import.
+ */
+export function groupImportPlanLines(preview: GroupImportPreview): GroupImportPlanLine[] {
+  const lines: GroupImportPlanLine[] = [{
+    kind: 'group',
+    name: preview.group.requested,
+    plannedName: preview.group.plannedName,
+    action: 'create',
+    ...(preview.group.renamed
+      ? { note: `同名分组已存在，导入为「${preview.group.plannedName}」` }
+      : {}),
+    ...(preview.group.briefChars === 0 ? {} : { detail: `简报 ${preview.group.briefChars} 字` }),
+  }]
+  for (const row of preview.assistants) {
+    lines.push({
+      kind: 'assistant',
+      name: row.name,
+      plannedName: row.plannedName,
+      action: row.action,
+      ...(row.reason === undefined ? {} : { note: row.reason }),
+    })
+  }
+  for (const row of preview.templates) {
+    lines.push({
+      kind: 'template',
+      name: row.name,
+      plannedName: row.plannedName,
+      action: row.action,
+      ...(row.action === 'reuse' ? { note: '复用本地相同的助手模板' } : {}),
+    })
+  }
+  for (const team of preview.teams) {
+    lines.push({
+      kind: 'team',
+      name: team.name,
+      plannedName: team.plannedName,
+      action: team.action,
+      ...(team.reason === undefined ? {} : { note: team.reason }),
+      ...(team.action === 'create' ? { detail: `${team.members.length} 名成员` } : {}),
+    })
+  }
+  return lines
 }
 
 export interface SidebarGroups {

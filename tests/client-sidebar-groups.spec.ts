@@ -4,6 +4,13 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import { SIDEBAR_GROUP_BRIEF_MAX_CHARS as HOST_BRIEF_MAX_CHARS } from '../src/domain/schemas.js'
 import {
+  GROUP_SHARE_KIND,
+  GROUP_SHARE_MAX_DOCUMENT_BYTES as HOST_GROUP_SHARE_MAX_DOCUMENT_BYTES,
+  type GroupImportPreview,
+  type PortableAssistantProfile,
+} from '../src/domain/group-share.js'
+import {
+  GROUP_SHARE_MAX_DOCUMENT_BYTES,
   SIDEBAR_GROUP_BRIEF_MAX_CHARS,
   SIDEBAR_GROUP_MAX_CHARS,
   UNGROUPED_PARTITION_ID,
@@ -12,10 +19,13 @@ import {
   groupBatchMembers,
   groupBatchModelRefs,
   groupBatchPatch,
+  groupExportFileName,
+  groupImportPlanLines,
   groupMembershipCandidates,
   groupMembershipChanges,
   insertGroupOrder,
   movedGroupOrder,
+  parseGroupExportText,
   resolveDropTarget,
   sidebarGroupBriefError,
   sidebarGroupBriefUsage,
@@ -911,5 +921,329 @@ describe('group batch settings source contract', () => {
     expect(joined).toContain('var(--dsw-alias-label-primary)')
     expect(joined).toContain('var(--dsw-alias-state-success-primary)')
     expect(joined).toContain('var(--dsw-alias-state-error-primary)')
+  })
+})
+
+describe('parseGroupExportText', () => {
+  it('asks for a document when the editor is blank', () => {
+    expect(parseGroupExportText('  \n\t ')).toEqual({
+      ok: false,
+      error: '请粘贴分组导出的 JSON，或选择一个文件',
+    })
+  })
+
+  it('names malformed JSON instead of clearing the editor', () => {
+    const outcome = parseGroupExportText('{"kind": ')
+
+    expect(outcome.ok).toBe(false)
+    if (!outcome.ok) expect(outcome.error).toContain('JSON')
+  })
+
+  it('refuses anything that is not one JSON object', () => {
+    for (const text of ['[]', 'null', '42', '"text"', 'true']) {
+      const outcome = parseGroupExportText(text)
+      expect(outcome.ok).toBe(false)
+      if (!outcome.ok) expect(outcome.error).toContain('JSON 对象')
+    }
+  })
+
+  it('keeps the document exactly as parsed, including keys it does not know', () => {
+    // The Host owns the schema and the plan hash. Re-serialising here would
+    // change what the apply sends and could earn a stale-preview refusal.
+    const outcome = parseGroupExportText(JSON.stringify({
+      kind: GROUP_SHARE_KIND,
+      schemaVersion: 1,
+      future: { keep: [1, 2, 3] },
+    }))
+
+    expect(outcome.ok).toBe(true)
+    if (outcome.ok) {
+      expect(outcome.document).toEqual({
+        kind: GROUP_SHARE_KIND,
+        schemaVersion: 1,
+        future: { keep: [1, 2, 3] },
+      })
+      expect(Object.keys(outcome.document)).toEqual(['kind', 'schemaVersion', 'future'])
+    }
+  })
+
+  it('pins the client file-size guard to the Host cap', () => {
+    expect(GROUP_SHARE_MAX_DOCUMENT_BYTES).toBe(HOST_GROUP_SHARE_MAX_DOCUMENT_BYTES)
+  })
+})
+
+describe('groupExportFileName', () => {
+  it('keeps a readable group name and adds the portable suffix', () => {
+    expect(groupExportFileName('工作')).toBe('工作.group.json')
+    expect(groupExportFileName(' 工作 ')).toBe('工作.group.json')
+  })
+
+  it('turns characters a filesystem would refuse into dashes', () => {
+    expect(groupExportFileName('a/b:c*d?"e<f>g|h')).toBe('a-b-c-d--e-f-g-h.group.json')
+    expect(groupExportFileName('a\u0000b\u001fc')).toBe('a-b-c.group.json')
+  })
+
+  it('falls back to a name and stays under the cap for odd input', () => {
+    expect(groupExportFileName('   ')).toBe('group.group.json')
+    expect(groupExportFileName('.').endsWith('.group.json')).toBe(true)
+
+    const long = groupExportFileName('长'.repeat(120))
+    expect(long.endsWith('.group.json')).toBe(true)
+    expect(long.length).toBe(60 + '.group.json'.length)
+  })
+})
+
+const portableProfile = (name: string): PortableAssistantProfile => ({
+  name,
+  instructions: '你是研究员。',
+  provider: 'deepseek',
+  model: 'deepseek-chat',
+  agentPresetId: 'default',
+  permissionPresetId: 'workspace-write',
+  skillAllowlist: [],
+  mcpServers: [],
+})
+
+const importPreview = (overrides: Partial<GroupImportPreview> = {}): GroupImportPreview => ({
+  schemaVersion: 1,
+  group: { requested: '工作', plannedName: '工作 (2)', renamed: true, briefChars: 12 },
+  assistants: [
+    { name: '研究员', plannedName: '研究员', action: 'create', profile: portableProfile('研究员') },
+    {
+      name: '旧模型助手',
+      plannedName: '旧模型助手',
+      action: 'skip',
+      reason: "unknown model 'gone/model'",
+    },
+  ],
+  templates: [{ name: '研究员', plannedName: '研究员', action: 'create', profile: portableProfile('研究员') }],
+  teams: [{
+    name: '小队',
+    plannedName: '小队',
+    action: 'create',
+    members: [{
+      displayName: '组长',
+      role: 'leader',
+      templateName: '研究员',
+      permissionPresetId: 'workspace-write',
+    }],
+  }],
+  skills: [{ name: 'mine', available: false }],
+  mcpServers: [],
+  warnings: ['Portable documents carry mascot identities, not avatar photos.'],
+  counts: { assistants: 1, templates: 1, teams: 1, members: 1, skipped: 1 },
+  planHash: 'a'.repeat(64),
+  ...overrides,
+})
+
+describe('groupImportPlanLines', () => {
+  it('lists the group first, with its collision suffix and brief size', () => {
+    const [first] = groupImportPlanLines(importPreview())
+
+    expect(first).toEqual({
+      kind: 'group',
+      name: '工作',
+      plannedName: '工作 (2)',
+      action: 'create',
+      note: '同名分组已存在，导入为「工作 (2)」',
+      detail: '简报 12 字',
+    })
+  })
+
+  it('leaves the suffix note off when the planned name is unchanged', () => {
+    const preview = importPreview({
+      group: { requested: '工作', plannedName: '工作', renamed: false, briefChars: 0 },
+    })
+
+    expect(groupImportPlanLines(preview)[0]).toEqual({
+      kind: 'group',
+      name: '工作',
+      plannedName: '工作',
+      action: 'create',
+    })
+  })
+
+  it('keeps every skipped row and its reason', () => {
+    const skipped = groupImportPlanLines(importPreview())
+      .find(line => line.kind === 'assistant' && line.action === 'skip')
+
+    expect(skipped).toEqual({
+      kind: 'assistant',
+      name: '旧模型助手',
+      plannedName: '旧模型助手',
+      action: 'skip',
+      note: "unknown model 'gone/model'",
+    })
+  })
+
+  it('says a template is reused and how many members a team carries', () => {
+    const lines = groupImportPlanLines(importPreview({
+      templates: [{
+        name: '研究员',
+        plannedName: '研究员',
+        action: 'reuse',
+        profile: portableProfile('研究员'),
+      }],
+    }))
+
+    expect(lines.find(line => line.kind === 'template')).toMatchObject({
+      action: 'reuse',
+      note: '复用本地相同的助手模板',
+    })
+    expect(lines.find(line => line.kind === 'team')).toMatchObject({
+      action: 'create',
+      detail: '1 名成员',
+    })
+  })
+
+  it('flattens in review order: group, assistants, templates, teams', () => {
+    expect(groupImportPlanLines(importPreview()).map(line => line.kind))
+      .toEqual(['group', 'assistant', 'assistant', 'template', 'team'])
+  })
+})
+
+describe('group export/import dialog source contract', () => {
+  const ui = readFileSync(new URL('../src/client/sidebar-group-ui.tsx', import.meta.url), 'utf8')
+  const exportDialog = ui.slice(
+    ui.indexOf('function GroupExportDialog'),
+    ui.indexOf('function GroupImportDialog'),
+  )
+  const importDialog = ui.slice(ui.indexOf('function GroupImportDialog'))
+  const moduleCss = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+  const shareCss = moduleCss.slice(
+    moduleCss.indexOf('.groupShareForm {'),
+    moduleCss.indexOf('/* ── Sidebar drag & drop'),
+  )
+
+  it('offers 导出分组 / 导入分组 in the shared group ⋯ menu', () => {
+    const entries = sidebarGroupMenuItems(['甲组', '乙组'], '甲组')
+    // MenuEntry is a union with separators, which carry no label.
+    const labelOf = (id: string): unknown => {
+      const entry = entries.find(candidate => candidate.id === id)
+      return entry !== undefined && 'label' in entry ? entry.label : undefined
+    }
+
+    expect(labelOf('export')).toBe('导出分组')
+    expect(labelOf('import')).toBe('导入分组')
+    expect(ui).toContain("label: '导出分组'")
+    expect(ui).toContain("label: '导入分组'")
+  })
+
+  it('opens the export as one native modal showing the portable JSON', () => {
+    const markup = renderToStaticMarkup(createElement(SidebarGroupDialogs, {
+      dialog: { kind: 'export', name: '甲组' },
+      groups: ['甲组'],
+      onClose: () => {},
+      onListChanged: () => {},
+      onChanged: () => {},
+    }))
+
+    expect(markup).toContain('role="dialog"')
+    expect(markup).toContain('导出分组「甲组」')
+    expect(markup).toContain('data-dsh-group-export-omitted')
+    // The two static omissions the user must know before sharing the file.
+    expect(markup).toContain('头像照片不会导出')
+    expect(markup).toContain('助手提示词（prompts）是本机记录')
+    // The footer buttons come from the shared primitive (null in this mock), so
+    // their copy is pinned on the source instead of the rendered text.
+    expect(exportDialog).toContain('复制 JSON')
+    expect(exportDialog).toContain('下载文件')
+    expect(exportDialog).toContain("callAgentTeam('sidebar.groups.export', { name })")
+    expect(exportDialog).toContain('readOnly')
+    expect(exportDialog).toContain('writeClipboard(text)')
+    expect(exportDialog).toContain('URL.createObjectURL')
+    expect(exportDialog).toContain('anchor.download = groupExportFileName(name)')
+  })
+
+  it('opens the import as one native modal with paste, file and workspace pickers', () => {
+    const markup = renderToStaticMarkup(createElement(SidebarGroupDialogs, {
+      dialog: { kind: 'import' },
+      groups: ['甲组'],
+      onClose: () => {},
+      onListChanged: () => {},
+      onChanged: () => {},
+    }))
+
+    expect(markup).toContain('role="dialog"')
+    expect(markup).toContain('导入分组')
+    expect(markup).toContain('data-dsh-group-import-source')
+    expect(markup).toContain('type="file"')
+    expect(markup).toContain('accept=".json,application/json"')
+    expect(importDialog).toContain('预览导入')
+    expect(importDialog).toContain('取消')
+    // Prompts are not carried and the dialog says so up front.
+    expect(markup).toContain('提示词（prompts）、会话、记忆和头像照片都不在导入范围内')
+    expect(importDialog).toContain('await file.text()')
+    expect(importDialog).toContain('GROUP_SHARE_MAX_DOCUMENT_BYTES')
+    // Cancel is the native close, and an edit never writes.
+    expect(importDialog).toContain('disabled={busy} onClick={onClose}>取消</Button>')
+    const editBody = importDialog.slice(
+      importDialog.indexOf('const edit ='),
+      importDialog.indexOf('const readFile ='),
+    )
+    expect(editBody).not.toContain('callAgentTeam')
+  })
+
+  it('previews with one held document and applies the previewed plan hash', () => {
+    expect(importDialog).toContain("callAgentTeam('sidebar.groups.import.preview'")
+    expect(importDialog).toContain('document: parsed.document')
+    expect(importDialog).toContain("callAgentTeam('sidebar.groups.import',")
+    // The exact object and workspace the user reviewed, never a re-parse.
+    expect(importDialog).toContain('document: preview.document')
+    expect(importDialog).toContain('workspaceId: preview.workspaceId')
+    expect(importDialog).toContain('expectedPlanHash: preview.value.planHash')
+    // An edit or a target change drops the reviewed plan.
+    expect(importDialog.match(/setPreview\(undefined\)/g)?.length ?? 0)
+      .toBeGreaterThanOrEqual(3)
+  })
+
+  it('previews created/skipped rows, the collision suffix and per-item outcomes', () => {
+    expect(importDialog).toContain('groupImportPlanLines(planned)')
+    expect(importDialog).toContain('data-dsh-group-import-preview')
+    expect(importDialog).toContain('data-dsh-group-import-renamed')
+    expect(importDialog).toContain('data-dsh-group-import-counts')
+    expect(importDialog).toContain('GROUP_SHARE_STATUS_LABELS[row.status]')
+    expect(importDialog).toContain('data-dsh-group-import-result-row')
+    expect(importDialog).toContain('data-dsh-group-import-outcome')
+    expect(importDialog).toContain('已创建')
+    expect(importDialog).toContain('已拒绝')
+    // The applied import re-reads the sections and adopts the Host's group list.
+    expect(importDialog).toContain('onChanged()')
+    expect(importDialog).toContain("callAgentTeam('sidebar.groups.list')")
+    expect(importDialog).toContain('onListChanged(')
+  })
+
+  it('never renders a secret, a session or an assistant template', () => {
+    for (const source of [exportDialog, importDialog]) {
+      expect(source).not.toContain('assistantSnapshot')
+      expect(source).not.toContain('.instructions')
+      expect(source).not.toContain('memoryKey')
+      expect(source).not.toContain('sessionId')
+      expect(source).not.toContain('apiKey')
+    }
+  })
+
+  it('stays on native surfaces with no page-level layer', () => {
+    for (const source of [exportDialog, importDialog]) {
+      expect(source).toContain('<AnimatedModal')
+      expect(source).toContain('<Button')
+      expect(source).not.toContain('createPortal')
+      expect(source).not.toContain('document.body')
+      expect(source).not.toContain('position: fixed')
+      expect(source).not.toContain('zIndex')
+    }
+  })
+
+  it('styles the share dialogs with semantic tokens and no positioning of its own', () => {
+    expect(shareCss.length).toBeGreaterThan(800)
+    expect(shareCss).not.toContain('position:')
+    expect(shareCss).not.toContain('z-index')
+    expect(shareCss).not.toContain('!important')
+    expect(shareCss).not.toMatch(/#[0-9a-f]{3,8}/i)
+    expect(shareCss).not.toMatch(/\brgb\(/)
+    expect(shareCss).toContain('var(--dsw-alias-label-primary)')
+    expect(shareCss).toContain('var(--dsw-alias-state-success-primary)')
+    expect(shareCss).toContain('var(--dsw-alias-state-error-primary)')
+    expect(shareCss).toContain('var(--dsw-alias-state-business-primary)')
   })
 })
