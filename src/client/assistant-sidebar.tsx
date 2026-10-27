@@ -605,10 +605,14 @@ export function AssistantSidebarSection({
     setCollapsedPartitions(current => ({ ...current, [id]: current[id] !== true }))
   }
 
-  /** One group header's `⋯`: brief, rename, delete, or move the group itself. */
+  /** One group header's `⋯`: brief, batch settings, rename, delete, or move. */
   const selectGroupMenu = async (group: string, id: string): Promise<void> => {
     if (id === 'brief') {
       setGroupDialog({ kind: 'brief', name: group })
+      return
+    }
+    if (id === 'batch') {
+      setGroupDialog({ kind: 'batch', group })
       return
     }
     if (id === 'rename') {

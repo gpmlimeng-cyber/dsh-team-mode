@@ -171,6 +171,8 @@ describe('one select implementation', () => {
       // The merged model control composes the one control; it is not a second
       // dropdown implementation.
       'model-control.tsx',
+      // The per-group batch dialog picks model/thinking/permission here too.
+      'sidebar-group-ui.tsx',
       'team-activity.tsx',
       'team-board.tsx',
       'teams/TeamPanel.tsx',

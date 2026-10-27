@@ -7,6 +7,9 @@ import {
   SIDEBAR_GROUP_BRIEF_MAX_CHARS,
   SIDEBAR_GROUP_MAX_CHARS,
   UNGROUPED_PARTITION_ID,
+  applyGroupBatch,
+  groupBatchMembers,
+  groupBatchPatch,
   groupMembershipCandidates,
   groupMembershipChanges,
   insertGroupOrder,
@@ -20,12 +23,26 @@ import {
 } from '../src/client/sidebar-groups.js'
 
 // The picker imports the whole primitive set; this node test only needs the
-// native Menu's shape (anchor always rendered, content only while open).
+// native Menu's shape (anchor always rendered, content only while open) and a
+// Modal that renders its frame, so a group dialog can be read as text.
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
   const { createElement: h } = await import('react')
   const api: Record<string, unknown> = {
     Menu: (props: { anchor?: unknown; open?: boolean; children?: unknown }) =>
       h('div', { role: 'menu' }, props.anchor as never, props.open === true ? props.children as never : null),
+    Modal: (props: {
+      title?: unknown
+      description?: unknown
+      children?: unknown
+      footer?: unknown
+    }) => h(
+      'div',
+      { role: 'dialog' },
+      h('div', null, props.title as never),
+      h('div', null, props.description as never),
+      props.children as never,
+      h('div', null, props.footer as never),
+    ),
   }
   // Icons are irrelevant here; unknown names resolve to a null component. The
   // module must never look thenable, or `await import()` never settles.
@@ -39,6 +56,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
 })
 
 import { NewChatPanel } from '../src/client/new-chat-panel.js'
+import { SidebarGroupDialogs, sidebarGroupMenuItems } from '../src/client/sidebar-group-ui.js'
 
 interface Row {
   id: string
@@ -505,5 +523,215 @@ describe('initial focus in the unified pickers', () => {
     expect(chrome).toContain('role="menuitem"')
     expect(chrome).not.toContain("event.key === 'Escape'")
     expect(chrome).not.toContain("event.key === 'Tab'")
+  })
+})
+
+interface BatchRow {
+  id: string
+  name: string
+  group?: string
+  status: string
+}
+
+const batchRow = (id: string, status: string, group?: string): BatchRow => ({
+  id,
+  name: `name-${id}`,
+  ...(group === undefined ? {} : { group }),
+  status,
+})
+const batchProject = (value: BatchRow): { id: string; name: string; group?: string; status: string } => ({
+  id: value.id,
+  name: value.name,
+  ...(value.group === undefined ? {} : { group: value.group }),
+  status: value.status,
+})
+
+describe('groupBatchMembers', () => {
+  const items = [
+    batchRow('a1', 'idle', 'work'),
+    batchRow('elsewhere', 'idle', 'play'),
+    batchRow('loose', 'idle'),
+    batchRow('a2', 'active', 'work'),
+    batchRow('gone', 'archived', 'work'),
+  ]
+
+  it('lists only that group, and never an archived row', () => {
+    expect(groupBatchMembers('work', items, batchProject))
+      .toEqual([{ id: 'a1', name: 'name-a1' }, { id: 'a2', name: 'name-a2' }])
+  })
+
+  it('takes no search query, so a typed filter cannot shrink the batch', () => {
+    // Three inputs: the group, the rows, the projection. A query parameter would
+    // be the way the sidebar's search could hide rows from the batch.
+    expect(groupBatchMembers).toHaveLength(3)
+    expect(groupBatchMembers('work', items, batchProject)).toHaveLength(2)
+  })
+
+  it('answers an empty list for a group without members', () => {
+    expect(groupBatchMembers('empty', items, batchProject)).toEqual([])
+  })
+})
+
+describe('groupBatchPatch', () => {
+  it('sends nothing when no picker was touched', () => {
+    expect(groupBatchPatch({})).toBeUndefined()
+  })
+
+  it('writes the provider with the model, never one half alone', () => {
+    expect(groupBatchPatch({ model: { provider: 'deepseek', model: 'deepseek-chat' } }))
+      .toEqual({ provider: 'deepseek', model: 'deepseek-chat' })
+  })
+
+  it('carries one explicit level, the clearing value included', () => {
+    expect(groupBatchPatch({ reasoningEffort: 'high' })).toEqual({ reasoningEffort: 'high' })
+    expect(groupBatchPatch({ reasoningEffort: '' })).toEqual({ reasoningEffort: '' })
+  })
+
+  it('writes a permission preset on its own', () => {
+    expect(groupBatchPatch({ permissionPresetId: 'workspace-write' }))
+      .toEqual({ permissionPresetId: 'workspace-write' })
+  })
+
+  it('keeps all three axes in one patch, and never a group label', () => {
+    const patch = groupBatchPatch({
+      model: { provider: 'p', model: 'm' },
+      reasoningEffort: 'high',
+      permissionPresetId: 'read-only',
+    })
+
+    expect(patch).toEqual({
+      provider: 'p',
+      model: 'm',
+      reasoningEffort: 'high',
+      permissionPresetId: 'read-only',
+    })
+    // Batch membership is the filter, not a write: a group label here would
+    // move rows the user never asked to move.
+    expect(Object.keys(patch ?? {})).not.toContain('group')
+  })
+})
+
+describe('applyGroupBatch', () => {
+  const members = [
+    { id: 'a1', name: '助手一' },
+    { id: 'a2', name: '助手二' },
+    { id: 'a3', name: '助手三' },
+  ]
+
+  it('reports one outcome per member, in list order, and keeps going after a refusal', async () => {
+    const written: string[] = []
+    const results = await applyGroupBatch(
+      members,
+      { permissionPresetId: 'read-only' },
+      async id => {
+        written.push(id)
+        if (id === 'a2') throw new Error('Unknown permission preset')
+        return undefined
+      },
+    )
+
+    // No rollback: the refusal does not undo a1, and it does not stop a3.
+    expect(written).toEqual(['a1', 'a2', 'a3'])
+    expect(results).toEqual([
+      { id: 'a1', name: '助手一' },
+      { id: 'a2', name: '助手二', error: 'Unknown permission preset' },
+      { id: 'a3', name: '助手三' },
+    ])
+  })
+
+  it('names a non-Error refusal instead of dropping it', async () => {
+    const results = await applyGroupBatch(members.slice(0, 1), { reasoningEffort: 'high' }, async () => {
+      throw 'MODEL_REFERENCE_INVALID'
+    })
+
+    expect(results).toEqual([{ id: 'a1', name: '助手一', error: 'MODEL_REFERENCE_INVALID' }])
+  })
+
+  it('writes nothing for an empty group', async () => {
+    const write = vi.fn()
+    expect(await applyGroupBatch([], { reasoningEffort: 'high' }, write)).toEqual([])
+    expect(write).not.toHaveBeenCalled()
+  })
+})
+
+describe('group batch settings source contract', () => {
+  const source = readFileSync(new URL('../src/client/sidebar-group-ui.tsx', import.meta.url), 'utf8')
+  const moduleCss = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+  const dialog = source.slice(
+    source.indexOf('function GroupBatchDialog'),
+    source.indexOf('/** Renaming keeps the one-field dialog'),
+  )
+  const batchRules = [...moduleCss.matchAll(/\.groupBatch[\w]*(?::hover)?\s*\{[^}]*\}/g)]
+    .map(match => match[0])
+
+  it('offers 批量设置… in the group header menu', () => {
+    expect(sidebarGroupMenuItems(['甲组', '乙组'], '甲组').map(entry => entry.id)).toContain('batch')
+    expect(source).toContain("label: '批量设置…'")
+  })
+
+  it('opens one native modal titled after the group', () => {
+    const markup = renderToStaticMarkup(createElement(SidebarGroupDialogs, {
+      dialog: { kind: 'batch', group: '甲组' },
+      groups: ['甲组'],
+      onClose: () => {},
+      onListChanged: () => {},
+      onChanged: () => {},
+    }))
+
+    expect(markup).toContain('role="dialog"')
+    expect(markup).toContain('批量设置「甲组」')
+    // The one thing the dialog promises before any write.
+    expect(markup).toContain('不会回滚')
+  })
+
+  it('reads membership from a fresh list instead of the rendered section', () => {
+    expect(dialog).toContain("callAgentTeam('assistant.instance.list'")
+    expect(dialog).toContain('groupBatchMembers(')
+    // A search-filtered partition would silently shrink the batch.
+    expect(dialog).not.toContain('partition.')
+  })
+
+  it('offers the three pickers through the shared select, and writes one by one', () => {
+    expect(dialog).toContain('ariaLabel="模型"')
+    expect(dialog).toContain('ariaLabel="思考模式"')
+    expect(dialog).toContain('ariaLabel="权限"')
+    expect(dialog.match(/<SelectControl/g) ?? []).toHaveLength(3)
+    expect(dialog).toContain('applyGroupBatch(members, patch')
+    expect(dialog).toContain("callAgentTeam('assistant.instance.update', { id, value })")
+    // The batch is a settings write only; a group label would move the rows.
+    expect(dialog).not.toContain('value: { group')
+  })
+
+  it('shows one row per assistant with its own outcome, and a clear empty state', () => {
+    expect(dialog).toContain('data-dsh-group-batch-row={member.id}')
+    expect(dialog).toContain('data-dsh-group-batch-failed')
+    expect(dialog).toContain('已更新')
+    expect(dialog).toContain('个被拒绝')
+    expect(dialog).toContain('还没有助手')
+    expect(dialog).toContain('data-dsh-group-batch-empty')
+  })
+
+  it('uses the native modal/button and no page-level layer', () => {
+    expect(dialog).toContain('<AnimatedModal')
+    expect(dialog).toContain('<Button')
+    expect(dialog).not.toContain('createPortal')
+    expect(dialog).not.toContain('position: fixed')
+    expect(dialog).not.toContain('zIndex')
+    expect(source).not.toContain('createPortal')
+  })
+
+  it('styles the dialog with semantic tokens and no positioning of its own', () => {
+    expect(batchRules.length).toBeGreaterThan(6)
+    for (const rule of batchRules) {
+      expect(rule).not.toContain('position:')
+      expect(rule).not.toContain('z-index')
+      expect(rule).not.toContain('!important')
+    }
+    const joined = batchRules.join('\n')
+    expect(joined).not.toMatch(/#[0-9a-f]{3,8}/i)
+    expect(joined).not.toMatch(/\brgb\(/)
+    expect(joined).toContain('var(--dsw-alias-label-primary)')
+    expect(joined).toContain('var(--dsw-alias-state-success-primary)')
+    expect(joined).toContain('var(--dsw-alias-state-error-primary)')
   })
 })

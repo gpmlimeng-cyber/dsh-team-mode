@@ -293,6 +293,100 @@ export function insertGroupOrder(
   return rest
 }
 
+/** One assistant a group batch write targets, as the result list shows it. */
+export interface GroupBatchMember {
+  id: string
+  name: string
+}
+
+/** What one batch write did to one assistant; no `error` means it landed. */
+export interface GroupBatchResult extends GroupBatchMember {
+  error?: string
+}
+
+/**
+ * The rows one batch write may touch: only assistants carrying this group's
+ * label, archived rows excluded exactly like the sidebar excludes them.
+ *
+ * There is deliberately no query input. The sidebar's sections are built from a
+ * search-filtered list, so reading membership from a rendered section would let
+ * a typed query silently shrink the batch; the dialog reads the full list.
+ */
+export function groupBatchMembers<T>(
+  group: string,
+  items: readonly T[],
+  project: (item: T) => { id: string; name: string; group?: string; status: string },
+): GroupBatchMember[] {
+  const members: GroupBatchMember[] = []
+  for (const item of items) {
+    const row = project(item)
+    if (row.group !== group || row.status === 'archived') continue
+    members.push({ id: row.id, name: row.name })
+  }
+  return members
+}
+
+/** The engine fields one apply writes; an absent field keeps its stored value. */
+export interface GroupBatchPatch {
+  provider?: string
+  model?: string
+  reasoningEffort?: string
+  permissionPresetId?: string
+}
+
+/** What the three pickers chose; an untouched picker stays absent. */
+export interface GroupBatchDraft {
+  /** A picked model; the pair is one field because the Host refuses a lone half. */
+  model?: { provider: string; model: string }
+  /** A picked thinking level; `''` means the model's own default. */
+  reasoningEffort?: string
+  /** A picked permission preset. */
+  permissionPresetId?: string
+}
+
+/**
+ * The patch one apply sends, or undefined when nothing was picked. The model
+ * pair travels together and a chosen level travels with it, so one assistant is
+ * always one atomic write instead of two that could half-land.
+ */
+export function groupBatchPatch(draft: GroupBatchDraft): GroupBatchPatch | undefined {
+  const patch: GroupBatchPatch = {}
+  if (draft.model !== undefined) {
+    patch.provider = draft.model.provider
+    patch.model = draft.model.model
+  }
+  if (draft.reasoningEffort !== undefined) patch.reasoningEffort = draft.reasoningEffort
+  if (draft.permissionPresetId !== undefined) patch.permissionPresetId = draft.permissionPresetId
+  return Object.keys(patch).length === 0 ? undefined : patch
+}
+
+/**
+ * Write one patch to every member, one assistant at a time, and report each
+ * outcome in member order. A refusal is recorded and the loop continues: the
+ * batch has no rollback, so an already-updated assistant stays updated while a
+ * refused one keeps its own values and shows the Host's reason.
+ */
+export async function applyGroupBatch(
+  members: readonly GroupBatchMember[],
+  patch: GroupBatchPatch,
+  write: (id: string, patch: GroupBatchPatch) => Promise<unknown>,
+): Promise<GroupBatchResult[]> {
+  const results: GroupBatchResult[] = []
+  for (const member of members) {
+    try {
+      await write(member.id, patch)
+      results.push({ id: member.id, name: member.name })
+    } catch (cause) {
+      results.push({
+        id: member.id,
+        name: member.name,
+        error: cause instanceof Error ? cause.message : String(cause),
+      })
+    }
+  }
+  return results
+}
+
 export interface SidebarGroups {
   /** Ordered labels, exactly as the Host returned them. */
   groups: string[]

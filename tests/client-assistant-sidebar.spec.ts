@@ -212,4 +212,15 @@ describe('assistant sidebar source contract', () => {
     // The coordinator is still not repeated in the list.
     expect(source).toMatch(/filter\(instance => instance\.id !== coordinatorId\)/)
   })
+
+  it('opens the native group batch dialog from both group ⋯ menus', () => {
+    // The menu row is defined once in the shared dialog module; each sidebar
+    // only has to dispatch it, and both do.
+    expect(source).toContain("setGroupDialog({ kind: 'batch', group })")
+    const teamSidebar = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
+    expect(teamSidebar).toContain("openGroupDialog({ kind: 'batch', group })")
+    // Both sections reach the dialog through the one shared component.
+    expect(source).toContain('<SidebarGroupDialogs')
+    expect(teamSidebar).toContain('<SidebarGroupDialogs')
+  })
 })

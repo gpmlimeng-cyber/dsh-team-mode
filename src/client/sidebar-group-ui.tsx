@@ -11,6 +11,7 @@ import {
   IconEllipsisOutlineRegular,
   IconListPenOutlineRegular,
   IconPlusOutlineRegular,
+  IconSlidersTwoOutlineRegular,
   IconTrashOutlineRegular,
   IconWarningOutlineRegular,
   Menu,
@@ -19,12 +20,26 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
 import { assistantAvatarSource, assistantInstanceName } from './assistant-instances.js'
+import { PERMISSION_LABELS } from './labels.js'
 import { MemberAvatar } from './member-avatar.js'
+import {
+  modelControlEffortRow,
+  modelControlOptions,
+  modelControlPick,
+  modelControlReasoning,
+  type ModelControlModel,
+} from './model-control.js'
+import { useModelCapabilities } from './model-reasoning.js'
+import { SelectControl } from './select-control.js'
+import type { SelectControlOption } from './select-control.js'
 import { AnimatedModal } from './shared.js'
 import {
   SIDEBAR_GROUP_BRIEF_MAX_CHARS,
   SIDEBAR_GROUP_MAX_CHARS,
   UNGROUPED_PARTITION_ID,
+  applyGroupBatch,
+  groupBatchMembers,
+  groupBatchPatch,
   groupCreateRows,
   groupCreateSelection,
   groupMembershipCandidates,
@@ -35,13 +50,19 @@ import {
   sidebarGroupBriefUsage,
   sidebarGroupNameError,
   toggleGroupCreateSelection,
+  type GroupBatchMember,
+  type GroupBatchResult,
   type GroupCreateRow,
   type SidebarDropHalf,
   type SidebarDropOverKind,
   type SidebarGroupCandidate,
 } from './sidebar-groups.js'
 import css from './AgentTeam.module.css'
-import type { AssistantInstanceView, TeamView } from '../transport/contracts.js'
+import type {
+  AssistantInstanceView,
+  CatalogView,
+  TeamView,
+} from '../transport/contracts.js'
 
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
@@ -395,6 +416,7 @@ export function SidebarGroupCreateRow({ onCreate }: { onCreate: () => void }): J
 export type SidebarGroupDialog =
   | { kind: 'create' }
   | { kind: 'brief'; name: string }
+  | { kind: 'batch'; group: string }
   | { kind: 'rename'; from: string }
   | { kind: 'delete'; name: string }
   | { kind: 'members'; group: string }
@@ -435,6 +457,15 @@ export function SidebarGroupDialogs({
   if (dialog.kind === 'brief') {
     return <GroupBriefDialog name={dialog.name} onClose={onClose} />
   }
+  if (dialog.kind === 'batch') {
+    return (
+      <GroupBatchDialog
+        group={dialog.group}
+        onClose={onClose}
+        onChanged={onChanged}
+      />
+    )
+  }
   if (dialog.kind === 'rename') {
     return (
       <GroupNameDialog
@@ -474,7 +505,7 @@ export function SidebarGroupDialogs({
   )
 }
 
-/** Header menu of one group: its brief, rename, delete, and the two order moves. */
+/** Header menu of one group: its brief, the batch settings, rename, delete, and the two order moves. */
 export function sidebarGroupMenuItems(
   groups: readonly string[],
   group: string,
@@ -482,6 +513,7 @@ export function sidebarGroupMenuItems(
   const index = groups.indexOf(group)
   return [
     { id: 'brief', label: '编辑分组简报', icon: <IconListPenOutlineRegular size={14} /> },
+    { id: 'batch', label: '批量设置…', icon: <IconSlidersTwoOutlineRegular size={14} /> },
     { id: 'rename', label: '重命名', icon: <IconEditOutlineRegular size={14} /> },
     { id: 'delete', label: '删除分组', icon: <IconTrashOutlineRegular size={14} />, danger: true },
     { type: 'separator', id: 'order-separator' },
@@ -634,6 +666,288 @@ function GroupBriefDialog({
             {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
           </div>
         )}
+    </AnimatedModal>
+  )
+}
+
+/** A picker row: one label over the shared control, with an optional hint. */
+function GroupBatchField({
+  label,
+  hint,
+  children,
+}: {
+  label: string
+  hint?: string | undefined
+  children: ReactNode
+}): JSX.Element {
+  return (
+    <div className={css.groupBatchField}>
+      <span className={css.groupBatchLabel}>{label}</span>
+      {children}
+      {hint !== undefined && hint !== '' && <span className={css.groupBatchHint}>{hint}</span>}
+    </div>
+  )
+}
+
+/**
+ * 批量设置: the group's assistants, three pickers, and one row per assistant
+ * saying what happened. Membership comes from a fresh `assistant.instance.list`,
+ * never from the rendered section — a typed sidebar search hides rows, and a
+ * hidden row must not silently drop out of the batch. Every assistant is written
+ * on its own, so a refusal keeps its reason and the writes that already landed
+ * stay landed: there is no rollback.
+ */
+function GroupBatchDialog({
+  group,
+  onClose,
+  onChanged,
+}: {
+  group: string
+  onClose: () => void
+  onChanged: () => void
+}): JSX.Element {
+  const [catalog, setCatalog] = useState<CatalogView>()
+  const [members, setMembers] = useState<GroupBatchMember[]>([])
+  const [loaded, setLoaded] = useState(false)
+  const [modelRow, setModelRow] = useState('')
+  const [thinkingRow, setThinkingRow] = useState('')
+  const [permission, setPermission] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [results, setResults] = useState<GroupBatchResult[]>()
+  const [error, setError] = useState<string>()
+
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([
+      callAgentTeam('catalog.get'),
+      callAgentTeam('assistant.instance.list'),
+    ]).then(([nextCatalog, page]) => {
+      if (cancelled) return
+      setCatalog(nextCatalog)
+      setMembers(groupBatchMembers(group, page.items, item => ({
+        id: item.id,
+        name: assistantInstanceName(item),
+        ...(item.group === undefined ? {} : { group: item.group }),
+        status: item.status,
+      })))
+    }).catch(cause => {
+      if (!cancelled) setError(messageOf(cause))
+    }).finally(() => {
+      if (!cancelled) setLoaded(true)
+    })
+    return () => { cancelled = true }
+  }, [group])
+
+  const modelPick = modelRow === '' ? undefined : modelControlPick(modelRow)
+  const pickedProvider = modelPick?.provider ?? ''
+  const pickedModel = modelPick?.model ?? ''
+  // The level list is the picked model's own, so it is read from that model only.
+  const capabilities = useModelCapabilities(pickedProvider, pickedModel)
+  const reasoning = modelControlReasoning(capabilities.value)
+
+  const modelOptions: SelectControlOption[] = useMemo(() => {
+    const rows: ModelControlModel[] = (catalog?.providers ?? []).flatMap(provider => (
+      (catalog?.models[provider.id] ?? []).map(model => ({
+        providerId: provider.id,
+        providerName: provider.name,
+        modelId: model.id,
+        label: model.name,
+        ...(model.description === undefined ? {} : { description: model.description }),
+      }))
+    ))
+    return [{ value: '', label: '保持不变' }, ...modelControlOptions(rows, undefined)]
+  }, [catalog])
+
+  const thinkingOptions: SelectControlOption[] = useMemo(() => [
+    { value: '', label: '保持不变' },
+    ...(reasoning === undefined
+      ? []
+      : [
+          { value: modelControlEffortRow(''), label: reasoning.defaultLabel },
+          ...reasoning.levels.map(level => ({
+            value: modelControlEffortRow(level.id),
+            label: level.label,
+          })),
+        ]),
+  ], [reasoning])
+
+  const permissionOptions: SelectControlOption[] = useMemo(() => [
+    { value: '', label: '保持不变' },
+    ...(catalog?.permissionPresets ?? []).map(option => ({
+      value: option.value,
+      label: PERMISSION_LABELS[option.value] ?? option.name,
+    })),
+  ], [catalog])
+
+  const thinkingPick = thinkingRow === '' ? undefined : modelControlPick(thinkingRow)
+  const patch = groupBatchPatch({
+    ...(pickedProvider === '' || pickedModel === ''
+      ? {}
+      : { model: { provider: pickedProvider, model: pickedModel } }),
+    ...(thinkingPick?.reasoningEffort === undefined
+      ? {}
+      : { reasoningEffort: thinkingPick.reasoningEffort }),
+    ...(permission === '' ? {} : { permissionPresetId: permission }),
+  })
+  const done = results !== undefined
+  const locked = busy || done
+  const failures = results?.filter(result => result.error !== undefined) ?? []
+  const failureOf = new Map(failures.map(failure => [failure.id, failure.error ?? '']))
+  const updated = (results?.length ?? 0) - failures.length
+
+  const apply = async (): Promise<void> => {
+    if (locked || patch === undefined || members.length === 0) return
+    setBusy(true)
+    setError(undefined)
+    setResults(undefined)
+    const next = await applyGroupBatch(members, patch, (id, value) => (
+      callAgentTeam('assistant.instance.update', { id, value })
+    ))
+    setResults(next)
+    setBusy(false)
+    onChanged()
+  }
+
+  return (
+    <AnimatedModal
+      open
+      onClose={() => { if (!busy) onClose() }}
+      title={`批量设置「${group}」`}
+      description="只改这个分组里的助手。模型、思考模式和权限逐台写入；被拒绝的那台保持原样，已经写入的不会回滚。"
+      closeLabel="关闭"
+      className={css.sidebarGroupDialog ?? ''}
+      contentClassName={css.sidebarGroupDialogContent ?? ''}
+      footer={done || (loaded && members.length === 0)
+        ? (
+          <Button variant="primary" type="button" onClick={onClose}>
+            {done ? '完成' : '关闭'}
+          </Button>
+        )
+        : (
+          <>
+            <Button variant="outline" type="button" disabled={busy} onClick={onClose}>取消</Button>
+            <Button
+              variant="primary"
+              type="button"
+              disabled={locked || patch === undefined || members.length === 0}
+              onClick={() => { void apply() }}
+            >
+              {busy ? '应用中…' : `应用到 ${members.length} 个助手`}
+            </Button>
+          </>
+        )}
+    >
+      {!loaded
+        ? <div className={css.dialogEmpty}>正在读取分组里的助手…</div>
+        : members.length === 0
+          ? (
+            <div className={css.dialogEmpty} data-dsh-group-batch-empty>
+              「{group}」里还没有助手。先用分组标题旁的 + 把助手移进来，再批量设置。
+            </div>
+          )
+          : (
+            <div className={css.groupBatchForm} data-dsh-group-batch>
+              <div className={css.groupBatchFields}>
+                <GroupBatchField
+                  label="模型"
+                  hint="模型和它的提供方一起写入，避免出现只有一半的模型引用。"
+                >
+                  <SelectControl
+                    ariaLabel="模型"
+                    value={modelRow}
+                    options={modelOptions}
+                    disabled={locked}
+                    onChange={next => {
+                      setModelRow(next)
+                      // The level rows belong to the model that was picked, so a
+                      // new model clears the level instead of carrying it over.
+                      setThinkingRow('')
+                    }}
+                  />
+                </GroupBatchField>
+                <GroupBatchField
+                  label="思考模式"
+                  hint={pickedModel === ''
+                    ? '先选择模型：思考档位跟着模型走，由模型自己列出。'
+                    : capabilities.loading
+                      ? '正在读取这个模型的思考档位…'
+                      : capabilities.error === undefined
+                        ? reasoning === undefined
+                          ? '这个模型没有可选的思考档位。'
+                          : undefined
+                        : `读取思考档位失败：${capabilities.error}`}
+                >
+                  <SelectControl
+                    ariaLabel="思考模式"
+                    value={thinkingRow}
+                    options={thinkingOptions}
+                    disabled={locked || pickedModel === ''}
+                    onChange={setThinkingRow}
+                  />
+                </GroupBatchField>
+                <GroupBatchField
+                  label="权限"
+                  hint="权限预设必须存在于当前目录；不存在的会被 Host 拒绝。"
+                >
+                  <SelectControl
+                    ariaLabel="权限"
+                    value={permission}
+                    options={permissionOptions}
+                    disabled={locked}
+                    onChange={setPermission}
+                  />
+                </GroupBatchField>
+                {patch === undefined && (
+                  <p className={css.groupBatchHint}>至少选择一项要修改的设置。</p>
+                )}
+              </div>
+              <section className={css.sidebarGroupSegment}>
+                <h4 className={css.sidebarGroupSegmentTitle}>
+                  组内助手（{members.length}）
+                  {done && (
+                    <span className={css.groupBatchSummary} role="status">
+                      已更新 {updated} 个，{failures.length} 个被拒绝
+                    </span>
+                  )}
+                </h4>
+                <div className={css.groupBatchList}>
+                  {members.map(member => {
+                    const failure = failureOf.get(member.id)
+                    return (
+                      <div
+                        key={member.id}
+                        className={css.groupBatchRow}
+                        data-dsh-group-batch-row={member.id}
+                      >
+                        <span className={css.groupBatchName}>{member.name}</span>
+                        {done && (failure === undefined
+                          ? <span className={css.groupBatchOk}>已更新</span>
+                          : (
+                            <span
+                              className={css.groupBatchFailed}
+                              title={failure}
+                              data-dsh-group-batch-failed
+                            >
+                              {failure}
+                            </span>
+                          ))}
+                      </div>
+                    )
+                  })}
+                </div>
+                {failures.length > 0 && (
+                  <p className={css.groupBatchHint}>
+                    被拒绝的助手保持原来的设置；它们各自的拒绝原因就在上面那一行。
+                  </p>
+                )}
+              </section>
+            </div>
+          )}
+      {error !== undefined && (
+        <div className={css.inlineError} role="alert">
+          <IconWarningOutlineRegular size={12} /> {error}
+        </div>
+      )}
     </AnimatedModal>
   )
 }

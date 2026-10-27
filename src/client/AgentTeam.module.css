@@ -12207,6 +12207,101 @@ textarea.sidebarGroupBriefInput {
   white-space: nowrap;
 }
 
+/* ── Group batch settings ─────────────────────────────────────────────────
+   Three shared pickers over the group's roster and one outcome line per
+   assistant. Spacing and colour only: the dialog owns placement, so nothing
+   here positions itself or raises its own stacking order. */
+.groupBatchForm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.groupBatchFields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.groupBatchField {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.groupBatchLabel {
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.groupBatchHint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.groupBatchSummary {
+  margin-left: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.groupBatchList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.groupBatchRow {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-height: 26px;
+  padding: 2px 6px;
+  border-radius: var(--dsw-radius-sm);
+}
+
+.groupBatchRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.groupBatchName {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.groupBatchOk {
+  flex: none;
+  color: var(--dsw-alias-state-success-primary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* One long Host message stays on its row instead of pushing the name away. */
+.groupBatchFailed {
+  min-width: 0;
+  flex: 0 1 62%;
+  overflow: hidden;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 16px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── Sidebar drag & drop ──────────────────────────────────────────────────
    The same affordances the native list draws: the source row dims, the header
    under the pointer highlights, and a dragged group header shows a 1px
