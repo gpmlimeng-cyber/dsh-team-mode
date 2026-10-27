@@ -4255,20 +4255,20 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 /* Sectioned create dialog, shaped after the reference product: a fixed
    header/footer around a left section nav and one independently scrolling
    content pane. Every section below maps to a real instance field. */
-/* Floating "start a chat with…" panel: search on top, rows under it. */
-.newChatPanel {
-  position: fixed;
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
+/* Floating "start a chat with…" picker: search on top, rows under it. The
+   native Menu owns the card material, the portal placement and the keyboard,
+   so this class carries only the picker's own metrics. */
+.newChatPicker {
+  width: 264px;
   max-height: min(420px, 70vh);
   padding: 6px;
+}
+
+.newChatBody {
+  display: flex;
+  flex-direction: column;
   gap: 4px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-bg-layer-1);
-  box-shadow: var(--dsw-alias-shadow-l2);
-  overflow: hidden;
+  min-height: 0;
 }
 
 .newChatSearch {
@@ -7316,20 +7316,22 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   outline-offset: 2px;
 }
 
-.teamMentionPopover {
-  position: fixed;
-  z-index: 60;
+/* The host Menu owns the card material, the portal placement (fixed, z 1100)
+   and the keyboard; this class only fixes the picker's width and height so it
+   never outgrows a 320px pane. */
+.teamMentionMenu {
+  width: 288px;
+  min-width: 12rem;
+  max-width: calc(100vw - 24px);
+  max-height: 15rem;
+  padding: 6px;
+}
+
+.teamMentionBody {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  min-width: 12rem;
-  max-height: 15rem;
-  padding: 6px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-bg-layer-1);
-  box-shadow: var(--dsw-shadow-l2, 0 6px 20px rgb(0 0 0 / 18%));
-  overflow-y: auto;
+  min-height: 0;
 }
 
 .teamMentionTitle {

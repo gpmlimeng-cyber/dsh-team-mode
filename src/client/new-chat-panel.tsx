@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { createPortal } from 'react-dom'
 import {
   IconChevronRightOutlineRegular,
   IconFolderOpenOutlineRegular,
   IconSearchOutlineRegular,
   IconUserOutlineRegular,
   IconUsersOutlineRegular,
+  Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import css from './AgentTeam.module.css'
 
@@ -23,12 +23,12 @@ export interface NewChatEntry {
   hint?: string
 }
 
-const PANEL_WIDTH = 264
-
 /**
- * The floating "start a chat with…" panel: search on top, then the create
- * actions, then every assistant. Mirrors MausBot's new-chat panel, including
- * its keyboard walk (↑/↓ move the cursor, Enter opens, Escape closes).
+ * The "start a chat with…" picker: search on top, then the create actions, then
+ * every assistant. The native Menu owns placement (portalled, tracking the
+ * shipped ＋ button) and the keyboard (Escape closes and returns focus, outside
+ * clicks close); the panel keeps the search field, its ↑/↓/Enter walk and every
+ * row exactly as before.
  */
 export function NewChatPanel({
   anchor,
@@ -47,7 +47,6 @@ export function NewChatPanel({
 }): JSX.Element | null {
   const [query, setQuery] = useState('')
   const [cursor, setCursor] = useState(0)
-  const rootRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   const rows = useMemo(() => {
@@ -71,29 +70,14 @@ export function NewChatPanel({
     inputRef.current?.focus()
   }, [])
 
+  // The native Menu cannot name an external trigger, so the shipped ＋ button
+  // gets the keyboard back when this panel unmounts (Escape and picks alike).
   useEffect(() => {
-    const onPointerDown = (event: PointerEvent): void => {
-      if (rootRef.current?.contains(event.target as Node) === true) return
-      onClose()
-    }
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.stopPropagation()
-        onClose()
-      }
-    }
-    document.addEventListener('pointerdown', onPointerDown, true)
-    document.addEventListener('keydown', onKeyDown, true)
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true)
-      document.removeEventListener('keydown', onKeyDown, true)
-    }
-  }, [onClose])
+    const trigger = anchor
+    return () => { trigger?.focus() }
+  }, [anchor])
 
   if (anchor === null || !anchor.isConnected) return null
-  const rect = anchor.getBoundingClientRect()
-  const left = Math.min(rect.left, window.innerWidth - PANEL_WIDTH - 8)
-  const top = rect.bottom + 6
 
   const run = (id: string): void => {
     if (id === 'new-assistant') { onClose(); onNewAssistant(); return }
@@ -103,87 +87,89 @@ export function NewChatPanel({
     onPick(id)
   }
 
-  return createPortal(
-    <div
-      ref={rootRef}
-      className={css.newChatPanel}
-      style={{ left, top, width: PANEL_WIDTH }}
-      role="dialog"
-      aria-label="新对话：选择助手"
+  return (
+    <Menu
+      open
+      portal
+      onClose={onClose}
+      getAnchorRect={() => (anchor.isConnected ? anchor.getBoundingClientRect() : null)}
+      anchor={<span />}
+      listClassName={css.newChatPicker}
     >
-      <div className={css.newChatSearch}>
-        <IconSearchOutlineRegular size={14} />
-        <input
-          ref={inputRef}
-          type="search"
-          value={query}
-          placeholder="跟谁聊？搜索助手"
-          aria-label="搜索助手"
-          onChange={(event) => { setQuery(event.target.value); setCursor(0) }}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowDown') {
-              event.preventDefault()
-              setCursor(current => (current + 1) % Math.max(rowCount, 1))
-            } else if (event.key === 'ArrowUp') {
-              event.preventDefault()
-              setCursor(current => (current - 1 + Math.max(rowCount, 1)) % Math.max(rowCount, 1))
-            } else if (event.key === 'Enter') {
-              event.preventDefault()
-              if (cursor < actions.length) {
-                const action = actions[cursor]
-                if (action !== undefined) run(action.id)
-                return
+      <div className={css.newChatBody} role="group" aria-label="新对话：选择助手">
+        <div className={css.newChatSearch}>
+          <IconSearchOutlineRegular size={14} />
+          <input
+            ref={inputRef}
+            type="search"
+            value={query}
+            placeholder="跟谁聊？搜索助手"
+            aria-label="搜索助手"
+            onChange={(event) => { setQuery(event.target.value); setCursor(0) }}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowDown') {
+                event.preventDefault()
+                setCursor(current => (current + 1) % Math.max(rowCount, 1))
+              } else if (event.key === 'ArrowUp') {
+                event.preventDefault()
+                setCursor(current => (current - 1 + Math.max(rowCount, 1)) % Math.max(rowCount, 1))
+              } else if (event.key === 'Enter') {
+                event.preventDefault()
+                if (cursor < actions.length) {
+                  const action = actions[cursor]
+                  if (action !== undefined) run(action.id)
+                  return
+                }
+                const picked = rows[cursor - actions.length]
+                if (picked !== undefined) run(picked.id)
               }
-              const picked = rows[cursor - actions.length]
-              if (picked !== undefined) run(picked.id)
-            }
-          }}
-        />
-      </div>
-      <div className={css.newChatList} role="listbox" aria-label="助手">
-        {actions.map((action, index) => (
-          <button
-            key={action.id}
-            type="button"
-            role="option"
-            aria-selected={cursor === index}
-            className={`${css.newChatRow} ${cursor === index ? css.newChatRowActive : ''}`}
-            onPointerEnter={() => { setCursor(index) }}
-            onClick={() => { run(action.id) }}
-          >
-            <span className={css.newChatIcon}>{action.icon}</span>
-            <span className={css.newChatRowText}>{action.label}</span>
-            <IconChevronRightOutlineRegular size={12} className={css.newChatRowCaret} />
-          </button>
-        ))}
-        {rows.length > 0 && <div className={css.newChatSeparator} role="presentation" />}
-        {rows.map((entry, index) => {
-          const rowIndex = actions.length + index
-          return (
+            }}
+          />
+        </div>
+        <div className={css.newChatList} role="listbox" aria-label="助手">
+          {actions.map((action, index) => (
             <button
-              key={entry.id}
+              key={action.id}
               type="button"
               role="option"
-              aria-selected={cursor === rowIndex}
-              className={`${css.newChatRow} ${cursor === rowIndex ? css.newChatRowActive : ''}`}
-              onPointerEnter={() => { setCursor(rowIndex) }}
-              onClick={() => { run(entry.id) }}
+              aria-selected={cursor === index}
+              className={`${css.newChatRow} ${cursor === index ? css.newChatRowActive : ''}`}
+              onPointerEnter={() => { setCursor(index) }}
+              onClick={() => { run(action.id) }}
             >
-              <span className={css.newChatRowAvatar}>{entry.portrait}</span>
-              <span className={css.newChatRowText}>
-                <span className={css.newChatRowName}>{entry.name}</span>
-                {entry.hint !== undefined && entry.hint !== ''
-                  ? <span className={css.newChatRowHint}>{entry.hint}</span>
-                  : null}
-              </span>
+              <span className={css.newChatIcon}>{action.icon}</span>
+              <span className={css.newChatRowText}>{action.label}</span>
+              <IconChevronRightOutlineRegular size={12} className={css.newChatRowCaret} />
             </button>
-          )
-        })}
-        {rows.length === 0 && query.trim() !== '' && (
-          <div className={css.newChatEmpty}>没有匹配的助手</div>
-        )}
+          ))}
+          {rows.length > 0 && <div className={css.newChatSeparator} role="presentation" />}
+          {rows.map((entry, index) => {
+            const rowIndex = actions.length + index
+            return (
+              <button
+                key={entry.id}
+                type="button"
+                role="option"
+                aria-selected={cursor === rowIndex}
+                className={`${css.newChatRow} ${cursor === rowIndex ? css.newChatRowActive : ''}`}
+                onPointerEnter={() => { setCursor(rowIndex) }}
+                onClick={() => { run(entry.id) }}
+              >
+                <span className={css.newChatRowAvatar}>{entry.portrait}</span>
+                <span className={css.newChatRowText}>
+                  <span className={css.newChatRowName}>{entry.name}</span>
+                  {entry.hint !== undefined && entry.hint !== ''
+                    ? <span className={css.newChatRowHint}>{entry.hint}</span>
+                    : null}
+                </span>
+              </button>
+            )
+          })}
+          {rows.length === 0 && query.trim() !== '' && (
+            <div className={css.newChatEmpty}>没有匹配的助手</div>
+          )}
+        </div>
       </div>
-    </div>,
-    document.body,
+    </Menu>
   )
 }

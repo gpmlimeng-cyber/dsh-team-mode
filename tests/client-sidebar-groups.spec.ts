@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it, vi } from 'vitest'
 import { SIDEBAR_GROUP_BRIEF_MAX_CHARS as HOST_BRIEF_MAX_CHARS } from '../src/domain/schemas.js'
 import {
   SIDEBAR_GROUP_BRIEF_MAX_CHARS,
@@ -16,6 +18,27 @@ import {
   sidebarPartitions,
   type SidebarGroupCandidate,
 } from '../src/client/sidebar-groups.js'
+
+// The picker imports the whole primitive set; this node test only needs the
+// native Menu's shape (anchor always rendered, content only while open).
+vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
+  const { createElement: h } = await import('react')
+  const api: Record<string, unknown> = {
+    Menu: (props: { anchor?: unknown; open?: boolean; children?: unknown }) =>
+      h('div', { role: 'menu' }, props.anchor as never, props.open === true ? props.children as never : null),
+  }
+  // Icons are irrelevant here; unknown names resolve to a null component. The
+  // module must never look thenable, or `await import()` never settles.
+  return new Proxy(api, {
+    get: (target, key) => {
+      if (typeof key !== 'string' || key === 'then' || key === '__esModule') return undefined
+      if (!(key in target)) target[key] = () => null
+      return target[key]
+    },
+  })
+})
+
+import { NewChatPanel } from '../src/client/new-chat-panel.js'
 
 interface Row {
   id: string
@@ -268,5 +291,87 @@ describe('group brief editor source contract', () => {
     expect(assistant).toContain("{ kind: 'brief', name: group }")
     expect(team).toContain('<SidebarGroupDialogs')
     expect(assistant).toContain('<SidebarGroupDialogs')
+  })
+})
+
+describe('native menu unification for the floating pickers', () => {
+  const panel = readFileSync(new URL('../src/client/new-chat-panel.tsx', import.meta.url), 'utf8')
+  const parallel = readFileSync(new URL('../src/client/team-parallel.tsx', import.meta.url), 'utf8')
+  const mention = parallel.slice(
+    parallel.indexOf('export function TeamMentionAction'),
+    parallel.indexOf('function initial('),
+  )
+  const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+  const pickerCss = css.slice(css.indexOf('.newChatPicker {'), css.indexOf('.newChatSearch {'))
+  const mentionCss = css.slice(css.indexOf('.teamMentionMenu {'), css.indexOf('.teamMentionTitle {'))
+
+  it('opens the new-chat picker as a portalled host Menu anchored to the ＋ button', () => {
+    expect(panel).toContain('<Menu')
+    expect(panel).toContain('portal')
+    expect(panel).toContain('getAnchorRect')
+    expect(panel).toContain('listClassName={css.newChatPicker}')
+    // The picker no longer builds its own body host or coordinates; only the
+    // host Menu's getAnchorRect hook reads the trigger rect.
+    expect(panel).not.toContain('createPortal')
+    expect(panel).not.toContain('document.body')
+    expect(panel).not.toContain('window.innerWidth')
+    expect(panel).not.toContain('document.addEventListener')
+  })
+
+  it('keeps the picker content and actions inside the native surface', () => {
+    const anchor = {
+      isConnected: true,
+      focus: () => undefined,
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0 }),
+    } as unknown as HTMLElement
+    const markup = renderToStaticMarkup(createElement(NewChatPanel, {
+      anchor,
+      entries: [{ id: 'chief', name: 'Chief', portrait: 'C', hint: '总协调' }],
+      onClose: () => undefined,
+      onNewAssistant: () => undefined,
+      onNewTeam: () => undefined,
+      onPick: () => undefined,
+    }))
+    expect(markup).toContain('role="menu"')
+    expect(markup).toContain('aria-label="新对话：选择助手"')
+    expect(markup).toContain('placeholder="跟谁聊？搜索助手"')
+    expect(markup).toContain('新建助手')
+    expect(markup).toContain('新建团队')
+    expect(markup).toContain('创建分组')
+    expect(markup).toContain('Chief')
+    expect(markup).toContain('总协调')
+    // One surface, not a second bespoke dialog layer.
+    expect(markup).not.toContain('role="dialog"')
+    expect(panel).toContain('onPick(id)')
+    expect(panel).toContain('onNewAssistant()')
+  })
+
+  it('opens the @ picker as a portalled host Menu anchored to the @ button', () => {
+    expect(mention).toContain('<Menu')
+    expect(mention).toContain('portal')
+    expect(mention).toContain('autoFocus')
+    expect(mention).toContain('side="top"')
+    expect(mention).toContain('listClassName={css.teamMentionMenu}')
+    expect(mention).toContain('role="menuitem"')
+    // Host Menu owns placement, dismissal and the keyboard walk now.
+    expect(mention).not.toContain('createPortal')
+    expect(mention).not.toContain('document.body')
+    expect(mention).not.toContain('getBoundingClientRect')
+    expect(mention).not.toContain("addEventListener('scroll'")
+    expect(mention).not.toContain('document.addEventListener')
+  })
+
+  it('leaves no fixed or globally layered picker styles behind', () => {
+    expect(pickerCss.length).toBeGreaterThan(0)
+    expect(mentionCss.length).toBeGreaterThan(0)
+    for (const block of [pickerCss, mentionCss]) {
+      expect(block).not.toContain('position: fixed')
+      expect(block).not.toContain('z-index')
+      expect(block).not.toContain('background:')
+      expect(block).not.toContain('box-shadow:')
+    }
+    // The bespoke card classes are gone; the host Menu paints the surface.
+    expect(css).not.toContain('.newChatPanel {')
+    expect(css).not.toContain('.teamMentionPopover {')
   })
 })

@@ -1,6 +1,5 @@
 import {
   createContext,
-  useCallback,
   useContext,
   useEffect,
   useMemo,
@@ -8,12 +7,11 @@ import {
   useState,
   type ComponentType,
   type CSSProperties,
-  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
 import { MemberAvatar } from './member-avatar.js'
-import { IconAgentPresetOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconAgentPresetOutlineRegular, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { TeamView } from '../transport/contracts.js'
 import { useAgentTeamData } from './components.js'
 import { callAgentTeam } from './api.js'
@@ -190,61 +188,13 @@ export function TeamMentionAction(props: any): JSX.Element | null {
     : undefined) as ComposerInputState | undefined
   const [open, setOpen] = useState(false)
   const [notice, setNotice] = useState<string>()
-  const [placement, setPlacement] = useState<{ left: number; bottom: number; width: number }>()
-  const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const listRef = useRef<HTMLUListElement>(null)
-  const popoverRef = useRef<HTMLDivElement>(null)
-  /**
-   * The pane clips its own conversation box, so the picker is portaled to the
-   * body and measured from the `@` button: it stays visible on a 320px phone
-   * pane instead of being cut off by the pane overflow.
-   */
-  const place = useCallback((): void => {
-    const trigger = triggerRef.current
-    if (trigger === null || typeof window === 'undefined') return
-    const rect = trigger.getBoundingClientRect()
-    const width = Math.min(288, Math.max(160, window.innerWidth - 32))
-    const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8))
-    setPlacement({ left, bottom: window.innerHeight - rect.top + 8, width })
-  }, [])
   const candidates = useMemo<MentionCandidate[]>(
     () => (scope === undefined ? [] : teamMentionCandidates(scope.team, scope.selfSlotId)),
     [scope],
   )
 
-  useEffect(() => {
-    if (!open) {
-      setPlacement(undefined)
-      return
-    }
-    place()
-    // A scrolled or resized composer would leave a fixed popover behind: close
-    // instead of tracking, which also keeps the picker off a moving send button.
-    const close = (): void => { setOpen(false) }
-    window.addEventListener('resize', close)
-    window.addEventListener('scroll', close, true)
-    return () => {
-      window.removeEventListener('resize', close)
-      window.removeEventListener('scroll', close, true)
-    }
-  }, [open, place])
-
-  useEffect(() => {
-    if (!open || placement === undefined) return
-    listRef.current?.querySelector<HTMLButtonElement>('button[role="option"]')?.focus()
-    const onPointerDown = (event: PointerEvent): void => {
-      const target = event.target
-      if (!(target instanceof Node)) return
-      if (rootRef.current?.contains(target) === true) return
-      if (popoverRef.current?.contains(target) === true) return
-      setOpen(false)
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    return () => { document.removeEventListener('pointerdown', onPointerDown) }
-  }, [open, placement])
-
-  const choose = useCallback((mention: string): void => {
+  const choose = (mention: string): void => {
     if (inputActions === undefined) return
     const draft = typeof input?.draft === 'string' ? input.draft : ''
     if (input?.phase !== undefined && input.phase !== 'plain') {
@@ -272,101 +222,74 @@ export function TeamMentionAction(props: any): JSX.Element | null {
     setNotice(undefined)
     setOpen(false)
     triggerRef.current?.focus()
-  }, [input, inputActions])
-
-  function onListKeyDown(event: ReactKeyboardEvent<HTMLDivElement>): void {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      setOpen(false)
-      triggerRef.current?.focus()
-      return
-    }
-    if (event.key === 'Tab') {
-      setOpen(false)
-      return
-    }
-    const options = Array.from(
-      listRef.current?.querySelectorAll<HTMLButtonElement>('button[role="option"]') ?? [],
-    )
-    if (options.length === 0) return
-    const current = document.activeElement
-    const index = current instanceof HTMLButtonElement ? options.indexOf(current) : -1
-    const step = event.key === 'ArrowDown' ? 1 : event.key === 'ArrowUp' ? -1 : 0
-    if (step !== 0) {
-      event.preventDefault()
-      options[(index + step + options.length) % options.length]?.focus()
-      return
-    }
-    if (event.key === 'Home' || event.key === 'End') {
-      event.preventDefault()
-      const target = event.key === 'Home' ? options[0] : options[options.length - 1]
-      target?.focus()
-    }
   }
 
   // Outside a 群聊 pane, or with nothing to mention, the entry stays absent.
   if (scope === undefined || inputActions === undefined || candidates.length === 0) return null
 
   return (
-    <div className={css.teamMentionRoot} ref={rootRef}>
-      <button
-        ref={triggerRef}
-        type="button"
-        className={css.teamMentionTrigger}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        aria-label={TEAM_MENTION_LABEL}
-        title={TEAM_MENTION_HINT}
-        onClick={() => { setOpen(value => !value) }}
-        onKeyDown={event => {
-          if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-          event.preventDefault()
-          setOpen(true)
-        }}
-      >
-        @
-      </button>
-      {open && placement !== undefined && typeof document !== 'undefined' && createPortal(
-        <div
-          ref={popoverRef}
-          className={css.teamMentionPopover}
-          style={{ left: placement.left, bottom: placement.bottom, width: placement.width }}
-          role="presentation"
-          onKeyDown={onListKeyDown}
+    <Menu
+      open={open}
+      autoFocus
+      portal
+      side="top"
+      align="start"
+      className={css.teamMentionRoot}
+      listClassName={css.teamMentionMenu}
+      onClose={() => { setOpen(false) }}
+      anchor={(
+        <button
+          ref={triggerRef}
+          type="button"
+          className={css.teamMentionTrigger}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          aria-label={TEAM_MENTION_LABEL}
+          title={TEAM_MENTION_HINT}
+          onClick={() => { setOpen(value => !value) }}
+          onKeyDown={event => {
+            // Open only while closed; once the native Menu owns the keyboard it
+            // walks the rows itself.
+            if (open) return
+            if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+            event.preventDefault()
+            setOpen(true)
+          }}
         >
-          <p className={css.teamMentionTitle}>{TEAM_MENTION_LABEL}</p>
-          <ul className={css.teamMentionList} role="listbox" aria-label={TEAM_MENTION_LABEL} ref={listRef}>
-            {candidates.map(candidate => (
-              <li key={candidate.id} role="presentation">
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={false}
-                  className={css.teamMentionOption}
-                  onClick={() => { choose(candidate.mention) }}
-                >
-                  <MemberAvatar
-                    name={candidate.name}
-                    avatar={candidate.avatar}
-                    size={18}
-                  />
-                  <span className={css.teamMentionName}>{candidate.name}</span>
-                  {candidate.role === 'leader' && (
-                    <span className={css.teamMentionLeader}>Leader</span>
-                  )}
-                  <span className={css.teamMentionToken}>{candidate.mention.trim()}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
-          <p className={css.teamMentionHint}>{TEAM_MENTION_HINT}</p>
-          {notice !== undefined && (
-            <p className={css.teamMentionNotice} role="status">{notice}</p>
-          )}
-        </div>,
-        document.body,
+          @
+        </button>
       )}
-    </div>
+    >
+      <div className={css.teamMentionBody} role="group" aria-label={TEAM_MENTION_LABEL}>
+        <p className={css.teamMentionTitle} role="presentation">{TEAM_MENTION_LABEL}</p>
+        <div className={css.teamMentionList} role="presentation">
+          {candidates.map(candidate => (
+            <button
+              key={candidate.id}
+              type="button"
+              role="menuitem"
+              className={css.teamMentionOption}
+              onClick={() => { choose(candidate.mention) }}
+            >
+              <MemberAvatar
+                name={candidate.name}
+                avatar={candidate.avatar}
+                size={18}
+              />
+              <span className={css.teamMentionName}>{candidate.name}</span>
+              {candidate.role === 'leader' && (
+                <span className={css.teamMentionLeader}>Leader</span>
+              )}
+              <span className={css.teamMentionToken}>{candidate.mention.trim()}</span>
+            </button>
+          ))}
+        </div>
+        <p className={css.teamMentionHint} role="presentation">{TEAM_MENTION_HINT}</p>
+        {notice !== undefined && (
+          <p className={css.teamMentionNotice} role="status">{notice}</p>
+        )}
+      </div>
+    </Menu>
   )
 }
 

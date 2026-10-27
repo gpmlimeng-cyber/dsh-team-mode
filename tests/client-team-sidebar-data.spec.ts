@@ -12,7 +12,9 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
     Button: (props: Record<string, unknown>) => h('button', null, props.children as never),
     Input: (props: Record<string, unknown>) => h('input', { placeholder: props.placeholder as string }),
     Tooltip: passthrough,
-    Menu: () => null,
+    // The native Menu always renders its anchor; the list only exists while open.
+    Menu: (props: { anchor?: unknown; open?: boolean; children?: unknown }) =>
+      (props.open === true ? h('div', { role: 'menu' }, props.children as never) : props.anchor ?? null),
     Tag: passthrough,
   }
   // Icons are irrelevant here; unknown names resolve to a null component. The
@@ -1242,13 +1244,15 @@ describe('@member affordance is an additive composer entry', () => {
       })))
   }
 
-  it('renders one @ button that opens a listbox inside a group-chat pane', () => {
+  it('renders one @ button that opens the native menu inside a group-chat pane', () => {
     const markup = renderMention({ team, selfSlotId: 'leader' })
     expect(markup).toContain('aria-label="提及成员"')
-    expect(markup).toContain('aria-haspopup="listbox"')
+    // The host Menu owns the popover: the trigger advertises a menu, not a
+    // bespoke listbox, and stays closed until the composer asks for it.
+    expect(markup).toContain('aria-haspopup="menu"')
     expect(markup).toContain('aria-expanded="false"')
     expect(markup).toContain('>@<')
-    // Closed by default: the native composer keeps its own surface.
+    expect(markup).not.toContain('role="menu"')
     expect(markup).not.toContain('role="listbox"')
   })
 
