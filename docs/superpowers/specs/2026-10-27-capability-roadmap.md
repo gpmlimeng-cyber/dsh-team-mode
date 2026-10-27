@@ -24,7 +24,9 @@
 
 ### P1 · 能力装配（C）——唯一一条"用户会踩坑"的缺口
 
-**现状**：模板（assistant template）可以配 `skillAllowlist` / `mcpServers`；但 `assistant.instance.create` 直接建实例时把这两个**写死为 `[]`**，而 `updateAssistantInstanceInputSchema` 也不开放它们。结果：用户从模板建助手，以为继承了模板的能力，实际没有。
+**现状修正**（核对后）：模板建实例**其实是继承技能的**（`service:845-848` + `applyAssistantSnapshotOverrides:3963-3986`，已有测试证明）。写死 `[]` 只发生在**无 `templateId` 的直建路径**（`service:3952-3953`）——而**创建对话框从不发 `templateId`**，所以用户体感就是"不继承"。
+
+真正的缺口因此是两件事：**创建流程没有走模板路径**，以及 **`update` 完全不处理这两个字段**（既不合并进 `changed`，也没调 `validateAssistantInstanceSnapshot`），所以建完也改不了。
 
 **MausBot 的做法**（`bot-settings/SkillsSection.tsx` + bot 的 skills 字段）：技能是 bot 的一等字段，创建时可勾、之后可改。
 
@@ -64,7 +66,17 @@ DSH 有「自动化任务」面板（我们 BOT 模式把它放在底部控制�
 
 **验收**：详情面板能看到该助手的自动化任务数量与入口；没有时显示空态说明去哪儿建。
 
-### P6 · 权限细项（G）——先确认 DSH 权限预设够不够
+### P6 · 权限细项（G）——**已核对：宿主已覆盖，不做**
+
+核对结论（`docs/superpowers/notes/2026-10-27-capability-gates.md`，逐条带文件行号）：
+
+- DSH 权限预设只有两个旋钮：`sandbox`（read-only / workspace-write / danger-full-access）+ `approval`（ask / never）；
+- 它**只约束文件写**（SBPL = 默认允许 + 拒绝 file-write*）；宿主的原文是「Network and process visibility are outside this vocabulary」；
+- **没有**命令级白名单、**没有**外发/网络策略；审批是"一次性 + 带理由"的 escalation，不是白名单。
+
+所以 MausBot 的三个细项里：审批模式与命令白名单**在宿主执行器里，插件造假白名单只会更糟**；外发策略我们没有 outbound 工具；peers 由 coordinator + Team 覆盖。**P6 零工作量关闭。**
+
+### P6（原始设想，已作废）
 
 我们现在只有 `permissionPresetId`（读/写/全权档位）。MausBot 的细项（命令白名单、外发策略）在 DSH 里可能已经在预设内部实现。
 
