@@ -3004,7 +3004,8 @@ textarea.input {
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
-  background: var(--dsw-specific-sidebar-fill);
+  /* No fill: the mode row must read as part of the column, not as its own band. */
+  background: transparent;
 }
 
 
