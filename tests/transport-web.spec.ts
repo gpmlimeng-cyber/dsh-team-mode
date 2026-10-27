@@ -112,6 +112,10 @@ function harness(overrides: {
       memory: { assistantId, revision: 2 },
       entry: { id: 'mem-1', ...entry },
     })),
+    askAssistantMemory: vi.fn(async (_assistantId: string, memoryText: string) =>
+      memoryText === 'remember'
+        ? { kind: 'change', entries: [{ id: 'mem-1', status: 'proposed' }] }
+        : { kind: 'answer', answer: memoryText }),
     openAssistantTask: vi.fn(async (taskId: string) => ({
       task: { id: taskId, status: 'completed' },
       sessionId: 'session-worker',
@@ -336,6 +340,46 @@ describe('web transport authentication and upload contract', () => {
       const reply = await post({ title: 'Tone', body: 'Keep answers short.', status })
       expect(reply.status).toBe(200)
     }
+  })
+
+  it('dispatches assistant.memory.ask with a strict payload and the fixed union', async () => {
+    const { call, service } = harness()
+    const post = (payload: unknown) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ requestId: 'r1', method: 'assistant.memory.ask', payload }),
+    }))
+
+    const answered = await post({ assistantId: 'instance-1', text: 'How do we format tables?' })
+    expect(answered.status).toBe(200)
+    expect(JSON.parse(answered.body)).toMatchObject({
+      ok: true,
+      value: { kind: 'answer', answer: 'How do we format tables?' },
+    })
+    expect(service.askAssistantMemory).toHaveBeenCalledWith(
+      'instance-1',
+      'How do we format tables?',
+    )
+
+    const changed = await post({ assistantId: 'instance-1', text: 'remember' })
+    expect(changed.status).toBe(200)
+    expect(JSON.parse(changed.body)).toMatchObject({
+      ok: true,
+      value: { kind: 'change', entries: [{ id: 'mem-1', status: 'proposed' }] },
+    })
+    // The transport exposes the runtime's outcome; it never writes entries itself.
+    expect(service.writeAssistantMemoryEntry).not.toHaveBeenCalled()
+
+    const extra = await post({ assistantId: 'instance-1', text: 'x', expectedRevision: 3 })
+    expect(extra.status).toBe(400)
+    expect(JSON.parse(extra.body)).toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_REQUEST' },
+    })
+
+    const missing = await post({ assistantId: 'instance-1' })
+    expect(missing.status).toBe(400)
+    const blankId = await post({ assistantId: '  ', text: 'x' })
+    expect(blankId.status).toBe(400)
   })
 
   it('dispatches assistant.task.open', async () => {

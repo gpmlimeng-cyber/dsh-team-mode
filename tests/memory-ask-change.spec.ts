@@ -1,7 +1,14 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
+import { createElement, type ReactElement, type ReactNode } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
+import {
+  AssistantMemorySection,
+  MemoryAskOutcome,
+  memoryAskFailure,
+} from '../src/client/assistant-memory-panel.js'
 import { AgentTeamError } from '../src/domain/errors.js'
 import type {
   AssistantInstance,
@@ -10,7 +17,34 @@ import type {
   WriteAssistantMemoryEntryInput,
 } from '../src/domain/types.js'
 import { AssistantRuntime } from '../src/runtime/assistant-runtime.js'
-import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
+import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
+
+// The shipped primitives package expects browser peers this node test does not
+// install; the rendered copy and structure are what the assertions below pin.
+vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
+  const react = await import('react')
+  const Icon = (): ReactElement => react.createElement('span')
+  const Pass = (props: { children?: ReactNode }): ReactElement =>
+    react.createElement('span', null, props.children)
+  return {
+    Button: (props: {
+      children?: ReactNode
+      type?: 'button' | 'submit'
+      disabled?: boolean
+    }): ReactElement => react.createElement(
+      'button',
+      { type: props.type ?? 'button', disabled: props.disabled },
+      props.children,
+    ),
+    Menu: Pass,
+    Modal: Pass,
+    IconChevronDownOutlineRegular: Icon,
+  }
+})
+
+function text(html: string): string {
+  return html.replace(/<[^>]*>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim()
+}
 
 const NOW = '2026-10-27T00:00:00.000Z'
 
@@ -284,5 +318,87 @@ describe('askAssistantMemory', () => {
     await expect(h.runtime.askAssistantMemory('instance-1', 'x'.repeat(2_001)))
       .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
     expect(h.requests).toHaveLength(0)
+  })
+})
+
+describe('service ask-or-change passthrough', () => {
+  it('delegates to the attached Assistant runtime', async () => {
+    const result = { kind: 'answer', answer: 'Delegated.' } as const
+    const ask = vi.fn(async () => result)
+    // The method only touches the attached runtime; exercising it on a bare
+    // prototype instance proves the service adds no second call path.
+    const service = Object.create(AgentTeamService.prototype) as AgentTeamService
+    ;(service as unknown as { assistantRuntime: unknown }).assistantRuntime = {
+      askAssistantMemory: ask,
+    }
+
+    await expect(service.askAssistantMemory('instance-1', 'How do we format tables?'))
+      .resolves.toBe(result)
+    expect(ask).toHaveBeenCalledWith('instance-1', 'How do we format tables?')
+  })
+
+  it('refuses when no Assistant runtime is attached', async () => {
+    const service = Object.create(AgentTeamService.prototype) as AgentTeamService
+
+    await expect(service.askAssistantMemory('instance-1', 'Anything?'))
+      .rejects.toThrow(/Assistant runtime is not attached/)
+  })
+})
+
+describe('client ask-or-change surface', () => {
+  it('keeps the typed draft and reloads only on a revision conflict', () => {
+    const conflict = Object.assign(new Error('conflict'), { code: 'MEMORY_REVISION_CONFLICT' })
+    expect(memoryAskFailure(conflict)).toEqual({
+      message: '记忆已被其他操作更新，已重新加载最新版本，请重试。',
+      reload: true,
+    })
+
+    const unusable = Object.assign(new Error('Memory ask reply was not usable: no JSON object'), {
+      code: 'INVALID_REQUEST',
+    })
+    expect(memoryAskFailure(unusable)).toEqual({
+      message: 'Memory ask reply was not usable: no JSON object',
+      reload: false,
+    })
+  })
+
+  it('renders an answer as text and says the memory was not touched', () => {
+    const html = text(renderToStaticMarkup(createElement(MemoryAskOutcome, {
+      result: { kind: 'answer', answer: 'Render data sets as tables.' },
+    })))
+
+    expect(html).toContain('回答')
+    expect(html).toContain('Render data sets as tables.')
+    expect(html).toContain('未改动记忆')
+    expect(html).not.toContain('待确认')
+  })
+
+  it('renders the proposed entries a change wrote', () => {
+    const html = text(renderToStaticMarkup(createElement(MemoryAskOutcome, {
+      result: {
+        kind: 'change',
+        entries: [
+          entry('m1', 'proposed', 'Tables', 'Render data sets as tables.'),
+          entry('m2', 'proposed', 'Tone', 'Keep answers short.'),
+        ],
+      },
+    })))
+
+    expect(html).toContain('已提出 2 条待确认条目')
+    expect(html).toContain('采纳后生效')
+    expect(html).toContain('Tables')
+    expect(html).toContain('Keep answers short.')
+  })
+
+  it('offers one explicit ask-or-change trigger in the memory panel', () => {
+    const markup = renderToStaticMarkup(createElement(AssistantMemorySection, {
+      assistantId: 'instance-1',
+    }))
+    const html = text(markup)
+
+    expect(html).toContain('问 / 改')
+    expect(markup).toContain('aria-label="问 / 改记忆"')
+    expect(markup).toContain('placeholder="例如：我们一般怎么组织表格？"')
+    expect(html).toContain('修改只写成「待确认」条目')
   })
 })

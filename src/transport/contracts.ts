@@ -1,3 +1,4 @@
+import type { MemoryAskResult } from '../domain/memory.js'
 import type {
   AddTeamMemberInput,
   AssistantInstance,
@@ -56,6 +57,8 @@ export const AGENT_TEAM_METHODS = [
   'assistant.memory.write',
   'assistant.memory.entry.write',
   'assistant.memory.undo',
+  /** One explicit ask-or-change request; the fixed union decides answer vs change. */
+  'assistant.memory.ask',
   'assistant.checkpoint.create',
   'assistant.checkpoint.list',
   'assistant.checkpoint.handoff',
@@ -456,6 +459,11 @@ export interface AgentTeamRequestMap {
       expectedRevision?: number
     }
     result: AssistantMemoryEntryWriteView
+  }
+  /** One user-triggered model call: an answer (no write) or proposals (`proposed`). */
+  'assistant.memory.ask': {
+    payload: { assistantId: string; text: string }
+    result: MemoryAskResult
   }
   'assistant.checkpoint.create': {
     payload: { assistantId: string; note?: string }

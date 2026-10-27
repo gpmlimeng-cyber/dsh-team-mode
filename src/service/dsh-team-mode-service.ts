@@ -5,7 +5,11 @@ import { isModelInvocable, isSkillName, isUserInvocable } from '@deepseek-ai/dsh
 import type { Config } from '../config.js'
 import { CHIEF_ASSISTANT } from '../domain/chief.js'
 import { AgentTeamError, epochStaleError, sessionRetiredError } from '../domain/errors.js'
-import { memoryDedupeKey, redactMemoryText } from '../domain/memory.js'
+import {
+  memoryDedupeKey,
+  redactMemoryText,
+  type MemoryAskResult,
+} from '../domain/memory.js'
 import { isMcpServerName, mcpServerFromToolName } from '../domain/mcp.js'
 import {
   createAssistantInputSchema,
@@ -1203,6 +1207,16 @@ export class AgentTeamService extends Service {
    */
   getAssistantMemoryEntries(assistantId: string): MemoryEntry[] {
     return [...(this.getAssistantMemory(assistantId)?.entries ?? [])]
+  }
+
+  /**
+   * One explicit ask-or-change request over this Assistant instance's
+   * structured memory. The runtime owns the single model call: an `answer`
+   * writes nothing, while a `change` writes every entry as `proposed` through
+   * the revision-fenced entry write path, so acceptance stays a user action.
+   */
+  async askAssistantMemory(assistantId: string, text: string): Promise<MemoryAskResult> {
+    return this.requireAssistantRuntime().askAssistantMemory(assistantId, text)
   }
 
   /**

@@ -318,6 +318,14 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
         actor: 'user',
       })
     }
+    case 'assistant.memory.ask': {
+      const payload = z.object({
+        assistantId: z.string().trim().min(1).max(200),
+        // The runtime trims and bounds the request so its rejection carries the limit.
+        text: z.string(),
+      }).strict().parse(request.payload)
+      return service.askAssistantMemory(payload.assistantId, payload.text)
+    }
     case 'assistant.checkpoint.create': {
       const payload = z.object({
         assistantId: z.string().trim().min(1).max(200),

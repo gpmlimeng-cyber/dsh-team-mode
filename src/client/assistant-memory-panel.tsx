@@ -15,6 +15,7 @@ import type {
   AssistantMemory,
   MemoryEntry,
 } from '../domain/types.js'
+import type { MemoryAskResult } from '../domain/memory.js'
 import type { AssistantMemoryEntryWriteView } from '../transport/contracts.js'
 
 function messageOf(cause: unknown): string {
@@ -42,6 +43,19 @@ function memoryTime(value: string): string {
 }
 
 /**
+ * Ask-or-change failures keep the typed request, so the failure is shown
+ * instead of the draft being dropped. A revision conflict also means this
+ * panel's revision is stale: the caller reloads and the kept draft can be
+ * retried against the fresh revision.
+ */
+export function memoryAskFailure(cause: unknown): { message: string; reload: boolean } {
+  return {
+    message: memoryError(cause),
+    reload: memoryErrorCode(cause) === 'MEMORY_REVISION_CONFLICT',
+  }
+}
+
+/**
  * Every successful write in the 记忆 block announces itself. The count row in
  * 概览 reads the same document through its own `assistant.memory.get`, so this
  * event is what keeps its N live after a write — the pane renders that row
@@ -63,6 +77,64 @@ function announceMemoryChange(assistantId: string): void {
  */
 export function memoryAfterUndo(result: AssistantMemoryEntryWriteView): AssistantMemory {
   return result.memory
+}
+
+/** One entry card, shared by the panel and the ask-or-change outcome. */
+function memoryEntryCard(entry: MemoryEntry, actions?: JSX.Element): JSX.Element {
+  return (
+    <article key={entry.id} className={css.memoryEntryCard}>
+      <div className={css.memoryEntryHeader}>
+        <strong>{entry.title}</strong>
+        <span className={css.memoryBadges}>
+          <span className={`${css.memoryBadge} ${entry.visibility === 'private' ? css.memoryBadgePrivate : ''}`}>
+            {memoryVisibilityLabel(entry.visibility)}
+          </span>
+          <span className={`${css.memoryBadge} ${entry.status === 'proposed' ? css.memoryBadgeProposed : ''}`}>
+            {memoryStatusLabel(entry.status)}
+          </span>
+          <span className={css.memoryBadge}>v{entry.revision}</span>
+        </span>
+      </div>
+      {entry.body !== '' && <p className={css.memoryEntryBody}>{entry.body}</p>}
+      <div className={css.memoryEntryMeta}>
+        <span>{memorySourceLabel(entry.source)}{entry.key === undefined ? '' : ` · ${entry.key}`}{` · ${memoryTime(entry.updatedAt)}`}</span>
+        {actions}
+      </div>
+    </article>
+  )
+}
+
+/**
+ * The fixed ask-or-change result: an `answer` renders as text and says the
+ * memory was not touched, while a `change` renders the entries the call wrote —
+ * every one of them `proposed`, so accepting it stays a separate user action.
+ * Rendering nothing here would drop a proposal the user was just told about.
+ */
+export function MemoryAskOutcome({ result }: { result: MemoryAskResult }): JSX.Element {
+  if (result.kind === 'answer') {
+    return (
+      <article className={css.memoryEntryCard}>
+        <div className={css.memoryEntryHeader}>
+          <strong>回答</strong>
+          <span className={css.memoryBadges}>
+            <span className={css.memoryBadge}>未改动记忆</span>
+          </span>
+        </div>
+        <p className={css.memoryEntryBody}>{result.answer}</p>
+      </article>
+    )
+  }
+  return (
+    <div className={css.memoryGroup}>
+      <div className={css.memoryGroupTitleRow}>
+        <strong className={css.memoryGroupTitle}>已提出 {result.entries.length} 条待确认条目</strong>
+        <span className={css.memoryBadges}>
+          <span className={css.memoryBadge}>采纳后生效</span>
+        </span>
+      </div>
+      {result.entries.map(entry => memoryEntryCard(entry))}
+    </div>
+  )
 }
 
 interface MemoryDraft {
@@ -90,6 +162,9 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
   const [legacyDraft, setLegacyDraft] = useState('')
   const [confirmClear, setConfirmClear] = useState<string>()
   const [undoing, setUndoing] = useState<string>()
+  const [askText, setAskText] = useState('')
+  const [asking, setAsking] = useState(false)
+  const [askResult, setAskResult] = useState<MemoryAskResult>()
   const view = useMemo(() => assistantMemoryView(memory), [memory])
   const revision = memory?.revision ?? 0
   const journal = memory?.journal ?? []
@@ -126,6 +201,36 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       })
     return () => { live = false }
   }, [assistantId])
+
+  /**
+   * One explicit ask-or-change call, triggered only by the form below: no
+   * polling and no background work. An answer is shown as text; a change shows
+   * the entries the call wrote and re-reads the document so the panel's next
+   * write is fenced by the revision those proposals just created.
+   */
+  async function askMemory(): Promise<void> {
+    const text = askText.trim()
+    if (text === '' || asking) return
+    setAsking(true)
+    setError(undefined)
+    setAskResult(undefined)
+    try {
+      const result = await callAgentTeam('assistant.memory.ask', { assistantId, text })
+      setAskResult(result)
+      setAskText('')
+      if (result.kind === 'change') {
+        announceMemoryChange(assistantId)
+        await load()
+      }
+    } catch (cause) {
+      const failure = memoryAskFailure(cause)
+      // The draft stays in askText, including across a conflict reload.
+      setError(failure.message)
+      if (failure.reload) void load()
+    } finally {
+      setAsking(false)
+    }
+  }
 
   async function writeEntry(): Promise<void> {
     if (draft === undefined || busy) return
@@ -244,30 +349,6 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
     }
   }
 
-  function entryCard(entry: MemoryEntry, actions?: JSX.Element): JSX.Element {
-    return (
-      <article key={entry.id} className={css.memoryEntryCard}>
-        <div className={css.memoryEntryHeader}>
-          <strong>{entry.title}</strong>
-          <span className={css.memoryBadges}>
-            <span className={`${css.memoryBadge} ${entry.visibility === 'private' ? css.memoryBadgePrivate : ''}`}>
-              {memoryVisibilityLabel(entry.visibility)}
-            </span>
-            <span className={`${css.memoryBadge} ${entry.status === 'proposed' ? css.memoryBadgeProposed : ''}`}>
-              {memoryStatusLabel(entry.status)}
-            </span>
-            <span className={css.memoryBadge}>v{entry.revision}</span>
-          </span>
-        </div>
-        {entry.body !== '' && <p className={css.memoryEntryBody}>{entry.body}</p>}
-        <div className={css.memoryEntryMeta}>
-          <span>{memorySourceLabel(entry.source)}{entry.key === undefined ? '' : ` · ${entry.key}`}{` · ${memoryTime(entry.updatedAt)}`}</span>
-          {actions}
-        </div>
-      </article>
-    )
-  }
-
   return (
     <section className={css.assistantMemorySection} aria-label="助手持久记忆">
       <div className={css.teamSectionHeader}>
@@ -306,6 +387,31 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       {(loadError !== undefined || error !== undefined) && (
         <div role="alert" className={css.inlineError}>{error ?? loadError}</div>
       )}
+      <p className={css.assistantMemoryHint}>
+        一句话提问，或让助手提出记忆修改；修改只写成「待确认」条目，采纳后才会生效。
+      </p>
+      <form
+        className={css.memoryForm}
+        onSubmit={event => { event.preventDefault(); void askMemory() }}
+      >
+        <Field label="问 / 改">
+          <input
+            className={css.input}
+            value={askText}
+            maxLength={2_000}
+            placeholder="例如：我们一般怎么组织表格？"
+            aria-label="问 / 改记忆"
+            disabled={asking}
+            onChange={event => { setAskText(event.target.value) }}
+          />
+        </Field>
+        <div className={css.memoryFormActions}>
+          <Button variant="primary" type="submit" disabled={asking || askText.trim() === ''}>
+            {asking ? '思考中…' : '问 / 改'}
+          </Button>
+        </div>
+      </form>
+      {askResult !== undefined && <MemoryAskOutcome result={askResult} />}
       {loading && <p className={css.memoryEmpty}>读取记忆中…</p>}
       {!loading && view.empty && draft === undefined && !legacyEditing && (
         <p className={css.memoryEmpty}>还没有持久记忆。助手也可以通过工具写入，或在此新建结构化条目。</p>
@@ -382,7 +488,7 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       {view.active.length > 0 && (
         <div className={css.memoryGroup}>
           <strong className={css.memoryGroupTitle}>生效条目 · {view.active.length}</strong>
-          {view.active.map(entry => entryCard(
+          {view.active.map(entry => memoryEntryCard(
             entry,
             <span className={css.memoryEntryActions}>
               <button
@@ -418,13 +524,13 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       {view.proposed.length > 0 && (
         <div className={css.memoryGroup}>
           <strong className={css.memoryGroupTitle}>待确认 · {view.proposed.length}</strong>
-          {view.proposed.map(entry => entryCard(entry))}
+          {view.proposed.map(entry => memoryEntryCard(entry))}
         </div>
       )}
       {view.historyTotal > 0 && (
         <div className={css.memoryGroup}>
           <strong className={css.memoryGroupTitle}>历史 · {view.historyTotal}</strong>
-          {view.history.map(entry => entryCard(entry))}
+          {view.history.map(entry => memoryEntryCard(entry))}
           {view.historyTotal > view.history.length && (
             <p className={css.memoryEmpty}>仅显示最近 {view.history.length} 条历史记录。</p>
           )}
