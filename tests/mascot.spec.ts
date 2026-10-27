@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { TEAM_IDENTITY_COLORS } from '../src/client/team-identity.js'
+import { MASCOT_SHAPE_FIT } from '../src/client/mascot-shape-fit.js'
 import {
   MASCOT_ANIMATIONS,
   MASCOT_EYES,
@@ -13,6 +14,7 @@ import {
   mascotMotionForStatus,
   mascotOptionsFor,
   mascotPaletteColor,
+  mascotShapeFit,
   mascotSvg,
   type MascotMotion,
 } from '../src/client/mascot.js'
@@ -94,6 +96,46 @@ describe('mascot generation', () => {
     const uri = mascotDataUri('alpha')
     expect(uri.startsWith('data:image/svg+xml;charset=utf-8,')).toBe(true)
     expect(uri).not.toContain('<svg')
+  })
+})
+
+describe('mascot fit', () => {
+  const FIT_WRAPPER = /<g transform="translate\(50 50\) scale\(([0-9.]+)\) translate\(-50 -50\)">/
+
+  function fitOf(svg: string): number {
+    const match = FIT_WRAPPER.exec(svg)
+    expect(match).not.toBeNull()
+    return Number(match![1])
+  }
+
+  it('zooms every body by its measured shape factor', () => {
+    for (const shape of MASCOT_SHAPES) {
+      expect(fitOf(mascotSvg('alpha', { shapeVariant: shape }))).toBe(MASCOT_SHAPE_FIT[shape])
+    }
+  })
+
+  it('fits the shape DiceBear resolved for a bare seed', () => {
+    // No shape option: DiceBear picks one from the seed (alpha → circle, beta →
+    // arch), so the factor has to come from the resolved options, not a guess.
+    expect(fitOf(mascotSvg('alpha'))).toBe(MASCOT_SHAPE_FIT.circle)
+    expect(fitOf(mascotSvg('beta'))).toBe(MASCOT_SHAPE_FIT.arch)
+  })
+
+  it('falls back to no zoom for an unknown or missing shape', () => {
+    expect(mascotShapeFit(undefined)).toBe(1)
+    expect(mascotShapeFit('')).toBe(1)
+    expect(mascotShapeFit('hexagram')).toBe(1)
+    expect(mascotShapeFit('circle')).toBe(MASCOT_SHAPE_FIT.circle)
+  })
+
+  it('grows a small-ink shape more than a wide one', () => {
+    // Measured ink: a circle spans 68 units, a pill 78×50, so the circle needs
+    // the bigger multiplier. A square spans the same 68×68 as a circle, so the
+    // two multiply equally — the brief expected circle > square, but the
+    // measured bounding boxes are identical and bbox is the agreed metric.
+    expect(MASCOT_SHAPE_FIT.circle).toBeGreaterThan(MASCOT_SHAPE_FIT.pill)
+    expect(MASCOT_SHAPE_FIT.circle).toBe(MASCOT_SHAPE_FIT.square)
+    expect(MASCOT_SHAPE_FIT.triangle).toBeGreaterThan(MASCOT_SHAPE_FIT.circle)
   })
 })
 

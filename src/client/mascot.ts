@@ -2,6 +2,7 @@ import { Avatar, Style } from '@dicebear/core'
 import gazeDefinition from '@dicebear/styles/gaze.json' with { type: 'json' }
 import { TEAM_IDENTITY_COLORS } from './team-identity.js'
 import { isAssistantAvatarDataUrl } from './assistant-instances.js'
+import { MASCOT_SHAPE_FIT } from './mascot-shape-fit.js'
 import type { AssistantInstance } from '../domain/types.js'
 
 /** DiceBear `gaze` (CC0 1.0) — the only style we ship. */
@@ -131,7 +132,7 @@ export function mascotSvg(seed: string, options: MascotOptions = {}): string {
   const normalizedSeed = seed.trim() === '' ? 'assistant' : seed.trim()
   const bodyColor = sanitizeColor(options.bodyColor) ?? mascotColor(normalizedSeed)
   const radial = options.bodyColorFill === 'radial'
-  return new Avatar(style, {
+  const avatar = new Avatar(style, {
     seed: normalizedSeed,
     animationVariant: options.animationVariant ?? 'medium',
     ...(options.shapeVariant === undefined ? {} : { shapeVariant: options.shapeVariant }),
@@ -149,7 +150,41 @@ export function mascotSvg(seed: string, options: MascotOptions = {}): string {
             : { bodyColorFillStops: options.bodyColorFillStops }),
         }
       : {}),
-  }).toString()
+  })
+  // DiceBear picks a random shape when none is passed, so read the shape back
+  // from its resolved options instead of guessing it from the seed.
+  const { svg, options: resolved } = avatar.toJSON()
+  const resolvedShape = typeof resolved.shapeVariant === 'string' ? resolved.shapeVariant : undefined
+  return fitMascotSvg(svg, mascotShapeFit(resolvedShape))
+}
+
+/**
+ * How much to zoom one body so its ink fills the tile.
+ *
+ * `shape` is the shape DiceBear actually drew (see `toJSON().options`); an
+ * unknown or empty name is a no-op rather than a NaN-producing lookup.
+ */
+export function mascotShapeFit(shape: string | undefined): number {
+  if (shape === undefined || !Object.hasOwn(MASCOT_SHAPE_FIT, shape)) return 1
+  return MASCOT_SHAPE_FIT[shape as MascotShape]
+}
+
+/**
+ * Scale the drawing around the canvas centre (all measured ink is centred on
+ * 50, so centring on the canvas is within a pixel of centring on the ink).
+ *
+ * Doing it inside the SVG rather than on the `<img>` keeps the tile's CSS
+ * `transform` free for the hover zoom. The factor already normalises the
+ * unrotated body to 98% of the viewBox; DiceBear's per-seed rotate/scale jitter
+ * can still push a corner past it, which `.mascotTile`'s `overflow: hidden`
+ * trims instead of showing outside the tile.
+ */
+function fitMascotSvg(svg: string, fit: number): string {
+  const open = svg.indexOf('>')
+  const close = svg.lastIndexOf('</svg>')
+  if (fit === 1 || open < 0 || close < 0) return svg
+  const transform = `translate(50 50) scale(${fit}) translate(-50 -50)`
+  return `${svg.slice(0, open + 1)}<g transform="${transform}">${svg.slice(open + 1, close)}</g>${svg.slice(close)}`
 }
 
 /**

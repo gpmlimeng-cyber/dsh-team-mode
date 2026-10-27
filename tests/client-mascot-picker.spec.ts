@@ -5,6 +5,7 @@ import { describe, expect, it } from 'vitest'
 import { assistantMascotSchema } from '../src/domain/schemas.js'
 import { MASCOT_EYES, MASCOT_SHAPES, mascotPaletteColor, mascotSvg, type MascotOptions } from '../src/client/mascot.js'
 import { MascotPicker, mascotPickerOptions } from '../src/client/mascot-picker.js'
+import { Mascot } from '../src/client/mascot-view.js'
 import { TEAM_IDENTITY_COLORS } from '../src/client/team-identity.js'
 
 function decodePreview(preview: string): string {
@@ -143,5 +144,18 @@ describe('assistant settings integration', () => {
     }
     expect(source).toContain('随机')
     expect(source).toContain("{ fill: 'radial' as const }")
+  })
+})
+
+describe('fit and hover', () => {
+  it('scales inside the SVG so the CSS hover zoom still applies', () => {
+    const html = renderToStaticMarkup(createElement(Mascot, { seed: 'assistant-1', size: 36 }))
+    // The fit lives in the data URI, not in an inline transform on the <img>,
+    // which would win over the hover rule in the stylesheet.
+    expect(html).toContain('translate(50%2050)%20scale(1.')
+    expect(html).not.toMatch(/<img[^>]*style=/)
+
+    const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+    expect(css).toMatch(/\.mascotTile:hover \.mascotImage \{[^}]*transform: scale\(1\.04\)/)
   })
 })
