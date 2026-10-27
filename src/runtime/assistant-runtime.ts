@@ -9,9 +9,10 @@ import {
   type ModelSelectionRef,
 } from '@deepseek-ai/dsh-agent'
 import { createUserMessage, ReasoningEffortId, type UserMessage } from '@deepseek-ai/dsh-llm'
-import { SessionId } from '@deepseek-ai/dsh-session'
+import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
+import { z } from 'zod'
 import type { Config } from '../config.js'
 import { AgentTeamError } from '../domain/errors.js'
 import {
@@ -109,6 +110,20 @@ const MEMORY_PROMPT_LIMIT = 4_000
 const MEMORY_ENTRY_PROMPT_LIMIT = 20
 const MEMORY_ENTRY_TITLE_LIMIT = 80
 const MEMORY_ENTRY_BODY_LIMIT = 200
+/** One opt-in capture run proposes at most this many entries. */
+const MEMORY_CAPTURE_MAX_ENTRIES = 3
+const MEMORY_CAPTURE_MAX_TITLE_CHARS = 160
+const MEMORY_CAPTURE_MAX_BODY_CHARS = 2_000
+const MEMORY_CAPTURE_MAX_TOKENS = 800
+/** Bounds on the completed turn copied into the single capture call. */
+const MEMORY_CAPTURE_MAX_TEXT_CHARS = 4_000
+const MEMORY_CAPTURE_PROMPT_CHARS = 4_000
+const MEMORY_CAPTURE_PROJECT_LIMIT = 60
+/**
+ * Prefix/containment dedupe only runs when both sides are this long: a short
+ * phrase such as "ok" would otherwise match unrelated entries.
+ */
+const MEMORY_CAPTURE_DEDUPE_MIN_CHARS = 12
 
 /**
  * Owns every Agent Session one Assistant instance needs: the visible main
@@ -131,6 +146,16 @@ export class AssistantRuntime {
    */
   private readonly workerGenerations = new Map<string, number>()
   private readonly assistantLocks = new Map<string, Promise<void>>()
+  /**
+   * Last completed turn already handled per Session. A turn's `turn/end` may be
+   * observed more than once by a resumed Session, so the highest handled turn is
+   * remembered instead of counting events.
+   */
+  private readonly capturedTurnBySession = new Map<string, number>()
+  /** Assistants whose one capture model call is in flight; never two at once. */
+  private readonly capturingAssistants = new Set<string>()
+  /** Opt-in auto-capture per assistant instance; absence means off. */
+  private readonly autoCaptureAssistants = new Set<string>()
   private readonly interactionSessions = new Set<string>()
   private readonly interactions: TeamInteractionBridge
   private readonly disposeStatusListener: () => void
@@ -174,11 +199,32 @@ export class AssistantRuntime {
       })
     })
     this.disposeSessionListener = ctx.on('session/event', (session, event) => {
-      const taskId = this.workerBySession.get(String(session.id))
-      if (taskId === undefined || this.closing) return
-      if (event.type !== 'turn/end' || event.data.reason.kind !== 'error') return
-      void this.markTaskFailed(taskId, event.data.reason.error.message).catch(error => {
-        this.ctx.logger.warn('dsh-team-mode: failed to record worker turn failure', error)
+      const sessionId = String(session.id)
+      if (this.closing) return
+      const taskId = this.workerBySession.get(sessionId)
+      if (taskId !== undefined) {
+        if (event.type !== 'turn/end' || event.data.reason.kind !== 'error') return
+        void this.markTaskFailed(taskId, event.data.reason.error.message).catch(error => {
+          this.ctx.logger.warn('dsh-team-mode: failed to record worker turn failure', error)
+        })
+        return
+      }
+      // Only a completed conversational turn is worth capturing; an aborted,
+      // blocked, or failed turn has no trustworthy result to remember.
+      if (event.type !== 'turn/end' || event.data.reason.kind !== 'completed') return
+      const assistantId = this.assistantIdForSession(sessionId)
+      if (assistantId === undefined) return
+      void this.captureTurnMemory(
+        assistantId,
+        sessionId,
+        session.snapshotEvents(),
+        Number(event.seq),
+        event.data.turn,
+      ).catch(error => {
+        this.ctx.logger.warn(
+          `dsh-team-mode: memory auto-capture failed for assistant '${assistantId}'`,
+          error,
+        )
       })
     })
   }
@@ -204,6 +250,11 @@ export class AssistantRuntime {
     this.disposeSessionListener()
     await this.interactions.dispose()
     this.interactionSessions.clear()
+    // Capture bookkeeping is runtime-local; a disposing runtime must not keep a
+    // turn memory or an opt-in switch alive.
+    this.capturedTurnBySession.clear()
+    this.capturingAssistants.clear()
+    this.autoCaptureAssistants.clear()
     const pending = [...this.starting.values(), ...this.startingWorkers.values()]
     this.starting.clear()
     this.startingWorkers.clear()
@@ -564,6 +615,146 @@ export class AssistantRuntime {
       written.push(entry)
     }
     return written
+  }
+
+  /** Auto-capture is an explicit per-assistant switch and is off until set. */
+  getMemoryAutoCapture(assistantId: string): boolean {
+    return this.autoCaptureAssistants.has(this.service.getAssistantInstance(assistantId).id)
+  }
+
+  /**
+   * Turn auto-capture on or off for one assistant. The switch is read again on
+   * every completed turn and once more before a run writes, so turning it off
+   * stops both later turns and an in-flight run's write; nothing keeps polling.
+   */
+  setMemoryAutoCapture(assistantId: string, enabled: boolean): boolean {
+    const instance = this.service.getAssistantInstance(assistantId)
+    if (enabled) this.autoCaptureAssistants.add(instance.id)
+    else this.autoCaptureAssistants.delete(instance.id)
+    return this.autoCaptureAssistants.has(instance.id)
+  }
+
+  /**
+   * Bulk-ignore proposals: archive them through the same revision-fenced entry
+   * write path, so the decision persists in the memory document and a later
+   * capture sees the archived text as already handled. Ids that are no longer
+   * proposed (accepted, or already archived) are skipped instead of failing the
+   * whole batch; the returned entries are the ones actually archived.
+   */
+  async ignoreMemoryProposals(
+    assistantId: string,
+    entryIds?: readonly string[],
+  ): Promise<MemoryEntry[]> {
+    const instance = this.service.getAssistantInstance(assistantId)
+    const wanted = entryIds === undefined ? undefined : new Set(entryIds)
+    const proposed = (this.service.getAssistantMemory(instance.id)?.entries ?? [])
+      .filter(entry => entry.status === 'proposed')
+      .filter(entry => wanted === undefined || wanted.has(entry.id))
+    let expectedRevision = this.service.getAssistantMemory(instance.id)?.revision ?? 0
+    const archived: MemoryEntry[] = []
+    for (const entry of proposed) {
+      const { memory, entry: written } = await this.service.writeAssistantMemoryEntry(
+        instance.id,
+        {
+          id: entry.id,
+          ...(entry.key === undefined ? {} : { key: entry.key }),
+          visibility: entry.visibility,
+          status: 'archived',
+          title: entry.title,
+          body: entry.body,
+        },
+        { expectedRevision },
+      )
+      expectedRevision = memory.revision
+      archived.push(written)
+    }
+    return archived
+  }
+
+  /**
+   * The assistant an assistant-owned conversation Session belongs to: its main
+   * Session or one of its threads. Absence means the Session is not an
+   * Assistant conversation this runtime should capture from.
+   */
+  private assistantIdForSession(sessionId: string): string | undefined {
+    return this.service.listAssistantInstances().items.find(instance =>
+      instance.mainSessionId === sessionId
+      || (instance.threadSessionIds ?? []).includes(sessionId))?.id
+  }
+
+  /**
+   * One opt-in capture run for one completed turn: at most one model call, at
+   * most three proposals, every one written as `proposed` through the M3 write
+   * path. The turn is claimed before the first await so a repeated `turn/end`
+   * cannot start a second run, and the switch is re-read after the model call so
+   * disabling mid-turn still stops the write.
+   */
+  private async captureTurnMemory(
+    assistantId: string,
+    sessionId: string,
+    events: readonly SessionEvent[],
+    turnEndSeq: number,
+    turn: number,
+  ): Promise<void> {
+    if (!this.autoCaptureAssistants.has(assistantId)) return
+    const instance = this.service.getAssistantInstance(assistantId)
+    if (instance.status === 'archived') return
+    const handled = this.capturedTurnBySession.get(sessionId)
+    if (handled !== undefined && turn <= handled) return
+    if (this.capturingAssistants.has(assistantId)) return
+    this.capturedTurnBySession.set(sessionId, turn)
+    this.capturingAssistants.add(assistantId)
+    try {
+      const transcript = captureTurnTranscript(events, turnEndSeq)
+      if (transcript === '') return
+      const entries = this.service.getAssistantMemory(assistantId)?.entries ?? []
+      const reply = await this.completeMemoryCapture(
+        instance,
+        memoryCapturePrompt(entries, transcript),
+      )
+      if (!this.autoCaptureAssistants.has(assistantId)) return
+      const proposals = captureProposals(reply, entries)
+        .slice(0, MEMORY_CAPTURE_MAX_ENTRIES)
+      if (proposals.length === 0) return
+      await this.proposeMemoryEntries(assistantId, proposals)
+    } finally {
+      this.capturingAssistants.delete(assistantId)
+    }
+  }
+
+  /**
+   * The one capture model call: the assistant's own provider and model, a
+   * hand-built one-shot request, no tools and no Session turn.
+   */
+  private async completeMemoryCapture(
+    instance: AssistantInstance,
+    prompt: string,
+  ): Promise<string> {
+    const snapshot = instance.assistantSnapshot
+    let text = ''
+    const chunks = this.ctx.llm.stream({
+      provider: snapshot.provider,
+      model: snapshot.model,
+      ...(snapshot.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: ReasoningEffortId(snapshot.reasoningEffort) }),
+      system: MEMORY_CAPTURE_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+      maxTokens: MEMORY_CAPTURE_MAX_TOKENS,
+    })
+    for await (const chunk of chunks) {
+      if (chunk.type === 'text-delta') {
+        text += chunk.text
+        continue
+      }
+      if (chunk.type === 'finish') {
+        if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
+          throw new Error(`memory auto-capture model call failed: ${chunk.reason.failure.message}`)
+        }
+        break
+      }
+    }
+    return text
   }
 
   /**
@@ -1530,6 +1721,163 @@ function workerMessage(text: string): UserMessage {
   return createUserMessage({
     content: [{ type: 'text', text }],
     source: { kind: 'user' },
+  })
+}
+
+/**
+ * The fixed instruction for the single opt-in capture call. The reply is a
+ * closed contract with an explicit empty list, so "nothing worth keeping" is a
+ * normal answer instead of a missing one.
+ */
+const MEMORY_CAPTURE_SYSTEM_PROMPT = [
+  'You review one completed assistant conversation turn and decide whether it holds durable memory.',
+  'Reply with exactly one JSON object and no other text.',
+  'Shape: {"entries":[{"title":"<short heading>","body":"<stored text>","key":"<optional stable key>","visibility":"private"}]}',
+  `Propose at most ${MEMORY_CAPTURE_MAX_ENTRIES} entries, and reply with {"entries":[]} when the turn holds nothing durable.`,
+  'Keep lasting preferences, decisions, and facts about the user or the work; never transcripts, tool output, or one-off details.',
+  'Never repeat or rephrase anything already stored, including archived entries.',
+  'Every proposal is stored as status "proposed" and takes effect only after the user accepts it, so never claim a write happened.',
+].join('\n')
+
+const memoryCaptureEntrySchema = z.object({
+  key: z.string().max(200).optional(),
+  visibility: z.enum(['private', 'team-safe']).optional(),
+  title: z.string().max(MEMORY_CAPTURE_MAX_TITLE_CHARS),
+  body: z.string().max(MEMORY_CAPTURE_MAX_BODY_CHARS),
+}).strict()
+
+/** A larger list than the cap is accepted and then truncated to three. */
+const memoryCaptureReplySchema = z.object({
+  entries: z.array(memoryCaptureEntrySchema).max(20),
+}).strict()
+
+/**
+ * Build the single capture prompt: what is already stored (every status, so an
+ * ignored proposal is not offered again), then this turn's visible text.
+ */
+function memoryCapturePrompt(
+  entries: readonly MemoryEntry[],
+  transcript: string,
+): string {
+  const lines = ['Already stored memory (never repeat it):']
+  if (entries.length === 0) lines.push('(none)')
+  let chars = 0
+  let shown = 0
+  for (const entry of entries) {
+    const body = entry.body.trim()
+    const line = `- [${entry.status}] ${truncate(entry.title, MEMORY_ENTRY_TITLE_LIMIT)}`
+      + (body === '' ? '' : `: ${boundedText(body, MEMORY_ENTRY_BODY_LIMIT)}`)
+    if (chars + line.length > MEMORY_CAPTURE_PROMPT_CHARS) break
+    lines.push(line)
+    chars += line.length
+    shown += 1
+  }
+  if (shown < entries.length) lines.push(`(${entries.length - shown} more entries are stored but omitted.)`)
+  lines.push('', 'Completed turn:', transcript)
+  return lines.join('\n')
+}
+
+/**
+ * The visible user/assistant text of the turn that just ended: the last user
+ * message in the log plus everything after it, bounded. Tool output and
+ * reasoning are never copied.
+ */
+function captureTurnTranscript(events: readonly SessionEvent[], turnEndSeq: number): string {
+  const visible = events.filter(event => Number(event.seq) <= turnEndSeq)
+  const nodes = projectConversation(visible, MEMORY_CAPTURE_PROJECT_LIMIT).nodes
+  const start = nodes.findLastIndex(node => node.kind === 'user' && node.text.trim() !== '')
+  if (start === -1) return ''
+  const lines: string[] = []
+  for (const node of nodes.slice(start)) {
+    if (node.kind !== 'user' && node.kind !== 'assistant') continue
+    const text = node.text.trim()
+    if (text === '') continue
+    lines.push(`${node.kind === 'user' ? 'User' : 'Assistant'}: ${text}`)
+  }
+  return boundedText(lines.join('\n'), MEMORY_CAPTURE_MAX_TEXT_CHARS)
+}
+
+/**
+ * Turn a capture reply into proposals: unusable JSON throws (the listener logs
+ * and keeps the memory untouched), while empty titles and duplicates against
+ * stored entries or earlier proposals in the same reply are dropped.
+ */
+function captureProposals(
+  reply: string,
+  entries: readonly MemoryEntry[],
+): MemoryChangeProposal[] {
+  const parsed = memoryCaptureReplySchema.safeParse(captureReplyJson(reply))
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]
+    throw new Error(issue === undefined
+      ? 'memory auto-capture reply does not match its contract'
+      : `memory auto-capture reply ${issue.path.join('.') || ''}: ${issue.message}`)
+  }
+  const proposals: MemoryChangeProposal[] = []
+  const accepted: CaptureCandidate[] = [...entries]
+  for (const candidate of parsed.data.entries) {
+    const title = candidate.title.trim()
+    if (title === '') continue
+    const proposal: MemoryChangeProposal = {
+      ...(candidate.key === undefined || candidate.key.trim() === ''
+        ? {}
+        : { key: candidate.key.trim() }),
+      ...(candidate.visibility === undefined ? {} : { visibility: candidate.visibility }),
+      title,
+      body: candidate.body,
+    }
+    if (isDuplicateCapture(accepted, proposal)) continue
+    proposals.push(proposal)
+    accepted.push(proposal)
+  }
+  return proposals
+}
+
+function captureReplyJson(reply: string): unknown {
+  const text = reply.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start === -1 || end <= start) throw new Error('memory auto-capture reply contains no JSON object')
+  try {
+    return JSON.parse(text.slice(start, end + 1))
+  } catch {
+    throw new Error('memory auto-capture reply is not valid JSON')
+  }
+}
+
+/** Case-folded, whitespace-collapsed text used for prefix/containment dedupe. */
+function captureText(title: string, body: string): string {
+  return `${title} ${body}`.trim().toLowerCase().replace(/\s+/g, ' ')
+}
+
+/** The text fields dedupe compares; every stored entry and every proposal has them. */
+interface CaptureCandidate {
+  key?: string | undefined
+  title: string
+  body: string
+}
+
+/**
+ * Prefix/containment dedupe against existing entries (every status, so an
+ * ignored proposal stays ignored) and against earlier proposals in the same
+ * reply.
+ */
+function isDuplicateCapture(
+  entries: readonly CaptureCandidate[],
+  candidate: CaptureCandidate,
+): boolean {
+  const candidateText = captureText(candidate.title, candidate.body)
+  const candidateKey = candidate.key?.trim().toLowerCase()
+  return entries.some(entry => {
+    const entryKey = entry.key?.trim().toLowerCase()
+    if (candidateKey !== undefined && candidateKey !== '' && entryKey === candidateKey) return true
+    const existing = captureText(entry.title, entry.body)
+    if (existing === candidateText) return true
+    if (Math.min(existing.length, candidateText.length) < MEMORY_CAPTURE_DEDUPE_MIN_CHARS) return false
+    return existing.startsWith(candidateText)
+      || candidateText.startsWith(existing)
+      || existing.includes(candidateText)
+      || candidateText.includes(existing)
   })
 }
 
