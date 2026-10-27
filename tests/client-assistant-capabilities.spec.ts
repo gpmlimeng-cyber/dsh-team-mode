@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
   const icon = (): unknown => createElement('span')
   return {
+    IconSearchOutlineRegular: icon,
     IconSparkleRegular: icon,
     IconProjectAddOutlineRegular: icon,
     // The rows are toggles in the shipped plugin-list shape; the stub keeps
@@ -109,7 +110,8 @@ describe('CapabilityPicker', () => {
 
   it('refuses interaction while the dialog is saving', () => {
     const html = renderPicker({ disabled: true })
-    expect(html.match(/disabled=""/g) ?? []).toHaveLength(OPTIONS.length)
+    // Every row toggle plus the search field is disabled; nothing is clickable.
+    expect(html.match(/disabled=""/g) ?? []).toHaveLength(OPTIONS.length + 1)
   })
 })
 

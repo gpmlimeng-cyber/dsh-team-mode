@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   IconProjectAddOutlineRegular,
+  IconSearchOutlineRegular,
   IconSparkleRegular,
   Switch,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -97,19 +98,45 @@ export function CapabilityPicker({
   /** Tile glyph, matching the shipped plugin list's per-row icon. */
   icon?: ReactNode
 }): JSX.Element {
-  const rows = loading || error !== undefined
+  const [query, setQuery] = useState('')
+  const allRows = loading || error !== undefined
     ? []
     : capabilityRows(selected, options, missingDetail)
+  // Search only narrows what is shown: a selected entry stays selected even
+  // while the filter hides it, so the count above never lies.
+  const rows = useMemo(() => {
+    const needle = query.trim().toLocaleLowerCase()
+    if (needle === '') return allRows
+    return allRows.filter(row => (
+      row.name.toLocaleLowerCase().includes(needle)
+      || row.detail.toLocaleLowerCase().includes(needle)
+    ))
+  }, [allRows, query])
+
   return (
     <div className={css.field}>
       <span className={css.label}>{label}</span>
+      <label className={css.capabilitySearch}>
+        <IconSearchOutlineRegular size={14} />
+        <input
+          type="search"
+          value={query}
+          aria-label={`${label}：搜索`}
+          placeholder="搜索名称或描述"
+          disabled={disabled}
+          onChange={event => { setQuery(event.target.value) }}
+        />
+      </label>
       <div className={css.skillPicker} role="group" aria-label={ariaLabel}>
         {loading && <span className={css.hint}>正在读取该 Agent Preset 的目录…</span>}
         {!loading && error !== undefined && (
           <span className={css.inlineError} role="alert">读取失败：{error}</span>
         )}
-        {!loading && error === undefined && rows.length === 0 && (
+        {!loading && error === undefined && allRows.length === 0 && (
           <span className={css.hint}>{emptyText}</span>
+        )}
+        {!loading && error === undefined && allRows.length > 0 && rows.length === 0 && (
+          <span className={css.hint}>没有匹配「{query.trim()}」的条目。</span>
         )}
         {rows.map(row => (
           <div

@@ -1945,6 +1945,31 @@ textarea.input {
   --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
 
+/* Search above the capability rows; the field is chrome, not a setting. */
+.capabilitySearch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  margin: 2px 0 6px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.capabilitySearch input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
 /* One row of the shipped plugin list: icon tile, name over description, and a
    toggle on the right. Two columns, so a long catalog stays one screen. */
 .skillOption {
@@ -7791,19 +7816,29 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 }
 
 
-/* Compact modal header, shared by every AnimatedModal: the title row keeps the
- * close button clear but stops eating the body's height, and the description
- * reads as a grey subline instead of a second paragraph. Scoped to the dialogs'
- * own direct children so a feature header inside the body is untouched. */
-.teamModal > [class*="content"] {
+/* Compact modal header, shared by every AnimatedModal: title and its one-line
+ * explanation sit together instead of a tall band with air in the middle.
+ * Descendant selectors, because the shell nests these one level deeper than it
+ * used to when this rule was first written as direct children. */
+.teamModal {
+  gap: 4px;
+  padding-bottom: 16px;
+}
+
+.teamModal [class*="content"] {
   gap: 2px;
 }
 
-.teamModal > [class*="content"] > [class*="header"] {
-  padding: 14px 12px 2px 20px;
+.teamModal [class*="header"] {
+  padding: 12px 12px 0 20px;
 }
 
-.teamModal > [class*="content"] > [class*="description"] {
+.teamModal [class*="title"] {
+  font-size: 15px;
+  line-height: 22px;
+}
+
+.teamModal [class*="description"] {
   margin: 0;
   padding: 0 20px 2px;
   color: var(--dsw-alias-label-tertiary);
@@ -7811,8 +7846,8 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   line-height: 17px;
 }
 
-.teamModal > [class*="content"] > [class*="body"] {
-  margin-top: 10px;
+.teamModal [class*="body"] {
+  margin-top: 8px;
 }
 
 
