@@ -39,6 +39,8 @@ export type MascotEyes = (typeof MASCOT_EYES)[number]
 export type MascotSpacing = (typeof MASCOT_SPACINGS)[number]
 export type MascotAnimation = (typeof MASCOT_ANIMATIONS)[number]
 export type MascotAvatarShape = 'circle' | 'rounded' | 'square'
+/** `radial` paints the chrome ball: a light core fading to a darker rim. */
+export type MascotBodyFill = 'solid' | 'radial'
 
 /** The mascot options the UI actually exposes; everything else stays DiceBear's own. */
 export interface MascotOptions {
@@ -46,6 +48,9 @@ export interface MascotOptions {
   eyesVariant?: MascotEyes
   spacingVariant?: MascotSpacing
   bodyColor?: string
+  bodyColorFill?: MascotBodyFill
+  /** DiceBear's number of gradient stops; defaults to its own `2`. */
+  bodyColorFillStops?: number
   /** Container corner radius in percent, DiceBear's own 0–50 range. */
   borderRadius?: number
   animationVariant?: MascotAnimation
@@ -80,9 +85,32 @@ function sanitizeColor(value: string | undefined): string | undefined {
   return /^#?[0-9a-fA-F]{3,8}$/.test(value.trim()) ? value.trim() : undefined
 }
 
+/** Nudge one hex channel set towards white (`amount` > 0) or black (< 0). */
+function shadeHex(color: string, amount: number): string {
+  const raw = color.replace('#', '')
+  const full = raw.length === 3 ? raw.split('').map(char => char + char).join('') : raw.slice(0, 6)
+  const channels = [0, 2, 4].map(index => {
+    const value = Number.parseInt(full.slice(index, index + 2), 16)
+    if (Number.isNaN(value)) return 0x80
+    return Math.max(0, Math.min(255, Math.round(value + amount * 255)))
+  })
+  return `#${channels.map(channel => channel.toString(16).padStart(2, '0')).join('')}`
+}
+
+/**
+ * Two stops for a `radial` body fill: a light core and a darker rim. The
+ * picker's chrome swatch reuses this so the dot and the mascot agree.
+ */
+export function mascotGradientStops(color: string): readonly [string, string] {
+  const light = sanitizeColor(color) ?? '#9E9E9E'
+  return [shadeHex(light, 0.35), shadeHex(light, -0.28)]
+}
+
 /** Render one mascot as SVG markup. Same seed + same options ⇒ byte-identical output. */
 export function mascotSvg(seed: string, options: MascotOptions = {}): string {
   const normalizedSeed = seed.trim() === '' ? 'assistant' : seed.trim()
+  const bodyColor = sanitizeColor(options.bodyColor) ?? mascotColor(normalizedSeed)
+  const radial = options.bodyColorFill === 'radial'
   return new Avatar(style, {
     seed: normalizedSeed,
     animationVariant: options.animationVariant ?? 'medium',
@@ -90,7 +118,17 @@ export function mascotSvg(seed: string, options: MascotOptions = {}): string {
     ...(options.eyesVariant === undefined ? {} : { eyesVariant: options.eyesVariant }),
     ...(options.spacingVariant === undefined ? {} : { spacingVariant: options.spacingVariant }),
     ...(options.borderRadius === undefined ? {} : { borderRadius: options.borderRadius }),
-    bodyColor: sanitizeColor(options.bodyColor) ?? mascotColor(normalizedSeed),
+    bodyColor: radial ? mascotGradientStops(bodyColor) : bodyColor,
+    ...(radial
+      ? {
+          bodyColorFill: 'radial' as const,
+          // Keep the light core first; the default order would shuffle per seed.
+          bodyColorOrder: 'fixed',
+          ...(options.bodyColorFillStops === undefined
+            ? {}
+            : { bodyColorFillStops: options.bodyColorFillStops }),
+        }
+      : {}),
   }).toString()
 }
 
@@ -151,6 +189,7 @@ export function mascotOptionsFor(instance: AssistantInstance): { seed: string, o
       ...(mascot?.eyes === undefined ? {} : { eyesVariant: mascot.eyes as MascotEyes }),
       ...(mascot?.spacing === undefined ? {} : { spacingVariant: mascot.spacing as MascotSpacing }),
       ...(mascot?.color === undefined ? {} : { bodyColor: mascot.color }),
+      ...(mascot?.fill === undefined ? {} : { bodyColorFill: mascot.fill }),
     },
   }
 }

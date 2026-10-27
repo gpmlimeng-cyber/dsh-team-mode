@@ -4525,7 +4525,7 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   line-height: 17px;
 }
 
-/* The mascot editor: one fixed-size preview beside compact option selects. */
+/* The mascot editor: one fixed-size preview beside the option grids. */
 .assistantMascotSection {
   display: flex;
   align-items: flex-start;
@@ -4550,10 +4550,90 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   flex: 1;
 }
 
-.assistantMascotGrid {
+/* Mascot picker: five preview tiles per row; the chosen one gets the blue ring. */
+.mascotPicker {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.mascotPickerSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.mascotPickerTitle {
+  padding: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.mascotPickerGrid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(5, max-content);
   gap: 8px;
+}
+
+.mascotPickerOption {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  cursor: pointer;
+}
+
+.mascotPickerOption:hover {
+  border-color: var(--dsw-alias-border-l3);
+}
+
+.mascotPickerOption:focus-visible {
+  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: 1px;
+}
+
+.mascotPickerOption[aria-pressed='true'] {
+  border-color: var(--dsw-alias-state-business-primary);
+  outline: 2px solid var(--dsw-alias-state-business-primary);
+  outline-offset: 1px;
+}
+
+.mascotPickerOption:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mascotPickerOption img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+}
+
+.mascotPickerSwatch {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+
+.mascotPickerSwatch img {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+}
+
+.mascotPickerSwatch[aria-pressed='true'] {
+  outline-offset: 2px;
 }
 
 .assistantMascotToggle {

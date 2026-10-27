@@ -86,6 +86,8 @@ export const assistantMascotSchema = z.object({
   eyes: z.string().max(32).optional(),
   spacing: z.string().max(32).optional(),
   color: z.string().max(120).optional(),
+  /** Body paint: solid (default when absent) or the chrome radial ball. */
+  fill: z.enum(['solid', 'radial']).optional(),
 }).strict()
 
 /**

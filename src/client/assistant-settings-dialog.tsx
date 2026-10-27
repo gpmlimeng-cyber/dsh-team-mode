@@ -17,18 +17,15 @@ import {
 } from './labels.js'
 import { MemberAvatar } from './member-avatar.js'
 import { Mascot, usePrefersReducedMotion } from './mascot-view.js'
+import { MascotPicker } from './mascot-picker.js'
 import {
-  MASCOT_EYES,
-  MASCOT_SHAPES,
-  MASCOT_SPACINGS,
-  mascotPaletteColor,
   nextMascotSeed,
+  type MascotBodyFill,
   type MascotEyes,
   type MascotMotion,
   type MascotShape,
   type MascotSpacing,
 } from './mascot.js'
-import { TEAM_IDENTITY_COLORS } from './team-identity.js'
 import { defaultReasoningLabel, useModelCapabilities } from './model-reasoning.js'
 import { AnimatedModal, Field } from './shared.js'
 import css from './AgentTeam.module.css'
@@ -40,45 +37,6 @@ import type {
   UpdateAssistantInstanceInput,
 } from '../domain/types.js'
 import type { AssistantMemoryEntryWriteView, CatalogView } from '../transport/contracts.js'
-
-/** Human labels for the DiceBear `gaze` variants we expose. */
-const MASCOT_SHAPE_LABELS: Record<MascotShape, string> = {
-  circle: '圆形',
-  square: '方形',
-  triangle: '三角',
-  pentagon: '五边形',
-  hexagon: '六边形',
-  octagon: '八边形',
-  diamond: '菱形',
-  pill: '胶囊',
-  column: '柱状',
-  egg: '蛋形',
-  arch: '拱形',
-}
-
-const MASCOT_EYES_LABELS: Record<MascotEyes, string> = {
-  dots: '点点',
-  big: '大眼',
-  small: '小眼',
-  shine: '闪亮',
-  beans: '豆豆',
-  bars: '横条',
-  wide: '宽眼',
-  tall: '竖眼',
-  happy: '开心',
-  grin: '咧嘴',
-  squint: '眯眼',
-}
-
-const MASCOT_SPACING_LABELS: Record<MascotSpacing, string> = {
-  close: '紧凑',
-  snug: '贴合',
-  normal: '正常',
-  wide: '宽距',
-  far: '远距',
-}
-
-const MASCOT_COLOR_VALUES = TEAM_IDENTITY_COLORS.map((_, index) => mascotPaletteColor(index))
 
 const STATUS_LABELS: Record<AssistantInstance['status'], string> = {
   idle: '空闲',
@@ -143,6 +101,7 @@ export function AssistantSettingsDialog({
   const [mascotEyes, setMascotEyes] = useState(assistant.mascot?.eyes ?? '')
   const [mascotSpacing, setMascotSpacing] = useState(assistant.mascot?.spacing ?? '')
   const [mascotColor, setMascotColor] = useState(assistant.mascot?.color ?? '')
+  const [mascotFill, setMascotFill] = useState<MascotBodyFill>(assistant.mascot?.fill ?? 'solid')
   const [mascotAnimated, setMascotAnimated] = useState(true)
   const [mascotMotion, setMascotMotion] = useState<MascotMotion>('idle')
   const [mascotMotionKey, setMascotMotionKey] = useState(0)
@@ -177,6 +136,7 @@ export function AssistantSettingsDialog({
     setMascotEyes(assistant.mascot?.eyes ?? '')
     setMascotSpacing(assistant.mascot?.spacing ?? '')
     setMascotColor(assistant.mascot?.color ?? '')
+    setMascotFill(assistant.mascot?.fill ?? 'solid')
     setMascotAnimated(true)
     setMascotMotion('idle')
     setMascotMotionKey(0)
@@ -295,6 +255,7 @@ export function AssistantSettingsDialog({
       ...(mascotEyes === '' ? {} : { eyes: mascotEyes }),
       ...(mascotSpacing === '' ? {} : { spacing: mascotSpacing }),
       ...(mascotColor === '' ? {} : { color: mascotColor }),
+      ...(mascotFill === 'radial' ? { fill: 'radial' as const } : {}),
     }
     if (JSON.stringify(nextMascot) !== JSON.stringify(assistant.mascot)) value.mascot = nextMascot
     setSaving(true)
@@ -368,8 +329,8 @@ export function AssistantSettingsDialog({
     ...(mascotEyes === '' ? {} : { eyesVariant: mascotEyes as MascotEyes }),
     ...(mascotSpacing === '' ? {} : { spacingVariant: mascotSpacing as MascotSpacing }),
     ...(mascotColor === '' ? {} : { bodyColor: mascotColor }),
+    bodyColorFill: mascotFill,
   }
-  const showCurrentMascotColor = mascotColor !== '' && !MASCOT_COLOR_VALUES.includes(mascotColor)
 
   return (
     <AnimatedModal
@@ -442,61 +403,17 @@ export function AssistantSettingsDialog({
             <span className={css.assistantSettingsAvatarHint}>
               没有上传头像时显示；同一个种子永远是同一只。
             </span>
-            <div className={css.assistantMascotGrid}>
-              <Field label="轮廓">
-                <select
-                  className={css.input}
-                  value={mascotShape}
-                  disabled={busy}
-                  onChange={event => { setMascotShape(event.target.value) }}
-                >
-                  <option value="">按种子</option>
-                  {MASCOT_SHAPES.map(shape => (
-                    <option key={shape} value={shape}>{MASCOT_SHAPE_LABELS[shape]}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="眼睛">
-                <select
-                  className={css.input}
-                  value={mascotEyes}
-                  disabled={busy}
-                  onChange={event => { setMascotEyes(event.target.value) }}
-                >
-                  <option value="">按种子</option>
-                  {MASCOT_EYES.map(eyes => (
-                    <option key={eyes} value={eyes}>{MASCOT_EYES_LABELS[eyes]}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="眼距">
-                <select
-                  className={css.input}
-                  value={mascotSpacing}
-                  disabled={busy}
-                  onChange={event => { setMascotSpacing(event.target.value) }}
-                >
-                  <option value="">按种子</option>
-                  {MASCOT_SPACINGS.map(spacing => (
-                    <option key={spacing} value={spacing}>{MASCOT_SPACING_LABELS[spacing]}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="配色">
-                <select
-                  className={css.input}
-                  value={mascotColor}
-                  disabled={busy}
-                  onChange={event => { setMascotColor(event.target.value) }}
-                >
-                  <option value="">按种子</option>
-                  {showCurrentMascotColor && <option value={mascotColor}>当前自定义</option>}
-                  {MASCOT_COLOR_VALUES.map((color, index) => (
-                    <option key={`${color}-${index}`} value={color}>配色 {index + 1}</option>
-                  ))}
-                </select>
-              </Field>
-            </div>
+            <MascotPicker
+              seed={mascotSeed}
+              value={mascotOptions}
+              disabled={busy}
+              onChange={next => {
+                setMascotShape(next.shapeVariant ?? '')
+                setMascotEyes(next.eyesVariant ?? '')
+                setMascotColor(next.bodyColor ?? '')
+                setMascotFill(next.bodyColorFill ?? 'solid')
+              }}
+            />
             <label className={css.assistantMascotToggle}>
               <input
                 type="checkbox"
