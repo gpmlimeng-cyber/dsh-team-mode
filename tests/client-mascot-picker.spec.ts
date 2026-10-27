@@ -84,8 +84,9 @@ describe('MascotPicker rendering contract', () => {
     expect(html).toContain('>表情<')
     expect(html).toContain('>颜色<')
     expect(html).toContain('>身体<')
+    // Body first, then expression, colour last.
+    expect(html.indexOf('>身体<')).toBeLessThan(html.indexOf('>表情<'))
     expect(html.indexOf('>表情<')).toBeLessThan(html.indexOf('>颜色<'))
-    expect(html.indexOf('>颜色<')).toBeLessThan(html.indexOf('>身体<'))
     expect(html.match(/<legend /g)).toHaveLength(3)
     // One row per section: a no-wrap flex row of equal shares, not a grid that
     // wraps into a second line.

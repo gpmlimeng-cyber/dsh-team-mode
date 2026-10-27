@@ -40,8 +40,10 @@ import {
   setAssistantDisplayMode,
   useAssistantDisplayMode,
 } from './assistant-display-mode.js'
-import { coordinatorAssistant, assistantInstanceName } from './assistant-instances.js'
+import { assistantAvatarSource, assistantInstanceName, coordinatorAssistant } from './assistant-instances.js'
 import { MemberAvatar } from './member-avatar.js'
+import { Mascot } from './mascot-view.js'
+import { assistantShowsMascot, mascotMotionForStatus, mascotOptionsFor } from './mascot.js'
 import {
   openCreateTeamDialog,
   openManageTeamDialog,
@@ -226,8 +228,8 @@ function useStewardAvailable(): boolean {
 export interface BrandChatEntry {
   id: string
   name: string
-  /** Portrait for the row; the picker renders the same avatar as the list. */
-  avatar?: string
+  /** The same picture the sidebar row shows: uploaded avatar, else mascot. */
+  portrait: ReactNode
   icon?: ReactNode
 }
 
@@ -1105,7 +1107,27 @@ function useAssistantChats(): BrandChatEntry[] {
           const ordered = coordinator === undefined
             ? listed
             : [coordinator, ...listed.filter(item => item.id !== coordinator.id)]
-          setChats(ordered.map(item => ({ id: item.id, name: assistantInstanceName(item) })))
+          setChats(ordered.map(item => ({
+            id: item.id,
+            name: assistantInstanceName(item),
+            portrait: assistantShowsMascot(item)
+              ? (
+                <Mascot
+                  {...mascotOptionsFor(item)}
+                  size={22}
+                  avatarShape="rounded"
+                  motion={mascotMotionForStatus(item.status)}
+                />
+              )
+              : (
+                <MemberAvatar
+                  name={assistantInstanceName(item)}
+                  avatar={assistantAvatarSource(item)}
+                  size={22}
+                  className={css.sidebarAssistantAvatarShape ?? ''}
+                />
+              ),
+          })))
         })
         .catch(() => { if (live) setChats([]) })
     }

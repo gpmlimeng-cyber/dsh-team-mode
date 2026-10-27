@@ -105,8 +105,8 @@ describe('the brand row carries the three actions', () => {
 
   it('leads with 新对话 and keeps 打开管家会话 as the last row', () => {
     const items = brandCreateItems(true, [
-      { id: 'chief', name: 'Chief' },
-      { id: 'other', name: 'Other' },
+      { id: 'chief', name: 'Chief', portrait: null },
+      { id: 'other', name: 'Other', portrait: null },
     ])
     expect(items.map(item => ('id' in item ? item.id : ''))).toEqual([
       'new-chat',

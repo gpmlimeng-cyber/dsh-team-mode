@@ -134,14 +134,15 @@ function pick(kind: MascotPickerKind, option: MascotPickerOption): MascotOptions
 }
 
 const SECTIONS: readonly { kind: MascotPickerKind, title: string }[] = [
+  { kind: 'body', title: '身体' },
   { kind: 'eyes', title: '表情' },
   { kind: 'color', title: '颜色' },
-  { kind: 'body', title: '身体' },
 ]
 
 /**
- * The mascot picker: three five-per-row preview grids. Native `<button>`s give
- * Tab order, Enter/Space activation and `aria-pressed` for free.
+ * The mascot picker: body, expression, then colour — each on one unwrapped row
+ * of previews. Native `<button>`s give Tab order, Enter/Space activation and
+ * `aria-pressed` for free.
  */
 export function MascotPicker({
   seed,

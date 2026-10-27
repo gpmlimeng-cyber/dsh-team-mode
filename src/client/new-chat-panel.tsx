@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import {
   IconChevronRightOutlineRegular,
@@ -7,19 +8,22 @@ import {
   IconUserOutlineRegular,
   IconUsersOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { MemberAvatar } from './member-avatar.js'
 import css from './AgentTeam.module.css'
 
 /** One assistant the picker can start a chat with. */
 export interface NewChatEntry {
   id: string
   name: string
-  avatar?: string
+  /**
+   * The assistant's own picture, rendered by the caller with the same branch the
+   * sidebar row uses (uploaded avatar or mascot) so the two never diverge.
+   */
+  portrait: ReactNode
   /** Shown under the name when the assistant has something to say about itself. */
   hint?: string
 }
 
-const PANEL_WIDTH = 320
+const PANEL_WIDTH = 264
 
 /**
  * The floating "start a chat with…" panel: search on top, then the create
@@ -165,7 +169,7 @@ export function NewChatPanel({
               onPointerEnter={() => { setCursor(rowIndex) }}
               onClick={() => { run(entry.id) }}
             >
-              <MemberAvatar name={entry.name} avatar={entry.avatar} size={22} />
+              <span className={css.newChatRowAvatar}>{entry.portrait}</span>
               <span className={css.newChatRowText}>
                 <span className={css.newChatRowName}>{entry.name}</span>
                 {entry.hint !== undefined && entry.hint !== ''

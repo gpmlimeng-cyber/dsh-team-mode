@@ -4667,14 +4667,15 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   min-width: 0;
   height: 56px;
   padding: 0;
-  border: 1px solid var(--dsw-alias-border-l1);
+  /* No tile: the previews sit bare and only the chosen one gets a mark. */
+  border: 0;
   border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-bg-layer-2);
+  background: transparent;
   cursor: pointer;
 }
 
 .mascotPickerOption:hover {
-  border-color: var(--dsw-alias-border-l3);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .mascotPickerOption:focus-visible {
@@ -4683,7 +4684,7 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 }
 
 .mascotPickerOption[aria-pressed='true'] {
-  border-color: var(--dsw-alias-state-business-primary);
+  /* Selection is the only persistent decoration. */
   outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 1px;
 }
