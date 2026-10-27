@@ -4099,6 +4099,19 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 /* Sectioned create dialog, shaped after the reference product: a fixed
    header/footer around a left section nav and one independently scrolling
    content pane. Every section below maps to a real instance field. */
+/* The template library reuses the settings panel; the dialog only frames it. */
+.assistantLibraryDialog {
+  width: min(1040px, calc(100vw - 32px));
+  height: min(680px, 90dvh);
+  max-height: 100%;
+}
+
+.assistantLibraryContent {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .assistantCreateDialog {
   width: min(900px, calc(100vw - 32px));
   height: min(760px, 94dvh);

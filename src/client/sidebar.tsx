@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
@@ -22,18 +23,20 @@ import {
   Menu,
   Tooltip,
   type MenuEntry,
+  type MenuItem,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import {
   AssistantSidebarSection,
   SIDEBAR_ASSISTANT_CREATE_EVENT,
+  SIDEBAR_GROUP_CREATE_EVENT,
   SIDEBAR_SEARCH_EVENT,
 } from './assistant-sidebar.js'
 import {
   setAssistantDisplayMode,
   useAssistantDisplayMode,
 } from './assistant-display-mode.js'
-import { coordinatorAssistant } from './assistant-instances.js'
+import { coordinatorAssistant, assistantInstanceName } from './assistant-instances.js'
 import { MemberAvatar } from './member-avatar.js'
 import {
   openCreateTeamDialog,
@@ -67,6 +70,7 @@ import css from './AgentTeam.module.css'
 import type { TeamView } from '../transport/contracts.js'
 import type { WorkspaceChoice } from './types.js'
 import { LeaderMark } from './team-member-chrome.js'
+import { AssistantLibraryDialog } from './assistant-library-dialog.js'
 import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-groups.js'
 import {
   SidebarGroupDialogs,
@@ -213,10 +217,35 @@ function useStewardAvailable(): boolean {
  * explicit; the steward row opens the coordinator's own conversation instead of
  * creating anything. Without a coordinator it is disabled and says why.
  */
-export function brandCreateItems(hasSteward: boolean): MenuEntry[] {
+/** One assistant the ＋ menu can start a chat with; the coordinator leads. */
+export interface BrandChatEntry {
+  id: string
+  name: string
+  icon?: ReactNode
+}
+
+/**
+ * The ＋ menu, shaped like MausBot's: 新对话 first (a picker of who to talk to,
+ * coordinator on top so it is the default choice), then the create actions.
+ */
+export function brandCreateItems(hasSteward: boolean, chats: readonly BrandChatEntry[] = []): MenuEntry[] {
+  const chatItems: MenuItem[] = chats.map(chat => ({
+    id: `chat:${chat.id}`,
+    label: chat.name,
+    ...(chat.icon === undefined ? {} : { icon: chat.icon }),
+  }))
   return [
-    { id: 'new-team', label: '新建团队' },
+    {
+      id: 'new-chat',
+      label: '新对话',
+      ...(chatItems.length === 0 ? {} : { submenu: chatItems }),
+      ...(chatItems.length === 0 ? { disabled: true } : {}),
+    },
+    { type: 'separator', id: 'new-chat-separator' },
     { id: 'new-assistant', label: '新建助手' },
+    { id: 'new-team', label: '新建团队' },
+    { id: 'create-group', label: '创建分组' },
+    { id: 'library', label: '模板库' },
     { type: 'separator', id: 'steward-separator' },
     hasSteward
       ? { id: 'open-steward', label: '打开管家会话' }
@@ -1057,6 +1086,45 @@ function restoreBotSidebar(): void {
 }
 
 /**
+ * Who the ＋ menu's 新对话 can talk to, coordinator first so it is the default
+ * choice — the same shape MausBot's picker opens with.
+ */
+function useAssistantChats(): BrandChatEntry[] {
+  const [chats, setChats] = useState<BrandChatEntry[]>([])
+  useEffect(() => {
+    let live = true
+    const load = (): void => {
+      void callAgentTeam('assistant.instance.list')
+        .then(value => {
+          if (!live) return
+          const listed = value.items.filter(item => item.status !== 'archived')
+          const coordinator = coordinatorAssistant(listed)
+          const ordered = coordinator === undefined
+            ? listed
+            : [coordinator, ...listed.filter(item => item.id !== coordinator.id)]
+          setChats(ordered.map(item => ({ id: item.id, name: assistantInstanceName(item) })))
+        })
+        .catch(() => { if (live) setChats([]) })
+    }
+    load()
+    const unsubscribe = subscribeAgentTeam(load, () => {}, load)
+    return () => { live = false; unsubscribe() }
+  }, [])
+  return chats
+}
+
+/** DeepBot mode: open one assistant's main Session, whatever it currently is. */
+async function startAssistantChat(id: string, open: (sessionId: string) => void): Promise<void> {
+  try {
+    const result = await callAgentTeam('assistant.instance.ensure', { id })
+    open(result.sessionId)
+  } catch {
+    // Same rule as the steward entry: a failed open stays silent rather than
+    // half-navigating the sidebar.
+  }
+}
+
+/**
  * BOT surface: the native "新会话" and "自动化任务" entries leave the list and
  * become footer actions next to the account row, and the shipped market entry is
  * dropped. DSH surface restores every node exactly as it was.
@@ -1187,6 +1255,8 @@ export function SidebarPortal({
   const [searchOpen, setSearchOpen] = useState(false)
   const [createMenuOpen, setCreateMenuOpen] = useState(false)
   const stewardAvailable = useStewardAvailable()
+  const chats = useAssistantChats()
+  const [libraryOpen, setLibraryOpen] = useState(false)
   const mode = useSurfaceMode()
 
   // Expose the mode on <html> so CSS and DOM-level helpers can follow it
@@ -1874,13 +1944,20 @@ export function SidebarPortal({
                 align="end"
                 dense
                 portal
-                items={brandCreateItems(stewardAvailable)}
+                items={brandCreateItems(stewardAvailable, chats)}
                 onSelect={id => {
                   setCreateMenuOpen(false)
                   if (id === 'new-team') openCreateTeamDialog()
                   else if (id === 'new-assistant') {
                     // The assistant section owns its own dialog; it answers this.
                     window.dispatchEvent(new CustomEvent(SIDEBAR_ASSISTANT_CREATE_EVENT))
+                  } else if (id === 'create-group') {
+                    // The group dialogs live with the lists they reorder.
+                    window.dispatchEvent(new CustomEvent(SIDEBAR_GROUP_CREATE_EVENT))
+                  } else if (id === 'library') {
+                    setLibraryOpen(true)
+                  } else if (id.startsWith('chat:')) {
+                    void startAssistantChat(id.slice('chat:'.length), openSession)
                   } else if (id === 'open-steward') void startStewardSession(openSession)
                 }}
                 anchor={(
@@ -1908,6 +1985,7 @@ export function SidebarPortal({
         </>,
         brandHost,
       )}
+      <AssistantLibraryDialog open={libraryOpen} onClose={() => { setLibraryOpen(false) }} />
       {host !== undefined && createPortal(
         <>
           {mode === 'team' && (

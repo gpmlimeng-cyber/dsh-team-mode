@@ -103,22 +103,31 @@ describe('the brand row carries the three actions', () => {
     expect(sidebar).toContain("setAssistantDisplayMode('advanced')")
   })
 
-  it('keeps 打开管家会话 as the last row, behind a separator', () => {
-    const items = brandCreateItems(true)
+  it('leads with 新对话 and keeps 打开管家会话 as the last row', () => {
+    const items = brandCreateItems(true, [
+      { id: 'chief', name: 'Chief' },
+      { id: 'other', name: 'Other' },
+    ])
     expect(items.map(item => ('id' in item ? item.id : ''))).toEqual([
-      'new-team',
+      'new-chat',
+      'new-chat-separator',
       'new-assistant',
+      'new-team',
+      'create-group',
+      'library',
       'steward-separator',
       'open-steward',
     ])
-    expect(items[2]).toEqual({ type: 'separator', id: 'steward-separator' })
-    const steward = items[3] as MenuItem
-    expect(steward.label).toBe('打开管家会话')
-    expect(steward.disabled).toBeUndefined()
+    // MausBot's shape: one row opens a picker of who to talk to, coordinator first.
+    const newChat = items[0] as MenuItem
+    expect(newChat.label).toBe('新对话')
+    expect(newChat.submenu?.map(entry => entry.id)).toEqual(['chat:chief', 'chat:other'])
+    expect((items.at(-1) as MenuItem).label).toBe('打开管家会话')
+    expect((items.at(-1) as MenuItem).disabled).toBeUndefined()
   })
 
   it('disables the steward row without a coordinator and says why', () => {
-    const steward = brandCreateItems(false)[3] as MenuItem
+    const steward = brandCreateItems(false).at(-1) as MenuItem
     expect(steward.disabled).toBe(true)
     expect((steward.label as unknown as { props: { title?: string } }).props.title)
       .toBe('还没有总协调助手')
@@ -127,7 +136,7 @@ describe('the brand row carries the three actions', () => {
   it('opens the coordinator session through the pre-existing action', () => {
     expect(sidebar).toContain('void startStewardSession(openSession)')
     expect(sidebar).toContain('const stewardAvailable = useStewardAvailable()')
-    expect(sidebar).toContain('items={brandCreateItems(stewardAvailable)}')
+    expect(sidebar).toContain('items={brandCreateItems(stewardAvailable, chats)}')
   })
 
   it('keeps one 新建分组 entry, at the bottom of the sidebar list', () => {

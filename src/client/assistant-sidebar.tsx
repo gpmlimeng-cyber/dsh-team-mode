@@ -84,6 +84,8 @@ import type { AssistantInstanceView, PendingInteractionView } from '../transport
 export const SIDEBAR_SEARCH_EVENT = 'dsh-team-mode:sidebar-search'
 /** Brand-row ＋ → 新建助手; the dialog itself still lives in this section. */
 export const SIDEBAR_ASSISTANT_CREATE_EVENT = 'dsh-team-mode:assistant-create'
+/** ＋ menu → 「创建分组」: the group dialogs live with the list they reorder. */
+export const SIDEBAR_GROUP_CREATE_EVENT = 'dsh-team-mode:sidebar-group-create'
 
 /** Three tiny dots used while an Assistant is thinking, not a static count. */
 function AssistantWorkingDots(): JSX.Element {
@@ -233,11 +235,14 @@ export function AssistantSidebarSection({
       setError(undefined)
       setCreateOpen(true)
     }
+    const onGroupCreate = (): void => { setGroupDialog({ kind: 'create' }) }
     window.addEventListener(SIDEBAR_SEARCH_EVENT, onSearch)
     window.addEventListener(SIDEBAR_ASSISTANT_CREATE_EVENT, onCreate)
+    window.addEventListener(SIDEBAR_GROUP_CREATE_EVENT, onGroupCreate)
     return () => {
       window.removeEventListener(SIDEBAR_SEARCH_EVENT, onSearch)
       window.removeEventListener(SIDEBAR_ASSISTANT_CREATE_EVENT, onCreate)
+      window.removeEventListener(SIDEBAR_GROUP_CREATE_EVENT, onGroupCreate)
     }
   }, [])
   const [threadOpenById, setThreadOpenById] = useState<Record<string, boolean>>({})
