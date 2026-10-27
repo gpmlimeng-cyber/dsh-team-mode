@@ -1277,7 +1277,7 @@ export function SidebarPortal({
         ?? (rect.width > 32 ? rect.width - 32 : Math.min(240, window.innerWidth - 32))
       // Keep a hard gap before the native collapse control on phones; the
       // brand actions are reduced to 新建 by CSS at this width.
-      if (window.innerWidth <= 760) width = Math.min(width, 190)
+      if (window.innerWidth <= 760) width = Math.min(width, 202)
       if (toggleRect !== undefined && toggleRect.width > 0) {
         width = Math.min(width, toggleRect.left - left - 20)
       }
