@@ -671,13 +671,29 @@ export function AssistantSettingsPane({
                   </button>
                 )
                 : (
-                  <p
-                    className={css.assistantOverviewDescription}
-                    title={overviewWho.description}
-                    data-dsh-assistant-overview-description
-                  >
-                    {overviewWho.description}
-                  </p>
+                  <>
+                    <p
+                      className={css.assistantOverviewDescription}
+                      title={overviewWho.description}
+                      data-dsh-assistant-overview-description
+                    >
+                      {overviewWho.description}
+                    </p>
+                    {/* The clamp hides the rest of the text; this text action is
+                        the keyboard and touch way into 身份与形象 (a title is
+                        neither focusable nor reachable on touch). It shares the
+                        empty-description placeholder's text-button look and is
+                        always shown for a non-empty description: measuring
+                        scrollHeight in a narrow clamped column is not reliable. */}
+                    <button
+                      type="button"
+                      className={css.assistantOverviewDescriptionEmpty}
+                      data-dsh-assistant-overview-read-all
+                      onClick={() => { jumpToOverviewTarget('identity') }}
+                    >
+                      读全部
+                    </button>
+                  </>
                 )}
               <p className={css.assistantOverviewMeta}>{overviewWho.meta.join(' · ')}</p>
             </section>

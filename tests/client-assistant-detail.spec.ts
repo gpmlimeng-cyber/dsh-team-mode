@@ -249,6 +249,31 @@ describe('assistant settings pane', () => {
     expect(html).not.toContain('data-dsh-assistant-settings-coordinator')
   })
 
+  it('always gives a non-empty description a 读全部 text action into 身份与形象', () => {
+    const html = renderPanel(instanceWith({ instructions: '第一行\n第二行\n第三行' }))
+
+    // The clamped two-line excerpt is followed by a real text button.
+    expect(html).toContain('assistantOverviewDescription')
+    expect(html).toContain('data-dsh-assistant-overview-read-all')
+    expect(html).toContain('>读全部<')
+    expect(html).toMatch(/<button[^>]*data-dsh-assistant-overview-read-all/)
+
+    const pane = source('assistant-settings-pane.tsx')
+    const readAll = pane.slice(
+      pane.indexOf('data-dsh-assistant-overview-read-all'),
+      pane.indexOf('</button>', pane.indexOf('data-dsh-assistant-overview-read-all')),
+    )
+    // It jumps to the group that owns the description, and it is a text action,
+    // not an icon.
+    expect(readAll).toContain("jumpToOverviewTarget('identity')")
+    expect(readAll).not.toContain('<svg')
+
+    // The empty branch keeps its own entry; the read-all only appears with text.
+    const empty = renderPanel(instanceWith({}))
+    expect(empty).toContain('还没有描述')
+    expect(empty).not.toContain('data-dsh-assistant-overview-read-all')
+  })
+
   it('drops the checklist entirely once nothing is missing', () => {
     const html = renderPanel(instanceWith({
       instructions: '写代码',
