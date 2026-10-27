@@ -37,9 +37,8 @@ export function assistantModelOptionLabel(
  */
 export const ASSISTANT_CREATE_SECTIONS = [
   { key: 'identity', label: '身份' },
-  { key: 'persona', label: '人设' },
-  { key: 'model', label: '模型与环境' },
-  { key: 'permissions', label: '权限' },
+  { key: 'model', label: '模型与权限' },
+  { key: 'capabilities', label: '能力' },
 ] as const
 
 export type AssistantCreateSection = (typeof ASSISTANT_CREATE_SECTIONS)[number]['key']

@@ -18,6 +18,12 @@ export interface SelectControlOption {
   icon?: ReactNode
   /** Second line under the label, like the shipped Agent Preset picker. */
   description?: string
+  /**
+   * What the closed pill shows, when the list row should stay short. The
+   * shipped model picker lists bare model names but still spells out provider
+   * and reasoning on the trigger.
+   */
+  triggerLabel?: string
 }
 
 /**
@@ -61,7 +67,7 @@ export function SelectControl({
   const current = options.find(option => option.value === value)
   // A stored value the catalog no longer offers still shows its raw value
   // instead of a blank pill, so the dialog never hides what is saved.
-  const label = current?.label ?? (value === '' ? placeholder : value)
+  const label = current?.triggerLabel ?? current?.label ?? (value === '' ? placeholder : value)
 
   const entries: MenuEntry[] = []
   let group: string | undefined

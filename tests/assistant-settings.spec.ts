@@ -171,7 +171,7 @@ function baseCreateBodyProps(): AssistantCreateBodyProps {
     modelGroups: [{
       providerId: 'deepseek',
       providerName: 'DeepSeek',
-      models: [{ id: 'flash', label: 'Flash — DeepSeek' }],
+      models: [{ id: 'flash', name: 'Flash', label: 'Flash — DeepSeek' }],
     }],
     reasoningOptions: [{ id: 'high', label: 'High' }],
     defaultReasoning: '模型默认（Medium）',
@@ -213,13 +213,13 @@ function navMarkup(html: string): string {
 }
 
 describe('assistant create dialog shell', () => {
-  it('renders four real sections with exactly one current item', () => {
+  it('renders three real sections with exactly one current item', () => {
     const html = renderCreateBody()
     const nav = navMarkup(html)
     expect(nav).toContain('aria-label="创建助手的区块"')
-    expect((nav.match(/<button/g) ?? [])).toHaveLength(4)
+    expect((nav.match(/<button/g) ?? [])).toHaveLength(3)
     expect((nav.match(/aria-current="page"/g) ?? [])).toHaveLength(1)
-    for (const label of ['身份', '人设', '模型与环境', '权限']) {
+    for (const label of ['身份', '模型与权限', '能力']) {
       expect(nav).toContain(`>${label}<`)
     }
     for (const label of ['记忆', '技能', '例程', '访问', '语音与通知']) {
@@ -236,7 +236,7 @@ describe('assistant create dialog shell', () => {
     expect(html).toContain('模型与环境')
     // The identity fields are not mounted: switching sections does not render
     // hidden controls that could write.
-    expect(html).not.toContain('起始角色')
+    expect(html).not.toContain('选择模板')
   })
 
   it('explains the remaining unsupported areas instead of offering them as tabs', () => {
@@ -348,7 +348,7 @@ describe('assistant create dialog sections', () => {
       groups: ['工作', '学习'],
     })
     const section = html.slice(html.indexOf('<section'), html.indexOf('</section>'))
-    expect(section).toContain('起始角色')
+    expect(section).toContain('选择模板')
     expect(section).toContain('上传本地头像')
     expect(section).toContain('aria-label="助手名称"')
     // The starting role and group are pill selects; a closed pill shows its
@@ -373,11 +373,13 @@ describe('assistant create dialog sections', () => {
     expect(section).not.toContain('>不分组<')
   })
 
-  it('persona is an editable instructions control', () => {
-    const html = renderCreateBody({ activeSection: 'persona' })
-    expect(html).toContain('aria-label="人设"')
+  it('描述 sits under 名称 in 身份 and writes the instructions', () => {
+    const html = renderCreateBody({ activeSection: 'identity' })
+    expect(html).toContain('aria-label="描述"')
     expect(html).toContain('先读代码，再给最小实现。')
     expect(html).toContain('留空则使用 Agent Preset 默认')
+    // Order inside the pane: name first, then the description.
+    expect(html.indexOf('助手名称')).toBeLessThan(html.indexOf('aria-label="描述"'))
   })
 
   it('model and environment writes workspace, model, reasoning and preset', () => {
@@ -391,8 +393,8 @@ describe('assistant create dialog sections', () => {
     expect(html).toContain('>Standard<')
   })
 
-  it('capabilities are part of 模型与环境 and start unchecked for a direct create', () => {
-    const html = renderCreateBody({ activeSection: 'model' })
+  it('capabilities have their own section and start unchecked for a direct create', () => {
+    const html = renderCreateBody({ activeSection: 'capabilities' })
     expect(html).toContain('>能力<')
     expect(html).toContain('技能（已选 0 个）')
     expect(html).toContain('MCP（已选 0 个）')
@@ -402,7 +404,7 @@ describe('assistant create dialog sections', () => {
 
   it('ticks the catalog entries a role brought in and disables the lost ones', () => {
     const resolved = renderCreateBody({
-      activeSection: 'model',
+      activeSection: 'capabilities',
       draft: { ...CREATE_DRAFT, skillAllowlist: ['research'], mcpServers: ['github'] },
       skills: [{ name: 'research', detail: '查资料' }],
       mcpServers: [{ name: 'github', detail: '4 个工具' }],
@@ -415,7 +417,7 @@ describe('assistant create dialog sections', () => {
     expect(resolved).not.toContain('不可用')
 
     const stale = renderCreateBody({
-      activeSection: 'model',
+      activeSection: 'capabilities',
       draft: { ...CREATE_DRAFT, skillAllowlist: ['retired-skill'] },
       skills: [{ name: 'research', detail: '查资料' }],
     })
@@ -426,8 +428,8 @@ describe('assistant create dialog sections', () => {
     expect(stale).toMatch(/<input[^>]*type="checkbox"[^>]*disabled=""/)
   })
 
-  it('permissions writes the preset and states the coordinator is set elsewhere', () => {
-    const html = renderCreateBody({ activeSection: 'permissions' })
+  it('keeps the permission preset inside 模型与权限 and states the coordinator rule', () => {
+    const html = renderCreateBody({ activeSection: 'model' })
     expect(html).toContain('权限预设')
     expect(html).toContain('工作区可写')
     expect(html).toContain('只影响之后创建或恢复的会话')
@@ -439,7 +441,7 @@ describe('assistant create dialog sections', () => {
     const section = html.slice(html.indexOf('<section'), html.indexOf('</section>'))
     expect(section).toContain('读取助手模板失败：模板服务不可用')
     // The row stays (the reason replaces the control), but no picker opens.
-    expect(section).not.toContain('aria-label="起始角色"')
+    expect(section).not.toContain('aria-label="选择模板"')
   })
 })
 

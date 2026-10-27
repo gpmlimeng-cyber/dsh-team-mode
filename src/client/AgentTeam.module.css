@@ -4416,8 +4416,11 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   text-overflow: ellipsis;
 }
 
-.assistantCreatePersona {
-  min-height: 200px;
+/* 描述 is a note, not an essay: two rows, and the textarea keeps the name
+   input's width because both live in the same row grid. */
+.assistantCreateDescription {
+  min-height: 52px;
+  resize: vertical;
 }
 
 .assistantCreateReadonlyNote {

@@ -569,11 +569,11 @@ function readyDraft(catalog: CatalogView): AssistantCreateDraft {
 }
 
 describe('assistant create sections', () => {
-  it('offers exactly the four real sections', () => {
+  it('offers exactly the three real sections', () => {
     expect(ASSISTANT_CREATE_SECTIONS.map(section => section.key))
-      .toEqual(['identity', 'persona', 'model', 'permissions'])
+      .toEqual(['identity', 'model', 'capabilities'])
     expect(ASSISTANT_CREATE_SECTIONS.map(section => section.label))
-      .toEqual(['身份', '人设', '模型与环境', '权限'])
+      .toEqual(['身份', '模型与权限', '能力'])
   })
 
   it('explains the remaining unsupported areas instead of rendering tabs for them', () => {

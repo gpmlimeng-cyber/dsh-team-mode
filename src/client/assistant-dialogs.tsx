@@ -52,7 +52,8 @@ function messageOf(cause: unknown): string {
 export interface AssistantCreateModelGroup {
   providerId: string
   providerName: string
-  models: Array<{ id: string; label: string }>
+  /** `label` is the full pill text; `name` is the bare row text. */
+  models: Array<{ id: string; name: string; label: string }>
 }
 
 /**
@@ -120,7 +121,9 @@ function modelOptions(
 ): SelectControlOption[] {
   return groups.flatMap(group => group.models.map(model => ({
     value: assistantModelKey(group.providerId, model.id),
-    label: model.label,
+    // The list row is the model alone; the pill still names the provider.
+    label: model.name,
+    triggerLabel: model.label,
     group: group.providerName,
   })))
 }
@@ -233,11 +236,11 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
         {roleError === undefined
           ? (
             <SettingsRow
-              label="起始角色"
-              hint="选中后填入该模板的真实名称、人设、头像与模型；之后仍可逐项修改，实例不会绑定模板。"
+              label="选择模板"
+              hint="选中后填入该模板的真实名称、描述、头像与模型；之后仍可逐项修改，实例不会绑定模板。"
               control={(
                 <SelectControl
-                  ariaLabel="起始角色"
+                  ariaLabel="选择模板"
                   value=""
                   options={roleOptions(roles)}
                   disabled={disabled}
@@ -248,7 +251,7 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
           )
           : (
             <SettingsRow
-              label="起始角色"
+              label="选择模板"
               hint={`读取助手模板失败：${roleError}。可以直接自定义创建，不影响其他字段。`}
               control={null}
             />
@@ -265,6 +268,21 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
               placeholder="输入名称"
               aria-label="助手名称"
               onChange={event => { onDraftChange({ name: event.target.value }) }}
+            />
+          )}
+        />
+        <SettingsRow
+          label="描述"
+          hint="写入助手的系统提示；留空则使用 Agent Preset 默认。只影响之后创建或恢复的会话。"
+          control={(
+            <textarea
+              className={`${css.input} ${css.assistantCreateDescription}`}
+              aria-label="描述"
+              rows={2}
+              value={draft.instructions}
+              disabled={disabled}
+              placeholder="例如：你负责整理需求并给出可执行的实现建议；先读代码再回答。"
+              onChange={event => { props.onDraftChange({ instructions: event.target.value }) }}
             />
           )}
         />
@@ -300,36 +318,12 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
   )
 }
 
-function PersonaSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.Element {
-  return (
-    <>
-      <SectionHeading title="人设" hint="写入助手的系统提示" />
-      <SettingsRows>
-        <SettingsRow
-          label="人设"
-          hint="会写入助手的系统提示；留空则使用 Agent Preset 默认。只影响之后创建或恢复的会话。"
-          control={(
-            <textarea
-              className={`${css.input} ${css.assistantCreatePersona}`}
-              aria-label="人设"
-              rows={8}
-              value={props.draft.instructions}
-              disabled={disabled}
-              placeholder="例如：你负责整理需求并给出可执行的实现建议；先读代码再回答。"
-              onChange={event => { props.onDraftChange({ instructions: event.target.value }) }}
-            />
-          )}
-        />
-      </SettingsRows>
-    </>
-  )
-}
 
 function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.Element {
   const { draft, workspaces, modelGroups, reasoningOptions, defaultReasoning, capabilityError } = props
   return (
     <>
-      <SectionHeading title="模型与环境" hint="会话在哪里运行、使用哪个模型" />
+      <SectionHeading title="模型与权限" hint="会话在哪里运行、用哪个模型、什么权限" />
       <SettingsRows>
         <SettingsRow
           label="Workspace"
@@ -415,7 +409,36 @@ function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.E
             />
           )}
         />
+        <SettingsRow
+          label="权限预设"
+          hint="只影响之后创建或恢复的会话；已打开的主会话保持原权限。"
+          control={(
+            <SelectControl
+              ariaLabel="权限预设"
+              value={draft.permissionPresetId}
+              placeholder="没有可用权限预设"
+              options={props.permissionPresets.map(preset => ({
+                value: preset.value,
+                label: PERMISSION_LABELS[preset.value] ?? preset.name,
+              }))}
+              disabled={disabled}
+              onChange={next => { props.onDraftChange({ permissionPresetId: next }) }}
+            />
+          )}
+        />
       </SettingsRows>
+      <div className={css.assistantCreateReadonlyNote}>
+        总协调（Coordinator）在侧栏行菜单设置，创建时不设。
+      </div>
+    </>
+  )
+}
+
+/** Skills and MCP granted to the assistant: what it may reach for. */
+function CapabilitiesSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.Element {
+  const { draft, capabilityError } = props
+  return (
+    <>
       <SectionHeading title="能力" hint="这个助手能用的技能与 MCP" />
       <CapabilityPicker
         label={`技能（已选 ${draft.skillAllowlist.length} 个）`}
@@ -450,36 +473,7 @@ function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.E
   )
 }
 
-function PermissionsSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.Element {
-  const { draft, permissionPresets } = props
-  return (
-    <>
-      <SectionHeading title="权限" hint="只影响之后创建或恢复的会话" />
-      <SettingsRows>
-        <SettingsRow
-          label="权限预设"
-          hint="已打开的主会话保持原权限，直到它被重新创建或恢复。"
-          control={(
-            <SelectControl
-              ariaLabel="权限预设"
-              value={draft.permissionPresetId}
-              placeholder="没有可用权限预设"
-              options={permissionPresets.map(preset => ({
-                value: preset.value,
-                label: PERMISSION_LABELS[preset.value] ?? preset.name,
-              }))}
-              disabled={disabled}
-              onChange={next => { props.onDraftChange({ permissionPresetId: next }) }}
-            />
-          )}
-        />
-      </SettingsRows>
-      <div className={css.assistantCreateReadonlyNote}>
-        总协调（Coordinator）在侧栏行菜单设置，创建时不设。
-      </div>
-    </>
-  )
-}
+
 
 function sectionContent(
   props: AssistantCreateBodyProps,
@@ -488,12 +482,10 @@ function sectionContent(
   switch (props.activeSection) {
     case 'identity':
       return IdentitySection(props, disabled)
-    case 'persona':
-      return PersonaSection(props, disabled)
     case 'model':
       return ModelSection(props, disabled)
-    case 'permissions':
-      return PermissionsSection(props, disabled)
+    case 'capabilities':
+      return CapabilitiesSection(props, disabled)
   }
 }
 
@@ -764,7 +756,7 @@ export function AssistantCreateDialog({
   }))
   const activeWorkspace = workspaces.find(workspace => workspace.id === draft.workspaceId)
   const banner = catalog !== undefined && workspaces.length > 1 && activeWorkspace !== undefined
-    ? `将在「${activeWorkspace.title}」中创建 · 可在「模型与环境」切换`
+    ? `将在「${activeWorkspace.title}」中创建 · 可在「模型与权限」切换`
     : undefined
   const canCreate = assistantCreateCanSubmit(draft)
 
@@ -784,6 +776,7 @@ export function AssistantCreateDialog({
   const modelGroups = (catalog?.providers ?? []).flatMap(providerEntry => {
     const models = (catalog?.models[providerEntry.id] ?? []).map(modelEntry => ({
       id: modelEntry.id,
+      name: modelEntry.name,
       label: assistantModelOptionLabel(
         providerEntry.name,
         modelEntry.name,

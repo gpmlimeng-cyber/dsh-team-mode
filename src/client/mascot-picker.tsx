@@ -87,6 +87,9 @@ const MASCOT_COLOR_OPTIONS: readonly MascotPickerOption[] = [
   ...[...new Set(TEAM_IDENTITY_COLORS.map((_, index) => mascotPaletteColor(index)))]
     .map((color, index) => solidSwatch(color, `配色 ${index + 1}`)),
   solidSwatch(MASCOT_NEUTRAL_GREY, '中性灰'),
+  // A real blue: the identity palette above is intentionally muted, so the
+  // vivid option readers asked for comes from a fixed swatch instead.
+  solidSwatch('#2F6FEB', '宝蓝'),
   {
     value: MASCOT_CHROME_GREY,
     label: '立体银',
