@@ -4691,20 +4691,32 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   object-fit: contain;
 }
 
+/* Colours read as a single flat row of circles, like the reference: no tile
+   box, no background — only the swatch itself and a ring when selected. */
+.mascotPickerSwatchRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
 .mascotPickerSwatch {
-  width: 100%;
-  height: 56px;
-  border-radius: var(--dsw-radius-sm);
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  border-radius: 50%;
 }
 
 .mascotPickerSwatch img {
-  width: 34px;
-  height: 34px;
+  width: 100%;
+  height: 100%;
   border-radius: 50%;
-  margin: 0 auto;
 }
 
 .mascotPickerSwatch[aria-pressed='true'] {
+  outline: 2px solid var(--dsw-alias-state-business-primary);
   outline-offset: 2px;
 }
 

@@ -169,7 +169,7 @@ export function MascotPicker({
       {sections.map(({ section, options }) => (
         <fieldset key={section.kind} className={css.mascotPickerSection} disabled={disabled}>
           <legend className={css.mascotPickerTitle}>{section.title}</legend>
-          <div className={css.mascotPickerGrid}>
+          <div className={section.kind === 'color' ? css.mascotPickerSwatchRow : css.mascotPickerGrid}>
             {options.map(option => (
               <button
                 key={`${option.value}-${option.fill ?? ''}`}
