@@ -672,6 +672,10 @@ export function AssistantSettingsPane({
                   setMascotShape(next.shape)
                   setMascotEyes(next.eyes)
                   setMascotColor(next.color)
+                  // Picking a mascot means "show this one": an uploaded picture
+                  // would keep winning, so the choice would look ignored.
+                  setAvatar('')
+                  setAvatarChanged(true)
                 }}
               >
                 随机
@@ -680,7 +684,7 @@ export function AssistantSettingsPane({
             <div className={css.assistantMascotFields}>
               <span className={css.assistantSettingsAvatarTitle}>吉祥物</span>
               <span className={css.assistantSettingsAvatarHint}>
-                没有上传头像时显示；同一个种子永远是同一只。
+                选吉祥物会替换掉已上传的头像；同一个种子永远是同一只。
               </span>
               <MascotPicker
                 seed={mascotSeed}
@@ -691,6 +695,8 @@ export function AssistantSettingsPane({
                   setMascotEyes(next.eyesVariant ?? '')
                   setMascotColor(next.bodyColor ?? '')
                   setMascotFill(next.bodyColorFill ?? 'solid')
+                  setAvatar('')
+                  setAvatarChanged(true)
                 }}
               />
               <div className={css.assistantMascotToggle}>

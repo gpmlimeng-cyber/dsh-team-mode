@@ -197,6 +197,7 @@ function MascotEditor({
               mascotShape: next.shape,
               mascotEyes: next.eyes,
               mascotColor: next.color,
+              avatar: '',
             })
           }}>
           随机
@@ -219,6 +220,8 @@ function MascotEditor({
           mascotEyes: next.eyesVariant ?? '',
           mascotColor: next.bodyColor ?? '',
           mascotFill: next.bodyColorFill ?? 'solid',
+          // Picking a mascot replaces a picture the user uploaded earlier.
+          avatar: '',
         })}
       />
     </details>
