@@ -594,15 +594,33 @@ export function SidebarTeamSection({
             aria-current={teamCurrent ? 'page' : undefined}
             title={`${team.name} · ${statusText}`}
           >
-            <span className={css.sidebarTeamAvatarStack} data-team-avatar={team.id} aria-hidden="true">
+            <span
+              className={css.sidebarTeamAvatarStack}
+              data-team-avatar={team.id}
+              data-count={avatarStack.faces.length + (avatarStack.extra > 0 ? 1 : 0)}
+              aria-hidden="true"
+            >
               {avatarStack.faces.map(face => (
-                <MemberAvatar
-                  key={face.id}
-                  name={face.name}
-                  avatar={face.avatar}
-                  size={20}
-                  className={css.sidebarTeamAvatarFace ?? ''}
-                />
+                face.avatar === undefined
+                  ? (
+                    <Mascot
+                      key={face.id}
+                      seed={face.mascotSeed}
+                      options={{ bodyColor: face.mascotColor }}
+                      size={avatarStack.size}
+                      avatarShape="rounded"
+                      animated={false}
+                    />
+                  )
+                  : (
+                    <MemberAvatar
+                      key={face.id}
+                      name={face.name}
+                      avatar={face.avatar}
+                      size={avatarStack.size}
+                      className={css.sidebarTeamAvatarFace ?? ''}
+                    />
+                  )
               ))}
               {avatarStack.extra > 0 && (
                 <span className={css.sidebarTeamAvatarChip}>+{avatarStack.extra}</span>

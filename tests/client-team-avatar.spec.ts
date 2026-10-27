@@ -54,15 +54,32 @@ describe('team avatar identity', () => {
     expect(values.size).toBeGreaterThan(1)
   })
 
-  it('stacks the leader first, then members, and counts the rest', () => {
-    const stack = teamAvatarStack({
-      b: { id: 'b', displayName: '成员二', role: 'member', assistantSnapshot: { name: '二' } },
-      lead: { id: 'lead', displayName: '队长', role: 'leader', assistantSnapshot: { name: '队' } },
-      c: { id: 'c', displayName: '成员三', role: 'member', assistantSnapshot: { name: '三' } },
-    })
-    // Leader leads; only two faces are drawn and the third becomes +1.
-    expect(stack.faces.map(face => face.id)).toEqual(['lead', 'b'])
-    expect(stack.extra).toBe(1)
+  it('draws every member up to four, with the grid size per count', () => {
+    const build = (count: number): ReturnType<typeof teamAvatarStack> => teamAvatarStack(
+      Object.fromEntries(Array.from({ length: count }, (_, index) => [
+        `m${index + 1}`,
+        { id: `m${index + 1}`, displayName: `成员${index + 1}`, role: index === 0 ? 'leader' : 'member' },
+      ])),
+    )
+    expect(build(2).faces).toHaveLength(2)
+    expect(build(2).size).toBe(24)
+    expect(build(3).faces).toHaveLength(3)
+    expect(build(3).size).toBe(20)
+    expect(build(4).faces).toHaveLength(4)
+    expect(build(4).extra).toBe(0)
+    expect(build(4).size).toBe(18)
+  })
+
+  it('turns the fourth seat into a counter past four members', () => {
+    const stack = teamAvatarStack(Object.fromEntries(
+      Array.from({ length: 5 }, (_, index) => [
+        `m${index + 1}`,
+        { id: `m${index + 1}`, displayName: `成员${index + 1}`, role: 'member' },
+      ]),
+    ))
+    // 5 people = three faces plus +2 (total − 3), not +1.
+    expect(stack.faces).toHaveLength(3)
+    expect(stack.extra).toBe(2)
   })
 
   it('keeps an uploaded picture and ignores a non-data avatar', () => {

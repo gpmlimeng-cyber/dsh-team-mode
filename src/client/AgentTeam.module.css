@@ -11732,38 +11732,58 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   color: var(--dsw-alias-label-quaternary);
 }
 
-/* A team row shows the people in it: the first two faces overlap, the rest
-   collapse into a +N chip (the shape OpenMausBot uses). */
+/* A team row stacks its people the way DeepSeek-Bot does: a 36px cluster of
+   four seats, filled by absolute offsets per count — 2 people sit on a
+   diagonal, 3 form an upright triangle, 4 fill the square, and past that the
+   last seat becomes the +N counter. */
 .sidebarTeamAvatarStack {
-  display: inline-flex;
-  align-items: center;
+  position: relative;
+  display: block;
   flex: none;
   width: 36px;
+  height: 36px;
 }
 
-.sidebarTeamAvatarFace {
-  position: relative;
-  box-shadow: 0 0 0 2px var(--dsw-alias-bg-layer-1);
+.sidebarTeamAvatarStack > * {
+  position: absolute;
+  border-radius: 25%;
 }
 
-.sidebarTeamAvatarFace + .sidebarTeamAvatarFace {
-  margin-left: -8px;
+/* Faces get a hairline of the column colour so neighbours never touch. */
+.sidebarTeamAvatarStack > .mascotTile,
+.sidebarTeamAvatarStack > .memberAvatar {
+  box-shadow: 0 0 0 2px var(--dsw-specific-sidebar-fill);
 }
 
+.sidebarTeamAvatarStack[data-count='2'] > :nth-child(1) { left: 0; top: 0; }
+.sidebarTeamAvatarStack[data-count='2'] > :nth-child(2) { left: 12px; top: 12px; }
+
+.sidebarTeamAvatarStack[data-count='3'] > :nth-child(1) { left: 8px; top: 0; }
+.sidebarTeamAvatarStack[data-count='3'] > :nth-child(2) { left: 0; top: 16px; }
+.sidebarTeamAvatarStack[data-count='3'] > :nth-child(3) { left: 16px; top: 16px; }
+
+.sidebarTeamAvatarStack[data-count='4'] > :nth-child(1),
+.sidebarTeamAvatarStack[data-count='5'] > :nth-child(1) { left: 0; top: 0; }
+.sidebarTeamAvatarStack[data-count='4'] > :nth-child(2),
+.sidebarTeamAvatarStack[data-count='5'] > :nth-child(2) { left: 18px; top: 0; }
+.sidebarTeamAvatarStack[data-count='4'] > :nth-child(3),
+.sidebarTeamAvatarStack[data-count='5'] > :nth-child(3) { left: 0; top: 18px; }
+.sidebarTeamAvatarStack[data-count='4'] > :nth-child(4) { left: 18px; top: 18px; }
+.sidebarTeamAvatarStack[data-count='5'] > :nth-child(4) { left: 18px; top: 18px; }
+
+/* The counter is a disc, not a face: 17px, 8px label, no border. */
 .sidebarTeamAvatarChip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 18px;
-  height: 18px;
-  margin-left: -6px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--dsw-alias-bg-module-platform);
-  box-shadow: 0 0 0 2px var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-secondary);
-  font-size: 9px;
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: var(--dsw-alias-interactive-bg-active);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 8px;
   font-weight: 500;
+  box-shadow: 0 0 0 2px var(--dsw-specific-sidebar-fill);
 }
 
 .sidebarTeamAvatarTile {

@@ -38,17 +38,21 @@ export function teamAvatarColor(teamId: string): string {
   return teamIdentityColor(teamAvatarIndex(teamId))
 }
 
-/** One face in a team's stacked avatar: the member's own picture, or initials. */
+/** One face in a team's stacked avatar: the member's picture, else a mascot. */
 export interface TeamAvatarFace {
   id: string
   name: string
   avatar?: string
+  /** Seed and colour for the mascot drawn when the member uploaded no picture. */
+  mascotSeed: string
+  mascotColor: string
 }
 
 /**
- * The faces a team row stacks, in the order the sidebar lists them: the Leader
- * first, then members. Only the first two are drawn; the rest collapse into a
- * `+N` chip — the shape OpenMausBot uses for a group row.
+ * The faces a team row stacks, in the order DeepSeek-Bot draws them: the Leader
+ * first, then members. The grid is always 2×2 and filled in reading order, so
+ * ≤4 people are all drawn (2 = a diagonal, 3 = an upright triangle), and past
+ * that the last cell becomes a `+N` chip with N = total − 3.
  */
 export function teamAvatarStack(
   members: Readonly<Record<string, {
@@ -57,21 +61,34 @@ export function teamAvatarStack(
     role: string
     assistantSnapshot?: { name?: string; avatar?: string | undefined }
   }>>,
-): { faces: TeamAvatarFace[]; extra: number } {
+): { faces: TeamAvatarFace[]; extra: number; total: number; size: number } {
   const ordered = Object.values(members)
     .slice()
     .sort((left, right) => {
       if (left.role !== right.role) return left.role === 'leader' ? -1 : 1
       return left.id.localeCompare(right.id)
     })
-  const faces = ordered.map(member => {
+  const named = ordered.map(member => {
     const avatar = member.assistantSnapshot?.avatar
-    const named = member.displayName.trim() === '' ? member.assistantSnapshot?.name ?? '' : member.displayName
+    const label = member.displayName.trim() === '' ? member.assistantSnapshot?.name ?? '' : member.displayName
     return {
       id: member.id,
-      name: named.trim() === '' ? '助手' : named.trim(),
+      name: label.trim() === '' ? '助手' : label.trim(),
+      // Deterministic per member: the same face on every render and reload.
+      mascotSeed: member.id,
+      mascotColor: teamAvatarColor(member.id),
       ...(avatar !== undefined && avatar.startsWith('data:') ? { avatar } : {}),
     }
   })
-  return { faces: faces.slice(0, 2), extra: Math.max(0, faces.length - 2) }
+  // Four or fewer: draw them all. Past that the fourth cell is the counter.
+  const overflow = named.length > 4
+  // Face size follows the grid that is actually drawn: two faces get a bigger
+  // tile than a full 2×2 (DeepSeek-Bot: 24 / 20 / 18 px).
+  const size = named.length <= 2 ? 24 : named.length === 3 ? 20 : 18
+  return {
+    faces: overflow ? named.slice(0, 3) : named.slice(0, 4),
+    extra: overflow ? named.length - 3 : 0,
+    total: named.length,
+    size,
+  }
 }
