@@ -1228,6 +1228,11 @@ export function SidebarPortal({
       if (element.parentElement !== stickyRow) {
         stickyRow.insertBefore(element, brand ?? stickyRow.firstElementChild ?? toggle)
       }
+      // Hide every native brand/logo sibling, not just the first _brand match:
+      // the shipped row can render a wordmark node beside the toggle.
+      for (const child of Array.from(stickyRow.children)) {
+        if (child !== element && child !== toggle) (child as HTMLElement).style.display = 'none'
+      }
       element.dataset.dshBrandInline = ''
       element.style.position = 'static'
       element.style.transform = 'none'
