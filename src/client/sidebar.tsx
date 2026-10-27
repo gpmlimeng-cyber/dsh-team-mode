@@ -614,39 +614,41 @@ export function SidebarTeamSection({
             aria-current={teamCurrent ? 'page' : undefined}
             title={`${team.name} · ${statusText}`}
           >
-            {avatarStack.total > 0 && (
-              <span
-                className={css.sidebarTeamAvatarStack}
-                data-team-avatar={team.id}
-                data-count={avatarStack.seats.length}
-                aria-hidden="true"
-              >
-                {avatarStack.seats.map(seat => (
-                  <span key={seat.key} className={css.sidebarTeamAvatarSeat} style={teamAvatarSeatStyle(seat)}>
-                    {seat.kind === 'face' && seat.face !== undefined
-                      ? (seat.face.avatar === undefined
-                          ? (
-                            <Mascot
-                              seed={seat.face.mascotSeed}
-                              options={{ bodyColor: seat.face.mascotColor }}
-                              size={seat.size}
-                              avatarShape="rounded"
-                              animated={false}
-                            />
-                          )
-                          : (
-                            <MemberAvatar
-                              name={seat.face.name}
-                              avatar={seat.face.avatar}
-                              size={seat.size}
-                              className={css.sidebarTeamAvatarFace ?? ''}
-                            />
-                          ))
+            <span
+              className={css.sidebarTeamAvatarStack}
+              data-team-avatar={team.id}
+              data-count={avatarStack.seats.length}
+              aria-hidden="true"
+            >
+              {avatarStack.seats.map(seat => (
+                <span key={seat.key} className={css.sidebarTeamAvatarSeat} style={teamAvatarSeatStyle(seat)}>
+                  {seat.kind === 'face' && seat.face !== undefined
+                    ? (seat.face.avatar === undefined
+                        ? (
+                          <Mascot
+                            seed={seat.face.mascotSeed}
+                            options={{ bodyColor: seat.face.mascotColor }}
+                            size={seat.size}
+                            avatarShape="rounded"
+                            animated={false}
+                          />
+                        )
+                        : (
+                          <MemberAvatar
+                            name={seat.face.name}
+                            avatar={seat.face.avatar}
+                            size={seat.size}
+                            className={css.sidebarTeamAvatarFace ?? ''}
+                          />
+                        ))
+                    : seat.kind === 'empty'
+                      // No members: the reference draws a 36px gumdrop; the row
+                      // keeps the same 36px seat with the team's initial tile.
+                      ? <MemberAvatar name={team.name} size={seat.size} />
                       : <span className={css.sidebarTeamAvatarChip} data-kind={seat.kind}>{seat.label ?? ''}</span>}
-                  </span>
-                ))}
-              </span>
-            )}
+                </span>
+              ))}
+            </span>
             <span className={css.sidebarTeamCopy}>
               <span className={css.sidebarAssistantTop}>
                 <span className={css.sidebarTeamName}>{team.name}</span>

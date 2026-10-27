@@ -3847,7 +3847,7 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 
 /* One shape language for every sidebar identity: the assistant avatar is the
    same rounded square as the team mark. Both use a percentage radius so the
-   corner stays the same at 32px and 34px. */
+   corner stays the same at any size (both rows are 36px). */
 /* Every assistant portrait (sidebar row, new-chat panel, detail panel) uses this
    shape: one rounded-square language. An uploaded picture keeps the shipped
    plate; only the mascot drops it (see .mascotTile). */
@@ -11720,15 +11720,16 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l1);
 }
 
-/* The +N counter: 92% of its seat with a 4% margin, 8px label, no border
-   (DeepSeek-Bot `.bt-cluster-more`). */
+/* The +N counter fills its seat: the seat is already 92% of the cell with a 4%
+   margin (team-avatar.ts's disc()), so scaling again here would shrink it twice
+   — 16.56px is the reference size (DeepSeek-Bot `.bt-cluster-more`). */
 .sidebarTeamAvatarChip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 92%;
-  height: 92%;
-  margin: 4%;
+  width: 100%;
+  height: 100%;
+  margin: 0;
   border-radius: 50%;
   background: var(--dsw-alias-interactive-bg-active);
   color: var(--dsw-alias-label-tertiary);

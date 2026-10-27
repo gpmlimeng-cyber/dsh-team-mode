@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { TEAM_IDENTITY_COLORS } from '../src/client/team-identity.js'
 import {
@@ -120,7 +121,13 @@ describe('team avatar identity', () => {
     expect(solo.seats.map(seat => seat.kind)).toEqual(['face'])
     expect(solo.seats[0]?.size).toBe(24)
     expect(solo.seats[0]?.holes).toEqual([])
-    expect(teamAvatarStack({})).toEqual({ faces: [], extra: 0, total: 0, seats: [] })
+    // No members: one neutral 36px seat, never an empty box.
+    expect(teamAvatarStack({})).toEqual({
+      faces: [],
+      extra: 0,
+      total: 0,
+      seats: [{ key: 'empty', kind: 'empty', left: 0, top: 0, size: 36, holes: [] }],
+    })
   })
 
   it('cuts the neighbour gap into the earlier seat and draws what it counts', () => {
@@ -154,5 +161,44 @@ describe('team avatar identity', () => {
       a: { id: 'a', displayName: '   ', role: 'leader', assistantSnapshot: { name: '  ' } },
     })
     expect(stack.faces[0]?.name).toBe('助手')
+  })
+})
+
+describe('team avatar css contract', () => {
+  // The geometry has two halves: team-avatar.ts picks seats and sizes, the
+  // stylesheet places them. Pinning only the JS half let a double-scaled +N
+  // through once; these assertions pin the other half.
+  const moduleCss = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+  const sidebarSource = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
+
+  function cssBlock(selector: string): string {
+    const start = moduleCss.indexOf(`${selector} {`)
+    expect(start).toBeGreaterThan(-1)
+    return moduleCss.slice(start, moduleCss.indexOf('}', start) + 1)
+  }
+
+  it('keeps the 36px relative frame and the absolute seats', () => {
+    const stack = cssBlock('.sidebarTeamAvatarStack')
+    expect(stack).toContain('position: relative;')
+    expect(stack).toContain('width: 36px;')
+    expect(stack).toContain('height: 36px;')
+    expect(cssBlock('.sidebarTeamAvatarSeat')).toContain('position: absolute;')
+  })
+
+  it('never scales the counter twice', () => {
+    const chip = cssBlock('.sidebarTeamAvatarChip')
+    // The seat already carries s*0.92 + s*0.04; the disc fills it.
+    expect(chip).toContain('width: 100%;')
+    expect(chip).toContain('height: 100%;')
+    expect(chip).toContain('margin: 0;')
+    expect(chip).not.toContain('92%')
+    expect(chip).not.toContain('margin: 4%')
+  })
+
+  it('cuts the neighbour gaps with the mask composite pair', () => {
+    expect(sidebarSource).toContain("style.WebkitMaskImage = seat.holes.join(',')")
+    expect(sidebarSource).toContain("style.maskImage = seat.holes.join(',')")
+    expect(sidebarSource).toContain("style.WebkitMaskComposite = 'source-in'")
+    expect(sidebarSource).toContain("style.maskComposite = 'intersect'")
   })
 })

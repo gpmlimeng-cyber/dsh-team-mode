@@ -54,7 +54,7 @@ export const TEAM_AVATAR_FRAME = 36
 /** One seat of the cluster: its frame-relative box and what it draws. */
 export interface TeamAvatarSeat {
   key: string
-  kind: 'face' | 'more'
+  kind: 'face' | 'more' | 'empty'
   left: number
   top: number
   size: number
@@ -129,8 +129,9 @@ function clusterHoles(
  * The faces a team row seats, in `team.members` insertion order — DeepSeek-Bot
  * draws `room.members` as stored and never promotes the Leader, so neither do
  * we. Every member up to four is drawn; past that the fourth seat becomes a
- * `+N` disc with N = total − 3. A single member sits beside a "you" disc, which
- * is what a one-Bot room shows; no member at all draws nothing (no empty box).
+ * `+N` disc with N = total − 3. A member-less team keeps one neutral 36px seat:
+ * the reference falls back to a gumdrop there (`mark.js:145`), we use the
+ * sidebar's own initial tile in the same seat.
  */
 export function teamAvatarStack(
   members: Readonly<Record<string, {
@@ -153,7 +154,14 @@ export function teamAvatarStack(
     }
   })
   const total = named.length
-  if (total === 0) return { faces: [], extra: 0, total: 0, seats: [] }
+  if (total === 0) {
+    return {
+      faces: [],
+      extra: 0,
+      total: 0,
+      seats: [{ key: 'empty', kind: 'empty', left: 0, top: 0, size: TEAM_AVATAR_FRAME, holes: [] }],
+    }
+  }
   const overflow = total > 4
   const extra = overflow ? total - 3 : 0
   const faces = overflow ? named.slice(0, 3) : named.slice(0, 4)
