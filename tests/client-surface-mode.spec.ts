@@ -116,12 +116,10 @@ describe('sidebar surface switch', () => {
     expect(sidebar).toContain('ensureBrand')
     // The row itself survives; only the original brand button is hidden.
     expect(sidebar).toContain('brand.style.display')
-    // The rail is narrow on mobile and widens into the drawer without a
-    // window resize; the brand row itself must be observed.
-    expect(sidebar).toContain('brandResize.observe(row)')
-    expect(sidebar).toContain('const minCenter = sidebarRect.top + 30')
-    expect(sidebar).toContain('toggleRect.left - left - 20')
-    expect(sidebar).toContain('toggleRect.top + toggleRect.height / 2')
+    // The row is the sidebar's sticky header, not a body-fixed overlay, so
+    // dialogs and menus keep their normal z-index above it.
+    expect(sidebar).toContain("stickyRow.style.position = 'sticky'")
+    expect(sidebar).toContain("stickyRow.style.zIndex = '20'")
   })
 
   it('renders the pinned coordinator with the real assistant row', () => {

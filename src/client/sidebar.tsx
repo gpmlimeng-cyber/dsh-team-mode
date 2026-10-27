@@ -1198,12 +1198,8 @@ export function SidebarPortal({
      * is mounting point for the switch.
      */
     const ensureBrand = (): void => {
-      // Several sidebar roots can be mounted at once (desktop rail + mobile
-      // drawer). Position over the visible one; otherwise the switch is created
-      // inside a hidden root and never appears on a phone.
-      // Several sidebar roots can be mounted at once (desktop rail + mobile
-      // drawer). Pick the visible collapse button that is actually on screen,
-      // not merely the first hidden one, and use its row as the anchor.
+      // Pick the visible brand row; desktop and mobile drawers can both be
+      // mounted at once.
       const toggles = Array.from(document.querySelectorAll<HTMLElement>('button[class*="_toggle"]'))
         .filter(candidate => {
           const box = candidate.getBoundingClientRect()
@@ -1215,108 +1211,53 @@ export function SidebarPortal({
       const logoRow = toggle?.closest<HTMLElement>('[class*="_logoRow"]') ?? null
       const row = logoRow ?? toggle?.parentElement ?? null
       if (row === null) return
-      // The sidebar opens as a narrow rail on mobile and widens to a drawer.
-      // The row's own width changes without a window resize, so observe it
-      // directly; otherwise the fixed mode switch keeps the collapsed 3px
-      // width and disappears from the open drawer.
-      if (brandResize === undefined) brandResize = new ResizeObserver(() => { schedule() })
-      if (observedLogoRow !== row) {
-        brandResize.disconnect()
-        brandResize.observe(row)
-        observedLogoRow = row
-      }
       const brand = logoRow?.querySelector<HTMLElement>('[class*="_brand"]')
       if (brand !== null && brand !== undefined) brand.style.display = 'none'
-      // The shipped brand row is React-owned: a node inserted into it is removed
-      // on its next render, taking the portalled control with it. The host lives
-      // on <body> instead and is positioned over the empty row.
+
       let element = document.getElementById(BRAND_HOST_ID)
       if (element === null || !element.isConnected) {
         element = document.createElement('div')
         element.id = BRAND_HOST_ID
         element.className = css.sidebarBrandHost ?? ''
-        element.style.position = 'fixed'
-        element.style.zIndex = '2147483001'
-        element.style.transform = 'translateY(-50%)'
-        document.body.append(element)
         setBrandHost(element)
       }
-      const rect = row.getBoundingClientRect()
-      // One column for both modes: the plugin host exists in DeepSeek and DeepBot
-      // alike, while the group headers only exist in DeepBot. The offset from
-      // host to the first header is measured where one is present and then
-      // reused, so the control does not jump sideways when the mode changes.
-      const teamHost = document.getElementById(SIDEBAR_HOST_ID)
-      const teamRect = teamHost?.getBoundingClientRect()
-      let columnLeft: number | undefined
-      let columnWidth: number | undefined
-      if (teamHost !== null && teamRect !== undefined) {
-        const hostLeft = teamRect.left
-        const titleLeft = document
-          .querySelector<HTMLElement>('[data-dsh-sidebar-title]')
-          ?.getBoundingClientRect().left
-        if (titleLeft !== undefined && titleLeft > 0 && hostLeft > 0) {
-          brandColumnOffset = Math.round(titleLeft - hostLeft)
-        }
-        if (hostLeft > 0 && teamRect.width > 0) {
-          // Same column as the sections below: start where their titles start and
-          // end where their own action buttons end, so the two button groups line
-          // up on both edges.
-          columnLeft = hostLeft + brandColumnOffset
-          columnWidth = Math.max(0, teamRect.width - brandColumnOffset)
-        }
+      // The switch lives inside the sidebar's own brand row and the row is the
+      // sticky header. This keeps it in the sidebar stacking context, below
+      // dialogs and menus, and lets the native collapse button share the row.
+      const stickyRow = logoRow ?? row
+      if (element.parentElement !== stickyRow) {
+        stickyRow.insertBefore(element, brand ?? stickyRow.firstElementChild ?? toggle)
       }
-      // A hidden/display:contents brand row can report width 0 while the
-      // collapse toggle is visible. Fall back to the visible viewport width
-      // instead of rendering a zero-width switch.
-      const left = Math.round(columnLeft ?? (rect.width > 32 ? rect.left + 16 : 16))
-      // Keep the collapse toggle on the same row usable: reserve its box plus
-      // a gap instead of letting the switch overlay it (mobile especially).
-      const toggleRect = toggle?.getBoundingClientRect()
-      let width = columnWidth
-        ?? (rect.width > 32 ? rect.width - 32 : Math.min(240, window.innerWidth - 32))
-      // Keep a hard gap before the native collapse control on phones; the
-      // brand actions are reduced to 新建 by CSS at this width.
-      if (window.innerWidth <= 760) width = Math.min(width, 202)
-      if (toggleRect !== undefined && toggleRect.width > 0) {
-        width = Math.min(width, toggleRect.left - left - 20)
-      }
-      element.style.left = `${left}px`
-      // Keep the fixed switch inside the visible sidebar box: on mobile the
-      // drawer starts below the system status bar, and the brand row can be
-      // scrolled above it. Clamping to the logo row's own parent (the sidebar
-      // root) keeps the row beside the collapse toggle in both cases.
-      const sidebarRoot = row.parentElement ?? row
-      const sidebarRect = sidebarRoot.getBoundingClientRect()
-      // Sit on the collapse-button row itself. On mobile that control can stay
-      // pinned while the brand row scrolls away, so prefer its center over the
-      // brand row center.
-      const center = toggleRect !== undefined && toggleRect.height > 0
-        ? toggleRect.top + toggleRect.height / 2
-        : rect.top + rect.height / 2
-      const minCenter = sidebarRect.top + 30
-      const maxCenter = sidebarRect.bottom - 30
-      element.style.top = `${Math.round(Math.min(Math.max(center, minCenter), Math.max(minCenter, maxCenter)))}px`
-      element.style.width = `${Math.max(0, Math.round(width))}px`
-      // Never hide a created switch: mobile shell chrome and drawer transitions
-      // can report a temporary zero rect, and the next layout pass would not
-      // necessarily run. It is removed only when the sidebar unmounts.
+      element.dataset.dshBrandInline = ''
+      element.style.position = 'static'
+      element.style.transform = 'none'
+      element.style.zIndex = ''
+      element.style.left = ''
+      element.style.top = ''
+      element.style.width = 'auto'
+      element.style.flex = '1 1 auto'
+      element.style.minWidth = '0'
+      element.style.marginRight = '4px'
       element.style.visibility = 'visible'
-      // The mode band must not paint over the native collapse control: lift the
-      // row above it, keep the row transparent, and only the toggle hit-testable.
-      row.style.position = 'relative'
-      row.style.zIndex = '2147483002'
-      row.style.pointerEvents = 'none'
-      if (toggle !== null) toggle.style.pointerEvents = 'auto'
+      stickyRow.style.position = 'sticky'
+      stickyRow.style.top = '0px'
+      stickyRow.style.zIndex = '20'
+      stickyRow.style.background = 'var(--dsw-specific-sidebar-fill)'
+      stickyRow.style.pointerEvents = 'auto'
+      stickyRow.style.height = '40px'
+      stickyRow.style.minHeight = '40px'
+      stickyRow.style.paddingTop = '6px'
+      stickyRow.style.paddingBottom = '6px'
+      stickyRow.style.marginBottom = '0'
+      document.getElementById('dsh-team-mode-header-shade')?.remove()
     }
 
     /** Lay the pinned BOT row over 新会话, or over the visible team column when
      * the mobile shell hides that button. */
     const ensureSteward = (): void => {
-      const newSession = document.querySelector<HTMLElement>('[class*="_newSession"]')
       const teamHost = document.getElementById(SIDEBAR_HOST_ID)
       let element = document.getElementById(STEWARD_HOST_ID)
-      if (getSurfaceMode() !== 'team' || (newSession === null && teamHost === null)) {
+      if (getSurfaceMode() !== 'team' || teamHost === null) {
         element?.remove()
         return
       }
@@ -1324,26 +1265,18 @@ export function SidebarPortal({
         element = document.createElement('div')
         element.id = STEWARD_HOST_ID
         element.className = css.stewardHost ?? ''
-        element.style.position = 'fixed'
-        element.style.zIndex = '2147483000'
         document.body.append(element)
       }
-      const newSessionRect = newSession?.getBoundingClientRect()
-      if (newSessionRect !== undefined && newSessionRect.width > 0) {
-        element.style.left = `${Math.round(newSessionRect.left)}px`
-        element.style.top = `${Math.round(newSessionRect.top)}px`
-        element.style.width = `${Math.round(newSessionRect.width)}px`
-      } else if (teamHost !== null) {
-        const teamRect = teamHost.getBoundingClientRect()
-        const visibleLogo = Array.from(document.querySelectorAll<HTMLElement>('[class*="_logoRow"]'))
-          .map(row => row.getBoundingClientRect())
-          .find(box => box.width > 0 && box.height > 0)
-        element.style.left = `${Math.round(teamRect.left)}px`
-        element.style.top = `${Math.round(visibleLogo === undefined ? Math.max(64, teamRect.top - 48) : visibleLogo.bottom + 8)}px`
-        element.style.width = `${Math.round(teamRect.width)}px`
-      }
-      // Height is the row's own: it has to read like a 单聊 assistant row, not
-      // like the 新会话 button it is pinned over.
+      // The coordinator is the first ordinary row of the team column. It
+      // scrolls with the list and passes under the sticky mode row.
+      if (element.parentElement !== teamHost) teamHost.insertBefore(element, teamHost.firstChild)
+      element.style.position = 'static'
+      element.style.zIndex = ''
+      element.style.left = ''
+      element.style.top = ''
+      element.style.width = '100%'
+      element.style.marginBottom = '6px'
+      element.style.background = 'var(--dsw-specific-sidebar-fill)'
       element.style.height = ''
     }
 
