@@ -222,7 +222,7 @@ describe('assistant create dialog shell', () => {
     expect(nav).toContain('aria-label="创建助手的区块"')
     expect((nav.match(/<button/g) ?? [])).toHaveLength(3)
     expect((nav.match(/aria-current="page"/g) ?? [])).toHaveLength(1)
-    for (const label of ['身份', '模型与权限', '技能与MCP']) {
+    for (const label of ['助手详情', '模型与权限', '技能与MCP']) {
       expect(nav).toContain(`>${label}<`)
     }
     for (const label of ['记忆', '技能', '例程', '访问', '语音与通知']) {
@@ -389,7 +389,7 @@ describe('assistant create dialog sections', () => {
 
   it('capabilities have their own section and start unchecked for a direct create', () => {
     const html = renderCreateBody({ activeSection: 'capabilities' })
-    expect(html).toContain('>能力<')
+    expect(html).toContain('>技能与MCP<')
     expect(html).toContain('技能（已选 0 个）')
     expect(html).toContain('MCP（已选 0 个）')
     expect(html).toContain('该 Agent Preset 没有可用的 Skill。')

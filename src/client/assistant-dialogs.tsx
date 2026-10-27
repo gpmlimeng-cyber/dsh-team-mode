@@ -229,7 +229,7 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
   const groupOptions = assistantCreateGroupOptions(groups)
   return (
     <>
-      <SectionHeading title="身份" hint="名称、形象与分组" />
+      <SectionHeading title="助手详情" hint="名称、形象与分组" />
       <SettingsRows>
         {roleError === undefined
           ? (
