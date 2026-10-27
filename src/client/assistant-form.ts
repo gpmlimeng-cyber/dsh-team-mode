@@ -36,7 +36,7 @@ export function assistantModelOptionLabel(
  * Agent Preset that section already picks.
  */
 export const ASSISTANT_CREATE_SECTIONS = [
-  { key: 'identity', label: '助手详情' },
+  { key: 'identity', label: '人设与形象' },
   { key: 'model', label: '模型与权限' },
   { key: 'capabilities', label: '技能与MCP' },
 ] as const

@@ -573,7 +573,7 @@ describe('assistant create sections', () => {
     expect(ASSISTANT_CREATE_SECTIONS.map(section => section.key))
       .toEqual(['identity', 'model', 'capabilities'])
     expect(ASSISTANT_CREATE_SECTIONS.map(section => section.label))
-      .toEqual(['助手详情', '模型与权限', '技能与MCP'])
+      .toEqual(['人设与形象', '模型与权限', '技能与MCP'])
   })
 
   it('explains the remaining unsupported areas instead of rendering tabs for them', () => {
