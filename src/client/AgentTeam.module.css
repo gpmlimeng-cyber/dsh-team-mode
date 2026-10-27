@@ -7829,18 +7829,20 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   gap: 2px;
 }
 
+/* Header metrics follow the shipped settings dialog: 20px of air above the
+   title, the description tucked right under it, ~72px to the first row. */
 .teamModal [class*="header"] {
-  padding: 12px 12px 0 20px;
+  padding: 20px 12px 2px 20px;
 }
 
 .teamModal [class*="title"] {
-  font-size: 15px;
-  line-height: 22px;
+  font-size: 16px;
+  line-height: 24px;
 }
 
 .teamModal [class*="description"] {
   margin: 0;
-  padding: 0 20px 2px;
+  padding: 2px 20px 8px;
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
   line-height: 17px;
