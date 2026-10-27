@@ -443,7 +443,7 @@ function CapabilitiesSection(props: AssistantCreateBodyProps, disabled: boolean)
   const [query, setQuery] = useState('')
   return (
     <>
-      <SectionHeading title="能力" hint="这个助手能用的技能与 MCP" />
+      <SectionHeading title="技能与MCP" hint="这个助手能用的技能与 MCP" />
       {/* One search over both groups, like the shipped plugin page. */}
       <label className={css.capabilitySearch}>
         <IconSearchOutlineRegular size={14} />
