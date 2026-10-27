@@ -14,6 +14,7 @@ import css from './AgentTeam.module.css'
 import type {
   AssistantMemory,
   MemoryEntry,
+  WriteAssistantMemoryEntryInput,
 } from '../domain/types.js'
 import type { MemoryAskResult } from '../domain/memory.js'
 import type { AssistantMemoryEntryWriteView } from '../transport/contracts.js'
@@ -43,16 +44,21 @@ function memoryTime(value: string): string {
 }
 
 /**
- * Ask-or-change failures keep the typed request, so the failure is shown
- * instead of the draft being dropped. A revision conflict also means this
- * panel's revision is stale: the caller reloads and the kept draft can be
- * retried against the fresh revision.
+ * A failed memory write keeps whatever the user was doing: the failure is
+ * shown, and a revision conflict also means this panel's revision is stale, so
+ * the caller reloads and the kept draft or proposal is retried against the
+ * fresh one. Nothing is ever dropped silently.
  */
-export function memoryAskFailure(cause: unknown): { message: string; reload: boolean } {
+export function memoryWriteFailure(cause: unknown): { message: string; reload: boolean } {
   return {
     message: memoryError(cause),
     reload: memoryErrorCode(cause) === 'MEMORY_REVISION_CONFLICT',
   }
+}
+
+/** Ask-or-change failures keep the typed request; the write rules are the same. */
+export function memoryAskFailure(cause: unknown): { message: string; reload: boolean } {
+  return memoryWriteFailure(cause)
 }
 
 /**
@@ -77,6 +83,23 @@ function announceMemoryChange(assistantId: string): void {
  */
 export function memoryAfterUndo(result: AssistantMemoryEntryWriteView): AssistantMemory {
   return result.memory
+}
+
+/**
+ * The entry write that adopts one proposal: the same entry, unchanged, with
+ * `status: 'active'`. Nothing is invented — the body the assistant proposed is
+ * exactly what the user is adopting — and a keyed decision keeps its key so
+ * adoption does not silently drop the handle the runtime dedupes on.
+ */
+export function memoryAcceptanceInput(entry: MemoryEntry): WriteAssistantMemoryEntryInput {
+  return {
+    id: entry.id,
+    title: entry.title,
+    body: entry.body,
+    visibility: entry.visibility,
+    ...(entry.key === undefined ? {} : { key: entry.key }),
+    status: 'active',
+  }
 }
 
 /** One entry card, shared by the panel and the ask-or-change outcome. */
@@ -168,6 +191,7 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
   const [autoCapture, setAutoCapture] = useState(false)
   const [switchingAutoCapture, setSwitchingAutoCapture] = useState(false)
   const [ignoringProposals, setIgnoringProposals] = useState(false)
+  const [acceptingProposals, setAcceptingProposals] = useState(false)
   const view = useMemo(() => assistantMemoryView(memory), [memory])
   const revision = memory?.revision ?? 0
   const journal = memory?.journal ?? []
@@ -302,6 +326,71 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       void load()
     } finally {
       setIgnoringProposals(false)
+    }
+  }
+
+  /**
+   * One proposal → active through the same revision-fenced entry write every
+   * other edit uses; returns the document the write produced, whose revision
+   * fences the next write of a batch.
+   */
+  async function acceptProposalWrite(entry: MemoryEntry, expected: number): Promise<AssistantMemory> {
+    const result = await callAgentTeam('assistant.memory.entry.write', {
+      assistantId,
+      expectedRevision: expected,
+      entry: memoryAcceptanceInput(entry),
+    })
+    return result.memory
+  }
+
+  /**
+   * Adopt one proposal: announce it for 概览's count, then re-read so the list
+   * is the server's truth. A revision conflict reloads and leaves the proposal
+   * in place for a retry — a proposal is never dropped because a write failed.
+   */
+  async function acceptEntry(entry: MemoryEntry): Promise<void> {
+    if (busy || acceptingProposals) return
+    setBusy(true)
+    setError(undefined)
+    try {
+      await acceptProposalWrite(entry, revision)
+      announceMemoryChange(assistantId)
+      await load()
+    } catch (cause) {
+      const failure = memoryWriteFailure(cause)
+      setError(failure.message)
+      if (failure.reload) void load()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /**
+   * 全部采纳 adopts every current proposal, one fenced write at a time: each is
+   * fenced by the revision the previous write returned, so a concurrent edit
+   * stops the batch instead of adopting a stale body. Entries already adopted
+   * stay adopted; the reload shows exactly what the batch did not reach, and
+   * those proposals remain available for a retry.
+   */
+  async function acceptProposals(): Promise<void> {
+    if (busy || acceptingProposals) return
+    const proposed = view.proposed
+    if (proposed.length === 0) return
+    setAcceptingProposals(true)
+    setError(undefined)
+    try {
+      let expected = revision
+      for (const entry of proposed) {
+        expected = (await acceptProposalWrite(entry, expected)).revision
+      }
+      announceMemoryChange(assistantId)
+      await load()
+    } catch (cause) {
+      setError(memoryWriteFailure(cause).message)
+      // A partial batch may already have adopted entries; re-read the truth.
+      void load()
+    } finally {
+      setAcceptingProposals(false)
     }
   }
 
@@ -619,16 +708,39 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
         <div className={css.memoryGroup}>
           <div className={css.memoryGroupTitleRow}>
             <strong className={css.memoryGroupTitle}>待确认 · {view.proposed.length}</strong>
-            <button
-              type="button"
-              className={css.memoryAction}
-              disabled={busy || ignoringProposals}
-              onClick={() => { void ignoreProposals() }}
-            >
-              {ignoringProposals ? '忽略中…' : '全部忽略'}
-            </button>
+            <span className={css.memoryEntryActions}>
+              <button
+                type="button"
+                className={css.memoryAction}
+                disabled={busy || acceptingProposals || ignoringProposals}
+                onClick={() => { void acceptProposals() }}
+              >
+                {acceptingProposals ? '采纳中…' : '全部采纳'}
+              </button>
+              <button
+                type="button"
+                className={css.memoryAction}
+                disabled={busy || ignoringProposals || acceptingProposals}
+                onClick={() => { void ignoreProposals() }}
+              >
+                {ignoringProposals ? '忽略中…' : '全部忽略'}
+              </button>
+            </span>
           </div>
-          {view.proposed.map(entry => memoryEntryCard(entry))}
+          {view.proposed.map(entry => memoryEntryCard(
+            entry,
+            <span className={css.memoryEntryActions}>
+              <button
+                type="button"
+                className={css.memoryAction}
+                data-dsh-memory-accept={entry.id}
+                disabled={busy || acceptingProposals || ignoringProposals}
+                onClick={() => { void acceptEntry(entry) }}
+              >
+                采纳
+              </button>
+            </span>,
+          ))}
         </div>
       )}
       {view.historyTotal > 0 && (

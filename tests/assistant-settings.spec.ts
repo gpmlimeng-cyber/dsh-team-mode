@@ -84,7 +84,11 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
   }
 })
 
-const { memoryAfterUndo } = await import('../src/client/assistant-memory-panel.js')
+const {
+  memoryAcceptanceInput,
+  memoryAfterUndo,
+  memoryWriteFailure,
+} = await import('../src/client/assistant-memory-panel.js')
 const { AssistantCreateBody, AssistantCreateFooter } = await import('../src/client/assistant-dialogs.js')
 const { AssistantOverviewMemoryRow } = await import('../src/client/assistant-settings-pane.js')
 const { assistantMemoryCountLine } = await import('../src/client/assistant-overview.js')
@@ -210,8 +214,8 @@ describe('assistant memory count row wiring', () => {
     // the count row's one read runs again.
     expect(memoryPanel).toContain("export const ASSISTANT_MEMORY_CHANGED_EVENT")
     // Entry writes (add/edit and archive share one announce tail), legacy text,
-    // undo, ask-or-change, and 全部忽略.
-    expect((memoryPanel.match(/announceMemoryChange\(assistantId\)/g) ?? [])).toHaveLength(5)
+    // undo, ask-or-change, 全部忽略, and the two adoption paths (采纳 and 全部采纳).
+    expect((memoryPanel.match(/announceMemoryChange\(assistantId\)/g) ?? [])).toHaveLength(7)
     expect(pane).toContain('window.addEventListener(ASSISTANT_MEMORY_CHANGED_EVENT, onChanged)')
     expect(pane).toContain('if (detail?.assistantId === assistant.id) setMemoryReadNonce')
     // The read effect is keyed by the nonce, so an event is a fresh read.
@@ -230,6 +234,73 @@ describe('assistant memory count row wiring', () => {
     // Batch ignore archives through the same revision-fenced entry write path.
     expect(memoryPanel).toContain("status: 'archived'")
     expect(memoryPanel).toContain('expectedRevision: expected')
+  })
+})
+
+describe('assistant memory proposal adoption', () => {
+  const memoryPanel = readFileSync(
+    new URL('../src/client/assistant-memory-panel.tsx', import.meta.url),
+    'utf8',
+  )
+
+  it('adopts a proposal by flipping exactly that entry to active', () => {
+    // The same entry with the same body the user was shown: adoption invents no
+    // field and rewrites no text.
+    expect(memoryAcceptanceInput(entry())).toEqual({
+      id: 'mem-1',
+      title: 'Tone',
+      body: 'Be terse.',
+      visibility: 'private',
+      status: 'active',
+    })
+    // A keyed decision keeps its key, so adoption does not drop the handle the
+    // runtime dedupes proposals on.
+    expect(memoryAcceptanceInput({ ...entry(), key: 'tone' })).toMatchObject({
+      key: 'tone',
+      status: 'active',
+    })
+  })
+
+  it('keeps a proposal and reloads when the revision moved under it', () => {
+    const conflict = Object.assign(new Error('conflict'), { code: 'MEMORY_REVISION_CONFLICT' })
+    expect(memoryWriteFailure(conflict)).toEqual({
+      message: '记忆已被其他操作更新，已重新加载最新版本，请重试。',
+      reload: true,
+    })
+    // Any other failure is reported as it is; the proposal is still not dropped.
+    const broken = Object.assign(new Error('写入失败'), { code: 'INTERNAL_ERROR' })
+    expect(memoryWriteFailure(broken)).toEqual({ message: '写入失败', reload: false })
+  })
+
+  it('offers 采纳 per proposal and 全部采纳 beside 全部忽略', () => {
+    expect(memoryPanel).toContain('全部采纳')
+    expect(memoryPanel).toContain('全部忽略')
+    expect(memoryPanel).toContain("acceptingProposals ? '采纳中…' : '全部采纳'")
+    // One 采纳 action per proposal card, keyed by the entry it adopts.
+    expect(memoryPanel).toContain('data-dsh-memory-accept={entry.id}')
+    expect(memoryPanel).toContain('void acceptEntry(entry)')
+    expect(memoryPanel).toContain('void acceptProposals()')
+  })
+
+  it('writes active through the same revision-fenced entry write, then announces and reloads', () => {
+    // No second write path: one endpoint, one expectedRevision fence per write.
+    expect(memoryPanel).toContain("callAgentTeam('assistant.memory.entry.write'")
+    expect(memoryPanel).toContain('entry: memoryAcceptanceInput(entry)')
+    expect(memoryPanel).toContain('await acceptProposalWrite(entry, revision)')
+    // 全部采纳 chains the revision each write returned, so a concurrent edit
+    // stops the batch instead of adopting a stale body.
+    expect(memoryPanel).toContain(
+      'expected = (await acceptProposalWrite(entry, expected)).revision',
+    )
+    const accept = memoryPanel.slice(
+      memoryPanel.indexOf('async function acceptEntry'),
+      memoryPanel.indexOf('async function acceptProposals'),
+    )
+    expect(accept).toContain('announceMemoryChange(assistantId)')
+    expect(accept).toContain('await load()')
+    expect(accept).toContain('if (failure.reload) void load()')
+    // Adoption never archives: a proposal is not handled by deleting it.
+    expect(accept).not.toContain("status: 'archived'")
   })
 })
 
