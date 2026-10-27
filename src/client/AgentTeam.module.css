@@ -1180,31 +1180,6 @@
   gap: 6px;
 }
 
-.assistantBuilderModelSelect {
-  flex: 0 1 320px;
-  min-width: 0;
-  max-width: 320px;
-  height: 34px;
-  padding: 0 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: 8px;
-  outline: 0;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 20px;
-}
-
-.assistantBuilderModelSelect:focus-visible {
-  border-color: var(--dsw-alias-state-business-primary);
-}
-
-.assistantBuilderModelSelect:disabled {
-  opacity: 0.6;
-}
-
 .assistantBuilderTimeline {
   padding: 20px 20px 16px;
 }
@@ -2914,11 +2889,6 @@ textarea.input {
     flex-wrap: wrap;
   }
 
-  .assistantBuilderModelSelect {
-    flex: 1;
-    max-width: none;
-  }
-
   .managementDialog {
     width: calc(100vw - 20px);
     max-height: calc(100vh - 20px);
@@ -4305,22 +4275,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   text-overflow: ellipsis;
 }
 
-.assistantCreateHero {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  min-width: 0;
-  padding-top: 0;
-}
-
-.assistantCreateHeroCopy {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
 .assistantCreatePersona {
   min-height: 200px;
 }
@@ -4489,31 +4443,10 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   min-width: 0;
 }
 
-.assistantSettingsAvatarRow {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  min-width: 0;
-}
-
-.assistantSettingsAvatarCopy {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
 .assistantSettingsAvatarTitle {
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   line-height: 18px;
-}
-
-.assistantSettingsAvatarActions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
 }
 
 .assistantSettingsAvatarHint {
@@ -5096,18 +5029,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   color: var(--dsw-alias-label-primary);
 }
 
-.activityMemberFilter select {
-  min-height: 24px;
-  max-width: 130px;
-  padding: 0 6px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 5px;
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 11px;
-}
-
 .activityRefresh {
   margin-inline-start: auto;
   border-color: var(--dsw-alias-border-l1);
@@ -5270,8 +5191,7 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 
 .activityCard:focus-visible,
 .activityFilter:focus-visible,
-.activityRefresh:focus-visible,
-.activityMemberFilter select:focus-visible {
+.activityRefresh:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 1px;
 }
@@ -6404,7 +6324,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 .activityToggle {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
 }
@@ -7619,13 +7539,28 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 }
 
 
-/* Compact modal header: title and description sit closer together. */
+/* Compact modal header, shared by every AnimatedModal: the title row keeps the
+ * close button clear but stops eating the body's height, and the description
+ * reads as a grey subline instead of a second paragraph. Scoped to the dialogs'
+ * own direct children so a feature header inside the body is untouched. */
 .teamModal > [class*="content"] {
-  gap: 4px;
+  gap: 2px;
 }
 
-.teamModal [class*="header"]:has(+ [class*="description"]) {
-  padding-bottom: 2px;
+.teamModal > [class*="content"] > [class*="header"] {
+  padding: 14px 12px 2px 20px;
+}
+
+.teamModal > [class*="content"] > [class*="description"] {
+  margin: 0;
+  padding: 0 20px 2px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.teamModal > [class*="content"] > [class*="body"] {
+  margin-top: 10px;
 }
 
 
@@ -12265,3 +12200,117 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 .sidebarTeamAvatarTile.sidebarTeamAvatarTileEmpty {
   background: transparent;
+
+/* ---------------------------------------------------------------------------
+ * Shared dialog furniture (t5): the native-style select pill and the
+ * one-setting-per-row list the official settings dialog uses. Every dialog
+ * writes its fields through these two, so there is no second control set.
+ * ------------------------------------------------------------------------- */
+
+.selectControl {
+  display: inline-flex;
+  max-width: 100%;
+  min-width: 0;
+}
+
+/* The Figma pill: value + chevron on a hover fill, never the browser's own dropdown. */
+.selectTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-height: 28px;
+  padding: 2px 6px 2px 9px;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.selectTrigger:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.selectTrigger:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.selectTrigger:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.selectValue {
+  overflow: hidden;
+  min-width: 0;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.selectChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.settingsRows {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 2px 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.settingsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.settingsRow:last-child {
+  border-bottom: 0;
+}
+
+.settingsRowCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settingsRowLabel {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.settingsRowHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.settingsRowControl {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.settingsRowControl > .input {
+  width: 100%;
+}

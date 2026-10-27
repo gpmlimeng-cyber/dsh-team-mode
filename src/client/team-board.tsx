@@ -9,6 +9,7 @@ import {
   IconWarningTriangleOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
+import { SelectControl } from './select-control.js'
 import { isTeamExecuting } from './team-status.js'
 import { teamIdentityColor } from './team-identity.js'
 import css from './TeamBoard.module.css'
@@ -962,22 +963,22 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
             </button>
           ))}
         </div>
-        <label className={css.memberFilter}>
+        <div className={css.memberFilter}>
           <span className={css.memberFilterLabel}>成员</span>
-          <select
-            className={css.memberSelect}
+          <SelectControl
+            ariaLabel="成员"
             value={activeMember}
-            onChange={event => { setFilters(current => ({ ...current, member: event.target.value })) }}
-          >
-            <option value="all">全部成员</option>
-            {memberEntries.map(member => (
-              <option key={member.id} value={member.id}>
-                {member.displayName}{member.role === 'leader' ? '（Leader）' : ''}
-              </option>
-            ))}
-            {counts.unassigned > 0 && <option value={UNASSIGNED}>未分配</option>}
-          </select>
-        </label>
+            options={[
+              { value: 'all', label: '全部成员' },
+              ...memberEntries.map(member => ({
+                value: member.id,
+                label: `${member.displayName}${member.role === 'leader' ? '（Leader）' : ''}`,
+              })),
+              ...(counts.unassigned > 0 ? [{ value: UNASSIGNED, label: '未分配' }] : []),
+            ]}
+            onChange={next => { setFilters(current => ({ ...current, member: next })) }}
+          />
+        </div>
         <button
           type="button"
           className={css.refreshButton}

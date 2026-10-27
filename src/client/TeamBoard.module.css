@@ -411,28 +411,6 @@
   color: var(--dsw-alias-label-tertiary);
 }
 
-.memberSelect {
-  height: 28px;
-  max-width: 12rem;
-  padding: 0 6px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.memberSelect:hover {
-  border-color: var(--dsw-alias-border-l2);
-}
-
-.memberSelect:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: 2px;
-}
-
 .refreshButton {
   display: inline-flex;
   align-items: center;

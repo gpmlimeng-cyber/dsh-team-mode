@@ -39,7 +39,24 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     }),
     createElement('span', undefined, props.label),
   )
-  return { Button, Checkbox, Modal: Stub }
+  // The pill select is the shipped Menu around our trigger; closed renders the
+  // anchor only, which is exactly what a server-rendered dialog shows.
+  const Menu = (props: { anchor?: unknown }): unknown =>
+    createElement('span', { 'data-menu': '' }, props.anchor as never)
+  const Switch = (props: {
+    checked: boolean
+    label: string
+    disabled?: boolean
+  }): unknown => createElement('input', {
+    type: 'checkbox',
+    role: 'switch',
+    'aria-label': props.label,
+    checked: props.checked,
+    disabled: props.disabled,
+    readOnly: true,
+  })
+  const Icon = (): unknown => createElement('span')
+  return { Button, Checkbox, Menu, Switch, IconChevronDownOutlineRegular: Icon, Modal: Stub }
 })
 
 const { memoryAfterUndo } = await import('../src/client/assistant-settings-dialog.js')
@@ -236,6 +253,65 @@ describe('assistant create dialog shell', () => {
   })
 })
 
+describe('dialog furniture', () => {
+  const createSource = readFileSync(
+    new URL('../src/client/assistant-dialogs.tsx', import.meta.url),
+    'utf8',
+  )
+  const settingsSource = readFileSync(
+    new URL('../src/client/assistant-settings-dialog.tsx', import.meta.url),
+    'utf8',
+  )
+  const activitySource = readFileSync(
+    new URL('../src/client/team-activity.tsx', import.meta.url),
+    'utf8',
+  )
+  const moduleCss = readFileSync(
+    new URL('../src/client/AgentTeam.module.css', import.meta.url),
+    'utf8',
+  )
+
+  it('writes every field in both dialogs as one setting per row', () => {
+    for (const source of [createSource, settingsSource]) {
+      expect(source).toContain('settings-row.js')
+      expect(source).toMatch(/<SettingsRows>/)
+      expect(source).toMatch(/<SettingsRow\b/)
+      // The old labelled-field and native-dropdown pair is gone.
+      expect(source).not.toMatch(/<select[\s>]/)
+      expect(source).not.toMatch(/<option\b/)
+    }
+    // The create dialog has no free-floating Field left.
+    expect(createSource).not.toMatch(/<Field\b/)
+  })
+
+  it('renders the rows as label/hint left and control right', () => {
+    expect(moduleCss).toContain('.settingsRow {')
+    expect(moduleCss).toContain('.settingsRowCopy {')
+    expect(moduleCss).toContain('.settingsRowControl {')
+    const body = renderCreateBody({ activeSection: 'model' })
+    expect(body).toMatch(/class="[^"]*settingsRow[^"]*"/)
+    expect(body).toMatch(/class="[^"]*settingsRowHint[^"]*"/)
+  })
+
+  it('uses the shipped Switch for toggles instead of a checkbox row', () => {
+    expect(activitySource).toContain('Switch')
+    expect((activitySource.match(/<Switch/g) ?? [])).toHaveLength(2)
+    expect(activitySource).not.toContain('type="checkbox"')
+    expect(settingsSource).toMatch(/<Switch\b/)
+    expect(settingsSource).not.toContain('type="checkbox"')
+  })
+
+  it('shares one compact header rule across every AnimatedModal', () => {
+    // One rule, scoped to the dialog's own header — no per-dialog copy.
+    expect((moduleCss.match(/class\*="header"/g) ?? [])).toHaveLength(1)
+    const rule = moduleCss.slice(
+      moduleCss.indexOf('.teamModal > [class*="content"] > [class*="header"] {'),
+    )
+    expect(rule.slice(0, rule.indexOf('}'))).toContain('padding: 14px 12px 2px 20px')
+    expect(moduleCss).toContain('.teamModal > [class*="content"] > [class*="description"] {')
+  })
+})
+
 describe('assistant create dialog sections', () => {
   it('identity collects a starting role, avatar, name and optional group', () => {
     const html = renderCreateBody({
@@ -263,12 +339,21 @@ describe('assistant create dialog sections', () => {
     })
     const section = html.slice(html.indexOf('<section'), html.indexOf('</section>'))
     expect(section).toContain('起始角色')
-    expect(section).toContain('内置角色')
-    expect(section).toContain('>工程师<')
     expect(section).toContain('上传本地头像')
     expect(section).toContain('aria-label="助手名称"')
+    // The starting role and group are pill selects; a closed pill shows its
+    // current value, and the template names live in the opened menu.
+    expect(section).toContain('自定义配置')
     expect(section).toContain('>不分组<')
+    expect(section).not.toContain('<select')
+    expect((section.match(/data-menu/g) ?? [])).toHaveLength(2)
+  })
+
+  it('shows the chosen group in the pill instead of a browser select', () => {
+    const html = renderCreateBody({ groups: ['工作'], draft: { ...CREATE_DRAFT, group: '工作' } })
+    const section = html.slice(html.indexOf('<section'), html.indexOf('</section>'))
     expect(section).toContain('>工作<')
+    expect(section).not.toContain('<select')
   })
 
   it('explains the empty group state instead of rendering an empty picker', () => {
@@ -343,7 +428,8 @@ describe('assistant create dialog sections', () => {
     const html = renderCreateBody({ roleError: '模板服务不可用' })
     const section = html.slice(html.indexOf('<section'), html.indexOf('</section>'))
     expect(section).toContain('读取助手模板失败：模板服务不可用')
-    expect(section).not.toContain('起始角色')
+    // The row stays (the reason replaces the control), but no picker opens.
+    expect(section).not.toContain('aria-label="起始角色"')
   })
 })
 

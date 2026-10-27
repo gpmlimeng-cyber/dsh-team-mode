@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
@@ -103,5 +104,33 @@ describe('CapabilityPicker', () => {
   it('refuses interaction while the dialog is saving', () => {
     const html = renderPicker({ disabled: true })
     expect(html.match(/disabled=""/g) ?? []).toHaveLength(OPTIONS.length)
+  })
+})
+
+describe('the template editor reuses the shared picker', () => {
+  const source = readFileSync(
+    new URL('../src/client/assistants/AssistantPanel.tsx', import.meta.url),
+    'utf8',
+  )
+
+  it('renders the one CapabilityPicker for Skills and MCP', () => {
+    expect((source.match(/<CapabilityPicker/g) ?? [])).toHaveLength(2)
+    expect(source).toContain('assistant-capabilities.js')
+    // The old hand-rolled grid and its per-list fetch states are gone.
+    expect(source).not.toContain('css.skillPicker')
+    expect(source).not.toContain('available-skills')
+    expect(source).not.toContain('setSkillsLoading')
+    expect(source).not.toContain('setMcpLoading')
+  })
+
+  it('keeps the entries the preset lost visible instead of filtering them out', () => {
+    // The old effects silently pruned a selection the catalog stopped offering.
+    expect(source).not.toContain('availableNames')
+    expect(source).not.toContain('current.filter(name => availableNames.has(name))')
+    expect(source).toContain('useCapabilityCatalog(agentPresetId)')
+    expect(source).toContain('missingDetail=')
+    // ...and the pruned list is what gets saved, exactly like the dialogs.
+    expect(source).toContain('savableNames(selectedSkills, capabilities.skills)')
+    expect(source).toContain('savableNames(selectedMcpServers, capabilities.mcpServers)')
   })
 })

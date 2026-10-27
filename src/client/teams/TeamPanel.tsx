@@ -24,6 +24,7 @@ import type {
 import type { MemoryEntry, TeamCheckpoint, TeamTask } from '../../domain/types.js'
 import { epochOf } from '../../domain/types.js'
 import { callAgentTeam, subscribeAgentTeamConversation } from '../api.js'
+import { SelectControl } from '../select-control.js'
 import { checkpointNoteError } from '../assistant-checkpoint.js'
 import { AssistantPanel } from '../assistants/AssistantPanel.js'
 import css from '../AgentTeam.module.css'
@@ -808,15 +809,16 @@ function CloneTeamDialog({
           </Field>
           <Field label="Workspace">
             <div className={css.workspacePickerRow}>
-              <select
-                required
+              <SelectControl
+                ariaLabel="Workspace"
                 value={workspaceId}
-                onChange={event => { setWorkspaceId(event.target.value) }}
-                className={css.input}
-              >
-                <option value="">{workspaces.length === 0 ? '暂无 Workspace' : '请选择 Workspace'}</option>
-                {workspaces.map(item => <option key={item.id} value={item.id}>{item.title} — {item.path}</option>)}
-              </select>
+                placeholder={workspaces.length === 0 ? '暂无 Workspace' : '请选择 Workspace'}
+                options={workspaces.map(item => ({
+                  value: item.id,
+                  label: `${item.title} — ${item.path}`,
+                }))}
+                onChange={setWorkspaceId}
+              />
               <Button
                 variant="outline"
                 type="button"

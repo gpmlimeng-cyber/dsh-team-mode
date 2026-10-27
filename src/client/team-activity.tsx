@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
+import { SelectControl } from './select-control.js'
 import { TASK_STATE_LABELS } from './labels.js'
 import css from './AgentTeam.module.css'
 import type { TeamMessage } from '../domain/types.js'
@@ -113,24 +115,30 @@ export function TeamActivityBoard({ team }: { team: TeamView }): JSX.Element {
           <button type="button" className={`${css.activityFilter} ${filter === 'messages' ? css.activityFilterActive : ''}`} onClick={() => { setFilter('messages') }}>消息</button>
           <button type="button" className={`${css.activityFilter} ${filter === 'tasks' ? css.activityFilterActive : ''}`} onClick={() => { setFilter('tasks') }}>任务</button>
         </div>
-        <label className={css.activityMemberFilter}>
+        <div className={css.activityMemberFilter}>
           <span className={css.activityFilterLabel}>成员</span>
-          <select value={member} onChange={event => { setMember(event.target.value) }}>
-            <option value="all">全部成员</option>
-            {Object.values(team.members).map(entry => (
-              <option key={entry.id} value={entry.id}>{entry.displayName}</option>
-            ))}
-            <option value={FALLBACK_LANE}>未分配 / 外部</option>
-          </select>
-        </label>
-        <label className={css.activityToggle}>
-          <input type="checkbox" checked={showSystem} onChange={event => { setShowSystem(event.target.checked) }} />
-          系统消息
-        </label>
-        <label className={css.activityToggle}>
-          <input type="checkbox" checked={showCompleted} onChange={event => { setShowCompleted(event.target.checked) }} />
-          已完成任务
-        </label>
+          <SelectControl
+            ariaLabel="成员"
+            value={member}
+            options={[
+              { value: 'all', label: '全部成员' },
+              ...Object.values(team.members).map(entry => ({
+                value: entry.id,
+                label: entry.displayName,
+              })),
+              { value: FALLBACK_LANE, label: '未分配 / 外部' },
+            ]}
+            onChange={setMember}
+          />
+        </div>
+        <div className={css.activityToggle}>
+          <span>系统消息</span>
+          <Switch label="显示系统消息" checked={showSystem} onChange={setShowSystem} />
+        </div>
+        <div className={css.activityToggle}>
+          <span>已完成任务</span>
+          <Switch label="显示已完成任务" checked={showCompleted} onChange={setShowCompleted} />
+        </div>
         <button type="button" className={css.activityRefresh} onClick={() => { void load() }} disabled={loading}>
           {loading ? '刷新中…' : '刷新'}
         </button>

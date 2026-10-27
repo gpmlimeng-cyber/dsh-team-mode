@@ -955,34 +955,6 @@
   gap: 3px;
 }
 
-.permissionSelect {
-  max-width: 180px;
-  min-width: 0;
-  height: 30px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 8px;
-  outline: 0;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-  font: var(--dsw-font-xxs-strong-12);
-}
-
-.permissionSelect:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.permissionSelect:focus-visible {
-  outline: 2px solid var(--dsw-alias-state-business-primary);
-  outline-offset: 1px;
-}
-
-.permissionSelect:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
 .reasoningModeControl {
   position: relative;
   flex: none;
@@ -992,7 +964,6 @@
   padding: 0 8px;
   border-radius: 8px;
   color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
   font: var(--dsw-font-xxs-strong-12);
 }
 
@@ -1005,23 +976,9 @@
   outline-offset: 1px;
 }
 
-.reasoningModeControl select {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
 .reasoningModeControlDisabled {
   cursor: default;
   opacity: 0.6;
-}
-
-.reasoningModeControlDisabled select {
-  cursor: default;
 }
 
 .composerActions {

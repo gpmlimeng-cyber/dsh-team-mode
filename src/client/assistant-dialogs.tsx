@@ -36,7 +36,10 @@ import {
   reasoningEffortLabel,
   useModelCapabilities,
 } from './model-reasoning.js'
-import { AnimatedModal, Field } from './shared.js'
+import { SelectControl } from './select-control.js'
+import type { SelectControlOption } from './select-control.js'
+import { SettingsRow, SettingsRows } from './settings-row.js'
+import { AnimatedModal } from './shared.js'
 import css from './AgentTeam.module.css'
 import type { AssistantTemplate } from '../domain/types.js'
 import type { CatalogView } from '../transport/contracts.js'
@@ -98,42 +101,33 @@ function SectionHeading({ title, hint }: { title: string; hint: string }): JSX.E
   )
 }
 
-function RolePicker({
-  roles,
-  disabled,
-  onSelect,
-}: {
-  roles: readonly AssistantTemplate[]
-  disabled: boolean
-  onSelect: (templateId: string) => void
-}): JSX.Element {
+function roleOptions(
+  roles: readonly AssistantTemplate[],
+): SelectControlOption[] {
   const builtin = roles.filter(role => role.source === 'builtin')
   const mine = roles.filter(role => role.source !== 'builtin')
-  return (
-    <Field label="起始角色">
-      <select
-        className={css.input}
-        value=""
-        disabled={disabled}
-        onChange={event => { onSelect(event.target.value) }}
-      >
-        <option value="">自定义配置</option>
-        {builtin.length > 0 && (
-          <optgroup label="内置角色">
-            {builtin.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
-          </optgroup>
-        )}
-        {mine.length > 0 && (
-          <optgroup label="我的模板">
-            {mine.map(role => <option key={role.id} value={role.id}>{role.name}</option>)}
-          </optgroup>
-        )}
-      </select>
-      <span className={css.hint}>
-        选中后填入该模板的真实名称、人设、头像与模型；之后仍可逐项修改，实例不会绑定模板。
-      </span>
-    </Field>
-  )
+  return [
+    { value: '', label: '自定义配置' },
+    ...builtin.map(role => ({ value: role.id, label: role.name, group: '内置角色' })),
+    ...mine.map(role => ({ value: role.id, label: role.name, group: '我的模板' })),
+  ]
+}
+
+/** Model rows share the provider heading, so the pill reads like the old optgroup. */
+function modelOptions(
+  groups: readonly AssistantCreateModelGroup[],
+): SelectControlOption[] {
+  return groups.flatMap(group => group.models.map(model => ({
+    value: assistantModelKey(group.providerId, model.id),
+    label: model.label,
+    group: group.providerName,
+  })))
+}
+
+/** Split the `provider/model` key back into the pair the draft stores. */
+function splitModelKey(key: string): [string, string] {
+  const at = key.indexOf('/')
+  return at < 0 ? [key, ''] : [key.slice(0, at), key.slice(at + 1)]
 }
 
 /**
@@ -218,35 +212,34 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
   return (
     <>
       <SectionHeading title="身份" hint="名称、形象与分组" />
-      {roleError === undefined
-        ? <RolePicker roles={roles} disabled={disabled} onSelect={onRoleSelect} />
-        : (
-          <span className={css.hint}>
-            读取助手模板失败：{roleError}。可以直接自定义创建，不影响其他字段。
-          </span>
-        )}
-      <div className={css.assistantCreateHero}>
-        <label className={css.assistantCreateAvatarFrame} aria-label="上传本地头像">
-          <MemberAvatar
-            name={draft.name.trim() || '助手'}
-            avatar={draft.avatar !== '' ? draft.avatar : undefined}
-            size={72}
-          />
-          <span className={css.assistantCreateAvatarUpload} aria-hidden="true">本地上传</span>
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className={css.avatarFileInput}
-            disabled={disabled}
-            onChange={event => {
-              const file = event.target.files?.[0]
-              event.target.value = ''
-              if (file !== undefined) onAvatarFile(file)
-            }}
-          />
-        </label>
-        <div className={css.assistantCreateHeroCopy}>
-          <Field label="名称">
+      <SettingsRows>
+        {roleError === undefined
+          ? (
+            <SettingsRow
+              label="起始角色"
+              hint="选中后填入该模板的真实名称、人设、头像与模型；之后仍可逐项修改，实例不会绑定模板。"
+              control={(
+                <SelectControl
+                  ariaLabel="起始角色"
+                  value=""
+                  options={roleOptions(roles)}
+                  disabled={disabled}
+                  onChange={onRoleSelect}
+                />
+              )}
+            />
+          )
+          : (
+            <SettingsRow
+              label="起始角色"
+              hint={`读取助手模板失败：${roleError}。可以直接自定义创建，不影响其他字段。`}
+              control={null}
+            />
+          )}
+        <SettingsRow
+          label="名称"
+          hint="显示在侧栏和会话里，必填。"
+          control={(
             <input
               className={css.input}
               value={draft.name}
@@ -256,34 +249,60 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
               aria-label="助手名称"
               onChange={event => { onDraftChange({ name: event.target.value }) }}
             />
-          </Field>
-          <span className={css.hint}>显示在侧栏和会话里，必填。</span>
-        </div>
-      </div>
+          )}
+        />
+        <SettingsRow
+          label="头像"
+          hint="点击头像上传 PNG/JPEG/WebP（≤256KB）；没有图片时显示下面的吉祥物。"
+          control={(
+            <label className={css.assistantCreateAvatarFrame} aria-label="上传本地头像">
+              <MemberAvatar
+                name={draft.name.trim() || '助手'}
+                avatar={draft.avatar !== '' ? draft.avatar : undefined}
+                size={40}
+              />
+              <span className={css.assistantCreateAvatarUpload} aria-hidden="true">上传</span>
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className={css.avatarFileInput}
+                disabled={disabled}
+                onChange={event => {
+                  const file = event.target.files?.[0]
+                  event.target.value = ''
+                  if (file !== undefined) onAvatarFile(file)
+                }}
+              />
+            </label>
+          )}
+        />
+        {groupOptions.visible && (
+          <SettingsRow
+            label="分组"
+            hint="创建后立即写入侧栏分组；写入失败不会影响助手创建，可稍后在行菜单里移动。"
+            control={(
+              <SelectControl
+                ariaLabel="分组"
+                value={draft.group}
+                options={groupOptions.options.map(option => ({
+                  value: option.value,
+                  label: option.label,
+                }))}
+                disabled={disabled}
+                onChange={next => { onDraftChange({ group: next }) }}
+              />
+            )}
+          />
+        )}
+      </SettingsRows>
+      {!groupOptions.visible && (
+        <span className={css.hint}>还没有分组；先在侧栏新建分组，再回来选择。</span>
+      )}
       <MascotEditor
         draft={draft}
         disabled={disabled}
         onChange={onDraftChange}
       />
-      {groupOptions.visible
-        ? (
-          <Field label="分组">
-            <select
-              className={css.input}
-              value={draft.group}
-              disabled={disabled}
-              onChange={event => { onDraftChange({ group: event.target.value }) }}
-            >
-              {groupOptions.options.map(option => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            <span className={css.hint}>
-              创建后立即写入侧栏分组；写入失败不会影响助手创建，可稍后在行菜单里移动。
-            </span>
-          </Field>
-        )
-        : <span className={css.hint}>还没有分组；先在侧栏新建分组，再回来选择。</span>}
     </>
   )
 }
@@ -292,103 +311,106 @@ function PersonaSection(props: AssistantCreateBodyProps, disabled: boolean): JSX
   return (
     <>
       <SectionHeading title="人设" hint="写入助手的系统提示" />
-      <Field label="人设">
-        <textarea
-          className={`${css.input} ${css.assistantCreatePersona}`}
-          aria-label="人设"
-          rows={8}
-          value={props.draft.instructions}
-          disabled={disabled}
-          placeholder="例如：你负责整理需求并给出可执行的实现建议；先读代码再回答。"
-          onChange={event => { props.onDraftChange({ instructions: event.target.value }) }}
+      <SettingsRows>
+        <SettingsRow
+          label="人设"
+          hint="会写入助手的系统提示；留空则使用 Agent Preset 默认。只影响之后创建或恢复的会话。"
+          control={(
+            <textarea
+              className={`${css.input} ${css.assistantCreatePersona}`}
+              aria-label="人设"
+              rows={8}
+              value={props.draft.instructions}
+              disabled={disabled}
+              placeholder="例如：你负责整理需求并给出可执行的实现建议；先读代码再回答。"
+              onChange={event => { props.onDraftChange({ instructions: event.target.value }) }}
+            />
+          )}
         />
-        <span className={css.hint}>
-          会写入助手的系统提示；留空则使用 Agent Preset 默认。只影响之后创建或恢复的会话。
-        </span>
-      </Field>
+      </SettingsRows>
     </>
   )
 }
 
 function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.Element {
   const { draft, workspaces, modelGroups, reasoningOptions, defaultReasoning, capabilityError } = props
-  const modelSelection = JSON.stringify([draft.provider, draft.model])
   return (
     <>
       <SectionHeading title="模型与环境" hint="会话在哪里运行、使用哪个模型" />
-      <Field label="Workspace">
-        <select
-          className={css.input}
-          value={draft.workspaceId}
-          disabled={disabled}
-          onChange={event => { props.onDraftChange({ workspaceId: event.target.value }) }}
-        >
-          {workspaces.length === 0
-            ? <option value="">没有可用 Workspace</option>
-            : draft.workspaceId === '' && <option value="">请选择</option>}
-          {workspaces.map(workspace => (
-            <option key={workspace.id} value={workspace.id}>{workspace.title}</option>
-          ))}
-        </select>
-        <span className={css.hint}>主会话在这个 Workspace 里运行；创建后不可更改。</span>
-      </Field>
-      <Field label="模型">
-        <select
-          className={css.input}
-          value={modelSelection}
-          disabled={disabled}
-          onChange={event => {
-            const [provider, model] = JSON.parse(event.target.value) as [string, string]
-            props.onDraftChange({ provider, model })
-          }}
-        >
-          {modelGroups.length === 0 && <option value="">没有可用模型</option>}
-          {modelGroups.map(group => (
-            <optgroup key={group.providerId} label={group.providerName}>
-              {group.models.map(model => (
-                <option
-                  key={model.id}
-                  value={JSON.stringify([group.providerId, model.id])}
-                >
-                  {model.label}
-                </option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
-      </Field>
-      {reasoningOptions.length > 0 && (
-        <Field label="思考模式">
-          <select
-            className={css.input}
-            value={draft.reasoningEffort}
-            disabled={disabled}
-            onChange={event => { props.onDraftChange({ reasoningEffort: event.target.value }) }}
-          >
-            <option value="">{defaultReasoning}</option>
-            {reasoningOptions.map(option => (
-              <option key={option.id} value={option.id}>{option.label}</option>
-            ))}
-          </select>
-          <span className={css.hint}>由当前模型决定可用档位；选择「模型默认」会清除档位。</span>
-        </Field>
-      )}
-      <Field label="Agent Preset">
-        <select
-          className={css.input}
-          value={draft.agentPresetId}
-          disabled={disabled}
-          onChange={event => { props.onDraftChange({ agentPresetId: event.target.value }) }}
-        >
-          {props.agentPresets.length === 0
-            ? <option value="">没有可用 Agent Preset</option>
-            : draft.agentPresetId === '' && <option value="">请选择</option>}
-          {props.agentPresets.map(preset => (
-            <option key={preset.id} value={preset.id}>{preset.name}</option>
-          ))}
-        </select>
-        <span className={css.hint}>决定工具与策略包；创建时定死，之后不可修改。</span>
-      </Field>
+      <SettingsRows>
+        <SettingsRow
+          label="Workspace"
+          hint="主会话在这个 Workspace 里运行；创建后不可更改。"
+          control={(
+            <SelectControl
+              ariaLabel="Workspace"
+              value={draft.workspaceId}
+              placeholder="没有可用 Workspace"
+              options={workspaces.map(workspace => ({
+                value: workspace.id,
+                label: workspace.title,
+              }))}
+              disabled={disabled}
+              onChange={next => { props.onDraftChange({ workspaceId: next }) }}
+            />
+          )}
+        />
+        <SettingsRow
+          label="模型"
+          hint="Provider 与模型一起保存；创建后仍可在助手设置里改。"
+          control={(
+            <SelectControl
+              ariaLabel="模型"
+              value={assistantModelKey(draft.provider, draft.model)}
+              placeholder="没有可用模型"
+              options={modelOptions(modelGroups)}
+              disabled={disabled}
+              onChange={next => {
+                const [provider, model] = splitModelKey(next)
+                props.onDraftChange({ provider, model })
+              }}
+            />
+          )}
+        />
+        {reasoningOptions.length > 0 && (
+          <SettingsRow
+            label="思考模式"
+            hint="由当前模型决定可用档位；选择「模型默认」会清除档位。"
+            control={(
+              <SelectControl
+                ariaLabel="思考模式"
+                value={draft.reasoningEffort}
+                options={[
+                  { value: '', label: defaultReasoning },
+                  ...reasoningOptions.map(option => ({
+                    value: option.id,
+                    label: option.label,
+                  })),
+                ]}
+                disabled={disabled}
+                onChange={next => { props.onDraftChange({ reasoningEffort: next }) }}
+              />
+            )}
+          />
+        )}
+        <SettingsRow
+          label="Agent Preset"
+          hint="决定工具与策略包；创建时定死，之后不可修改。"
+          control={(
+            <SelectControl
+              ariaLabel="Agent Preset"
+              value={draft.agentPresetId}
+              placeholder="没有可用 Agent Preset"
+              options={props.agentPresets.map(preset => ({
+                value: preset.id,
+                label: preset.name,
+              }))}
+              disabled={disabled}
+              onChange={next => { props.onDraftChange({ agentPresetId: next }) }}
+            />
+          )}
+        />
+      </SettingsRows>
       <SectionHeading title="能力" hint="这个助手能用的技能与 MCP" />
       <CapabilityPicker
         label={`技能（已选 ${draft.skillAllowlist.length} 个）`}
@@ -428,24 +450,25 @@ function PermissionsSection(props: AssistantCreateBodyProps, disabled: boolean):
   return (
     <>
       <SectionHeading title="权限" hint="只影响之后创建或恢复的会话" />
-      <Field label="权限预设">
-        <select
-          className={css.input}
-          value={draft.permissionPresetId}
-          disabled={disabled}
-          onChange={event => { props.onDraftChange({ permissionPresetId: event.target.value }) }}
-        >
-          {permissionPresets.length === 0
-            ? <option value="">没有可用权限预设</option>
-            : draft.permissionPresetId === '' && <option value="">请选择</option>}
-          {permissionPresets.map(preset => (
-            <option key={preset.value} value={preset.value}>
-              {PERMISSION_LABELS[preset.value] ?? preset.name}
-            </option>
-          ))}
-        </select>
-        <span className={css.hint}>已打开的主会话保持原权限，直到它被重新创建或恢复。</span>
-      </Field>
+      <SettingsRows>
+        <SettingsRow
+          label="权限预设"
+          hint="已打开的主会话保持原权限，直到它被重新创建或恢复。"
+          control={(
+            <SelectControl
+              ariaLabel="权限预设"
+              value={draft.permissionPresetId}
+              placeholder="没有可用权限预设"
+              options={permissionPresets.map(preset => ({
+                value: preset.value,
+                label: PERMISSION_LABELS[preset.value] ?? preset.name,
+              }))}
+              disabled={disabled}
+              onChange={next => { props.onDraftChange({ permissionPresetId: next }) }}
+            />
+          )}
+        />
+      </SettingsRows>
       <div className={css.assistantCreateReadonlyNote}>
         总协调（Coordinator）在侧栏行菜单设置，创建时不设。
       </div>

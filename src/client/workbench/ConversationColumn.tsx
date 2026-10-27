@@ -17,6 +17,7 @@ import type {
   WorkspaceUploadView,
 } from '../../transport/contracts.js'
 import { callAgentTeam, uploadAgentTeamFile } from '../api.js'
+import { SelectControl } from '../select-control.js'
 import { teamIdentityColor } from '../team-identity.js'
 import {
   composerTriggerAt,
@@ -562,40 +563,38 @@ export function ConversationColumn({
               tabIndex={-1}
               onChange={event => { void uploadFiles(event.currentTarget.files) }}
             />
-            <select
-              className={css.permissionSelect}
-              aria-label={`${member.displayName} 权限`}
+            <SelectControl
+              ariaLabel={`${member.displayName} 权限`}
               value={permissionPresetId}
+              options={permissionPresets.map(permission => ({
+                value: permission.value,
+                label: `权限 · ${PERMISSION_LABELS[permission.value] ?? permission.name}`,
+              }))}
+              align="end"
               disabled={changingPermission || permissionPresets.length === 0}
-              onChange={event => { void changePermission(event.target.value) }}
-            >
-              {permissionPresets.map(permission => (
-                <option key={permission.value} value={permission.value}>
-                  权限 · {PERMISSION_LABELS[permission.value] ?? permission.name}
-                </option>
-              ))}
-            </select>
+              onChange={next => { void changePermission(next) }}
+            />
             {modelCapabilities.value?.reasoning !== undefined
               && modelCapabilities.value.reasoning.efforts.length > 0 && (
-                <label
+                <div
                   className={`${css.reasoningModeControl} ${changingReasoning ? css.reasoningModeControlDisabled : ''}`}
-                  title={`思考模式：${reasoningModeLabel}；切换后下一轮生效`}
                 >
                   <span>思考模式</span>
-                  <select
-                    aria-label={`${member.displayName} 思考模式；当前为 ${reasoningModeLabel}；切换后下一轮生效`}
+                  <SelectControl
+                    ariaLabel={`${member.displayName} 思考模式；当前为 ${reasoningModeLabel}；切换后下一轮生效`}
+                    title={`思考模式：${reasoningModeLabel}；切换后下一轮生效`}
                     value={reasoningEffort}
+                    options={[
+                      { value: '', label: defaultReasoningLabel(modelCapabilities.value) },
+                      ...modelCapabilities.value.reasoning.efforts.map(effort => ({
+                        value: effort.id,
+                        label: reasoningEffortLabel(modelCapabilities.value, effort.id),
+                      })),
+                    ]}
                     disabled={changingReasoning}
-                    onChange={event => { void changeReasoning(event.target.value) }}
-                  >
-                    <option value="">{defaultReasoningLabel(modelCapabilities.value)}</option>
-                    {modelCapabilities.value.reasoning.efforts.map(effort => (
-                      <option key={effort.id} value={effort.id}>
-                        {reasoningEffortLabel(modelCapabilities.value, effort.id)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    onChange={next => { void changeReasoning(next) }}
+                  />
+                </div>
               )}
           </div>
           <div className={css.composerActions}>

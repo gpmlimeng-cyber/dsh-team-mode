@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
+import { assistantModelKey } from './assistant-form.js'
 import {
   CapabilityPicker,
   savableNames,
@@ -33,6 +34,9 @@ import {
   type MascotSpacing,
 } from './mascot.js'
 import { defaultReasoningLabel, useModelCapabilities } from './model-reasoning.js'
+import { SelectControl } from './select-control.js'
+import type { SelectControlOption } from './select-control.js'
+import { SettingsRow, SettingsRows } from './settings-row.js'
 import { AnimatedModal, Field } from './shared.js'
 import css from './AgentTeam.module.css'
 import { isCoordinatorInstance } from '../domain/types.js'
@@ -342,12 +346,38 @@ export function AssistantSettingsDialog({
     provider: providerEntry,
     models: catalog?.models[providerEntry.id] ?? [],
   })).filter(group => group.models.length > 0)
-  const modelSelection = JSON.stringify([provider, model])
+  const modelSelection = assistantModelKey(provider, model)
   const modelSelectionInCatalog = modelGroups.some(group => (
     group.provider.id === provider && group.models.some(modelEntry => modelEntry.id === model)
   ))
+  // A stored value the catalog dropped stays selectable and labelled 「当前」,
+  // so the pill never hides what is saved on the instance.
+  const modelOptions: SelectControlOption[] = [
+    ...(modelSelectionInCatalog
+      ? []
+      : [{ value: modelSelection, label: `${provider} / ${model}（当前）` }]),
+    ...modelGroups.flatMap(group => group.models.map(modelEntry => ({
+      value: assistantModelKey(group.provider.id, modelEntry.id),
+      label: modelEntry.name === modelEntry.id
+        ? modelEntry.id
+        : `${modelEntry.name}（${modelEntry.id}）`,
+      group: group.provider.name,
+    }))),
+  ]
   const permissionOptions = catalog?.permissionPresets ?? []
   const permissionInCatalog = permissionOptions.some(option => option.value === permissionPresetId)
+  const permissionSelectOptions: SelectControlOption[] = [
+    ...(permissionInCatalog
+      ? []
+      : [{
+          value: permissionPresetId,
+          label: `${PERMISSION_LABELS[permissionPresetId] ?? permissionPresetId}（当前）`,
+        }]),
+    ...permissionOptions.map(option => ({
+      value: option.value,
+      label: PERMISSION_LABELS[option.value] ?? option.name,
+    })),
+  ]
   const reasoningEfforts = modelCapabilities.value?.reasoning?.efforts ?? []
   const mascotOptions = {
     ...(mascotShape === '' ? {} : { shapeVariant: mascotShape as MascotShape }),
@@ -369,34 +399,108 @@ export function AssistantSettingsDialog({
       <form className={css.assistantSettingsForm} onSubmit={(event) => { void save(event) }}>
         {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
         {catalogError !== undefined && <div className={css.inlineError} role="alert">{catalogError}</div>}
-        <div className={css.assistantSettingsAvatarRow}>
-          <MemberAvatar name={displayName} avatar={avatar} size={52} />
-          <div className={css.assistantSettingsAvatarCopy}>
-            <span className={css.assistantSettingsAvatarTitle}>头像</span>
-            <div className={css.assistantSettingsAvatarActions}>
-              <label className={css.avatarUpload}>
-                <input
-                  type="file"
-                  accept="image/png,image/jpeg,image/webp"
-                  className={css.avatarFileInput}
+        <SettingsRows>
+          <SettingsRow
+            label="头像"
+            hint="支持 PNG、JPEG、WebP，最大 256KB；清空后显示吉祥物。"
+            control={(
+              <>
+                <MemberAvatar name={displayName} avatar={avatar} size={32} />
+                <label className={css.avatarUpload}>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className={css.avatarFileInput}
+                    disabled={busy}
+                    onChange={event => {
+                      const file = event.target.files?.[0]
+                      event.target.value = ''
+                      if (file !== undefined) chooseAvatar(file)
+                    }}
+                  />
+                  选择图片
+                </label>
+                {avatar !== '' && (
+                  <Button variant="outline" type="button" disabled={busy} onClick={clearAvatar}>
+                    清除
+                  </Button>
+                )}
+              </>
+            )}
+          />
+          <SettingsRow
+            label="显示名称"
+            hint="显示在侧栏和会话里，必填。"
+            control={(
+              <input
+                className={css.input}
+                value={name}
+                disabled={busy}
+                autoFocus
+                placeholder="助手名称"
+                aria-label="显示名称"
+                onChange={event => { setName(event.target.value) }}
+              />
+            )}
+          />
+          <SettingsRow
+            label="模型"
+            hint={catalogLoading
+              ? '正在读取模型列表…'
+              : '按 Provider 分组；保存时同时写入 Provider 与模型。'}
+            control={(
+              <SelectControl
+                ariaLabel="模型"
+                value={modelSelection}
+                options={modelOptions}
+                disabled={busy || catalog === undefined}
+                onChange={next => {
+                  const [nextProvider, nextModel] = next.split('/') as [string, string]
+                  setProvider(nextProvider)
+                  setModel(nextModel)
+                  setError(undefined)
+                }}
+              />
+            )}
+          />
+          {reasoningEfforts.length > 0 && (
+            <SettingsRow
+              label="思考模式"
+              hint="由当前模型决定可用档位；选择「模型默认」会清除已保存的档位。"
+              control={(
+                <SelectControl
+                  ariaLabel="思考模式"
+                  value={reasoningEffort}
+                  options={[
+                    { value: '', label: defaultReasoningLabel(modelCapabilities.value) },
+                    ...reasoningEfforts.map(effort => ({
+                      value: effort.id,
+                      label: effort.name === effort.id ? effort.name : `${effort.name}（${effort.id}）`,
+                    })),
+                  ]}
                   disabled={busy}
-                  onChange={event => {
-                    const file = event.target.files?.[0]
-                    event.target.value = ''
-                    if (file !== undefined) chooseAvatar(file)
-                  }}
+                  onChange={next => { setReasoningEffort(next) }}
                 />
-                选择图片
-              </label>
-              {avatar !== '' && (
-                <Button variant="outline" type="button" disabled={busy} onClick={clearAvatar}>
-                  清除头像
-                </Button>
               )}
-            </div>
-            <span className={css.assistantSettingsAvatarHint}>支持 PNG、JPEG、WebP，最大 256KB。</span>
-          </div>
-        </div>
+            />
+          )}
+          <SettingsRow
+            label="权限预设"
+            hint="权限只影响之后创建或恢复的会话；已打开的主会话保持原权限。"
+            control={(
+              <SelectControl
+                ariaLabel="权限预设"
+                value={permissionPresetId}
+                options={permissionSelectOptions}
+                disabled={busy || catalog === undefined}
+                onChange={next => {
+                  setPermissionPresetId(next)
+                  setError(undefined)
+                }}
+              />
+            )}
+          />
+        </SettingsRows>
         <div className={css.assistantMascotSection} data-dsh-assistant-mascot>
           <div className={css.assistantMascotPreview}>
             <Mascot
@@ -445,111 +549,22 @@ export function AssistantSettingsDialog({
                 setMascotFill(next.bodyColorFill ?? 'solid')
               }}
             />
-            <label className={css.assistantMascotToggle}>
-              <input
-                type="checkbox"
+            <div className={css.assistantMascotToggle}>
+              <span>{reducedMotion ? '动画（系统已要求减少动效）' : '动画'}</span>
+              <Switch
+                label="动画"
                 checked={mascotAnimated && !reducedMotion}
                 disabled={busy || reducedMotion}
-                onChange={event => { setMascotAnimated(event.target.checked) }}
+                onChange={next => { setMascotAnimated(next) }}
               />
-              {reducedMotion ? '动画（系统已要求减少动效）' : '动画'}
-            </label>
+            </div>
           </div>
         </div>
-        <Field label="显示名称">
-          <input
-            className={css.input}
-            value={name}
-            disabled={busy}
-            autoFocus
-            placeholder="助手名称"
-            onChange={event => { setName(event.target.value) }}
-          />
-        </Field>
-        <Field label="模型">
-          <select
-            className={css.input}
-            value={modelSelection}
-            disabled={busy || catalog === undefined}
-            onChange={event => {
-              const [nextProvider, nextModel] = JSON.parse(event.target.value) as [string, string]
-              setProvider(nextProvider)
-              setModel(nextModel)
-              setError(undefined)
-            }}
-          >
-            {!modelSelectionInCatalog && (
-              <option value={modelSelection}>{provider} / {model}（当前）</option>
-            )}
-            {modelGroups.map(group => (
-              <optgroup key={group.provider.id} label={group.provider.name}>
-                {group.models.map(modelEntry => (
-                  <option
-                    key={`${group.provider.id}/${modelEntry.id}`}
-                    value={JSON.stringify([group.provider.id, modelEntry.id])}
-                  >
-                    {modelEntry.name === modelEntry.id ? modelEntry.id : `${modelEntry.name}（${modelEntry.id}）`}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-          <span className={css.assistantSettingsAvatarHint}>
-            {catalogLoading
-              ? '正在读取模型列表…'
-              : '按 Provider 分组；保存时同时写入 Provider 与模型。'}
-          </span>
-        </Field>
-        {reasoningEfforts.length > 0 && (
-          <Field label="思考模式">
-            <select
-              className={css.input}
-              value={reasoningEffort}
-              disabled={busy}
-              onChange={event => { setReasoningEffort(event.target.value) }}
-            >
-              <option value="">{defaultReasoningLabel(modelCapabilities.value)}</option>
-              {reasoningEfforts.map(effort => (
-                <option key={effort.id} value={effort.id}>
-                  {effort.name === effort.id ? effort.name : `${effort.name}（${effort.id}）`}
-                </option>
-              ))}
-            </select>
-            <span className={css.assistantSettingsAvatarHint}>
-              由当前模型决定可用档位；选择「模型默认」会清除已保存的档位。
-            </span>
-          </Field>
-        )}
         {modelCapabilities.error !== undefined && (
           <div className={css.inlineError} role="alert">
             读取模型能力失败：{modelCapabilities.error}
           </div>
         )}
-        <Field label="权限预设">
-          <select
-            className={css.input}
-            value={permissionPresetId}
-            disabled={busy || catalog === undefined}
-            onChange={event => {
-              setPermissionPresetId(event.target.value)
-              setError(undefined)
-            }}
-          >
-            {!permissionInCatalog && (
-              <option value={permissionPresetId}>
-                {PERMISSION_LABELS[permissionPresetId] ?? permissionPresetId}（当前）
-              </option>
-            )}
-            {permissionOptions.map(option => (
-              <option key={option.value} value={option.value}>
-                {PERMISSION_LABELS[option.value] ?? option.name}
-              </option>
-            ))}
-          </select>
-          <span className={css.assistantSettingsAvatarHint}>
-            权限只影响之后创建或恢复的会话；已打开的主会话保持原权限。
-          </span>
-        </Field>
         <CapabilityPicker
           label={`技能（已选 ${selectedSkills.length} 个）`}
           ariaLabel="选择助手可使用的 Skills"
@@ -1098,17 +1113,18 @@ function AssistantMemorySection({ assistantId }: { assistantId: string }): JSX.E
             />
           </Field>
           <Field label="可见性">
-            <select
-              className={css.input}
+            <SelectControl
+              ariaLabel="可见性"
               value={draft.visibility}
+              options={[
+                { value: 'private', label: '私有（仅此助手）' },
+                { value: 'team-safe', label: '团队可见（仅关联成员读取）' },
+              ]}
               disabled={busy}
-              onChange={event => {
-                setDraft({ ...draft, visibility: event.target.value === 'team-safe' ? 'team-safe' : 'private' })
+              onChange={next => {
+                setDraft({ ...draft, visibility: next === 'team-safe' ? 'team-safe' : 'private' })
               }}
-            >
-              <option value="private">私有（仅此助手）</option>
-              <option value="team-safe">团队可见（仅关联成员读取）</option>
-            </select>
+            />
           </Field>
           <Field label="键（可选）">
             <input
