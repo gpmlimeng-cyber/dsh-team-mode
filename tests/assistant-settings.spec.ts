@@ -93,6 +93,7 @@ const CREATE_DRAFT: AssistantCreateDraft = {
   mascotShape: '',
   mascotEyes: '',
   mascotColor: '',
+  mascotFill: '',
 }
 
 function baseCreateBodyProps(): AssistantCreateBodyProps {
@@ -272,6 +273,45 @@ describe('assistant create dialog sections', () => {
     const section = html.slice(html.indexOf('<section'), html.indexOf('</section>'))
     expect(section).toContain('读取助手模板失败：模板服务不可用')
     expect(section).not.toContain('起始角色')
+  })
+})
+
+describe('assistant create mascot section', () => {
+  /** The create dialog's 形象 preview: the first mascot `<img>` in the details. */
+  function previewSource(html: string): string {
+    const at = html.indexOf('data-dsh-assistant-create-mascot')
+    const img = html.indexOf('<img', at)
+    return /src="([^"]+)"/.exec(html.slice(img))?.[1] ?? ''
+  }
+
+  function mascotDetails(html: string): string {
+    const start = html.indexOf('data-dsh-assistant-create-mascot')
+    return html.slice(start, html.indexOf('</details>', start))
+  }
+
+  it('is collapsed by default and opens onto the shared picker', () => {
+    const html = renderCreateBody()
+    const tag = /<details[^>]*data-dsh-assistant-create-mascot[^>]*>/.exec(html)?.[0] ?? ''
+    expect(tag).not.toBe('')
+    // No `open` attribute: the section starts folded.
+    expect(tag).not.toContain('open')
+    const details = mascotDetails(html)
+    expect(details).toContain('>形象<')
+    // Same three MausBot-style sections as the settings dialog.
+    expect(details).toContain('data-dsh-mascot-picker')
+    expect(details).toContain('>表情<')
+    expect(details).toContain('>颜色<')
+    expect(details).toContain('>身体<')
+  })
+
+  it('re-renders the preview as soon as an option changes', () => {
+    const dots = renderCreateBody({ draft: { ...CREATE_DRAFT, mascotEyes: 'dots' } })
+    const big = renderCreateBody({ draft: { ...CREATE_DRAFT, mascotEyes: 'big' } })
+    expect(previewSource(dots)).not.toBe('')
+    expect(previewSource(dots)).not.toBe(previewSource(big))
+    // Exactly one tile is pressed (the eyes group); the selection follows the draft.
+    expect((mascotDetails(dots).match(/aria-pressed="true"/g) ?? [])).toHaveLength(1)
+    expect((mascotDetails(big).match(/aria-pressed="true"/g) ?? [])).toHaveLength(1)
   })
 })
 

@@ -726,6 +726,38 @@ describe('assistantCreatePayload', () => {
     expect(createAssistantInstanceInputSchema.safeParse(payload).success).toBe(true)
   })
 
+  it('carries the mascot picked in the create dialog into the payload', () => {
+    const catalog = createCatalog()
+    const payload = assistantCreatePayload({
+      ...readyDraft(catalog),
+      mascotSeed: 'seed-7',
+      mascotShape: 'pill',
+      mascotEyes: 'big',
+      mascotColor: '#4E6EF2',
+      mascotFill: 'radial',
+    })
+    expect(payload.mascot).toEqual({
+      seed: 'seed-7',
+      shape: 'pill',
+      eyes: 'big',
+      color: '#4E6EF2',
+      fill: 'radial',
+    })
+    // The create contract accepts it: no follow-up update is needed.
+    expect(createAssistantInstanceInputSchema.safeParse(payload).success).toBe(true)
+    // A flat swatch stores no fill, so the body stays solid.
+    const solid = assistantCreatePayload({
+      ...readyDraft(catalog),
+      mascotSeed: 'seed-7',
+      mascotColor: '#4E6EF2',
+      mascotFill: 'solid',
+    })
+    expect(solid.mascot).toEqual({ seed: 'seed-7', color: '#4E6EF2' })
+    // No seed means "derive it from the instance id": no mascot field at all.
+    const unseeded = assistantCreatePayload({ ...readyDraft(catalog), mascotSeed: '  ' })
+    expect(unseeded).not.toHaveProperty('mascot')
+  })
+
   it('names the first missing required field', () => {
     const catalog = createCatalog()
     const draft = readyDraft(catalog)
@@ -822,7 +854,10 @@ describe('assistant create layout source contract', () => {
     expect(createAt).toBeLessThan(updateAt)
     expect(updateAt).toBeLessThan(ensureAt)
     expect(submit).toContain('setWarning(')
-    expect(submit).toContain('...(draft.group === \'\' ? {} : { group: draft.group })')
+    expect(submit).toContain('value: { group: draft.group }')
+    // The mascot now travels in the create payload, not the follow-up update.
+    expect(submit).toContain('assistantCreatePayload(draft)')
+    expect(submit).not.toContain('mascot')
   })
 
   it('reads roles and groups from existing transports only', () => {

@@ -13,7 +13,6 @@ import {
   assistantCreatePayload,
   assistantCreateValidationError,
   assistantModelKey,
-  assistantCreateMascot,
   assistantModelOptionLabel,
   emptyAssistantCreateDraft,
   enabledAssistantRoles,
@@ -21,7 +20,8 @@ import {
   type AssistantCreateSection,
 } from './assistant-form.js'
 import { avatarPickerUploadError, avatarPickerValueError } from './avatar-picker.js'
-import { MASCOT_EYES, MASCOT_SHAPES, mascotPaletteColor, nextMascotSeed, type MascotEyes, type MascotOptions, type MascotShape } from './mascot.js'
+import { nextMascotSeed, type MascotEyes, type MascotOptions, type MascotShape } from './mascot.js'
+import { MascotPicker } from './mascot-picker.js'
 import { Mascot } from './mascot-view.js'
 import { PERMISSION_LABELS } from './labels.js'
 import { MemberAvatar } from './member-avatar.js'
@@ -125,6 +125,11 @@ function RolePicker({
   )
 }
 
+/**
+ * The create dialog's 形象 section: collapsed by default, an existing-avatar
+ * preview plus the same `MascotPicker` the settings dialog uses. Every option
+ * writes the draft, so the preview above re-renders before anything is saved.
+ */
 function MascotEditor({
   draft,
   disabled,
@@ -139,21 +144,22 @@ function MascotEditor({
     ...(draft.mascotShape === '' ? {} : { shapeVariant: draft.mascotShape as MascotShape }),
     ...(draft.mascotEyes === '' ? {} : { eyesVariant: draft.mascotEyes as MascotEyes }),
     ...(draft.mascotColor === '' ? {} : { bodyColor: draft.mascotColor }),
+    bodyColorFill: draft.mascotFill === 'radial' ? 'radial' : 'solid',
   }
-  const palette = Array.from({ length: 8 }, (_, index) => mascotPaletteColor(index))
   const reset = (): void => onChange({
     avatar: '',
     mascotSeed: nextMascotSeed(),
     mascotShape: '',
     mascotEyes: '',
     mascotColor: '',
+    mascotFill: '',
   })
   return (
-    <div className={css.mascotEditor}>
-      <div className={css.assistantCreateCardHeading}>
-        <strong>形象</strong>
-        <span className={css.assistantCreateCardHint}>本地吉祥物，或上传自己的图片</span>
-      </div>
+    <details className={css.mascotEditor} data-dsh-assistant-create-mascot>
+      <summary className={css.mascotEditorSummary}>
+        <span>形象</span>
+        <span className={css.assistantCreateCardHint}>表情 · 颜色 · 身体</span>
+      </summary>
       <div className={css.mascotPreview}>
         {draft.avatar === ''
           ? <Mascot seed={seed} options={options} size={112} motion="idle" />
@@ -172,48 +178,18 @@ function MascotEditor({
           </button>
         )}
       </div>
-      <div className={css.mascotGroupLabel}>表情</div>
-      <div className={css.mascotEyes} role="group" aria-label="吉祥物表情">
-        {MASCOT_EYES.map(eyes => (
-          <button
-            key={eyes}
-            type="button"
-            className={css.mascotEyesButton}
-            aria-pressed={draft.mascotEyes === eyes}
-            disabled={disabled}
-            onClick={() => onChange({ mascotEyes: eyes })}
-          >
-            {eyes}
-          </button>
-        ))}
-      </div>
-      <div className={css.mascotGroupLabel}>形状</div>
-      <select
-        className={css.mascotShapeSelect}
-        value={draft.mascotShape}
+      <MascotPicker
+        seed={seed}
+        value={options}
         disabled={disabled}
-        aria-label="吉祥物形状"
-        onChange={event => onChange({ mascotShape: event.target.value })}
-      >
-        <option value="">默认</option>
-        {MASCOT_SHAPES.map(shape => <option key={shape} value={shape}>{shape}</option>)}
-      </select>
-      <div className={css.mascotGroupLabel}>颜色</div>
-      <div className={css.mascotColors} role="group" aria-label="吉祥物颜色">
-        {palette.map(color => (
-          <button
-            key={color}
-            type="button"
-            className={css.mascotColor}
-            style={{ background: color }}
-            aria-label={`颜色 ${color}`}
-            aria-pressed={draft.mascotColor.toLowerCase() === color.toLowerCase()}
-            disabled={disabled}
-            onClick={() => onChange({ mascotColor: color })}
-          />
-        ))}
-      </div>
-    </div>
+        onChange={next => onChange({
+          mascotShape: next.shapeVariant ?? '',
+          mascotEyes: next.eyesVariant ?? '',
+          mascotColor: next.bodyColor ?? '',
+          mascotFill: next.bodyColorFill ?? 'solid',
+        })}
+      />
+    </details>
   )
 }
 
@@ -812,20 +788,16 @@ export function AssistantCreateDialog({
       // The create schema is strict and rejects `group`, so placement is one
       // follow-up update. It is not part of creation success: a refusal becomes
       // an inline warning and the assistant still opens.
-      const mascot = assistantCreateMascot(draft)
-      if ((draft.group !== '' || mascot !== undefined) && !groupApplied) {
+      if (draft.group !== '' && !groupApplied) {
         try {
           await callAgentTeam('assistant.instance.update', {
             id: created.id,
-            value: {
-              ...(draft.group === '' ? {} : { group: draft.group }),
-              ...(mascot === undefined ? {} : { mascot }),
-            },
+            value: { group: draft.group },
           })
           setGroupApplied(true)
         } catch (cause) {
           setWarning(
-            `助手已创建，但分组或形象未写入：${messageOf(cause)}。可在助手设置里稍后调整。`,
+            `助手已创建，但分组未写入：${messageOf(cause)}。可在行菜单里稍后移动。`,
           )
         }
       }

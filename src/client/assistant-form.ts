@@ -91,6 +91,8 @@ export interface AssistantCreateDraft {
   mascotShape: string
   mascotEyes: string
   mascotColor: string
+  /** Body paint: solid for every flat swatch, radial for the chrome ball. */
+  mascotFill: string
 }
 
 export function emptyAssistantCreateDraft(): AssistantCreateDraft {
@@ -109,6 +111,7 @@ export function emptyAssistantCreateDraft(): AssistantCreateDraft {
     mascotShape: '',
     mascotEyes: '',
     mascotColor: '',
+    mascotFill: '',
   }
 }
 
@@ -185,9 +188,10 @@ export function applyStartingRole(
 }
 
 /**
- * The mascot is stored on the instance through the follow-up update, not the
- * strict create payload. An empty seed means "let the instance fall back to its
- * id"; the dialog seeds it when it opens.
+ * The mascot travels in the create payload (`mascot` is part of the create
+ * contract, the same precedent as `instructions`), so the picked look is the
+ * one the instance is born with. An empty seed means "let the instance fall
+ * back to its id"; the dialog seeds it when it opens.
  */
 export function assistantCreateMascot(draft: AssistantCreateDraft): AssistantInstance['mascot'] {
   if (draft.mascotSeed.trim() === '') return undefined
@@ -196,11 +200,13 @@ export function assistantCreateMascot(draft: AssistantCreateDraft): AssistantIns
     ...(draft.mascotShape === '' ? {} : { shape: draft.mascotShape }),
     ...(draft.mascotEyes === '' ? {} : { eyes: draft.mascotEyes }),
     ...(draft.mascotColor === '' ? {} : { color: draft.mascotColor }),
+    ...(draft.mascotFill === 'radial' ? { fill: 'radial' as const } : {}),
   }
 }
 
-/** The direct-create shape; `group`, `mascot` and `templateId` are never part of it. */
+/** The direct-create shape; only `group` and `templateId` stay outside it. */
 export function assistantCreatePayload(draft: AssistantCreateDraft): CreateAssistantInstanceInput {
+  const mascot = assistantCreateMascot(draft)
   return {
     name: draft.name.trim(),
     workspaceId: draft.workspaceId,
@@ -211,6 +217,7 @@ export function assistantCreatePayload(draft: AssistantCreateDraft): CreateAssis
     instructions: draft.instructions.trim(),
     ...(draft.avatar === '' ? {} : { avatar: draft.avatar }),
     ...(draft.reasoningEffort === '' ? {} : { reasoningEffort: draft.reasoningEffort }),
+    ...(mascot === undefined ? {} : { mascot }),
   }
 }
 

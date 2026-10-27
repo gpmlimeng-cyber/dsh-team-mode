@@ -4358,20 +4358,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   background: var(--dsw-alias-bg-layer-1);
 }
 
-.assistantCreateCardHeading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.assistantCreateCardHeading strong {
-  color: var(--dsw-alias-label-primary);
-  font-size: 13px;
-  font-weight: 500;
-}
-
 .assistantCreateCardHint {
   overflow: hidden;
   color: var(--dsw-alias-label-tertiary);
@@ -12159,6 +12145,27 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   background: var(--dsw-alias-bg-layer-1);
 }
 
+/* A native <details>/<summary>: collapsed by default, keyboard reachable. */
+.mascotEditorSummary {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.mascotEditorSummary::-webkit-details-marker {
+  display: none;
+}
+
+.mascotEditor[open] > .mascotEditorSummary {
+  margin-bottom: 2px;
+}
+
 .mascotPreview {
   display: flex;
   align-items: center;
@@ -12193,63 +12200,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 .mascotAction:hover:not(:disabled) {
   background: var(--dsw-alias-bg-layer-3);
-}
-
-.mascotGroupLabel {
-  margin-top: 2px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-
-.mascotEyes {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));
-  gap: 4px;
-}
-
-.mascotEyesButton {
-  padding: 4px 2px;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.mascotEyesButton[aria-pressed='true'] {
-  border-color: var(--dsw-alias-state-business-primary);
-  color: var(--dsw-alias-label-primary);
-}
-
-.mascotShapeSelect {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-primary);
-  font-size: 12px;
-}
-
-.mascotColors {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.mascotColor {
-  width: 28px;
-  height: 28px;
-  border: 2px solid transparent;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.mascotColor[aria-pressed='true'] {
-  border-color: var(--dsw-alias-label-primary);
 }
 
 @media (max-width: 760px) {

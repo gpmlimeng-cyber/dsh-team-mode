@@ -170,6 +170,42 @@ describe('Assistant instances', () => {
     expect(minimal.assistantSnapshot.reasoningEffort).toBeUndefined()
   })
 
+  it('stores the mascot picked at creation, like instructions', async () => {
+    const { service, store } = createHarness()
+
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Picked',
+      instructions: '',
+      provider: 'openai',
+      model: 'gpt-5',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+      mascot: { seed: 'seed-7', shape: 'pill', eyes: 'big', color: '#4E6EF2', fill: 'radial' },
+    })
+
+    expect(instance.mascot).toEqual({
+      seed: 'seed-7',
+      shape: 'pill',
+      eyes: 'big',
+      color: '#4E6EF2',
+      fill: 'radial',
+    })
+    expect(assistantInstanceSchema.parse(instance).mascot).toEqual(instance.mascot)
+    expect(store.getAssistantInstance(instance.id)?.mascot).toEqual(instance.mascot)
+
+    // Absent mascot stays absent: the avatar-less row falls back to initials.
+    const plain = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Plain',
+      provider: 'openai',
+      model: 'gpt-5',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+    })
+    expect(Object.hasOwn(plain as object, 'mascot')).toBe(false)
+  })
+
   it('applies explicit fields on top of a template snapshot', async () => {
     const { service, store } = createHarness()
     const source = template({ avatar: avatar('AAAA') })

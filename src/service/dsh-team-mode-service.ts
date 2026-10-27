@@ -862,6 +862,7 @@ export class AgentTeamService extends Service {
       workspacePath: workspace.path,
       status: 'idle',
       pinned: input.pinned ?? false,
+      ...(input.mascot === undefined ? {} : { mascot: input.mascot }),
       revision: 1,
       createdAt: now,
       updatedAt: now,

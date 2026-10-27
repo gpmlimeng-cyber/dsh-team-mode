@@ -773,6 +773,12 @@ const assistantInstanceOverrides = {
   permissionPresetId: nonEmpty.optional(),
   instructions: z.string().optional(),
   pinned: z.boolean().optional(),
+  /**
+   * Offline mascot identity, accepted at creation like `instructions`, so the
+   * create dialog writes the picked look in the same call instead of a
+   * follow-up update. Absent means the avatar-less fallback is the initials.
+   */
+  mascot: assistantMascotSchema.optional(),
 } as const
 
 /**
