@@ -20,7 +20,7 @@ import {
   type AssistantCreateSection,
 } from './assistant-form.js'
 import { avatarPickerUploadError, avatarPickerValueError } from './avatar-picker.js'
-import { nextMascotSeed, type MascotEyes, type MascotOptions, type MascotShape } from './mascot.js'
+import { MASCOT_EYES, MASCOT_SHAPES, nextMascotSeed, randomMascotDraft, type MascotEyes, type MascotOptions, type MascotShape } from './mascot.js'
 import { MascotPicker } from './mascot-picker.js'
 import { Mascot } from './mascot-view.js'
 import { PERMISSION_LABELS } from './labels.js'
@@ -155,7 +155,7 @@ function MascotEditor({
     mascotFill: '',
   })
   return (
-    <details className={css.mascotEditor} data-dsh-assistant-create-mascot>
+    <details className={css.mascotEditor} data-dsh-assistant-create-mascot open>
       <summary className={css.mascotEditorSummary}>
         <span>形象</span>
         <span className={css.assistantCreateCardHint}>表情 · 颜色 · 身体</span>
@@ -166,7 +166,15 @@ function MascotEditor({
           : <img className={css.mascotPreviewImage} src={draft.avatar} alt="助手头像预览" />}
       </div>
       <div className={css.mascotActions}>
-        <button type="button" className={css.mascotAction} disabled={disabled} onClick={() => onChange({ mascotSeed: nextMascotSeed() })}>
+        <button type="button" className={css.mascotAction} disabled={disabled} onClick={() => {
+            const next = randomMascotDraft()
+            onChange({
+              mascotSeed: next.seed,
+              mascotShape: next.shape,
+              mascotEyes: next.eyes,
+              mascotColor: next.color,
+            })
+          }}>
           换一只
         </button>
         <button type="button" className={css.mascotAction} disabled={disabled} onClick={reset}>

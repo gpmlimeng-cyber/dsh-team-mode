@@ -67,6 +67,26 @@ const style = new Style(gazeDefinition)
  * colour function cannot resolve, and DiceBear only accepts hex — so take the
  * light arm and keep the identity mapping.
  */
+/**
+ * One random mascot in one step: seed plus a fresh expression, body and colour.
+ * "换一只" used to reroll only the seed, so a reader who had already picked a
+ * face and body saw the same silhouette with different eyes.
+ */
+export function randomMascotDraft(): {
+  seed: string
+  eyes: MascotEyes
+  shape: MascotShape
+  color: string
+} {
+  const pick = <T,>(list: readonly T[]): T => list[Math.floor(Math.random() * list.length)] as T
+  return {
+    seed: nextMascotSeed(),
+    eyes: pick(MASCOT_EYES),
+    shape: pick(MASCOT_SHAPES),
+    color: mascotPaletteColor(Math.floor(Math.random() * TEAM_IDENTITY_COLORS.length)),
+  }
+}
+
 export function mascotPaletteColor(index: number): string {
   const entry = TEAM_IDENTITY_COLORS[index % TEAM_IDENTITY_COLORS.length] ?? ''
   return /#([0-9a-fA-F]{3,8})/.exec(entry)?.[0] ?? '#5F5E5A'

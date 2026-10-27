@@ -3152,7 +3152,7 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   color: var(--dsw-alias-label-primary);
   font: inherit;
   font-size: 19px;
-  font-weight: 700;
+  font-weight: 500;
   letter-spacing: -0.01em;
   line-height: 24px;
   cursor: pointer;
@@ -4563,7 +4563,9 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 
 .mascotPickerGrid {
   display: grid;
-  grid-template-columns: repeat(5, max-content);
+  /* Five equal columns that fill the pane: the tiles were max-content, which
+     left a ragged half-empty grid in a wide dialog. */
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -4571,8 +4573,11 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  /* Fill the grid cell so the row reads as one band; the preview keeps its own
+     size and stays centred. */
+  width: 100%;
+  min-width: 0;
+  height: 44px;
   padding: 0;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: var(--dsw-radius-sm);
@@ -4607,15 +4612,16 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 }
 
 .mascotPickerSwatch {
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
+  width: 100%;
+  height: 44px;
+  border-radius: var(--dsw-radius-sm);
 }
 
 .mascotPickerSwatch img {
   width: 26px;
   height: 26px;
   border-radius: 50%;
+  margin: 0 auto;
 }
 
 .mascotPickerSwatch[aria-pressed='true'] {
@@ -5736,7 +5742,7 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   flex: 0 1 auto;
   overflow: hidden;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.01em;
   line-height: 20px;
   text-overflow: ellipsis;
@@ -7086,7 +7092,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   color: var(--dsw-alias-label-secondary);
   font: inherit;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 18px;
   cursor: pointer;
 }
@@ -8427,7 +8433,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   overflow-wrap: anywhere;
   color: var(--dsw-alias-label-primary);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 18px;
 }
 
@@ -8661,7 +8667,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   min-width: 0;
   color: var(--dsw-alias-label-primary);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 17px;
   overflow-wrap: anywhere;
 }
@@ -8836,7 +8842,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 .goalTaskGroupTitle strong {
   color: var(--dsw-alias-label-primary);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 17px;
 }
 
@@ -10594,7 +10600,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   background: color-mix(in srgb, var(--dsw-alias-state-warn-primary) 16%, transparent);
   color: var(--dsw-alias-state-warn-label);
   font-size: 9px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 13px;
 }
 
@@ -12153,7 +12159,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   gap: 8px;
   color: var(--dsw-alias-label-primary);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
   list-style: none;
 }

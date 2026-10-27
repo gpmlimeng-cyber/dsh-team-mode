@@ -20,6 +20,7 @@ import { Mascot, usePrefersReducedMotion } from './mascot-view.js'
 import { MascotPicker } from './mascot-picker.js'
 import {
   nextMascotSeed,
+  randomMascotDraft,
   type MascotBodyFill,
   type MascotEyes,
   type MascotMotion,
@@ -393,7 +394,13 @@ export function AssistantSettingsDialog({
               variant="outline"
               type="button"
               disabled={busy}
-              onClick={() => { setMascotSeed(nextMascotSeed()) }}
+              onClick={() => {
+                const next = randomMascotDraft()
+                setMascotSeed(next.seed)
+                setMascotShape(next.shape)
+                setMascotEyes(next.eyes)
+                setMascotColor(next.color)
+              }}
             >
               换一只
             </Button>
