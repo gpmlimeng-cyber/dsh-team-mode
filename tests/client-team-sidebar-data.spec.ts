@@ -941,13 +941,13 @@ describe('roster CSS and sidebar structure', () => {
     expect(sidebar).toMatch(/aria-expanded=\{rosterOpen\}\n\s*aria-controls=\{rosterOpen \? rosterId : undefined\}/)
   })
 
-  it('navigates from a roster row with the existing openSession callback', () => {
+  it('navigates from a thread row with the existing openSession callback', () => {
     expect(sidebar).toContain("import { MemberAvatar } from './member-avatar.js'")
-    expect(sidebar).toContain('onClick={() => { openRosterMember(team, row) }}')
+    expect(sidebar).toContain('onClick={() => { openTeamThread(team, row) }}')
     expect(sidebar).toContain('openSession(row.sessionId)')
   })
 
-  it('draws an explicit loading and load-failure state instead of an empty roster', () => {
+  it('draws an explicit loading and load-failure state instead of an empty list', () => {
     expect(sidebar).toContain('正在加载团队…')
     expect(sidebar).toContain('role="status"')
     expect(sidebar).toContain('团队数据加载失败：')
@@ -961,10 +961,54 @@ describe('roster CSS and sidebar structure', () => {
     expect(data).not.toContain("from './api.js'")
   })
 
-  it('shows the status word and the attention mark in every row', () => {
-    expect(sidebar).toContain('{rosterSubtitle(row)}')
-    expect(sidebar).toContain("row.attention === 'error' ? '异常' : '待审批'")
-    expect(sidebar).toContain("row.tone === 'running'")
+  it('lists threads instead of member rows under an expanded team', () => {
+    // The member projection still feeds the Session hider, but the sidebar no
+    // longer renders one row per member: threads are the rows now.
+    expect(sidebar).not.toContain('rosterSubtitle(row)')
+    expect(sidebar).not.toContain('teamRosterRows(team)')
+    expect(sidebar).not.toContain('openRosterMember')
+    expect(sidebar).toContain('data-dsh-team-threads')
+    expect(sidebar).toContain('data-dsh-team-thread-row={key}')
+  })
+
+  it('draws a thread row with the shipped 32px single-line row anatomy', () => {
+    // One row component: the shipped roster/session row, not a second shape.
+    expect(sidebar).toContain('className={css.sidebarRosterRow}')
+    expect(sidebar).toContain('{row.title}')
+    expect(sidebar).toMatch(/<span className=\{css\.sidebarRosterMeta\}>\{time\}<\/span>/)
+    expect(css).toMatch(/\.sidebarRosterRow\s*\{[^}]*height: 32px/)
+    expect(css).not.toMatch(/\.sidebarTeamThreadRow\s*\{/)
+  })
+
+  it('offers open, rename and archive in the thread hover menu', () => {
+    expect(sidebar).toMatch(/id: 'open', label: '打开'/)
+    expect(sidebar).toMatch(/id: 'rename',\s+label: '重命名'/)
+    expect(sidebar).toMatch(/id: 'archive',\s+label: '归档'/)
+    expect(sidebar).toContain("team.thread.rename', { id: teamId, threadId, title }")
+    expect(sidebar).toContain("team.thread.archive', { id: team.id, threadId }")
+  })
+
+  it('adopts the answered TeamView so a rename and an archive land at once', () => {
+    // No optimistic row: the Host's answer is the only source of the new list.
+    expect(sidebar).toContain('adoptThreads(await callAgentTeam')
+    expect(sidebar).toContain('setTeams(current => current.map(item => item.id === next.id ? next : item))')
+  })
+
+  it('creates a thread only from the team row, never by expanding it', () => {
+    expect(sidebar).toContain("team.thread.create', { id: team.id }")
+    expect(sidebar).toContain('data-dsh-team-thread-create={team.id}')
+    const toggle = sidebar.slice(
+      sidebar.indexOf('const toggleRoster ='),
+      sidebar.indexOf('const openTeamThread ='),
+    )
+    expect(toggle).not.toContain('team.thread.create')
+    expect(toggle).toContain('setRosterExpanded')
+  })
+
+  it('keeps members reachable from the avatar cluster and the team page', () => {
+    expect(sidebar).toContain('teamAvatarStack(team.members)')
+    expect(sidebar).toContain("{ id: 'member', label: '成员任务与检查点'")
+    expect(sidebar).toContain('openTeamPage(team.id)')
   })
 })
 

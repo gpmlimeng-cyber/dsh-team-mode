@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore
 import type { CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import {
+  Button,
   IconArchiveOutlineRegular,
   IconChecklistOutlineRegular,
   IconChevronRightOutlineRegular,
@@ -11,6 +12,7 @@ import {
   IconChevronsUpDownOutlineRegular,
   IconClockOutlineRegular,
   IconCloseFillRegular,
+  IconEditOutlineRegular,
   IconFolderOpenOutlineRegular,
   IconFlatListOutlineRegular,
   IconUserOutlineRegular,
@@ -29,7 +31,7 @@ import {
   type MenuEntry,
   type MenuItem,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import { callAgentTeam, subscribeAgentTeam } from './api.js'
+import { callAgentTeam, subscribeAgentTeam, teamLeaderSessionId } from './api.js'
 import {
   AssistantSidebarSection,
   SIDEBAR_ASSISTANT_CREATE_EVENT,
@@ -54,12 +56,9 @@ import {
 import {
   compareTeamSidebar,
   recentTeamTasks,
-  rosterSubtitle,
-  teamRosterRows,
   teamScopeCounts,
   teamSidebarStatusText,
   teamSidebarSummary,
-  type TeamRosterRow,
 } from './team-sidebar-data.js'
 import { useTeamText } from './team-i18n.js'
 import { TEAM_TASK_CREATE_HINT } from './labels.js'
@@ -381,6 +380,118 @@ function relativeTime(iso: string): string {
   return `${date.getMonth() + 1}月${date.getDate()}日`
 }
 
+/**
+ * One row under an expanded team. Threads are the team's conversations; a team
+ * that has none falls back to its main (Leader) Session, so expanding a fresh
+ * team is never empty — the same fallback MausBot takes from `group.threadId`.
+ * Member Sessions are not rows here: members stay reachable through the avatar
+ * cluster and the team page's roster.
+ */
+export interface TeamThreadRow {
+  /** Thread id; absent on the fallback row standing for the main Session. */
+  id?: string
+  sessionId: string
+  title: string
+  /** ISO time of the thread's last activity; absent on the fallback row. */
+  updatedAt?: string
+  /** True when the row is the team main Session, not a created thread. */
+  main: boolean
+}
+
+/** Newest activity first, id as the stable tiebreak; the Host owns creation. */
+export function teamThreadRows(team: TeamView): TeamThreadRow[] {
+  const threads = Object.values(team.threads ?? {})
+    .sort((left, right) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+  if (threads.length === 0) {
+    const sessionId = teamLeaderSessionId(team)
+    return sessionId === undefined
+      ? []
+      : [{ sessionId, title: '主会话', main: true }]
+  }
+  return threads.map(thread => ({
+    id: thread.id,
+    sessionId: thread.sessionId,
+    title: thread.title,
+    updatedAt: new Date(thread.updatedAt).toISOString(),
+    main: false,
+  }))
+}
+
+/**
+ * 重命名线程: one title field, the same dialog anatomy the group rename uses.
+ * The title is trimmed here; the Host validates and trims again.
+ */
+function ThreadRenameDialog({
+  title,
+  onClose,
+  save,
+}: {
+  title: string
+  onClose: () => void
+  save: (title: string) => Promise<void>
+}): JSX.Element {
+  const [value, setValue] = useState(title)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  const trimmed = value.trim()
+  const invalid = trimmed === '' || trimmed.length > 80
+  const formId = 'dsh-team-mode-thread-rename-form'
+
+  const submit = async (): Promise<void> => {
+    if (busy || invalid) return
+    setBusy(true)
+    setError(undefined)
+    try {
+      await save(trimmed)
+      onClose()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AnimatedModal
+      open
+      onClose={() => { if (!busy) onClose() }}
+      title="重命名线程"
+      description="线程是团队里的一条会话，改名不影响它的内容。"
+      closeLabel="关闭"
+      className={css.sidebarGroupDialog ?? ''}
+      footer={(
+        <>
+          <Button variant="outline" type="button" disabled={busy} onClick={onClose}>取消</Button>
+          <Button variant="primary" type="submit" form={formId} disabled={busy || invalid}>
+            {busy ? '保存中…' : '保存'}
+          </Button>
+        </>
+      )}
+    >
+      <form
+        id={formId}
+        className={css.sidebarGroupNameForm ?? ''}
+        onSubmit={event => {
+          event.preventDefault()
+          void submit()
+        }}
+      >
+        <input
+          className={css.input}
+          data-modal-autofocus
+          value={value}
+          maxLength={80}
+          placeholder="线程标题，最多 80 个字"
+          aria-label="线程标题"
+          aria-invalid={trimmed === ''}
+          onChange={event => { setValue(event.target.value) }}
+        />
+        {error !== undefined && <div className={css.sidebarAssistantThreadError} role="alert">{error}</div>}
+      </form>
+    </AnimatedModal>
+  )
+}
+
 /** The collapsible “群聊” section above the native Workspace/Session browser. */
 export function SidebarTeamSection({
   openSession,
@@ -406,6 +517,8 @@ export function SidebarTeamSection({
   const assistantMode = useAssistantDisplayMode()
   const [menuTeamId, setMenuTeamId] = useState<string>()
   const [rosterMenuRow, setRosterMenuRow] = useState<string>()
+  const [threadRename, setThreadRename] = useState<{ teamId: string; threadId: string; title: string }>()
+  const [creatingThreadTeamId, setCreatingThreadTeamId] = useState<string>()
   const [taskDialogTeamId, setTaskDialogTeamId] = useState<string>()
   const [error, setError] = useState<string>()
   const { groups, refresh: refreshGroups, adopt: adoptGroups } = useSidebarGroups()
@@ -503,11 +616,55 @@ export function SidebarTeamSection({
     writeRosterExpanded(teamId, next)
   }
 
-  /** A member row is navigation only: it opens that member's Session. */
-  const openRosterMember = (team: TeamView, row: TeamRosterRow): void => {
+  /** A thread row is navigation only: it opens that thread's Session. */
+  const openTeamThread = (team: TeamView, row: TeamThreadRow): void => {
     selectTeam(team.id)
     setActiveSessionId(row.sessionId)
     openSession(row.sessionId)
+  }
+
+  /** Adopt a TeamView a thread write answered with; the Host owns the list. */
+  const adoptThreads = (next: TeamView): void => {
+    setTeams(current => current.map(item => item.id === next.id ? next : item))
+  }
+
+  /**
+   * ＋ on the team row. Explicit only: expanding never mints a conversation,
+   * because every thread is a real Session. The answer is the only source of
+   * the new row, and the tree opens around it so the result is visible.
+   */
+  const createTeamThread = async (team: TeamView): Promise<void> => {
+    if (creatingThreadTeamId !== undefined) return
+    setCreatingThreadTeamId(team.id)
+    setError(undefined)
+    try {
+      adoptThreads(await callAgentTeam('team.thread.create', { id: team.id }))
+      setRosterExpanded(current => ({ ...current, [team.id]: true }))
+      writeRosterExpanded(team.id, true)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setCreatingThreadTeamId(undefined)
+    }
+  }
+
+  /** The answered TeamView replaces the row, so the new title shows at once. */
+  const renameTeamThread = async (
+    teamId: string,
+    threadId: string,
+    title: string,
+  ): Promise<void> => {
+    adoptThreads(await callAgentTeam('team.thread.rename', { id: teamId, threadId, title }))
+  }
+
+  /** Archiving moves the thread out of the active list, so its row disappears. */
+  const archiveTeamThread = async (team: TeamView, threadId: string): Promise<void> => {
+    setError(undefined)
+    try {
+      adoptThreads(await callAgentTeam('team.thread.archive', { id: team.id, threadId }))
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
   }
 
   const taskDialogTeam = teams.find(team => team.id === taskDialogTeamId)
@@ -578,7 +735,8 @@ export function SidebarTeamSection({
     const avatarStack = teamAvatarStack(team.members)
     const rosterOpen = rosterIsOpen(team.id)
     const rosterId = `dsh-team-mode-roster-${team.id}`
-    const roster = rosterOpen ? teamRosterRows(team) : []
+    const threads = rosterOpen ? teamThreadRows(team) : []
+    const creating = creatingThreadTeamId === team.id
     const rowDrag = drag.row(team.id, team.group)
     return (
       <div key={team.id} className={css.sidebarTeamGroup}>
@@ -594,8 +752,8 @@ export function SidebarTeamSection({
             className={css.sidebarTeamExpand}
             aria-expanded={rosterOpen}
             aria-controls={rosterOpen ? rosterId : undefined}
-            aria-label={`${rosterOpen ? '收起' : '展开'} ${team.name} 成员名册`}
-            title={rosterOpen ? '收起成员' : '展开成员'}
+            aria-label={`${rosterOpen ? '收起' : '展开'} ${team.name} 线程`}
+            title={rosterOpen ? '收起线程' : '展开线程'}
             data-dsh-team-roster-toggle
             onClick={() => { toggleRoster(team.id) }}
           >
@@ -680,6 +838,22 @@ export function SidebarTeamSection({
                 ? <span className={css.sidebarTeamStateDot} aria-hidden="true" />
                 : null}
           </button>
+          {/* ＋ 新建线程: MausBot puts its create control on the group row and
+              reveals it on hover, so a thread is never created by expanding. */}
+          <Tooltip label="新建线程" delayMs={400}>
+            <button
+              type="button"
+              className={`${css.sidebarTeamManage} ${css.sidebarTeamMoreButton}`}
+              aria-label={`新建线程 ${team.name}`}
+              title="新建线程"
+              disabled={creating}
+              aria-busy={creating}
+              data-dsh-team-thread-create={team.id}
+              onClick={() => { void createTeamThread(team) }}
+            >
+              <IconPlusOutlineRegular size={14} />
+            </button>
+          </Tooltip>
           <Menu
             open={rowMenuOpen}
             onClose={() => { setMenuTeamId(undefined) }}
@@ -764,75 +938,90 @@ export function SidebarTeamSection({
             id={rosterId}
             className={css.sidebarRosterList}
             role="group"
-            aria-label={`${team.name} 成员`}
-            data-dsh-team-roster
+            aria-label={`${team.name} 线程`}
+            data-dsh-team-threads
           >
-            {roster.length === 0
-              ? <div className={css.sidebarRosterEmpty}>还没有成员</div>
-              : roster.map(row => (
-                <button
-                  key={row.slotId}
-                  type="button"
-                  className={css.sidebarRosterRow}
-                  role="treeitem"
-                  aria-selected={activeSessionId === row.sessionId}
-                  aria-current={activeSessionId === row.sessionId ? 'page' : undefined}
-                  title={`${row.name} · ${rosterSubtitle(row)}`}
-                  data-dsh-team-roster-row={row.slotId}
-                  onClick={() => { openRosterMember(team, row) }}
-                >
-                  {/* Shipped row shape: title, trailing status/time, hover menu.
-                      No avatar — the native list has none either. */}
-                  <span className={css.sidebarRosterName}>{row.name}</span>
-                  {row.role === 'leader' && (
-                    <span className={css.sidebarRosterRole}>Leader</span>
-                  )}
-                  {row.tone === 'running' && (
-                    <span className={css.sidebarTeamStateDot} aria-hidden="true" />
-                  )}
-                  {row.attention !== undefined && (
-                    <span
-                      className={`${css.sidebarRosterBadge} ${row.attention === 'error' ? css.sidebarRosterBadgeError : ''}`}
-                      role="img"
-                      title={row.attention === 'error' ? row.errorText ?? '异常' : '待审批'}
-                      aria-label={row.attention === 'error' ? '异常' : '待审批'}
-                    >
-                      !
+            {threads.length === 0
+              ? <div className={css.sidebarRosterEmpty}>还没有可打开的会话</div>
+              : threads.map(row => {
+                const key = row.id ?? row.sessionId
+                const current = activeSessionId === row.sessionId
+                const time = row.updatedAt === undefined ? undefined : relativeTime(row.updatedAt)
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    className={css.sidebarRosterRow}
+                    role="treeitem"
+                    aria-selected={current}
+                    aria-current={current ? 'page' : undefined}
+                    title={time === undefined ? row.title : `${row.title} · ${time}`}
+                    data-dsh-team-thread-row={key}
+                    {...(row.main ? { 'data-dsh-team-thread-main': '' } : {})}
+                    onClick={() => { openTeamThread(team, row) }}
+                  >
+                    {/* Same anatomy as the shipped session row: one 32px line,
+                        title, trailing time, hover menu. No second row shape. */}
+                    <span className={css.sidebarRosterName}>{row.title}</span>
+                    {row.main && <span className={css.sidebarRosterRole}>主</span>}
+                    {time !== undefined && (
+                      <span className={css.sidebarRosterMeta}>{time}</span>
+                    )}
+                    <span className={css.sidebarRosterActions}>
+                      <Menu
+                        open={rosterMenuRow === row.sessionId}
+                        portal
+                        align="end"
+                        dense
+                        items={[
+                          { id: 'open', label: '打开', icon: <IconFolderOpenOutlineRegular size={14} /> },
+                          {
+                            id: 'rename',
+                            label: '重命名',
+                            icon: <IconEditOutlineRegular size={14} />,
+                            // The fallback row is the team main Session: it has
+                            // no thread record to rename or archive.
+                            disabled: row.id === undefined,
+                          },
+                          {
+                            id: 'archive',
+                            label: '归档',
+                            icon: <IconArchiveOutlineRegular size={14} />,
+                            disabled: row.id === undefined,
+                          },
+                          { type: 'separator', id: 'thread-member-separator' },
+                          { id: 'member', label: '成员任务与检查点', icon: <IconUsersOutlineRegular size={14} /> },
+                        ]}
+                        onSelect={id => {
+                          setRosterMenuRow(undefined)
+                          if (id === 'open') openTeamThread(team, row)
+                          else if (id === 'rename' && row.id !== undefined) {
+                            setThreadRename({ teamId: team.id, threadId: row.id, title: row.title })
+                          } else if (id === 'archive' && row.id !== undefined) {
+                            void archiveTeamThread(team, row.id)
+                          } else if (id === 'member') openTeamPage(team.id)
+                        }}
+                        onClose={() => { setRosterMenuRow(undefined) }}
+                        anchor={(
+                          <button
+                            type="button"
+                            className={css.sidebarRosterIconButton}
+                            aria-label={`${row.title} 的更多操作`}
+                            aria-haspopup="menu"
+                            data-dsh-team-thread-menu={key}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setRosterMenuRow(currentRow => (currentRow === row.sessionId ? undefined : row.sessionId))
+                            }}
+                          >
+                            <IconEllipsisOutlineRegular size={14} />
+                          </button>
+                        )}
+                      />
                     </span>
-                  )}
-                  <span className={css.sidebarRosterMeta}>{rosterSubtitle(row)}</span>
-                  <span className={css.sidebarRosterActions}>
-                    <Menu
-                      open={rosterMenuRow === row.sessionId}
-                      portal
-                      align="end"
-                      items={[
-                        { id: 'open', label: '打开会话' },
-                        { id: 'member', label: '成员任务与检查点' },
-                      ]}
-                      onSelect={id => {
-                        setRosterMenuRow(undefined)
-                        if (id === 'open') openRosterMember(team, row)
-                        else openTeamPage(team.id)
-                      }}
-                      onClose={() => { setRosterMenuRow(undefined) }}
-                      anchor={(
-                        <button
-                          type="button"
-                          className={css.sidebarRosterIconButton}
-                          aria-label={`${row.name} 的更多操作`}
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            setRosterMenuRow(current => (current === row.sessionId ? undefined : row.sessionId))
-                          }}
-                        >
-                          <IconEllipsisOutlineRegular size={14} />
-                        </button>
-                      )}
-                    />
-                  </span>
-                </button>
-              ))}
+                  </button>
+                )
+              })}
           </div>
         )}
       </div>
@@ -1038,6 +1227,15 @@ export function SidebarTeamSection({
         onListChanged={adoptGroups}
         onChanged={() => { void load() }}
       />
+      {threadRename !== undefined && (
+        <ThreadRenameDialog
+          title={threadRename.title}
+          onClose={() => { setThreadRename(undefined) }}
+          save={async title => {
+            await renameTeamThread(threadRename.teamId, threadRename.threadId, title)
+          }}
+        />
+      )}
     </section>
   )
 }

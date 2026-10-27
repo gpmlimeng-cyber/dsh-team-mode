@@ -32,7 +32,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
   return Object.fromEntries(names.map(name => [name, Stub]))
 })
 
-const { SidebarTeamSection, brandCreateItems } = await import('../src/client/sidebar.js')
+const { SidebarTeamSection, brandCreateItems, teamThreadRows } = await import('../src/client/sidebar.js')
 const { AssistantSidebarSection } = await import('../src/client/assistant-sidebar.js')
 
 const sidebar = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
@@ -154,5 +154,52 @@ describe('the brand row carries the three actions', () => {
   it('keeps one 新建分组 entry, at the bottom of the sidebar list', () => {
     expect(assistant).toContain('<SidebarGroupCreateRow')
     expect(sidebar).not.toContain('<SidebarGroupCreateRow')
+  })
+})
+
+/** Just enough of a TeamView for the sidebar row projection. */
+function teamThreadFixture(overrides: Record<string, unknown> = {}): Parameters<typeof teamThreadRows>[0] {
+  return {
+    id: 'team-1',
+    name: '测试团队',
+    leaderSlotId: 'leader',
+    members: { leader: { sessionId: 'session-main' } },
+    ...overrides,
+  } as unknown as Parameters<typeof teamThreadRows>[0]
+}
+
+describe('an expanded team lists threads, with a main-Session fallback', () => {
+  it('takes every row title and Session from the thread, newest first', () => {
+    const rows = teamThreadRows(teamThreadFixture({
+      threads: {
+        older: { id: 'older', title: '上周的排期', sessionId: 'session-older', createdAt: 1_000, updatedAt: 1_000 },
+        newer: { id: 'newer', title: '今天的发布', sessionId: 'session-newer', createdAt: 2_000, updatedAt: 2_000 },
+      },
+    }))
+    // The row title is thread.title; member display names never become rows.
+    expect(rows.map(row => row.title)).toEqual(['今天的发布', '上周的排期'])
+    expect(rows.map(row => row.sessionId)).toEqual(['session-newer', 'session-older'])
+    expect(rows.every(row => row.main === false)).toBe(true)
+    expect(rows[0]?.updatedAt).toBe('1970-01-01T00:00:02.000Z')
+  })
+
+  it('falls back to one row for the team main Session when no thread exists', () => {
+    const rows = teamThreadRows(teamThreadFixture())
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ sessionId: 'session-main', title: '主会话', main: true })
+    // The fallback row is the main Session, so it has no thread to rename.
+    expect(rows[0]?.id).toBeUndefined()
+  })
+
+  it('keeps the Leader Session even when the team also has threads', () => {
+    const rows = teamThreadRows(teamThreadFixture({
+      threads: { only: { id: 'only', title: '线程', sessionId: 'session-thread', createdAt: 5, updatedAt: 5 } },
+    }))
+    expect(rows.map(row => row.sessionId)).toEqual(['session-thread'])
+  })
+
+  it('has no row when a team has neither threads nor a resolvable Leader Session', () => {
+    expect(teamThreadRows(teamThreadFixture({ members: {} }))).toEqual([])
+    expect(teamThreadRows(teamThreadFixture({ members: { leader: { sessionId: '' } } }))).toEqual([])
   })
 })
