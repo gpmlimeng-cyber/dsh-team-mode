@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Checkbox } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { ReactNode } from 'react'
+import {
+  IconProjectAddOutlineRegular,
+  IconSparkleRegular,
+  Switch,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
 import css from './AgentTeam.module.css'
 
@@ -76,6 +81,7 @@ export function CapabilityPicker({
   error,
   disabled,
   onChange,
+  icon = <IconSparkleRegular size={14} />,
 }: {
   label: string
   ariaLabel: string
@@ -88,6 +94,8 @@ export function CapabilityPicker({
   error: string | undefined
   disabled: boolean
   onChange: (next: string[]) => void
+  /** Tile glyph, matching the shipped plugin list's per-row icon. */
+  icon?: ReactNode
 }): JSX.Element {
   const rows = loading || error !== undefined
     ? []
@@ -109,16 +117,20 @@ export function CapabilityPicker({
             className={row.unavailable ? `${css.skillOption} ${css.skillOptionUnavailable}` : css.skillOption}
             data-capability-unavailable={row.unavailable ? 'true' : undefined}
           >
-            <Checkbox
+            <span className={css.skillOptionIcon} aria-hidden="true">{icon}</span>
+            <span className={css.skillOptionText}>
+              <span className={css.skillOptionTitle}>
+                {row.unavailable ? `${row.name}（不可用）` : row.name}
+              </span>
+              <small className={row.unavailable ? css.skillOptionReason : css.skillOptionDesc}>{row.detail}</small>
+            </span>
+            <Switch
               checked={row.checked}
               label={row.unavailable ? `${row.name}（不可用）` : row.name}
               title={row.unavailable ? row.detail : undefined}
               disabled={disabled || row.unavailable}
               onChange={next => { onChange(toggled(selected, row.name, next)) }}
             />
-            <span className={css.skillOptionText}>
-              <small className={row.unavailable ? css.skillOptionReason : undefined}>{row.detail}</small>
-            </span>
           </div>
         ))}
       </div>

@@ -5,25 +5,31 @@ import { describe, expect, it, vi } from 'vitest'
 
 // The primitives package needs browser peers this node test does not install.
 // The stub keeps the native input so checked/disabled state stays readable.
-vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => ({
-  Checkbox: (props: {
-    checked: boolean
-    label: string
-    disabled?: boolean
-    title?: string
-    onChange: (next: boolean) => void
-  }): unknown => createElement(
-    'label',
-    { title: props.title },
-    createElement('input', {
+vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
+  const icon = (): unknown => createElement('span')
+  return {
+    IconSparkleRegular: icon,
+    IconProjectAddOutlineRegular: icon,
+    // The rows are toggles in the shipped plugin-list shape; the stub keeps
+    // checked/disabled readable from the rendered markup.
+    Switch: (props: {
+      checked: boolean
+      label: string
+      disabled?: boolean
+      title?: string
+      onChange: (next: boolean) => void
+    }): unknown => createElement('input', {
       type: 'checkbox',
+      role: 'switch',
+      'aria-checked': props.checked,
+      'aria-label': props.label,
       checked: props.checked,
       disabled: props.disabled,
       readOnly: true,
+      title: props.title,
     }),
-    createElement('span', undefined, props.label),
-  ),
-}))
+  }
+})
 
 const { CapabilityPicker, capabilityRows, savableNames } = await import(
   '../src/client/assistant-capabilities.js'
@@ -76,7 +82,7 @@ describe('savableNames', () => {
 })
 
 describe('CapabilityPicker', () => {
-  it('renders the shipped Checkbox grid with the catalog details', () => {
+  it('renders the shipped list rows with the catalog details', () => {
     const html = renderPicker({ selected: ['research'] })
     expect(html).toContain('role="group"')
     expect(html).toContain('aria-label="选择助手可使用的 Skills"')

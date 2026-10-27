@@ -64,6 +64,8 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     IconChevronDownOutlineRegular: Icon,
     IconFolderOpenOutlineRegular: Icon,
     IconPlusOutlineRegular: Icon,
+    IconSparkleRegular: Icon,
+    IconProjectAddOutlineRegular: Icon,
     Modal: Stub,
   }
 })
@@ -233,27 +235,16 @@ describe('assistant create dialog shell', () => {
     expect(nav).toContain('aria-current="page"')
     expect(html).toContain('<section')
     expect(html).toContain('Workspace')
-    expect(html).toContain('模型与环境')
+    expect(html).toContain('模型与权限')
     // The identity fields are not mounted: switching sections does not render
     // hidden controls that could write.
     expect(html).not.toContain('选择模板')
   })
 
-  it('explains the remaining unsupported areas instead of offering them as tabs', () => {
+  it('no longer lists unsupported areas: the dialog only shows what it can save', () => {
     const html = renderCreateBody()
-    expect(html).toContain('<details')
-    expect(html).toContain('<summary>还有 4 项创建时不提供</summary>')
-    expect(html).toContain('aria-label="未提供的区块"')
-    for (const text of [
-      '创建后在助手设置/记忆面板维护',
-      '本插件没有按助手的定时任务',
-      '只保留 Workspace',
-      '通知沿用 DSH 全局行为',
-    ]) {
-      expect(html).toContain(text)
-    }
-    // Skills and MCP are real instance fields now, so they are not listed as missing.
-    expect(html).not.toContain('实例快照不开放技能与 MCP 字段')
+    expect(html).not.toContain('创建时不提供')
+    expect(html).not.toContain('aria-label="未提供的区块"')
   })
 
   it('shows the workspace banner only when it was supplied', () => {

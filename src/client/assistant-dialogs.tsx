@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Button, IconFolderOpenOutlineRegular, IconPlusOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconSparkleRegular, IconProjectAddOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
 import {
   ASSISTANT_CREATE_SECTIONS,
-  ASSISTANT_CREATE_UNSUPPORTED,
   applyStartingRole,
   assistantCreateCanSubmit,
   assistantCreateDefaults,
@@ -273,25 +272,22 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
         />
         <details className={css.assistantCreateFold} data-dsh-assistant-create-description>
           <summary className={css.assistantCreateFoldSummary}>
-            <span>描述</span>
-            <span className={css.assistantCreateCardHint}>
-              {draft.instructions.trim() === '' ? '可选，默认折叠' : '已填写'}
+            <span className={css.assistantCreateFoldCopy}>
+              <span className={css.assistantCreateFoldTitle}>描述</span>
+              <span className={css.settingsRowHint}>
+                写入助手的系统提示；留空则使用 Agent Preset 默认。只影响之后创建或恢复的会话。
+              </span>
             </span>
+            <span className={css.assistantCreateFoldAction}>编辑</span>
           </summary>
-          <SettingsRow
-            label="描述"
-            hint="写入助手的系统提示；留空则使用 Agent Preset 默认。只影响之后创建或恢复的会话。"
-            control={(
-              <textarea
-                className={`${css.input} ${css.assistantCreateDescription}`}
-                aria-label="描述"
-                rows={2}
-                value={draft.instructions}
-                disabled={disabled}
-                placeholder="例如：你负责整理需求并给出可执行的实现建议；先读代码再回答。"
-                onChange={event => { props.onDraftChange({ instructions: event.target.value }) }}
-              />
-            )}
+          <textarea
+            className={`${css.input} ${css.assistantCreateDescription}`}
+            aria-label="描述"
+            rows={3}
+            value={draft.instructions}
+            disabled={disabled}
+            placeholder="例如：你负责整理需求并给出可执行的实现建议；先读代码再回答。"
+            onChange={event => { props.onDraftChange({ instructions: event.target.value }) }}
           />
         </details>
         {groupOptions.visible && (
@@ -450,6 +446,7 @@ function CapabilitiesSection(props: AssistantCreateBodyProps, disabled: boolean)
       <SectionHeading title="能力" hint="这个助手能用的技能与 MCP" />
       <CapabilityPicker
         label={`技能（已选 ${draft.skillAllowlist.length} 个）`}
+        icon={<IconSparkleRegular size={14} />}
         ariaLabel="选择助手可使用的 Skills"
         hint="运行时按任务需要加载具体 Skill 指令；一个都不选表示不开放 Skill。"
         emptyText="该 Agent Preset 没有可用的 Skill。"
@@ -463,6 +460,7 @@ function CapabilitiesSection(props: AssistantCreateBodyProps, disabled: boolean)
       />
       <CapabilityPicker
         label={`MCP（已选 ${draft.mcpServers.length} 个）`}
+        icon={<IconProjectAddOutlineRegular size={14} />}
         ariaLabel="选择助手可使用的 MCP Server"
         hint="MCP 连接与密钥由 Harness Profile/Preset 管理；一个都不选表示不开放 Server 工具。"
         emptyText="该 Agent Preset 没有可用的 MCP Server。"
@@ -552,14 +550,6 @@ export function AssistantCreateBody(props: AssistantCreateBodyProps): JSX.Elemen
               )}
         </section>
       </div>
-      <details className={css.assistantCreateUnavailable}>
-        <summary>还有 {ASSISTANT_CREATE_UNSUPPORTED.length} 项创建时不提供</summary>
-        <ul aria-label="未提供的区块">
-          {ASSISTANT_CREATE_UNSUPPORTED.map(item => (
-            <li key={item.key}><strong>{item.title}</strong>：{item.detail}</li>
-          ))}
-        </ul>
-      </details>
     </div>
   )
 }

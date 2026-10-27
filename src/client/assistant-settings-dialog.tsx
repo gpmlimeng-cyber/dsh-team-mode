@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Button, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, Switch, IconProjectAddOutlineRegular, IconSparkleRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
 import { assistantModelKey } from './assistant-form.js'
 import {
@@ -568,6 +568,7 @@ export function AssistantSettingsDialog({
         <CapabilityPicker
           label={`技能（已选 ${selectedSkills.length} 个）`}
           ariaLabel="选择助手可使用的 Skills"
+        icon={<IconSparkleRegular size={14} />}
           hint="运行时会按任务需要加载具体 Skill 指令；一个都不选表示不开放 Skill。"
           emptyText="该 Agent Preset 没有可用的 Skill。"
           missingDetail="该 Agent Preset 不再提供这个 Skill，保存时不会带上"
@@ -584,6 +585,7 @@ export function AssistantSettingsDialog({
         <CapabilityPicker
           label={`MCP（已选 ${selectedMcpServers.length} 个）`}
           ariaLabel="选择助手可使用的 MCP Server"
+          icon={<IconProjectAddOutlineRegular size={14} />}
           hint="MCP 连接与密钥由 Harness Profile/Preset 管理；一个都不选表示不开放 Server 工具。"
           emptyText="该 Agent Preset 没有可用的 MCP Server。"
           missingDetail="该 Agent Preset 不再提供这个 MCP Server，保存时不会带上"
