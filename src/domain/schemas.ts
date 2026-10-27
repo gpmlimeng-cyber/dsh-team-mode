@@ -627,6 +627,24 @@ export const teamMessageSchema = z.object({
   createdAt: isoDate,
 }).strict()
 
+/**
+ * One team thread: a conversation under the team, in the team workspace. It is
+ * a layer above member Sessions, never a replacement for them: a thread owns its
+ * own `sessionId`, and no member `sessionId` is ever moved into a thread.
+ * `speakerSlotId` is the body that speaks in the thread and defaults to the
+ * Leader when absent. Added without a schema-version bump, the same precedent as
+ * `goals` and `memory`: a team stored before threads existed carries no field and
+ * loads unchanged.
+ */
+export const teamThreadSchema = z.object({
+  id: nonEmpty,
+  title: nonEmpty,
+  sessionId: nonEmpty,
+  speakerSlotId: nonEmpty.optional(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+}).strict()
+
 export const teamAggregateSchema = z.object({
   // v1 records open unchanged; the store migrates them to v2 at startup.
   schemaVersion: z.union([z.literal(1), z.literal(2)]),
@@ -650,6 +668,15 @@ export const teamAggregateSchema = z.object({
   tasks: z.record(z.string(), teamTaskSchema),
   /** Optional Goal layer; absent for every team that never created one. */
   goals: z.record(z.string(), teamGoalSchema).optional(),
+  /** Optional thread layer; absent for every team that never created one. */
+  threads: z.record(nonEmpty, teamThreadSchema).optional(),
+  /**
+   * Archived threads, keyed by thread id. Same semantics as `retiredSessions`:
+   * archiving moves the record here instead of deleting it, so the thread (and
+   * its Session id) stays discoverable for the team's Session reclaim sweep.
+   * Optional for the same reason as `threads`.
+   */
+  retiredThreads: z.record(nonEmpty, teamThreadSchema).optional(),
   /** Optional team memory; absent for every team that never wrote any. */
   memory: teamMemorySchema.optional(),
   leases: z.record(z.string(), fileScopeLeaseSchema),

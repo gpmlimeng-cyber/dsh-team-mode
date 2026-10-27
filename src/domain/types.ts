@@ -45,6 +45,7 @@ import type {
   teamTaskKindSchema,
   teamTaskSchema,
   teamTaskVerdictSchema,
+  teamThreadSchema,
   updateAssistantInputSchema,
   updateAssistantInstanceInputSchema,
   updateAssistantSessionInputSchema,
@@ -110,6 +111,7 @@ export function taskKindOf(task: Pick<TeamTask, 'kind'>): TeamTaskKind {
   return task.kind ?? 'work'
 }
 export type TeamGoal = z.infer<typeof teamGoalSchema>
+export type TeamThread = z.infer<typeof teamThreadSchema>
 export type TeamGoalMode = z.infer<typeof teamGoalModeSchema>
 export type TeamGoalStatus = z.infer<typeof teamGoalStatusSchema>
 export type CreateTeamGoalInput = z.infer<typeof createTeamGoalInputSchema>

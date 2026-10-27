@@ -66,6 +66,7 @@ import {
   type TeamMemberSlot,
   type TeamMessage,
   type TeamTask,
+  type TeamThread,
   type UpdateAssistantInput,
   type UpdateAssistantInstanceInput,
   type UpdateAssistantSessionInput,
@@ -110,6 +111,20 @@ declare module '@deepseek-ai/cordis' {
 export interface MutationOptions {
   expectedRevision?: number
 }
+
+/**
+ * What a caller may pin when creating a team thread. Everything is optional:
+ * the transport creates a plain thread (minted Session, default title, Leader as
+ * speaker), while the runtime may hand over the Session id its factory created.
+ */
+export interface CreateTeamThreadInput {
+  title?: string
+  sessionId?: string
+  speakerSlotId?: string
+}
+
+/** Thread titles are short row labels, bounded like a team name. */
+export const THREAD_TITLE_MAX_CHARS = 80
 
 /**
  * Fences for one runtime write. `expectedEpoch` rejects a write authored under a
@@ -3040,6 +3055,133 @@ export class AgentTeamService extends Service {
     return next
   }
 
+  /**
+   * Create one team thread. The thread is a new conversation layer under the
+   * team: it owns a freshly minted `sessionId` (the same id-first path a member
+   * Session takes; the runtime materializes it), and it never touches any
+   * member's `sessionId`. A caller that already created the Session (the
+   * runtime's session factory) may pass its id instead of letting this mint one.
+   */
+  async createThread(
+    teamId: string,
+    input: CreateTeamThreadInput = {},
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    assertRevision('team', team.revision, options.expectedRevision)
+    const sessionId = input.sessionId?.trim() ?? ''
+    if (sessionId !== '') requireUnusedThreadSession(team, sessionId)
+    const speakerSlotId = input.speakerSlotId?.trim() ?? ''
+    if (speakerSlotId !== '' && team.members[speakerSlotId] === undefined) {
+      throw new AgentTeamError('MEMBER_NOT_FOUND', `Unknown thread speaker '${speakerSlotId}'`, {
+        teamId,
+        speakerSlotId,
+      })
+    }
+    const requestedTitle = input.title === undefined ? '' : requireThreadTitle(input.title)
+    const now = Date.now()
+    const threadId = `thread-${randomUUID()}`
+    const next = await this.store.updateTeam(teamId, current => {
+      const threads = { ...(current.threads ?? {}) }
+      threads[threadId] = {
+        id: threadId,
+        title: requestedTitle === '' ? `新对话 ${Object.keys(threads).length + 1}` : requestedTitle,
+        sessionId: sessionId === '' ? `session-${randomUUID()}` : sessionId,
+        ...(speakerSlotId === '' ? {} : { speakerSlotId }),
+        createdAt: now,
+        updatedAt: now,
+      }
+      return {
+        ...current,
+        threads,
+        revision: current.revision + 1,
+        updatedAt: new Date(now).toISOString(),
+      }
+    })
+    await this.activity('team.thread_created', teamId, next.revision, 'Thread created')
+    this.publish('team', teamId, next.revision, 'team.thread_created')
+    return next
+  }
+
+  /**
+   * Rename one active thread. Only the thread's `title` and `updatedAt` change:
+   * its Session, its speaker, and every member Session stay exactly as they are.
+   */
+  async renameThread(
+    teamId: string,
+    threadId: string,
+    rawTitle: string,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    assertRevision('team', team.revision, options.expectedRevision)
+    requireThread(team, threadId)
+    const title = requireThreadTitle(rawTitle)
+    if (team.threads?.[threadId]?.title === title) return team
+    const now = Date.now()
+    const next = await this.store.updateTeam(teamId, current => {
+      const thread = requireThread(current, threadId)
+      return {
+        ...current,
+        threads: { ...(current.threads ?? {}), [threadId]: { ...thread, title, updatedAt: now } },
+        revision: current.revision + 1,
+        updatedAt: new Date(now).toISOString(),
+      }
+    })
+    await this.activity('team.thread_renamed', teamId, next.revision, `Thread renamed to ${title}`)
+    this.publish('team', teamId, next.revision, 'team.thread_renamed')
+    return next
+  }
+
+  /**
+   * Archive one thread off the active list. Same semantics as member
+   * archiving: the record moves to `retiredThreads` instead of being deleted, so
+   * its Session id stays known to `listTeamSessionIds` until the team goes away.
+   */
+  async archiveThread(
+    teamId: string,
+    threadId: string,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    assertRevision('team', team.revision, options.expectedRevision)
+    requireThread(team, threadId)
+    const now = Date.now()
+    const next = await this.store.updateTeam(teamId, current => {
+      const thread = requireThread(current, threadId)
+      const threads = { ...(current.threads ?? {}) }
+      delete threads[threadId]
+      return {
+        ...current,
+        threads,
+        retiredThreads: { ...(current.retiredThreads ?? {}), [threadId]: thread },
+        revision: current.revision + 1,
+        updatedAt: new Date(now).toISOString(),
+      }
+    })
+    await this.activity('team.thread_archived', teamId, next.revision, 'Thread archived; Session retained')
+    this.publish('team', teamId, next.revision, 'team.thread_archived')
+    return next
+  }
+
+  /**
+   * Every Session this team owns: member Sessions, retired member Sessions, and
+   * both live and archived thread Sessions. Dissolution sweeps exactly this set,
+   * so a thread's Session can never be orphaned by leaving it out.
+   */
+  listTeamSessionIds(teamId: string): string[] {
+    const team = requireTeam(this.store, teamId)
+    return [...new Set([
+      ...Object.values(team.members).map(member => member.sessionId),
+      ...Object.keys(team.retiredSessions),
+      ...Object.values(team.threads ?? {}).map(thread => thread.sessionId),
+      ...Object.values(team.retiredThreads ?? {}).map(thread => thread.sessionId),
+    ])]
+  }
+
   async removeMember(
     teamId: string,
     slotId: string,
@@ -4470,6 +4612,50 @@ function requireTeamMemoryEntry(team: TeamAggregate, entryId: string): MemoryEnt
 function requireTeam(store: AgentTeamStore, id: string): TeamAggregate {  const team = store.getTeam(id)
   if (team === undefined) throw new AgentTeamError('TEAM_NOT_FOUND', `Unknown team '${id}'`)
   return team
+}
+
+/** One active (non-archived) thread of the team. */
+function requireThread(team: TeamAggregate, threadId: string): TeamThread {
+  const thread = team.threads?.[threadId]
+  if (thread === undefined) {
+    throw new AgentTeamError('THREAD_NOT_FOUND', `Unknown thread '${threadId}' in team '${team.id}'`, {
+      teamId: team.id,
+      threadId,
+    })
+  }
+  return thread
+}
+
+/** Trim and bound a thread title; an empty title is refused, never stored. */
+function requireThreadTitle(raw: string): string {
+  const title = raw.trim()
+  if (title.length === 0) throw new AgentTeamError('INVALID_REQUEST', 'Thread title cannot be empty')
+  if (title.length > THREAD_TITLE_MAX_CHARS) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Thread title exceeds ${THREAD_TITLE_MAX_CHARS} characters`,
+      { length: title.length, limit: THREAD_TITLE_MAX_CHARS },
+    )
+  }
+  return title
+}
+
+/**
+ * A Session belongs to exactly one thing. Refuse a thread Session id that is
+ * already a member Session (or another thread's), so the two layers can never
+ * overwrite each other.
+ */
+function requireUnusedThreadSession(team: TeamAggregate, sessionId: string): void {
+  const taken = Object.values(team.members).some(member => member.sessionId === sessionId)
+    || Object.keys(team.retiredSessions).includes(sessionId)
+    || Object.values(team.threads ?? {}).some(thread => thread.sessionId === sessionId)
+    || Object.values(team.retiredThreads ?? {}).some(thread => thread.sessionId === sessionId)
+  if (taken) {
+    throw new AgentTeamError('INVALID_REQUEST', `Session '${sessionId}' already belongs to this team`, {
+      teamId: team.id,
+      sessionId,
+    })
+  }
 }
 
 function requireGoal(team: TeamAggregate, goalId: string): TeamGoal {
