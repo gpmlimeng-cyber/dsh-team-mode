@@ -16,6 +16,8 @@ export interface SelectControlOption {
   disabled?: boolean
   /** Leading glyph, e.g. the folder the shipped workspace picker shows. */
   icon?: ReactNode
+  /** Second line under the label, like the shipped Agent Preset picker. */
+  description?: string
 }
 
 /**
@@ -37,6 +39,7 @@ export function SelectControl({
   className,
   align = 'start',
   side = 'bottom',
+  footerAction,
 }: {
   value: string
   options: readonly SelectControlOption[]
@@ -48,6 +51,11 @@ export function SelectControl({
   className?: string | undefined
   align?: 'start' | 'end'
   side?: 'bottom' | 'top'
+  /**
+   * A trailing action behind a separator, like the shipped pickers' "添加…"
+   * row. It never carries the current value, so it stays out of the value list.
+   */
+  footerAction?: { label: string; icon?: ReactNode; onSelect: () => void }
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   const current = options.find(option => option.value === value)
@@ -64,9 +72,25 @@ export function SelectControl({
     }
     entries.push({
       id: option.value,
-      label: option.label,
+      label: option.description === undefined || option.description === ''
+        ? option.label
+        : (
+          <span className={css.selectRowText}>
+            <span className={css.selectRowTitle}>{option.label}</span>
+            <span className={css.selectRowHint}>{option.description}</span>
+          </span>
+        ),
       ...(option.disabled === true ? { disabled: true } : {}),
       ...(option.icon === undefined ? {} : { icon: option.icon }),
+    })
+  }
+
+  if (footerAction !== undefined) {
+    entries.push({ type: 'separator', id: 'footer-separator' })
+    entries.push({
+      id: 'footer-action',
+      label: footerAction.label,
+      ...(footerAction.icon === undefined ? {} : { icon: footerAction.icon }),
     })
   }
 
@@ -83,6 +107,10 @@ export function SelectControl({
       selectedId={value}
       onSelect={next => {
         setOpen(false)
+        if (next === 'footer-action') {
+          footerAction?.onSelect()
+          return
+        }
         if (next !== value) onChange(next)
       }}
       onClose={() => { setOpen(false) }}

@@ -63,6 +63,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     Switch,
     IconChevronDownOutlineRegular: Icon,
     IconFolderOpenOutlineRegular: Icon,
+    IconPlusOutlineRegular: Icon,
     Modal: Stub,
   }
 })
@@ -186,6 +187,7 @@ function baseCreateBodyProps(): AssistantCreateBodyProps {
     onRoleSelect: () => undefined,
     onRetryCatalog: () => undefined,
     onAvatarFile: () => undefined,
+    onAddWorkspace: async () => null,
   }
 }
 

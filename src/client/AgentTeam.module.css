@@ -12426,6 +12426,29 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   outline-offset: 1px;
 }
 
+/* Two-line option rows: the shipped picker's title on top, its explanation
+   underneath in the secondary label colour. */
+.selectRowText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  max-width: 260px;
+}
+
+.selectRowTitle {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.selectRowHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 15px;
+  white-space: normal;
+}
+
 .selectLead {
   display: inline-flex;
   align-items: center;

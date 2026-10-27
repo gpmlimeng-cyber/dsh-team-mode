@@ -1172,6 +1172,7 @@ export function AssistantSidebarSection({
         onClose={() => { setCreateOpen(false) }}
         openSession={openSession}
         onCreated={load}
+        onAddWorkspace={pickWorkspace}
       />
       {taskAssistant !== undefined && (
         <AssistantTaskDialog

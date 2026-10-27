@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Button, IconFolderOpenOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconFolderOpenOutlineRegular, IconPlusOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
 import {
   ASSISTANT_CREATE_SECTIONS,
@@ -82,13 +82,15 @@ export interface AssistantCreateBodyProps {
   mcpServers: readonly CapabilityOption[]
   capabilitiesLoading: boolean
   capabilitiesError: string | undefined
-  agentPresets: ReadonlyArray<{ id: string; name: string }>
+  agentPresets: ReadonlyArray<{ id: string; name: string; description?: string }>
   permissionPresets: ReadonlyArray<{ value: string; name: string }>
   onSectionChange: (section: AssistantCreateSection) => void
   onDraftChange: (patch: Partial<AssistantCreateDraft>) => void
   onRoleSelect: (templateId: string) => void
   onRetryCatalog: () => void
   onAvatarFile: (file: File) => void
+  /** Adds a workspace through the host picker and returns it, or null if cancelled. */
+  onAddWorkspace: () => Promise<{ id: string; title: string } | null>
 }
 
 function SectionHeading({ title, hint }: { title: string; hint: string }): JSX.Element {
@@ -345,6 +347,15 @@ function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.E
               }))}
               disabled={disabled}
               onChange={next => { props.onDraftChange({ workspaceId: next }) }}
+              footerAction={{
+                label: '添加工作区…',
+                icon: <IconPlusOutlineRegular size={14} />,
+                onSelect: () => {
+                  void props.onAddWorkspace().then(added => {
+                    if (added !== null) props.onDraftChange({ workspaceId: added.id })
+                  })
+                },
+              }}
             />
           )}
         />
@@ -397,6 +408,7 @@ function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.E
               options={props.agentPresets.map(preset => ({
                 value: preset.id,
                 label: preset.name,
+                ...(preset.description === undefined ? {} : { description: preset.description }),
               }))}
               disabled={disabled}
               onChange={next => { props.onDraftChange({ agentPresetId: next }) }}
@@ -601,11 +613,13 @@ export function AssistantCreateDialog({
   onClose,
   openSession,
   onCreated,
+  onAddWorkspace,
 }: {
   open: boolean
   onClose: () => void
   openSession: (sessionId: string) => void
   onCreated: () => Promise<void>
+  onAddWorkspace?: () => Promise<{ id: string; title: string } | null>
 }): JSX.Element | null {
   const [catalog, setCatalog] = useState<CatalogView>()
   const [catalogError, setCatalogError] = useState<string>()
@@ -723,6 +737,13 @@ export function AssistantCreateDialog({
     ))
   }, [modelCapabilities.loading, modelCapabilities.value])
 
+  const addWorkspace = async (): Promise<{ id: string; title: string } | null> => {
+    if (onAddWorkspace === undefined) return null
+    const added = await onAddWorkspace()
+    if (added !== null) setCatalogAttempt(current => current + 1)
+    return added
+  }
+
   if (!open) return null
 
   const workspaces = (catalog?.workspaces ?? [])
@@ -730,7 +751,11 @@ export function AssistantCreateDialog({
     .map(workspace => ({ id: workspace.id, title: workspace.title }))
   const agentPresets = (catalog?.agentPresets ?? [])
     .filter(preset => preset.broken === undefined)
-    .map(preset => ({ id: preset.id, name: preset.name }))
+    .map(preset => ({
+      id: preset.id,
+      name: preset.name,
+      ...(preset.description === undefined ? {} : { description: preset.description }),
+    }))
   const permissionPresets = catalog?.permissionPresets ?? []
   const reasoningEfforts = modelCapabilities.value?.reasoning?.efforts ?? []
   const reasoningOptions = reasoningEfforts.map(effort => ({
@@ -920,7 +945,8 @@ export function AssistantCreateDialog({
           roles={roles}
           roleError={roleError}
           groups={groups}
-          workspaces={workspaces}
+          onAddWorkspace={addWorkspace}
+        workspaces={workspaces}
           modelGroups={modelGroups}
           reasoningOptions={reasoningOptions}
           defaultReasoning={defaultReasoningLabel(modelCapabilities.value)}
