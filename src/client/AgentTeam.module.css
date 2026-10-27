@@ -1932,20 +1932,23 @@ textarea.input {
 }
 
 .skillPicker {
+  /* No inner scroll area and no inset: the rows fill the pane and scroll with
+     the section, left and right edges aligned with the heading. */
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0 16px;
-  max-height: 240px;
-  overflow: auto;
-  padding: 0 0 0 20px;
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  width: 100%;
+  padding: 0;
 }
 
 /* One capability group, shaped like the shipped plugin page: chevron + title
    with its one-line explanation, a count on the right, hairline between groups. */
 .capabilityGroup {
   padding: 4px 0;
+}
+
+.capabilityGroup .skillPicker {
+  padding: 0;
 }
 
 .capabilityGroupSummary {
