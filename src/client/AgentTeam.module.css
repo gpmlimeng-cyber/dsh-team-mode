@@ -4674,8 +4674,10 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   cursor: pointer;
 }
 
-.mascotPickerOption:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+/* Feedback hugs the picture instead of the cell: the cell is a flex track and
+   is wider than the glyph, so a cell-sized ring looked detached from it. */
+.mascotPickerOption:hover img {
+  outline-color: var(--dsw-alias-border-l3);
 }
 
 .mascotPickerOption:focus-visible {
@@ -4683,10 +4685,8 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   outline-offset: 1px;
 }
 
-.mascotPickerOption[aria-pressed='true'] {
-  /* Selection is the only persistent decoration. */
-  outline: 2px solid var(--dsw-alias-state-business-primary);
-  outline-offset: 1px;
+.mascotPickerOption[aria-pressed='true'] img {
+  outline-color: var(--dsw-alias-state-business-primary);
 }
 
 .mascotPickerOption:disabled {
@@ -4699,6 +4699,10 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   height: 44px;
   max-width: 100%;
   object-fit: contain;
+  border-radius: 8px;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color 120ms ease;
 }
 
 /* Colours read as a single flat row of circles, like the reference: no tile
@@ -4729,11 +4733,11 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   max-width: 100%;
   margin: 0 auto;
   border-radius: 50%;
+  outline-offset: 2px;
 }
 
-.mascotPickerSwatch[aria-pressed='true'] {
-  outline: 2px solid var(--dsw-alias-state-business-primary);
-  outline-offset: 2px;
+.mascotPickerSwatch[aria-pressed='true'] img {
+  outline-color: var(--dsw-alias-state-business-primary);
 }
 
 .assistantMascotToggle {
