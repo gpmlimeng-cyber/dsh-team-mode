@@ -54,7 +54,7 @@ export const TEAM_AVATAR_FRAME = 36
 /** One seat of the cluster: its frame-relative box and what it draws. */
 export interface TeamAvatarSeat {
   key: string
-  kind: 'face' | 'more' | 'empty'
+  kind: 'face' | 'more' | 'empty' | 'you'
   left: number
   top: number
   size: number
@@ -165,13 +165,10 @@ export function teamAvatarStack(
   const overflow = total > 4
   const extra = overflow ? total - 3 : 0
   const faces = overflow ? named.slice(0, 3) : named.slice(0, 4)
-  // A lone member keeps the reference's 24px face. The reference also seats a
-  // 22.08px "you" disc beside it (t1 doc §1.2-4); that disc is deferred until
-  // the product decides whether it belongs in a team row.
-  // TODO(t2): add the "you" seat here when that decision lands —
-  // docs/superpowers/notes/2026-10-27-dsbot-avatar-alignment.md.
+  // A lone member keeps the reference's 24px face and is joined by the 22.08px
+  // "you" disc in the opposite corner (t1 doc §1.2-4, mark.js:140-144).
   const solo = total === 1
-  const base = solo ? clusterSeats(2).slice(0, 1) : clusterSeats(Math.min(total, 4))
+  const base = clusterSeats(Math.min(total === 1 ? 2 : total, 4))
   const holes = clusterHoles(base)
   // The `+N` disc sits at 92% of its seat with a 4% margin.
   const disc = (seat: { left: number; top: number; size: number }): { left: number; top: number; size: number } => ({
@@ -183,7 +180,12 @@ export function teamAvatarStack(
     if (overflow && index === 3) {
       return { key: 'more', kind: 'more', ...disc(seat), holes: holes[index]!, label: `+${extra}` }
     }
-    const face = faces[index]!
+    if (solo && index === 1) {
+      // Same 92% disc geometry as the counter, but no label: it stands for the
+      // person reading the row, not for a hidden member.
+      return { key: 'you', kind: 'you', ...disc(seat), holes: holes[index]! }
+    }
+    const face = faces[solo ? 0 : index]!
     return { key: face.id, kind: 'face', left: seat.left, top: seat.top, size: seat.size, holes: holes[index]!, face }
   })
   return { faces, extra, total, seats }

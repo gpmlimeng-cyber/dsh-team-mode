@@ -645,7 +645,11 @@ export function SidebarTeamSection({
                       // No members: the reference draws a 36px gumdrop; the row
                       // keeps the same 36px seat with the team's initial tile.
                       ? <MemberAvatar name={team.name} size={seat.size} />
-                      : <span className={css.sidebarTeamAvatarChip} data-kind={seat.kind}>{seat.label ?? ''}</span>}
+                      : seat.kind === 'you'
+                        // The lone-member companion: a bare disc standing for the
+                        // reader, exactly as the reference draws it (no glyph).
+                        ? <span className={css.sidebarTeamAvatarYou} data-kind="you" />
+                        : <span className={css.sidebarTeamAvatarChip} data-kind={seat.kind}>{seat.label ?? ''}</span>}
                 </span>
               ))}
             </span>

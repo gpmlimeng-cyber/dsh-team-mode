@@ -11723,6 +11723,16 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 /* The +N counter fills its seat: the seat is already 92% of the cell with a 4%
    margin (team-avatar.ts's disc()), so scaling again here would shrink it twice
    — 16.56px is the reference size (DeepSeek-Bot `.bt-cluster-more`). */
+/* The lone-member companion disc: no glyph, just a neutral fill, so a team of
+   one does not read as an empty row. */
+.sidebarTeamAvatarYou {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);
+}
+
 .sidebarTeamAvatarChip {
   display: inline-flex;
   align-items: center;

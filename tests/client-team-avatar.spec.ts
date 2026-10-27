@@ -116,11 +116,12 @@ describe('team avatar identity', () => {
   })
 
   it('draws a lone member at the reference face size; nobody draws nothing', () => {
-    // The 22.08px "you" disc is deferred (t1 doc §1.2-4): one face, no disc.
+    // Lone member: 24px face plus the 22.08px companion disc (t1 doc §1.2-4).
     const solo = build(1)
-    expect(solo.seats.map(seat => seat.kind)).toEqual(['face'])
+    expect(solo.seats.map(seat => seat.kind)).toEqual(['face', 'you'])
     expect(solo.seats[0]?.size).toBe(24)
-    expect(solo.seats[0]?.holes).toEqual([])
+    // The disc presses into the face, so the face carries a cut-out.
+    expect(solo.seats[0]?.holes.length).toBe(1)
     // No members: one neutral 36px seat, never an empty box.
     expect(teamAvatarStack({})).toEqual({
       faces: [],
@@ -138,10 +139,11 @@ describe('team avatar identity', () => {
     const four = build(4)
     expect(four.seats[0]?.holes).toHaveLength(2)
     expect(four.seats[3]?.holes).toHaveLength(0)
-    // `data-count` is seats.length: every drawn face plus the +N disc.
+    // `data-count` is seats.length: every drawn face, the +N disc, and — for a
+    // lone member — the companion disc that stands in for the reader.
     for (const count of [1, 2, 3, 4, 5, 12]) {
       const stack = build(count)
-      const drawn = stack.faces.length + (stack.extra > 0 ? 1 : 0)
+      const drawn = stack.faces.length + (stack.extra > 0 ? 1 : 0) + (count === 1 ? 1 : 0)
       expect(stack.seats).toHaveLength(drawn)
     }
   })
@@ -154,6 +156,22 @@ describe('team avatar identity', () => {
     expect(stack.faces[0]?.avatar).toBe('data:image/png;base64,AA')
     expect(stack.faces[1]?.avatar).toBeUndefined()
     expect(stack.extra).toBe(0)
+  })
+
+  it('seats a bare companion disc beside a lone member', () => {
+    const stack = teamAvatarStack({
+      only: { id: 'only', displayName: '独苗', role: 'leader' },
+    })
+    // Reference: 24px face on the diagonal's first seat, then a 22.08px disc
+    // (92% of 24) inset by 4% in the opposite corner.
+    expect(stack.seats.map(seat => seat.kind)).toEqual(['face', 'you'])
+    const [face, you] = stack.seats
+    expect(face?.size).toBe(24)
+    expect(face?.left).toBe(0)
+    expect(you?.size).toBeCloseTo(22.08, 2)
+    expect(you?.left).toBeCloseTo(12.96, 2)
+    expect(you?.top).toBeCloseTo(12.96, 2)
+    expect(you?.label).toBeUndefined()
   })
 
   it('falls back to a label when a member has no usable name', () => {
