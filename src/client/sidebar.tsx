@@ -1183,8 +1183,6 @@ export function SidebarPortal({
     let observer: MutationObserver | undefined
     let resize: ResizeObserver | undefined
     let observedContainer: HTMLElement | undefined
-    let brandResize: ResizeObserver | undefined
-    let observedLogoRow: HTMLElement | undefined
 
     const anchorElement = (): HTMLElement | null => (
       document.querySelector('[data-slot="sidebar.workspaces"]') as HTMLElement | null
@@ -1197,106 +1195,61 @@ export function SidebarPortal({
      * scrolling region. Only the original brand button is hidden, and our host
      * is mounting point for the switch.
      */
-    /** Nearest opaque background behind the sticky row; the header paints it. */
-    const sidebarFillColor = (row: HTMLElement): string => {
-      let node: HTMLElement | null = row.parentElement
-      while (node !== null) {
-        const color = getComputedStyle(node).backgroundColor
-        if (color !== '' && color !== 'transparent' && color !== 'rgba(0, 0, 0, 0)') return color
-        node = node.parentElement
-      }
-      return 'transparent'
-    }
-
     const ensureBrand = (): void => {
-      // Pick the visible brand row; desktop and mobile drawers can both be
-      // mounted at once.
-      const toggles = Array.from(document.querySelectorAll<HTMLElement>('button[class*="_toggle"]'))
-        .filter(candidate => {
-          const box = candidate.getBoundingClientRect()
-          return box.width > 0 && box.height > 0 && getComputedStyle(candidate).visibility !== 'hidden'
-        })
-        .sort((left, right) => right.getBoundingClientRect().top - left.getBoundingClientRect().top)
-      const toggle = toggles[0]
-        ?? document.querySelector<HTMLElement>('[class*="_logoRow"] [class*="_toggle"]')
-      const logoRow = toggle?.closest<HTMLElement>('[class*="_logoRow"]') ?? null
-      const row = logoRow ?? toggle?.parentElement ?? null
-      if (row === null) return
-      const brand = logoRow?.querySelector<HTMLElement>('[class*="_brand"]')
-      if (brand !== null && brand !== undefined) brand.style.display = 'none'
-
+      const logoRow = document.querySelector<HTMLElement>('[class*="_logoRow"]')
+      if (logoRow === null) return
+      const brand = logoRow.querySelector<HTMLElement>('[class*="_brand"]')
+      if (brand !== null) brand.style.display = 'none'
+      // The shipped brand row is React-owned: a node inserted into it is removed
+      // on its next render, taking the portalled control with it. The host lives
+      // on <body> instead and is positioned over the empty row.
       let element = document.getElementById(BRAND_HOST_ID)
       if (element === null || !element.isConnected) {
         element = document.createElement('div')
         element.id = BRAND_HOST_ID
         element.className = css.sidebarBrandHost ?? ''
+        element.style.position = 'fixed'
+        element.style.zIndex = '50'
+        element.style.transform = 'translateY(-50%)'
+        document.body.append(element)
         setBrandHost(element)
       }
-      // The switch lives inside the sidebar's own brand row and the row is the
-      // sticky header. This keeps it in the sidebar stacking context, below
-      // dialogs and menus, and lets the native collapse button share the row.
-      const stickyRow = logoRow ?? row
-      if (element.parentElement !== stickyRow) {
-        stickyRow.insertBefore(element, brand ?? stickyRow.firstElementChild ?? toggle)
+      const rect = logoRow.getBoundingClientRect()
+      // One column for both modes: the plugin host exists in DeepSeek and DeepBot
+      // alike, while the group headers only exist in DeepBot. The offset from
+      // host to the first header is measured where one is present and then
+      // reused, so the control does not jump sideways when the mode changes.
+      const teamHost = document.getElementById(SIDEBAR_HOST_ID)
+      const teamRect = teamHost?.getBoundingClientRect()
+      let columnLeft: number | undefined
+      let columnWidth: number | undefined
+      if (teamHost !== null && teamRect !== undefined) {
+        const hostLeft = teamRect.left
+        const titleLeft = document
+          .querySelector<HTMLElement>('[data-dsh-sidebar-title]')
+          ?.getBoundingClientRect().left
+        if (titleLeft !== undefined && titleLeft > 0 && hostLeft > 0) {
+          brandColumnOffset = Math.round(titleLeft - hostLeft)
+        }
+        if (hostLeft > 0 && teamRect.width > 0) {
+          // Same column as the sections below: start where their titles start and
+          // end where their own action buttons end, so the two button groups line
+          // up on both edges.
+          columnLeft = hostLeft + brandColumnOffset
+          columnWidth = Math.max(0, teamRect.width - brandColumnOffset)
+        }
       }
-      // Hide every native brand node, not just the row's own children: the
-      // shipped shell also renders a wordmark outside the row (and the brand
-      // mark/name slot outlets can sit one level up), and any of them leaves an
-      // empty band above the list.
-      const shellRoot = stickyRow.closest<HTMLElement>('[class*="_root"]') ?? stickyRow.parentElement
-      const hideNativeBrand = (node: Element): void => {
-        const candidate = node as HTMLElement
-        if (candidate === element || candidate === toggle) return
-        if (candidate.contains(element) || candidate.contains(toggle)) return
-        if (candidate.contains(document.getElementById(SIDEBAR_HOST_ID))) return
-        candidate.style.display = 'none'
-      }
-      for (const child of Array.from(stickyRow.children)) hideNativeBrand(child)
-      if (shellRoot !== null) {
-        for (const node of Array.from(shellRoot.querySelectorAll([
-          '[data-slot="sidebar.brand.mark"]',
-          '[data-slot="sidebar.brand.name"]',
-          '[class*="_brand"]',
-          '[class*="_wordmark"]',
-        ].join(',')))) hideNativeBrand(node)
-      }
-      element.dataset.dshBrandInline = ''
-      element.style.position = 'static'
-      element.style.transform = 'none'
-      element.style.zIndex = ''
-      element.style.left = ''
-      element.style.top = ''
-      element.style.width = 'auto'
-      element.style.flex = '1 1 auto'
-      element.style.minWidth = '0'
-      element.style.marginRight = '4px'
-      element.style.visibility = 'visible'
-      stickyRow.style.position = 'sticky'
-      stickyRow.style.top = '0px'
-      stickyRow.style.zIndex = '20'
-      // The header must read as part of the column, not as its own band: copy the
-      // nearest solid background instead of guessing a token. Sticky needs some
-      // fill (content scrolls underneath), so `transparent` is not an option.
-      stickyRow.style.background = sidebarFillColor(stickyRow)
-      stickyRow.style.pointerEvents = 'auto'
-      // Two rows now (mode + actions, then the search field), so the row grows.
-      stickyRow.style.height = 'auto'
-      stickyRow.style.minHeight = '40px'
-      // macOS draws the traffic lights over the top-left of the window: keep the
-      // mode control clear of them instead of sliding under them.
-      stickyRow.style.paddingLeft = getSurfaceMode() === 'team' ? '78px' : ''
-      stickyRow.style.paddingTop = '6px'
-      stickyRow.style.paddingBottom = '6px'
-      stickyRow.style.marginBottom = '0'
-      document.getElementById('dsh-team-mode-header-shade')?.remove()
+      element.style.left = `${Math.round(columnLeft ?? rect.left + 16)}px`
+      element.style.top = `${Math.round(rect.top + rect.height / 2)}px`
+      element.style.width = `${Math.round(columnWidth ?? Math.max(0, rect.width - 32))}px`
+      element.style.visibility = rect.width > 0 && rect.height > 0 ? 'visible' : 'hidden'
     }
 
-    /** Lay the pinned BOT row over 新会话, or over the visible team column when
-     * the mobile shell hides that button. */
+    /** Lay the pinned BOT row exactly over the shipped 新会话 button box. */
     const ensureSteward = (): void => {
-      const teamHost = document.getElementById(SIDEBAR_HOST_ID)
+      const newSession = document.querySelector<HTMLElement>('[class*="_newSession"]')
       let element = document.getElementById(STEWARD_HOST_ID)
-      if (getSurfaceMode() !== 'team' || teamHost === null) {
+      if (getSurfaceMode() !== 'team' || newSession === null) {
         element?.remove()
         return
       }
@@ -1304,18 +1257,16 @@ export function SidebarPortal({
         element = document.createElement('div')
         element.id = STEWARD_HOST_ID
         element.className = css.stewardHost ?? ''
+        element.style.position = 'fixed'
+        element.style.zIndex = '5'
         document.body.append(element)
       }
-      // The coordinator is the first ordinary row of the team column. It
-      // scrolls with the list and passes under the sticky mode row.
-      if (element.parentElement !== teamHost) teamHost.insertBefore(element, teamHost.firstChild)
-      element.style.position = 'static'
-      element.style.zIndex = ''
-      element.style.left = ''
-      element.style.top = ''
-      element.style.width = '100%'
-      element.style.marginBottom = '6px'
-      element.style.background = 'var(--dsw-specific-sidebar-fill)'
+      const rect = newSession.getBoundingClientRect()
+      element.style.left = `${Math.round(rect.left)}px`
+      element.style.top = `${Math.round(rect.top)}px`
+      element.style.width = `${Math.round(rect.width)}px`
+      // Height is the row's own: it has to read like a 单聊 assistant row, not
+      // like the 新会话 button it is pinned over.
       element.style.height = ''
     }
 
@@ -1410,24 +1361,12 @@ export function SidebarPortal({
 
     ensure()
     observer = new MutationObserver(schedule)
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['class', 'style', 'data-sidebar-collapsed'],
-    })
+    observer.observe(document.body, { childList: true, subtree: true })
     window.addEventListener('resize', schedule)
-    window.addEventListener('scroll', schedule, true)
-    // React can replace the sidebar root after a connection reset; keep the
-    // manually mounted host attached and positioned through that lifecycle.
-    const heartbeat = window.setInterval(schedule, 1000)
     return () => {
       observer?.disconnect()
       resize?.disconnect()
-      brandResize?.disconnect()
-      window.clearInterval(heartbeat)
       window.removeEventListener('resize', schedule)
-      window.removeEventListener('scroll', schedule, true)
       scrollRoot?.removeAttribute('data-dsh-team-scroll')
       if (nativeList !== undefined && nativeListStyle !== undefined) {
         nativeList.style.flex = nativeListStyle.flex
@@ -1792,17 +1731,55 @@ export function SidebarPortal({
   return (
     <>
       {brandHost !== undefined && createPortal(
-        <div className={css.brandStack}>
-          <div className={css.brandTopRow}>
-            <SurfaceModeSwitch mode={mode} onChange={switchMode} />
-            <div className={css.brandActions}>
-              {/* Wide layout keeps the button (the field row is mobile-only). */}
+        <>
+          <SurfaceModeSwitch mode={mode} onChange={switchMode} />
+          {searchOpen ? (
+            <div className={css.sidebarTeamSearch}>
+              <IconSearchOutlineRegular size={14} />
+              <input
+                autoFocus
+                type="search"
+                value={search}
+                placeholder="搜索"
+                aria-label="搜索侧栏"
+                onChange={(event) => {
+                  const value = event.target.value
+                  setSearch(value)
+                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: value }))
+                }}
+                onBlur={() => {
+                  if (search !== '') return
+                  setSearchOpen(false)
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape') return
+                  setSearch('')
+                  setSearchOpen(false)
+                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
+                }}
+              />
               <button
                 type="button"
-                className={`${css.brandAction} ${css.brandActionSearch ?? ''}`}
+                className={css.sidebarTeamSearchClear}
+                aria-label="清除搜索"
+                onClick={() => {
+                  setSearch('')
+                  setSearchOpen(false)
+                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
+                }}
+              >
+                <IconCloseFillRegular size={14} />
+              </button>
+            </div>
+          ) : (
+            <div className={css.brandActions}>
+              <button
+                type="button"
+                className={css.brandAction}
                 aria-label="搜索"
                 title="搜索"
                 onClick={() => {
+                  // DeepSeek mode forwards to the shipped search; DeepBot expands ours.
                   if (mode === 'native' && clickNativeAction(/搜索|search/i)) return
                   setSearchOpen(true)
                 }}
@@ -1818,6 +1795,8 @@ export function SidebarPortal({
                 onClick={(event) => {
                   // DeepSeek mode opens the shipped grouping/sort/filter menu.
                   if (mode === 'native' && clickNativeAction(/筛选|排序|分组|filter|sort/i)) return
+                  // Hand the brand button over so the menu drops from this row,
+                  // not from the section header far below.
                   window.dispatchEvent(
                     new CustomEvent(SIDEBAR_MENU_EVENT, { detail: event.currentTarget }),
                   )
@@ -1862,53 +1841,10 @@ export function SidebarPortal({
                 )}
               />
             </div>
-          </div>
-          {/* The search button became a field on its own row: one input drives
-              both lists, and the row is always there instead of hiding behind a
-              toggle. DeepSeek mode keeps the shipped search. */}
-          {mode === 'team' && (
-            <div
-              className={`${css.sidebarTeamSearch} ${css.brandSearchRow ?? ''}`}
-              data-dsh-brand-search
-            >
-              <IconSearchOutlineRegular size={14} />
-              <input
-                autoFocus={searchOpen}
-                type="search"
-                value={search}
-                placeholder="搜索团队或助手"
-                aria-label="搜索侧栏"
-                onChange={(event) => {
-                  const value = event.target.value
-                  setSearch(value)
-                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: value }))
-                }}
-                onFocus={() => { setSearchOpen(true) }}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Escape') return
-                  setSearch('')
-                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
-                }}
-              />
-              {search !== '' && (
-                <button
-                  type="button"
-                  className={css.sidebarTeamSearchClear}
-                  aria-label="清除搜索"
-                  onClick={() => {
-                    setSearch('')
-                    window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
-                  }}
-                >
-                  <IconCloseFillRegular size={14} />
-                </button>
-              )}
-            </div>
           )}
-        </div>,
+        </>,
         brandHost,
       )}
-
       {host !== undefined && createPortal(
         <>
           {mode === 'team' && (

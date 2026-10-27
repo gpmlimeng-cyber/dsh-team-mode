@@ -116,10 +116,6 @@ describe('sidebar surface switch', () => {
     expect(sidebar).toContain('ensureBrand')
     // The row itself survives; only the original brand button is hidden.
     expect(sidebar).toContain('brand.style.display')
-    // The row is the sidebar's sticky header, not a body-fixed overlay, so
-    // dialogs and menus keep their normal z-index above it.
-    expect(sidebar).toContain("stickyRow.style.position = 'sticky'")
-    expect(sidebar).toContain("stickyRow.style.zIndex = '20'")
   })
 
   it('renders the pinned coordinator with the real assistant row', () => {
@@ -147,13 +143,9 @@ describe('sidebar surface switch', () => {
     expect(assistant).toContain('assistantId: isCoordinatorInstance(instance) ? null : instance.id')
   })
 
-  it('serves both layouts from one brand stack: desktop button, mobile field', () => {
+  it('keeps 搜索 / 筛选 / 新建 in the brand action group', () => {
     expect(sidebar).toContain('brandActions')
-    // Desktop keeps the 搜索 button; the narrow drawer stacks a real field.
     expect(sidebar).toContain('aria-label="搜索"')
-    expect(sidebar).toContain('brandActionSearch')
-    expect(sidebar).toContain('data-dsh-brand-search')
-    expect(sidebar).toContain('brandSearchRow')
     expect(sidebar).toContain('aria-label="筛选"')
     expect(sidebar).toContain('aria-label="新建"')
     // DeepSeek mode forwards to the shipped controls; DeepBot uses our own.
