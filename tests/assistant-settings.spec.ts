@@ -304,13 +304,13 @@ describe('dialog furniture', () => {
   })
 
   it('shares one compact header rule across every AnimatedModal', () => {
-    // One rule, scoped to the dialog's own header — no per-dialog copy.
+    // One rule for the header, one for the description — no per-dialog copy.
     expect((moduleCss.match(/class\*="header"/g) ?? [])).toHaveLength(1)
-    const rule = moduleCss.slice(
-      moduleCss.indexOf('.teamModal > [class*="content"] > [class*="header"] {'),
-    )
-    expect(rule.slice(0, rule.indexOf('}'))).toContain('padding: 14px 12px 2px 20px')
-    expect(moduleCss).toContain('.teamModal > [class*="content"] > [class*="description"] {')
+    const rule = moduleCss.slice(moduleCss.indexOf('.teamModal [class*="header"] {'))
+    expect(rule.slice(0, rule.indexOf('}'))).toContain('padding: 12px 12px 0 20px')
+    // Descendant selectors: the shell now nests header/body one level deeper.
+    expect(moduleCss).toContain('.teamModal [class*="description"] {')
+    expect(moduleCss).toContain('.teamModal [class*="body"] {')
   })
 })
 
