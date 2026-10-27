@@ -48,6 +48,7 @@ import {
 } from './team-messages.js'
 import { TeamTurnCoordinator } from './team-turn-coordinator.js'
 import { resolveTeamTarget } from './team-turn-routing.js'
+import { createThreadSession, type CreatedThreadSession } from './thread-session.js'
 import {
   linkedAssistantMemoryPrompt,
   memberPrompt,
@@ -818,6 +819,102 @@ export class TeamRuntime {
     })
   }
 
+  /**
+   * Create one team thread as a real Session in the team Workspace.
+   *
+   * The Session comes from the same create → attach → flush factory the
+   * Assistant thread path uses, so the Host owns it before the team record
+   * names it. The thread runs as the Leader by default: its preset, model,
+   * permission preset, and `speakerSlotId` all come from the Leader slot.
+   *
+   * The Agent is stopped once the header is flushed. Opening the thread row
+   * later resumes the stored Conversation, so an unopened thread costs no
+   * resident Agent.
+   */
+  async createThread(
+    teamId: string,
+    options: { expectedRevision?: number } = {},
+  ): Promise<TeamAggregate> {
+    const team = this.service.getTeam(teamId)
+    const leader = team.members[team.leaderSlotId]
+    if (leader === undefined) {
+      throw new AgentTeamError(
+        'MEMBER_NOT_FOUND',
+        `Unknown Leader slot '${team.leaderSlotId}'`,
+      )
+    }
+    const modelSelection: ModelSelectionRef = {
+      current: {
+        provider: leader.assistantSnapshot.provider,
+        model: leader.assistantSnapshot.model,
+        ...(leader.reasoningEffort === undefined
+          ? {}
+          : { reasoningEffort: ReasoningEffortId(leader.reasoningEffort) }),
+      },
+      assembled: undefined,
+    }
+    let session: CreatedThreadSession
+    try {
+      session = await createThreadSession(this.ctx, {
+        workspaceId: team.workspaceId,
+        cwd: team.workspacePath,
+        agentPresetId: leader.assistantSnapshot.agentPresetId,
+        agentOptions: {
+          provider: leader.assistantSnapshot.provider,
+          model: leader.assistantSnapshot.model,
+        },
+        setup: async (agentCtx, agent) => {
+          await this.ctx.agentPresets.mount(agentCtx, leader.assistantSnapshot.agentPresetId)
+          installModelSelection(agentCtx, modelSelection)
+          this.ctx.permissionPresets.set(agent.session, leader.permissionPresetId)
+        },
+      })
+    } catch (error) {
+      const causeMessage = error instanceof Error ? error.message : String(error)
+      throw error instanceof AgentTeamError
+        ? error
+        : new AgentTeamError(
+          'SESSION_CREATE_FAILED',
+          `Team '${team.name}' thread Session failed to start: ${causeMessage}`,
+          { teamId, cause: causeMessage },
+          { cause: error },
+        )
+    }
+
+    try {
+      const next = await this.service.createThread(teamId, {
+        sessionId: session.sessionId,
+        speakerSlotId: leader.id,
+      }, options)
+      await this.stopThreadSession(session.handle)
+      return next
+    } catch (error) {
+      await this.stopThreadSession(session.handle)
+      const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(team.workspaceId))
+      if (workspace !== undefined) {
+        try {
+          await workspace.detachSession(SessionId(session.sessionId))
+        } catch (detachError) {
+          this.ctx.logger.warn(
+            `dsh-team-mode: failed to detach unused thread Session '${session.sessionId}'`,
+            detachError,
+          )
+        }
+      }
+      throw error
+    }
+  }
+
+  /** Stop the Agent of a thread Session; the flushed header keeps it openable. */
+  private async stopThreadSession(handle: AgentHandle): Promise<void> {
+    try {
+      await this.ctx.sessions.flush(handle.agent.session)
+      await handle.dispose()
+    } catch (error) {
+      this.ctx.logger.warn('dsh-team-mode: thread Session failed to stop', error)
+    }
+  }
+
   resetTeam(teamId: string): Promise<TeamAggregate> {
     return this.exclusive(teamId, async () => {
       const team = this.service.getTeam(teamId)
@@ -859,11 +956,22 @@ export class TeamRuntime {
         this.interactions.forget(entry.member.sessionId)
         await entry.owned.handle.dispose()
       }
-      for (const member of members) {
+      // Sweep the team's whole reclaim scope, not just the member layer: an
+      // active thread Session keeps its Workspace account (its row must stay
+      // openable after the reset), while replaced member Sessions and retired
+      // Sessions are detached so the reset leaves no dangling account behind.
+      const keptSessions = new Set(
+        Object.values(team.threads ?? {}).map(thread => thread.sessionId),
+      )
+      for (const sessionId of this.service.listTeamSessionIds(teamId)) {
+        if (keptSessions.has(sessionId)) continue
         try {
-          await workspace.detachSession(SessionId(member.sessionId))
+          await workspace.detachSession(SessionId(sessionId))
         } catch (error) {
-          this.ctx.logger.warn(`dsh-team-mode: old workspace session detach failed during reset for ${member.sessionId}`, error)
+          this.ctx.logger.warn(
+            `dsh-team-mode: old workspace session detach failed during reset for ${sessionId}`,
+            error,
+          )
         }
       }
 
@@ -1162,11 +1270,10 @@ export class TeamRuntime {
 
         const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(team.workspaceId))
         if (workspace !== undefined) {
-          const sessionIds = new Set([
-            ...members.map(member => member.sessionId),
-            ...Object.keys(team.retiredSessions),
-          ])
-          for (const sessionId of sessionIds) {
+          // The reclaim scope covers member, retired, and thread Sessions; a
+          // thread left out here would stay attached to a workspace whose team
+          // record no longer exists.
+          for (const sessionId of this.service.listTeamSessionIds(teamId)) {
             await workspace.detachSession(SessionId(sessionId))
           }
         }

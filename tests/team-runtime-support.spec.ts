@@ -504,6 +504,7 @@ describe('team runtime support', () => {
         return team
       },
       retireQueuedMessages: async () => {},
+      listTeamSessionIds: () => [] as string[],
       updateRuntimeTeam: async (
         _teamId: string,
         update: (current: TeamAggregate) => TeamAggregate,
@@ -1555,3 +1556,297 @@ function thresholdServiceHarness() {
   const service = new AgentTeamService(new Context(), {} as Config, store)
   return { service, team, records: () => [...records.values()] }
 }
+
+describe('team thread Sessions', () => {
+  function threadTeam() {
+    const now = '2026-01-01T00:00:00.000Z'
+    const leader = {
+      id: 'leader-slot',
+      assistantId: 'assistant-1',
+      displayName: 'Leader Alice',
+      role: 'leader' as const,
+      assistantSnapshot: {
+        assistantId: 'assistant-1',
+        revision: 1,
+        name: 'Leader Alice',
+        instructions: 'Lead the team.',
+        provider: 'openai',
+        model: 'gpt-5',
+        agentPresetId: 'default',
+        permissionPresetId: 'workspace-write',
+        skillAllowlist: [],
+        mcpServers: [],
+        prompts: [],
+      },
+      permissionPresetId: 'workspace-write',
+      sessionId: 'session-old-leader',
+      desiredState: 'offline' as const,
+      lastRuntimeState: 'offline' as const,
+      joinedAt: now,
+    }
+    let team = {
+      schemaVersion: 2,
+      id: 'team-threads',
+      name: 'Thread Team',
+      workspaceId: 'workspace-1',
+      workspacePath: '/tmp/team-threads',
+      leaderSlotId: leader.id,
+      state: 'draft',
+      epoch: 1,
+      directMemberChat: true,
+      members: { [leader.id]: leader },
+      retiredSessions: {
+        'session-older': {
+          formerSlotId: 'old-slot',
+          sessionId: 'session-older',
+          displayName: 'Old Member',
+          removedAt: now,
+        },
+      },
+      threads: {
+        'thread-active': {
+          id: 'thread-active',
+          title: 'Shipped design',
+          sessionId: 'session-thread',
+          speakerSlotId: leader.id,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+      retiredThreads: {
+        'thread-old': {
+          id: 'thread-old',
+          title: 'Old conversation',
+          sessionId: 'session-retired-thread',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+      tasks: {},
+      goals: {},
+      leases: {},
+      outbox: {},
+      revision: 1,
+      createdAt: now,
+      updatedAt: now,
+    } as TeamAggregate
+    return {
+      team: () => team,
+      setTeam: (next: TeamAggregate) => { team = next },
+      leader,
+    }
+  }
+
+  function threadCtx() {
+    const workspace = {
+      id: 'workspace-1',
+      path: '/tmp/team-threads',
+      status: async () => 'ok' as const,
+      attachSession: vi.fn(async () => {}),
+      detachSession: vi.fn(async () => {}),
+    }
+    const ctx = new Context()
+    ctx.provide('agents', {
+      get: () => undefined,
+      create: vi.fn(),
+    } as never)
+    ctx.provide('sessions', { flush: vi.fn(async () => {}) } as never)
+    ctx.provide('workspaceRegistry', {
+      get: (id: string) => id === workspace.id ? workspace : undefined,
+      list: () => [workspace],
+    } as never)
+    const mount = vi.fn(async () => {})
+    ctx.provide('agentPresets', { mount } as never)
+    const permissionSet = vi.fn()
+    ctx.provide('permissionPresets', { set: permissionSet } as never)
+    return { ctx, workspace, mount, permissionSet }
+  }
+
+  it('creates a real Session in the team Workspace and records the Leader as speaker', async () => {
+    const h = threadTeam()
+    const fx = threadCtx()
+    const dispose = vi.fn(async () => {})
+    let created: { sessionId: string; handle: unknown } | undefined
+    const create = vi.fn(async (options: {
+      sessionId: unknown
+      meta: unknown
+      agentOptions: unknown
+      setup?: (ctx: Context, agent: { session: unknown }) => Promise<void> | void
+    }) => {
+      const sessionId = String(options.sessionId)
+      const agent = { id: sessionId, status: 'idle', session: { id: sessionId } }
+      await options.setup?.(new Context(), agent as never)
+      created = { sessionId, handle: { agent, dispose } }
+      return created.handle
+    })
+    ;(fx.ctx as unknown as { agents: { create: unknown; get: () => undefined } }).agents
+      .create = create
+    const createThread = vi.fn(async (
+      teamId: string,
+      input: { sessionId: string; speakerSlotId?: string },
+    ) => {
+      const next = {
+        ...h.team(),
+        revision: h.team().revision + 1,
+        threads: {
+          ...(h.team().threads ?? {}),
+          'thread-new': {
+            id: 'thread-new',
+            title: '新对话 2',
+            sessionId: input.sessionId,
+            ...(input.speakerSlotId === undefined ? {} : { speakerSlotId: input.speakerSlotId }),
+            createdAt: 2,
+            updatedAt: 2,
+          },
+        },
+      } as TeamAggregate
+      h.setTeam(next)
+      return next
+    })
+    const service = {
+      getTeam: (id: string) => {
+        if (id !== h.team().id) throw new AgentTeamError('TEAM_NOT_FOUND', `Unknown team '${id}'`)
+        return h.team()
+      },
+      createThread,
+      listTeamSessionIds: () => ['session-old-leader', 'session-thread'],
+      retireQueuedMessages: async () => {},
+      updateRuntimeTeam: async (
+        _teamId: string,
+        update: (current: TeamAggregate) => TeamAggregate,
+      ) => {
+        h.setTeam(update(h.team()))
+        return h.team()
+      },
+    } as unknown as AgentTeamService
+    const runtime = new TeamRuntime(fx.ctx, {} as Config, service)
+
+    const next = await runtime.createThread(h.team().id)
+
+    expect(create).toHaveBeenCalledOnce()
+    const options = create.mock.calls[0]![0]
+    expect(options.meta).toEqual({
+      cwd: h.team().workspacePath,
+      agentPreset: h.leader.assistantSnapshot.agentPresetId,
+    })
+    expect(options.agentOptions).toEqual({ provider: 'openai', model: 'gpt-5' })
+    // The Session is attached to the team Workspace and flushed before the
+    // record exists, so the row names a Host-owned Session.
+    expect(fx.workspace.attachSession).toHaveBeenCalledWith(created?.sessionId)
+    expect(fx.ctx.sessions.flush).toHaveBeenCalled()
+    // It runs as the Leader: same preset, model selection, and permission preset.
+    expect(fx.mount).toHaveBeenCalledWith(expect.anything(), 'default')
+    expect(fx.permissionSet).toHaveBeenCalledWith(expect.objectContaining({ id: created?.sessionId }), 'workspace-write')
+    // Default speaker is the Leader; the Session id is the real one.
+    expect(createThread).toHaveBeenCalledWith(h.team().id, {
+      sessionId: created?.sessionId,
+      speakerSlotId: h.leader.id,
+    }, {})
+    expect(next.threads?.['thread-new']).toMatchObject({
+      sessionId: created?.sessionId,
+      speakerSlotId: h.leader.id,
+    })
+    // No idle Agent is kept resident for a thread nobody opened.
+    expect(dispose).toHaveBeenCalledOnce()
+  })
+
+  it('detaches the unused Session when the service refuses the thread record', async () => {
+    const h = threadTeam()
+    const fx = threadCtx()
+    const dispose = vi.fn(async () => {})
+    let sessionId = ''
+    ;(fx.ctx as unknown as { agents: { create: unknown } }).agents.create = vi.fn(async (options: {
+      sessionId: unknown
+      setup?: (ctx: Context, agent: { session: unknown }) => Promise<void> | void
+    }) => {
+      sessionId = String(options.sessionId)
+      const agent = { id: sessionId, session: { id: sessionId } }
+      await options.setup?.(new Context(), agent as never)
+      return { agent, dispose }
+    })
+    const service = {
+      getTeam: () => h.team(),
+      createThread: vi.fn(async () => {
+        throw new AgentTeamError('TEAM_REVISION_CONFLICT', 'stale')
+      }),
+      listTeamSessionIds: () => [],
+    } as unknown as AgentTeamService
+    const runtime = new TeamRuntime(fx.ctx, {} as Config, service)
+
+    await expect(runtime.createThread(h.team().id)).rejects.toMatchObject({
+      code: 'TEAM_REVISION_CONFLICT',
+    })
+
+    expect(dispose).toHaveBeenCalledOnce()
+    expect(fx.workspace.detachSession).toHaveBeenCalledWith(sessionId)
+  })
+
+  it('keeps active thread Sessions attached on reset and detaches the rest of the scope', async () => {
+    const h = threadTeam()
+    const fx = threadCtx()
+    const service = {
+      getTeam: () => h.team(),
+      listTeamSessionIds: () => {
+        const team = h.team()
+        return [
+          ...Object.values(team.members).map(member => member.sessionId),
+          ...Object.keys(team.retiredSessions),
+          ...Object.values(team.threads ?? {}).map(thread => thread.sessionId),
+          ...Object.values(team.retiredThreads ?? {}).map(thread => thread.sessionId),
+        ]
+      },
+      retireQueuedMessages: async () => {},
+      updateRuntimeTeam: async (
+        _teamId: string,
+        update: (current: TeamAggregate) => TeamAggregate,
+      ) => {
+        h.setTeam(update(h.team()))
+        return h.team()
+      },
+    } as unknown as AgentTeamService
+    const runtime = new TeamRuntime(fx.ctx, {} as Config, service)
+
+    const reset = await runtime.resetTeam(h.team().id)
+
+    // The active thread keeps its record and its Workspace account.
+    expect(reset.threads?.['thread-active']?.sessionId).toBe('session-thread')
+    expect(fx.workspace.detachSession).not.toHaveBeenCalledWith('session-thread')
+    // Replaced member Sessions, retired Sessions, and retired thread Sessions
+    // are all swept via listTeamSessionIds.
+    expect(fx.workspace.detachSession).toHaveBeenCalledWith('session-old-leader')
+    expect(fx.workspace.detachSession).toHaveBeenCalledWith('session-older')
+    expect(fx.workspace.detachSession).toHaveBeenCalledWith('session-retired-thread')
+  })
+
+  it('detaches every thread Session when the team dissolves', async () => {
+    const h = threadTeam()
+    h.setTeam({ ...h.team(), state: 'active' })
+    const fx = threadCtx()
+    const deleteTeamRecords = vi.fn(async () => {})
+    const service = {
+      getTeam: () => h.team(),
+      listTeamSessionIds: () => {
+        const team = h.team()
+        return [
+          ...Object.values(team.members).map(member => member.sessionId),
+          ...Object.values(team.threads ?? {}).map(thread => thread.sessionId),
+        ]
+      },
+      updateRuntimeTeam: async (
+        _teamId: string,
+        update: (current: TeamAggregate) => TeamAggregate,
+      ) => {
+        h.setTeam(update(h.team()))
+        return h.team()
+      },
+      deleteTeamRecords,
+    } as unknown as AgentTeamService
+    const runtime = new TeamRuntime(fx.ctx, {} as Config, service)
+
+    await runtime.dissolveTeam(h.team().id)
+
+    expect(fx.workspace.detachSession).toHaveBeenCalledWith('session-old-leader')
+    expect(fx.workspace.detachSession).toHaveBeenCalledWith('session-thread')
+    expect(deleteTeamRecords).toHaveBeenCalledWith(h.team().id)
+  })
+})

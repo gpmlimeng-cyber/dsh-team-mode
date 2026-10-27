@@ -428,11 +428,13 @@ describe('team.thread wire shape', () => {
     } as never
     const team = (revision: number) => ({ id: 'team-1', revision }) as TeamView
     const createThread = vi.fn(async () => team(2))
+    const createTeamThread = vi.fn(async () => team(2))
     const renameThread = vi.fn(async () => team(3))
     const archiveThread = vi.fn(async () => team(4))
     const service = {
       subscribe: () => () => {},
       createThread,
+      createTeamThread,
       renameThread,
       archiveThread,
     } as unknown as AgentTeamService
@@ -451,7 +453,9 @@ describe('team.thread wire shape', () => {
     const created = await post('team.thread.create', { id: 'team-1' })
     expect(created.status).toBe(200)
     expect(created.body.value.revision).toBe(2)
-    expect(createThread).toHaveBeenCalledWith('team-1', {}, {})
+    expect(createTeamThread).toHaveBeenCalledWith('team-1', {})
+    // The row may only name a Session the runtime actually created.
+    expect(createThread).not.toHaveBeenCalled()
 
     const renamed = await post('team.thread.rename', {
       id: 'team-1',

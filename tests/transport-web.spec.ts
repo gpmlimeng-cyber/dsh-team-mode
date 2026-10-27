@@ -116,6 +116,7 @@ function harness(overrides: {
     deleteGroup: vi.fn(async () => ['工作']),
     setGroupOrder: vi.fn(async (names: readonly string[]) => [...names]),
     createThread: vi.fn(async (teamId: string) => ({ id: teamId, revision: 2 })),
+    createTeamThread: vi.fn(async (teamId: string) => ({ id: teamId, revision: 2 })),
     renameThread: vi.fn(async (teamId: string, threadId: string, title: string) => ({
       id: teamId,
       threads: { [threadId]: { id: threadId, title } },
@@ -389,7 +390,9 @@ describe('web transport authentication and upload contract', () => {
     const created = await post('team.thread.create', { id: 'team-1' })
     expect(created.status).toBe(200)
     expect(JSON.parse(created.body)).toMatchObject({ ok: true, value: { id: 'team-1', revision: 2 } })
-    expect(service.createThread).toHaveBeenCalledWith('team-1', {}, {})
+    expect(service.createTeamThread).toHaveBeenCalledWith('team-1', {})
+    // The raw record write never creates the Session the row would name.
+    expect(service.createThread).not.toHaveBeenCalled()
 
     const renamed = await post('team.thread.rename', {
       id: 'team-1',
@@ -423,7 +426,8 @@ describe('web transport authentication and upload contract', () => {
         error: { code: 'INVALID_REQUEST' },
       })
     }
-    expect(service.createThread).toHaveBeenCalledTimes(1)
+    expect(service.createThread).not.toHaveBeenCalled()
+    expect(service.createTeamThread).toHaveBeenCalledTimes(1)
     expect(service.renameThread).toHaveBeenCalledTimes(1)
     expect(service.archiveThread).toHaveBeenCalledTimes(1)
 

@@ -3056,6 +3056,16 @@ export class AgentTeamService extends Service {
   }
 
   /**
+   * Runtime-aware thread creation: the Session is created and attached in the
+   * team Workspace through the shared thread Session factory before the record
+   * is written, so the transport never records a Session the Host never made.
+   * The runtime defaults the speaker to the Leader.
+   */
+  async createTeamThread(teamId: string, options: MutationOptions = {}): Promise<TeamAggregate> {
+    return this.requireRuntime().createThread(teamId, options)
+  }
+
+  /**
    * Create one team thread. The thread is a new conversation layer under the
    * team: it owns a freshly minted `sessionId` (the same id-first path a member
    * Session takes; the runtime materializes it), and it never touches any

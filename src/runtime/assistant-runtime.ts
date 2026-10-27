@@ -37,6 +37,7 @@ import { TeamInteractionBridge } from './team-interaction-bridge.js'
 import { coordinatorPrompt } from './team-prompts.js'
 import type { ConversationNode } from '../transport/contracts.js'
 import { readStoredSessionEvents } from './session-log.js'
+import { createThreadSession, type CreatedThreadSession } from './thread-session.js'
 
 export interface AssistantEnsureResult {
   instance: AssistantInstance
@@ -328,24 +329,15 @@ export class AssistantRuntime {
         `Assistant instance '${id}' is archived`,
       )
     }
-    const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(instance.workspaceId))
-    if (workspace === undefined || await workspace.status() !== 'ok') {
-      throw new AgentTeamError(
-        'WORKSPACE_UNAVAILABLE',
-        `Workspace '${instance.workspaceId}' is unavailable`,
-      )
-    }
 
     const directory = cwd?.trim() ?? ''
-    const sessionId = `session-${randomUUID()}`
-    let handle: AgentHandle
+    let session: CreatedThreadSession
     try {
-      handle = await this.ctx.agents.create({
-        sessionId: SessionId(sessionId),
-        meta: {
-          cwd: directory === '' ? instance.workspacePath : directory,
-          agentPreset: instance.assistantSnapshot.agentPresetId,
-        },
+      // One factory with the team thread path: create, attach, flush.
+      session = await createThreadSession(this.ctx, {
+        workspaceId: instance.workspaceId,
+        cwd: directory === '' ? instance.workspacePath : directory,
+        agentPresetId: instance.assistantSnapshot.agentPresetId,
         agentOptions: agentOptionsFor(instance.assistantSnapshot),
         setup: this.assistantSetup(id, instance, 'thread'),
       })
@@ -354,15 +346,11 @@ export class AssistantRuntime {
     }
 
     try {
-      await workspace.attachSession(SessionId(sessionId))
-      // Flush the empty header first: a thread the Host never wrote is not
-      // openable from the native session browser.
-      await this.ctx.sessions.flush(handle.agent.session)
-      const bound = await this.service.attachAssistantThread(id, sessionId)
-      this.owned.set(sessionId, handle)
-      return { instance: bound, sessionId }
+      const bound = await this.service.attachAssistantThread(id, session.sessionId)
+      this.owned.set(session.sessionId, session.handle)
+      return { instance: bound, sessionId: session.sessionId }
     } catch (error) {
-      await this.disposeQuietly(handle, `thread Session '${sessionId}' failed to attach`)
+      await this.disposeQuietly(session.handle, `thread Session '${session.sessionId}' failed to attach`)
       throw this.startupError(instance, error)
     }
   }

@@ -510,9 +510,9 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
     }
     case 'team.workbench.get': return service.getWorkbench(idPayload.parse(request.payload).id)
     case 'team.thread.create': {
-      // The Session is minted by the runtime path the service already owns, so the
-      // transport only carries the team id; a default Leader speaker is assumed.
-      return service.createThread(idPayload.parse(request.payload).id, {}, options)
+      // The Session is created in the team Workspace by the runtime before the
+      // record is written; the transport only carries the team id.
+      return service.createTeamThread(idPayload.parse(request.payload).id, options)
     }
     case 'team.thread.rename': {
       const payload = z.object({
