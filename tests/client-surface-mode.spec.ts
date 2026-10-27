@@ -143,6 +143,17 @@ describe('sidebar surface switch', () => {
     expect(assistant).toContain('assistantId: isCoordinatorInstance(instance) ? null : instance.id')
   })
 
+  it('moves the rc.3 more row into the foot bar and puts it back', () => {
+    // The shipped 0.2.1-rc.3 sidebar folds overflowing panel icons into a
+    // "更多" row; BOT mode owns the foot bar, so that row moves there instead of
+    // sitting mid-list, and the DSH surface restores it.
+    expect(sidebar).toContain('moveNativeMoreToFooter')
+    expect(sidebar).toContain('restoreNativeMore')
+    expect(sidebar).toContain('_moreAnchor')
+    // Fail open: no row means nothing moves and the list keeps its own node.
+    expect(sidebar).toContain('if (anchor === null || anchor.parentElement === row) return')
+  })
+
   it('keeps 搜索 / 筛选 / 新建 in the brand action group', () => {
     expect(sidebar).toContain('brandActions')
     expect(sidebar).toContain('aria-label="搜索"')

@@ -982,6 +982,62 @@ function findMarketEntry(foot: HTMLElement): HTMLElement | null {
   }) ?? null
 }
 
+/** Where the native "更多" row came from, so the DSH surface can put it back. */
+interface MovedMoreOrigin {
+  parent: HTMLElement
+  next: Node | null
+  anchorStyle: string
+  buttonStyle: string
+  labelDisplay: string
+}
+const movedMore = new WeakMap<HTMLElement, MovedMoreOrigin>()
+
+/**
+ * DSH 0.2.1-rc.3 folds the panel icons that do not fit into a single "更多"
+ * row. In BOT mode that row belongs with the other foot actions, so it moves to
+ * the end of the account row and its label collapses to the icon.
+ */
+function moveNativeMoreToFooter(row: HTMLElement): void {
+  const anchor = document.querySelector<HTMLElement>('[class*="_moreAnchor"]')
+  if (anchor === null || anchor.parentElement === row) return
+  const button = anchor.querySelector<HTMLElement>('button')
+  const label = anchor.querySelector<HTMLElement>('[class*="_panelTitle"]')
+  if (anchor.parentElement !== null) {
+    movedMore.set(anchor, {
+      parent: anchor.parentElement,
+      next: anchor.nextSibling,
+      anchorStyle: anchor.getAttribute('style') ?? '',
+      buttonStyle: button?.getAttribute('style') ?? '',
+      labelDisplay: label?.style.display ?? '',
+    })
+  }
+  anchor.style.flex = '0 0 auto'
+  anchor.style.margin = '0'
+  if (button !== null) {
+    button.style.width = '28px'
+    button.style.height = '28px'
+    button.style.padding = '0'
+    button.style.justifyContent = 'center'
+  }
+  if (label !== null) label.style.display = 'none'
+  row.append(anchor)
+}
+
+/** Undo {@link moveNativeMoreToFooter}; a missing origin leaves the row alone. */
+function restoreNativeMore(): void {
+  for (const anchor of Array.from(document.querySelectorAll<HTMLElement>('[class*="_moreAnchor"]'))) {
+    const origin = movedMore.get(anchor)
+    if (origin === undefined) continue
+    movedMore.delete(anchor)
+    anchor.setAttribute('style', origin.anchorStyle)
+    const button = anchor.querySelector<HTMLElement>('button')
+    if (button !== null) button.setAttribute('style', origin.buttonStyle)
+    const label = anchor.querySelector<HTMLElement>('[class*="_panelTitle"]')
+    if (label !== null) label.style.display = origin.labelDisplay
+    if (origin.parent.isConnected) origin.parent.insertBefore(anchor, origin.next)
+  }
+}
+
 function restoreBotSidebar(): void {
   for (const node of Array.from(document.querySelectorAll<HTMLElement>(`[${BOT_HIDDEN_ATTR}]`))) {
     node.style.display = ''
@@ -993,6 +1049,7 @@ function restoreBotSidebar(): void {
     node.style.minWidth = ''
     node.removeAttribute(BOT_GROWN_ATTR)
   }
+  restoreNativeMore()
   document.getElementById(BOT_FOOTER_HOST_ID)?.remove()
 }
 
@@ -1039,6 +1096,9 @@ function syncBotSidebar(mode: SurfaceMode): void {
     account.style.minWidth = '0'
     account.setAttribute(BOT_GROWN_ATTR, '')
   }
+
+  // Last child so it sits at the far right of the bottom bar.
+  moveNativeMoreToFooter(row)
 
   for (const entry of BOT_FOOTER_ENTRIES) {
     const native = entry.find()
