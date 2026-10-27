@@ -30,7 +30,6 @@ import { MASCOT_EYES, MASCOT_SHAPES, nextMascotSeed, randomMascotDraft, type Mas
 import { MascotPicker } from './mascot-picker.js'
 import { Mascot } from './mascot-view.js'
 import { PERMISSION_LABELS } from './labels.js'
-import { MemberAvatar } from './member-avatar.js'
 import {
   defaultReasoningLabel,
   reasoningEffortLabel,
@@ -139,10 +138,12 @@ function MascotEditor({
   draft,
   disabled,
   onChange,
+  onAvatarFile,
 }: {
   draft: AssistantCreateDraft
   disabled: boolean
   onChange: (patch: Partial<AssistantCreateDraft>) => void
+  onAvatarFile: (file: File) => void
 }): JSX.Element {
   const seed = draft.mascotSeed.trim() === '' ? 'assistant' : draft.mascotSeed
   const options: MascotOptions = {
@@ -171,6 +172,20 @@ function MascotEditor({
           : <img className={css.mascotPreviewImage} src={draft.avatar} alt="助手头像预览" />}
       </div>
       <div className={css.mascotActions}>
+        <label className={css.mascotAction} aria-label="上传本地头像">
+          上传头像
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className={css.avatarFileInput}
+            disabled={disabled}
+            onChange={event => {
+              const file = event.target.files?.[0]
+              event.target.value = ''
+              if (file !== undefined) onAvatarFile(file)
+            }}
+          />
+        </label>
         <button type="button" className={css.mascotAction} disabled={disabled} onClick={() => {
             const next = randomMascotDraft()
             onChange({
@@ -251,31 +266,6 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
             />
           )}
         />
-        <SettingsRow
-          label="头像"
-          hint="点击头像上传 PNG/JPEG/WebP（≤256KB）；没有图片时显示下面的吉祥物。"
-          control={(
-            <label className={css.assistantCreateAvatarFrame} aria-label="上传本地头像">
-              <MemberAvatar
-                name={draft.name.trim() || '助手'}
-                avatar={draft.avatar !== '' ? draft.avatar : undefined}
-                size={40}
-              />
-              <span className={css.assistantCreateAvatarUpload} aria-hidden="true">上传</span>
-              <input
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                className={css.avatarFileInput}
-                disabled={disabled}
-                onChange={event => {
-                  const file = event.target.files?.[0]
-                  event.target.value = ''
-                  if (file !== undefined) onAvatarFile(file)
-                }}
-              />
-            </label>
-          )}
-        />
         {groupOptions.visible && (
           <SettingsRow
             label="分组"
@@ -302,6 +292,7 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
         draft={draft}
         disabled={disabled}
         onChange={onDraftChange}
+        onAvatarFile={onAvatarFile}
       />
     </>
   )
