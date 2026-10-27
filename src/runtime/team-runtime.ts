@@ -53,7 +53,6 @@ import {
   linkedAssistantMemoryPrompt,
   memberPrompt,
   rosterPrompt,
-  teamMemoryPrompt,
 } from './team-prompts.js'
 import {
   allowedInheritedToolNames,
@@ -1857,15 +1856,10 @@ export class TeamRuntime {
         agentCtx.systemPrompt.section({
           name: rosterSection,
           order: 11,
-          // Roster and team memory are one live section: both are read from the
-          // aggregate on every turn, so an accepted entry reaches the next turn
-          // without restarting the member Session.
-          text: () => {
-            const latest = this.service.getTeam(team.id)
-            return [rosterPrompt(latest), teamMemoryPrompt(latest)]
-              .filter(line => line !== '')
-              .join('\n\n')
-          },
+          // Roster only. Team memory is Leader context and lives in the
+          // identity section, which `memberPrompt` already gates on the live
+          // role; folding it in here would leak it to every member.
+          text: () => rosterPrompt(this.service.getTeam(team.id)),
         })
         registerTeamTools(agentCtx, {
           assertIdentity: agent => {

@@ -17,7 +17,6 @@ import type {
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import type { AgentTeamStore } from '../src/storage/store.js'
 import type { TeamCommandHandler } from '../src/runtime/team-command-handler.js'
-import { memberPrompt } from '../src/runtime/team-prompts.js'
 import { TeamRuntime } from '../src/runtime/team-runtime.js'
 
 const config: Config = {
@@ -70,6 +69,7 @@ function createHarness(overrides: Partial<Config> = {}) {
   ctx.provide('agentPresets', {
     list: async () => [{ id: 'default', name: 'Default' }],
     resolve: async (id: string) => ({ id, name: id }),
+    mount: async () => {},
     acquireScope: async () => ({ key: { kind: 'preset-scope' }, [Symbol.asyncDispose]: async () => {} }),
   } as never)
   ctx.provide('tools', { get: () => undefined, schemas: () => [] } as never)
@@ -79,7 +79,12 @@ function createHarness(overrides: Partial<Config> = {}) {
     optionOf: (name: string) => ({ value: name, name }),
     set: () => {},
   } as never)
-  ctx.provide('agents', { get: () => undefined } as never)
+  const agentFactory: { create?: (options: any) => Promise<any> } = {}
+  ctx.provide('agents', {
+    get: () => undefined,
+    create: async (options: any) => agentFactory.create!(options),
+    resume: async (options: any) => agentFactory.create!(options),
+  } as never)
   ctx.provide('sessions', { flush: async () => {} } as never)
   ctx.provide('sessionPersistence', { list: async () => [] } as never)
   const workspace = {
@@ -101,6 +106,9 @@ function createHarness(overrides: Partial<Config> = {}) {
     config: harnessConfig,
     service: new AgentTeamService(ctx as never, harnessConfig, store),
     emit: ctx.emit as (name: string, event: unknown) => void,
+    setAgentFactory: (factory: (options: any) => Promise<any>) => {
+      agentFactory.create = factory
+    },
   }
 }
 
@@ -233,6 +241,50 @@ type RuntimeInternals = {
     drainAll(teamIds: readonly string[]): Promise<void>
   }
   ensureMembersOnline(team: TeamAggregate): Promise<void>
+}
+
+interface PromptSection {
+  order: number
+  text: () => string
+}
+
+/**
+ * A minimal Agent-scoped context that records the prompt sections the runtime
+ * registers. Section text is read lazily, exactly like the host does, so a
+ * test can assert the assembled member prompt instead of a helper's output.
+ */
+function fakePromptAgentContext(
+  sections: Map<string, PromptSection>,
+  session: unknown,
+) {
+  const agent = {
+    id: session,
+    session,
+    status: 'idle',
+    followup: vi.fn(),
+    cancel: vi.fn(),
+    whenIdle: vi.fn(async () => {}),
+  }
+  const agentCtx: any = {
+    on: () => () => {},
+    effect: () => {},
+    inject: async (_deps: string[], callback: (scope: unknown) => void) => { callback(agentCtx) },
+    skills: { registerProvider: () => {} },
+    tools: {
+      schemas: () => [],
+      register: () => {},
+      restrict: () => {},
+      guard: () => {},
+      get: () => undefined,
+    },
+    systemPrompt: {
+      section: (spec: { name: string; order: number; text: () => string }) => {
+        sections.set(spec.name, { order: spec.order, text: spec.text })
+      },
+      assemble: async () => ({ sections: [...sections.keys()].map(name => ({ name })) }),
+    },
+  }
+  return { agent, agentCtx }
 }
 
 function internals(runtime: TeamRuntime): RuntimeInternals {
@@ -722,8 +774,8 @@ describe('team turn runtime wiring', () => {
     expect(service.getTeam(team.id).tasks[task.taskId]?.status).toBe(task.status)
   })
 
-  it('gives the roster section team memory to the Leader and to no member', async () => {
-    const { ctx, service, store } = createHarness()
+  it('registers team memory in the Leader system prompt only', async () => {
+    const { ctx, service, store, setAgentFactory } = createHarness()
     const team = await twoMemberTeam(service, store)
     const memberId = Object.keys(team.members).find(id => id !== team.leaderSlotId)!
     await service.writeUserTeamMemory(
@@ -731,13 +783,39 @@ describe('team turn runtime wiring', () => {
       { title: 'Release', body: 'Ship on Friday.' },
       { expectedMemoryRevision: 0 },
     )
-    const latest = service.getTeam(team.id)
 
-    const leaderPrompt = memberPrompt(latest, latest.members[team.leaderSlotId]!)
-    expect(leaderPrompt).toContain('Team memory — decisions')
+    const sectionsBySession = new Map<string, Map<string, PromptSection>>()
+    setAgentFactory(async (options: {
+      sessionId: unknown
+      setup: (agentCtx: unknown, agent: unknown) => Promise<void>
+    }) => {
+      const sections = new Map<string, PromptSection>()
+      const { agent, agentCtx } = fakePromptAgentContext(sections, options.sessionId)
+      sectionsBySession.set(String(options.sessionId), sections)
+      await options.setup(agentCtx, agent)
+      return { agent, dispose: async () => {} }
+    })
+
+    const runtime = new TeamRuntime(ctx, config, service)
+    await internals(runtime).ensureMembersOnline(service.getTeam(team.id))
+
+    const promptOf = (slotId: string): string => {
+      const member = service.getTeam(team.id).members[slotId]!
+      const sections = sectionsBySession.get(member.sessionId)
+      expect(sections, `no prompt sections captured for ${slotId}`).toBeDefined()
+      return [...sections!.values()]
+        .sort((left, right) => left.order - right.order)
+        .map(section => section.text())
+        .join('\n\n')
+    }
+
+    const leaderPrompt = promptOf(team.leaderSlotId)
+    // Exactly one block: the identity section gate, not the roster section.
+    expect(leaderPrompt.match(/Team memory — decisions/g)).toHaveLength(1)
     expect(leaderPrompt).toContain('Ship on Friday.')
 
-    const memberText = memberPrompt(latest, latest.members[memberId]!)
+    const memberText = promptOf(memberId)
+    expect(memberText).toContain('Team roster')
     expect(memberText).not.toContain('Team memory — decisions')
     expect(memberText).not.toContain('Ship on Friday.')
   })
