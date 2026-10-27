@@ -20,7 +20,7 @@ import type {
 import { TeamCommandHandler } from '../src/runtime/team-command-handler.js'
 import {
   linkedAssistantMemoryPrompt,
-  teamContextPrompt,
+  memberPrompt,
   teamMemoryPrompt,
 } from '../src/runtime/team-prompts.js'
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
@@ -150,17 +150,18 @@ describe('M2 team memory scope and UI', () => {
       updatedAt: NOW,
     })
 
-    const leaderPrompt = teamContextPrompt(team, 'leader')
-    expect(leaderPrompt).toContain('Team roster')
-    expect(leaderPrompt).toContain('Lint: Use eslint.')
-    expect(leaderPrompt).not.toContain('PROPOSED-BODY')
-    expect(leaderPrompt).not.toContain('PRIVATE-BODY')
-    expect(leaderPrompt).not.toContain('ASSISTANT-BODY')
+    const leaderText = memberPrompt(team, team.members.leader!)
+    expect(leaderText).toContain('Team memory — decisions')
+    expect(leaderText).toContain('Lint: Use eslint.')
+    expect(leaderText).not.toContain('PROPOSED-BODY')
+    expect(leaderText).not.toContain('PRIVATE-BODY')
+    expect(leaderText).not.toContain('ASSISTANT-BODY')
 
-    const memberPrompt = teamContextPrompt(team, 'worker')
-    expect(memberPrompt).toContain('Team roster')
-    expect(memberPrompt).not.toContain('Team memory')
-    expect(memberPrompt).not.toContain('Use eslint.')
+    // The shared rules mention team memory by name; the block itself, and its
+    // agreed facts, must not reach an ordinary member.
+    const memberText = memberPrompt(team, team.members.worker!)
+    expect(memberText).not.toContain('Team memory — decisions')
+    expect(memberText).not.toContain('Use eslint.')
     expect(teamMemoryPrompt(team)).toContain('Use eslint.')
   })
 

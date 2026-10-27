@@ -17,7 +17,7 @@ import type {
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import type { AgentTeamStore } from '../src/storage/store.js'
 import type { TeamCommandHandler } from '../src/runtime/team-command-handler.js'
-import { teamContextPrompt } from '../src/runtime/team-prompts.js'
+import { memberPrompt } from '../src/runtime/team-prompts.js'
 import { TeamRuntime } from '../src/runtime/team-runtime.js'
 
 const config: Config = {
@@ -733,13 +733,12 @@ describe('team turn runtime wiring', () => {
     )
     const latest = service.getTeam(team.id)
 
-    const leaderPrompt = teamContextPrompt(latest, team.leaderSlotId)
-    expect(leaderPrompt).toContain('Team memory')
+    const leaderPrompt = memberPrompt(latest, latest.members[team.leaderSlotId]!)
+    expect(leaderPrompt).toContain('Team memory — decisions')
     expect(leaderPrompt).toContain('Ship on Friday.')
 
-    const memberPrompt = teamContextPrompt(latest, memberId)
-    expect(memberPrompt).toContain('Team roster')
-    expect(memberPrompt).not.toContain('Team memory')
-    expect(memberPrompt).not.toContain('Ship on Friday.')
+    const memberText = memberPrompt(latest, latest.members[memberId]!)
+    expect(memberText).not.toContain('Team memory — decisions')
+    expect(memberText).not.toContain('Ship on Friday.')
   })
 })

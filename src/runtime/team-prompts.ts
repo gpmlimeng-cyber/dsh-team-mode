@@ -50,10 +50,14 @@ const TEAMMATE_RULES = [
 
 export function memberPrompt(team: TeamAggregate, member: TeamMemberSlot): string {
   const roleRules = member.role === 'leader' ? LEADER_RULES : TEAMMATE_RULES
+  // Team memory is Leader context only; an ordinary member prompt gets the
+  // roster and rules but never the agreed-memory block.
+  const memory = teamMemoryPromptFor(team, member.id)
   return [
     `You are ${member.displayName}, an independent Agent in the team “${team.name}”. Your role is ${member.role}.`,
     ...SHARED_RULES,
     ...roleRules,
+    ...(memory === '' ? [] : [memory]),
     member.assistantSnapshot.instructions.trim().length === 0
       ? undefined
       : `Your role instructions:\n${member.assistantSnapshot.instructions}`,
@@ -252,15 +256,4 @@ export function rosterPrompt(team: TeamAggregate): string {
     'Mailbox: team_read_messages returns unread first, then recent; team_send_message to `*` broadcasts to every active member except the sender. Message summaries are for mailbox previews; the full body is retained.',
     'If the user asks for a roster/plan, the Leader proposes it first; only spawn or assign after approval.',
   ].join('\n')
-}
-
-/**
- * The live roster section: the roster for every member, plus team memory for
- * the Leader only. One helper keeps the runtime's section and its tests
- * reading the same composition.
- */
-export function teamContextPrompt(team: TeamAggregate, slotId: string): string {
-  return [rosterPrompt(team), teamMemoryPromptFor(team, slotId)]
-    .filter(line => line !== '')
-    .join('\n\n')
 }
