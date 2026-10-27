@@ -66,7 +66,6 @@ export interface AssistantCreateBodyProps {
   catalogError: string | undefined
   error: string | undefined
   warning: string | undefined
-  banner: string | undefined
   activeSection: AssistantCreateSection
   draft: AssistantCreateDraft
   roles: readonly AssistantTemplate[]
@@ -521,9 +520,6 @@ export function AssistantCreateBody(props: AssistantCreateBodyProps): JSX.Elemen
       aria-busy={props.saving || props.locked ? true : undefined}
       data-dsh-assistant-create-body
     >
-      {props.banner !== undefined && (
-        <div className={css.assistantCreateBanner}>{props.banner}</div>
-      )}
       {props.error !== undefined && (
         <div className={css.inlineError} role="alert">{props.error}</div>
       )}
@@ -767,10 +763,6 @@ export function AssistantCreateDialog({
     id: effort.id,
     label: effort.name === effort.id ? effort.name : `${effort.name}（${effort.id}）`,
   }))
-  const activeWorkspace = workspaces.find(workspace => workspace.id === draft.workspaceId)
-  const banner = catalog !== undefined && workspaces.length > 1 && activeWorkspace !== undefined
-    ? `将在「${activeWorkspace.title}」中创建 · 可在「模型与权限」切换`
-    : undefined
   const canCreate = assistantCreateCanSubmit(draft)
 
   function reasoningLabelFor(providerId: string, modelId: string): string | undefined {
@@ -945,7 +937,6 @@ export function AssistantCreateDialog({
           catalogError={catalogError}
           error={error}
           warning={warning}
-          banner={banner}
           activeSection={activeSection}
           draft={draft}
           roles={roles}

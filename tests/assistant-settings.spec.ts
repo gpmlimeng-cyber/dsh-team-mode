@@ -165,7 +165,6 @@ function baseCreateBodyProps(): AssistantCreateBodyProps {
     catalogError: undefined,
     error: undefined,
     warning: undefined,
-    banner: undefined,
     activeSection: 'identity',
     draft: CREATE_DRAFT,
     roles: [],
@@ -249,10 +248,10 @@ describe('assistant create dialog shell', () => {
     expect(html).not.toContain('aria-label="未提供的区块"')
   })
 
-  it('shows the workspace banner only when it was supplied', () => {
-    expect(renderCreateBody()).not.toContain('中创建')
-    expect(renderCreateBody({ banner: '将在「主工作区」中创建 · 可在「模型与环境」切换' }))
-      .toContain('将在「主工作区」中创建')
+  it('keeps the dialog header to its title: no workspace banner line', () => {
+    const html = renderCreateBody()
+    expect(html).not.toContain('中创建 · 可在')
+    expect(html).not.toContain('assistantCreateBanner')
   })
 })
 
