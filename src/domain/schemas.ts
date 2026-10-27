@@ -209,6 +209,14 @@ export const memoryEntrySchema = z.object({
   authorSlotId: nonEmpty.optional(),
   /** Stable team-facing key; assistant entries usually leave it unset. */
   key: nonEmpty.optional(),
+  /**
+   * Pending proposals only: the entry id this proposal would replace. A
+   * revision proposal is its own `proposed` entry that points at the live
+   * target, so the target keeps its content and stays prompt-injected until the
+   * user accepts the proposal. Added without a schema-version bump: an entry
+   * stored before revisions existed carries no field.
+   */
+  supersedes: nonEmpty.optional(),
   title: nonEmpty,
   body: z.string(),
   revision: z.int().positive(),
@@ -307,6 +315,11 @@ export const writeAssistantMemoryEntryInputSchema = z.object({
   visibility: memoryVisibilitySchema.optional(),
   status: assistantMemoryEntryStatusSchema.optional(),
   key: nonEmpty.optional(),
+  /**
+   * Name the live entry a pending proposal would replace. Acceptance applies
+   * the proposal's body and supersedes that target in one revision.
+   */
+  supersedes: nonEmpty.optional(),
   title: nonEmpty,
   body: z.string(),
 }).strict()

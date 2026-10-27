@@ -27,6 +27,7 @@ import { callAgentTeam, subscribeAgentTeamConversation } from '../api.js'
 import { SelectControl } from '../select-control.js'
 import { checkpointNoteError } from '../assistant-checkpoint.js'
 import { AssistantPanel } from '../assistants/AssistantPanel.js'
+import { MemoryEntryCard } from '../memory-entry-card.js'
 import css from '../AgentTeam.module.css'
 import { GlobalOverview, openAssistantSession } from '../global-overview.js'
 import { CrownIcon } from '../icons/CrownIcon.js'
@@ -42,8 +43,6 @@ import {
   memberStatusLabel,
   memoryJournalActionLabel,
   memorySourceLabel,
-  memoryStatusLabel,
-  memoryVisibilityLabel,
   TASK_STATE_LABELS,
   taskDependencyView,
   taskKindLabel,
@@ -1364,9 +1363,7 @@ export function TeamCard({
       {goalsPresent && (
         <GoalSummary team={team} selected={goalFilter} onSelect={setGoalFilter} />
       )}
-      {(compact || team.memory !== undefined) && (
-        <TeamMemorySection team={team} onChanged={onChanged} />
-      )}
+      <TeamMemorySection team={team} onChanged={onChanged} />
       <div className={`${css.contextResetPanel} ${css.cloneTeamPanel ?? ''}`}>
         <div className={css.contextResetCopy}>
           <strong>复制团队</strong>
@@ -2087,44 +2084,11 @@ function memoryTime(value: string): string {
 }
 
 /**
- * The shared renderer for a structured memory entry: it reads only the entry
- * and caller-provided actions, so assistant and team memory can use the same
- * card. Team-scoped rows are always `team-safe` (their container has no
- * private meaning), and history rows render the same way with no actions.
+ * One renderer for a structured memory entry lives in `memory-entry-card.tsx`
+ * and is imported by both the team panel and the assistant memory panel. This
+ * re-export keeps the existing team-panel import path working.
  */
-export function MemoryEntryCard({
-  entry,
-  actions,
-}: {
-  entry: MemoryEntry
-  actions?: ReactNode
-}): JSX.Element {
-  return (
-    <article className={css.memoryEntryCard}>
-      <div className={css.memoryEntryHeader}>
-        <strong>{entry.title}</strong>
-        <span className={css.memoryBadges}>
-          <span className={`${css.memoryBadge} ${entry.visibility === 'private' ? css.memoryBadgePrivate : ''}`}>
-            {memoryVisibilityLabel(entry.visibility)}
-          </span>
-          <span className={`${css.memoryBadge} ${entry.status === 'proposed' ? css.memoryBadgeProposed : ''}`}>
-            {memoryStatusLabel(entry.status)}
-          </span>
-          <span className={css.memoryBadge}>v{entry.revision}</span>
-        </span>
-      </div>
-      {entry.body !== '' && <p className={css.memoryEntryBody}>{entry.body}</p>}
-      <div className={css.memoryEntryMeta}>
-        <span>
-          {memorySourceLabel(entry.source)}
-          {entry.key === undefined ? '' : ` · ${entry.key}`}
-          {` · ${memoryTime(entry.updatedAt)}`}
-        </span>
-        {actions}
-      </div>
-    </article>
-  )
-}
+export { MemoryEntryCard } from '../memory-entry-card.js'
 
 /**
  * Team memory lives inside the team aggregate, so the panel renders straight

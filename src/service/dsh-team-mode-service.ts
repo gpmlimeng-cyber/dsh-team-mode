@@ -1382,9 +1382,37 @@ export class AgentTeamService extends Service {
           { limit: ASSISTANT_MEMORY_MAX_ENTRIES },
         )
       }
+      // A revision proposal is its own pending entry that names the live target:
+      // the target is validated here and stays untouched until the user accepts.
+      if (input.supersedes !== undefined) {
+        if (input.supersedes === input.id) {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            `Assistant memory entry '${input.supersedes}' cannot supersede itself`,
+            { entryId: input.supersedes },
+          )
+        }
+        if (!entries.some(candidate => candidate.id === input.supersedes)) {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            `Unknown assistant memory entry '${input.supersedes}' to revise`,
+            { entryId: input.supersedes },
+          )
+        }
+      }
       const entry = existing === undefined
         ? newMemoryEntry(input, now)
         : reviseMemoryEntry(existing, input, now)
+      // An active entry is prompt-injected. Turning it back into a proposal would
+      // silently remove it from the prompt, so a revision has to be its own
+      // pending entry with `supersedes` instead.
+      if (existing !== undefined && existing.status === 'active' && entry.status === 'proposed') {
+        throw new AgentTeamError(
+          'INVALID_REQUEST',
+          `Active assistant memory entry '${existing.id}' cannot be demoted to proposed; write a separate proposed entry with supersedes instead`,
+          { entryId: existing.id },
+        )
+      }
       const nextEntries = existing === undefined
         ? [...entries, entry]
         : entries.map(value => value.id === entry.id ? entry : value)
@@ -1400,15 +1428,47 @@ export class AgentTeamService extends Service {
       }
       written.entry = entry
       const revision = value.revision + 1
+      let journal = appendMemoryJournal(
+        value.journal,
+        assistantJournalChange(entry, existing, options.actor ?? 'assistant'),
+        revision,
+        ASSISTANT_MEMORY_JOURNAL_MAX_CHARS,
+      )
+      // Accepting a revision proposal applies it and retires its target in the
+      // SAME revision: one fenced write leaves no window where both bodies are
+      // live, and a concurrent writer is rejected by the fence instead of
+      // accepting half of the pair.
+      const target = existing !== undefined
+        && existing.status === 'proposed'
+        && entry.status === 'active'
+        ? existing.supersedes
+        : undefined
+      if (target !== undefined) {
+        const position = nextEntries.findIndex(candidate => candidate.id === target)
+        const live = position === -1 ? undefined : nextEntries[position]
+        if (position !== -1 && live !== undefined && live.status === 'active') {
+          const superseded: MemoryEntry = {
+            ...live,
+            status: 'superseded',
+            revision: live.revision + 1,
+            updatedAt: now,
+          }
+          nextEntries[position] = superseded
+          journal = appendMemoryJournal(journal, {
+            scope: 'assistant',
+            actor: options.actor ?? 'assistant',
+            action: 'supersede',
+            entryId: superseded.id,
+            reason: `superseded by '${entry.title}'`,
+            before: memoryEntrySnapshot(live),
+            after: memoryEntrySnapshot(superseded),
+          }, revision, ASSISTANT_MEMORY_JOURNAL_MAX_CHARS)
+        }
+      }
       return {
         ...value,
         entries: nextEntries,
-        journal: appendMemoryJournal(
-          value.journal,
-          assistantJournalChange(entry, existing, options.actor ?? 'assistant'),
-          revision,
-          ASSISTANT_MEMORY_JOURNAL_MAX_CHARS,
-        ),
+        journal,
         revision,
         updatedAt: now,
       }
@@ -4252,6 +4312,7 @@ function newMemoryEntry(input: WriteAssistantMemoryEntryInput, now: string): Mem
     status: input.status ?? 'active',
     source: 'assistant',
     ...(input.key === undefined ? {} : { key: input.key }),
+    ...(input.supersedes === undefined ? {} : { supersedes: input.supersedes }),
     title: input.title,
     body: input.body,
     revision: 1,
@@ -4265,6 +4326,7 @@ function reviseMemoryEntry(
   input: WriteAssistantMemoryEntryInput,
   now: string,
 ): MemoryEntry {
+  const supersedes = input.supersedes ?? existing.supersedes
   return {
     ...existing,
     title: input.title,
@@ -4272,6 +4334,7 @@ function reviseMemoryEntry(
     visibility: input.visibility ?? existing.visibility,
     status: input.status ?? existing.status,
     ...(input.key === undefined ? {} : { key: input.key }),
+    ...(supersedes === undefined ? {} : { supersedes }),
     revision: existing.revision + 1,
     updatedAt: now,
   }
@@ -4400,7 +4463,9 @@ function assistantJournalChange(
     ? 'create'
     : entry.status === 'archived' && existing.status !== 'archived'
       ? 'archive'
-      : 'update'
+      : entry.status === 'active' && existing.status === 'proposed'
+        ? 'accept'
+        : 'update'
   return {
     scope: 'assistant',
     actor,

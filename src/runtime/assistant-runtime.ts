@@ -516,10 +516,13 @@ export class AssistantRuntime {
    * only way a proposal takes effect. Nothing here polls or schedules work: one
    * call per invoked operation.
    *
-   * The service file owns the transport passthrough; this method is the whole
-   * backend, callable from the runtime's owner once that passthrough exists.
-   * A failure part-way through a change leaves the earlier proposals stored as
-   * `proposed`; nothing here can ever write an `active` entry.
+   * A revision proposal never rewrites the entry it revises: it is written as
+   * its own pending entry naming that target, so the target keeps its accepted
+   * body and stays prompt-injected until the user accepts, and 采纳 is the only
+   * path that applies the proposal. A failure part-way through a change leaves
+   * the earlier proposals stored as `proposed`, so the caller must re-read the
+   * document when the request fails; nothing here can ever write an `active`
+   * entry.
    */
   async askAssistantMemory(assistantId: string, text: string): Promise<MemoryAskResult> {
     const instance = this.service.getAssistantInstance(assistantId)
@@ -595,6 +598,12 @@ export class AssistantRuntime {
    * per proposal. The first write is fenced by the revision read after the model
    * call, and each following write by the revision the previous write returned,
    * so a concurrent user write rejects the proposal instead of being overwritten.
+   *
+   * A proposal that names an existing entry is written as its own pending entry
+   * with `supersedes`, never in place: rewriting the target to `proposed` would
+   * drop it out of the prompt and destroy the accepted body before the user
+   * decided anything. Only 采纳 applies the proposal, and the service does that
+   * in one revision-fenced write that also supersedes the target.
    */
   private async proposeMemoryEntries(
     assistantId: string,
@@ -604,7 +613,7 @@ export class AssistantRuntime {
     const written: MemoryEntry[] = []
     for (const proposal of proposals) {
       const { memory, entry } = await this.service.writeAssistantMemoryEntry(assistantId, {
-        ...(proposal.entryId === undefined ? {} : { id: proposal.entryId }),
+        ...(proposal.entryId === undefined ? {} : { supersedes: proposal.entryId }),
         ...(proposal.key === undefined ? {} : { key: proposal.key }),
         ...(proposal.visibility === undefined ? {} : { visibility: proposal.visibility }),
         status: 'proposed',
@@ -1675,7 +1684,7 @@ function assistantPrompt(snapshot: AssistantSnapshot): string {
  * existing assistant memory view. A thread reads the same background without
  * being offered the write tools, so its intro names none.
  */
-function memoryPrompt(
+export function memoryPrompt(
   memory: AssistantMemory | undefined,
   role: 'main' | 'thread' | 'worker',
 ): string {

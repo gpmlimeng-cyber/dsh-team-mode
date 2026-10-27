@@ -5,9 +5,8 @@ import {
   assistantMemoryView,
   memoryJournalActionLabel,
   memorySourceLabel,
-  memoryStatusLabel,
-  memoryVisibilityLabel,
 } from './labels.js'
+import { MemoryEntryCard } from './memory-entry-card.js'
 import { SelectControl } from './select-control.js'
 import { Field } from './shared.js'
 import css from './AgentTeam.module.css'
@@ -56,9 +55,14 @@ export function memoryWriteFailure(cause: unknown): { message: string; reload: b
   }
 }
 
-/** Ask-or-change failures keep the typed request; the write rules are the same. */
+/**
+ * Ask-or-change failures keep the typed request and always re-read: the call
+ * writes its proposals one at a time, so a failure after the first write leaves
+ * earlier proposals stored even when the error is not a revision conflict.
+ * Re-reading shows exactly what was written instead of hiding it.
+ */
 export function memoryAskFailure(cause: unknown): { message: string; reload: boolean } {
-  return memoryWriteFailure(cause)
+  return { message: memoryError(cause), reload: true }
 }
 
 /**
@@ -102,31 +106,6 @@ export function memoryAcceptanceInput(entry: MemoryEntry): WriteAssistantMemoryE
   }
 }
 
-/** One entry card, shared by the panel and the ask-or-change outcome. */
-function memoryEntryCard(entry: MemoryEntry, actions?: JSX.Element): JSX.Element {
-  return (
-    <article key={entry.id} className={css.memoryEntryCard}>
-      <div className={css.memoryEntryHeader}>
-        <strong>{entry.title}</strong>
-        <span className={css.memoryBadges}>
-          <span className={`${css.memoryBadge} ${entry.visibility === 'private' ? css.memoryBadgePrivate : ''}`}>
-            {memoryVisibilityLabel(entry.visibility)}
-          </span>
-          <span className={`${css.memoryBadge} ${entry.status === 'proposed' ? css.memoryBadgeProposed : ''}`}>
-            {memoryStatusLabel(entry.status)}
-          </span>
-          <span className={css.memoryBadge}>v{entry.revision}</span>
-        </span>
-      </div>
-      {entry.body !== '' && <p className={css.memoryEntryBody}>{entry.body}</p>}
-      <div className={css.memoryEntryMeta}>
-        <span>{memorySourceLabel(entry.source)}{entry.key === undefined ? '' : ` · ${entry.key}`}{` · ${memoryTime(entry.updatedAt)}`}</span>
-        {actions}
-      </div>
-    </article>
-  )
-}
-
 /**
  * The fixed ask-or-change result: an `answer` renders as text and says the
  * memory was not touched, while a `change` renders the entries the call wrote —
@@ -155,7 +134,7 @@ export function MemoryAskOutcome({ result }: { result: MemoryAskResult }): JSX.E
           <span className={css.memoryBadge}>采纳后生效</span>
         </span>
       </div>
-      {result.entries.map(entry => memoryEntryCard(entry))}
+      {result.entries.map(entry => <MemoryEntryCard key={entry.id} entry={entry} />)}
     </div>
   )
 }
@@ -229,6 +208,24 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
         if (live) setLoading(false)
       })
     return () => { live = false }
+  }, [assistantId])
+
+  // Auto-capture and ask-or-change writes happen without this block acting, so
+  // the visible list would otherwise stay stale until a remount. Re-reading when
+  // the window becomes visible again is the one signal a pane has for "the
+  // server may have written"; the announce keeps 概览's count row in step too.
+  useEffect(() => {
+    const refresh = (): void => {
+      if (document.visibilityState === 'hidden') return
+      void load()
+      announceMemoryChange(assistantId)
+    }
+    window.addEventListener('focus', refresh)
+    window.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.removeEventListener('focus', refresh)
+      window.removeEventListener('visibilitychange', refresh)
+    }
   }, [assistantId])
 
   /**
@@ -671,9 +668,12 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       {view.active.length > 0 && (
         <div className={css.memoryGroup}>
           <strong className={css.memoryGroupTitle}>生效条目 · {view.active.length}</strong>
-          {view.active.map(entry => memoryEntryCard(
-            entry,
-            <span className={css.memoryEntryActions}>
+          {view.active.map(entry => (
+            <MemoryEntryCard
+              key={entry.id}
+              entry={entry}
+              actions={(
+                <span className={css.memoryEntryActions}>
               <button
                 type="button"
                 className={css.memoryAction}
@@ -700,7 +700,9 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
               >
                 {confirmClear === entry.id ? '确认归档' : '归档'}
               </button>
-            </span>,
+                </span>
+              )}
+            />
           ))}
         </div>
       )}
@@ -727,9 +729,12 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
               </button>
             </span>
           </div>
-          {view.proposed.map(entry => memoryEntryCard(
-            entry,
-            <span className={css.memoryEntryActions}>
+          {view.proposed.map(entry => (
+            <MemoryEntryCard
+              key={entry.id}
+              entry={entry}
+              actions={(
+                <span className={css.memoryEntryActions}>
               <button
                 type="button"
                 className={css.memoryAction}
@@ -739,14 +744,16 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
               >
                 采纳
               </button>
-            </span>,
+                </span>
+              )}
+            />
           ))}
         </div>
       )}
       {view.historyTotal > 0 && (
         <div className={css.memoryGroup}>
           <strong className={css.memoryGroupTitle}>历史 · {view.historyTotal}</strong>
-          {view.history.map(entry => memoryEntryCard(entry))}
+          {view.history.map(entry => <MemoryEntryCard key={entry.id} entry={entry} />)}
           {view.historyTotal > view.history.length && (
             <p className={css.memoryEmpty}>仅显示最近 {view.history.length} 条历史记录。</p>
           )}

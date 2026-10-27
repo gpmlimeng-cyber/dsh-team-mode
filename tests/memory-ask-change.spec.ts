@@ -1,4 +1,4 @@
-import type { Context } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { createElement, type ReactElement, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -13,11 +13,18 @@ import { AgentTeamError } from '../src/domain/errors.js'
 import type {
   AssistantInstance,
   AssistantMemory,
+  AssistantSession,
+  AssistantTemplate,
   MemoryEntry,
+  Operation,
+  TeamActivity,
+  TeamAggregate,
+  TeamMessage,
   WriteAssistantMemoryEntryInput,
 } from '../src/domain/types.js'
-import { AssistantRuntime } from '../src/runtime/assistant-runtime.js'
+import { AssistantRuntime, memoryPrompt } from '../src/runtime/assistant-runtime.js'
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
+import type { AgentTeamStore } from '../src/storage/store.js'
 
 // The shipped primitives package expects browser peers this node test does not
 // install; the rendered copy and structure are what the assertions below pin.
@@ -128,6 +135,8 @@ function harness(options: {
   stored?: AssistantMemory
   archived?: boolean
   rejectWrite?: AgentTeamError
+  /** 1-based index of a write that is rejected after the earlier ones landed. */
+  failWriteNumber?: number
 } = {}) {
   const requests: GenerateOptions[] = []
   const llm = {
@@ -168,6 +177,13 @@ function harness(options: {
     writeOptions: { expectedRevision?: number } = {},
   ) => {
     if (options.rejectWrite !== undefined) throw options.rejectWrite
+    const attempt = writeAssistantMemoryEntry.mock.calls.length
+    if (options.failWriteNumber !== undefined && attempt === options.failWriteNumber) {
+      throw new AgentTeamError(
+        'MEMORY_REVISION_CONFLICT',
+        `Assistant memory revision conflict on write ${attempt}`,
+      )
+    }
     const currentRevision = stored?.revision ?? 0
     if (writeOptions.expectedRevision !== undefined
       && writeOptions.expectedRevision !== currentRevision) {
@@ -185,6 +201,7 @@ function harness(options: {
       ),
       visibility: input.visibility ?? 'private',
       ...(input.key === undefined ? {} : { key: input.key }),
+      ...(input.supersedes === undefined ? {} : { supersedes: input.supersedes }),
       revision: input.id === undefined ? 1 : 2,
     }
     const nextEntries = input.id === undefined
@@ -259,7 +276,7 @@ describe('askAssistantMemory', () => {
     ])
     expect(h.writeAssistantMemoryEntry.mock.calls[1]?.slice(1)).toEqual([
       {
-        id: 'm1',
+        supersedes: 'm1',
         key: 'tables',
         visibility: 'team-safe',
         status: 'proposed',
@@ -271,7 +288,66 @@ describe('askAssistantMemory', () => {
     expect(result.kind).toBe('change')
     if (result.kind !== 'change') throw new Error('expected a change')
     expect(result.entries.map(value => value.status)).toEqual(['proposed', 'proposed'])
-    expect(h.stored()?.entries?.every(value => value.status === 'proposed')).toBe(true)
+    // The revised target was never rewritten: it keeps its accepted body and
+    // stays active (the only status the prompt injects), and the proposal names
+    // it until the user accepts.
+    expect(h.stored()?.entries?.[0]).toMatchObject({
+      id: 'm1',
+      status: 'active',
+      body: 'Render data as tables.',
+    })
+    expect(h.stored()?.entries?.[2]).toMatchObject({ status: 'proposed', supersedes: 'm1' })
+  })
+
+  it('keeps a revised target active and prompt-injected while the proposal is pending', async () => {
+    const h = harness({
+      stored: memory([entry('m1', 'active', 'Tables', 'Render data as tables.')]),
+      reply: JSON.stringify({
+        kind: 'change',
+        entries: [{ entryId: 'm1', title: 'Tables', body: 'Render every dataset as a table.' }],
+      }),
+    })
+
+    const result = await h.runtime.askAssistantMemory('instance-1', 'Use tables for datasets.')
+
+    expect(result.kind).toBe('change')
+    const stored = h.stored()!
+    const target = stored.entries?.find(value => value.id === 'm1')
+    expect(target).toMatchObject({ status: 'active', body: 'Render data as tables.' })
+    const proposal = stored.entries?.find(value => value.id !== 'm1')
+    expect(proposal).toMatchObject({
+      status: 'proposed',
+      supersedes: 'm1',
+      body: 'Render every dataset as a table.',
+    })
+    // Injection is status-based: the accepted body is still what the assistant
+    // reads, and the pending proposal stays out until 采纳 applies it.
+    const injected = memoryPrompt(stored, 'main')
+    expect(injected).toContain('Render data as tables.')
+    expect(injected).not.toContain('Render every dataset as a table.')
+  })
+
+  it('keeps the proposals that landed when a later write of the same call fails', async () => {
+    const h = harness({
+      stored: memory([entry('m1', 'active', 'Tables', 'Render data as tables.')]),
+      failWriteNumber: 2,
+      reply: JSON.stringify({
+        kind: 'change',
+        entries: [
+          { title: 'Tone', body: 'Keep answers short.' },
+          { title: 'Tests', body: 'Run the focused test first.' },
+        ],
+      }),
+    })
+
+    await expect(h.runtime.askAssistantMemory('instance-1', 'Remember these.'))
+      .rejects.toMatchObject({ code: 'MEMORY_REVISION_CONFLICT' })
+
+    // The first proposal was written before the second was rejected, so it is
+    // stored and must be visible through a re-read rather than silently lost.
+    expect(h.stored()?.entries?.map(value => value.title))
+      .toEqual(['Tables', 'Tone'])
+    expect(h.stored()?.entries?.[1]).toMatchObject({ status: 'proposed' })
   })
 
   it('surfaces a revision conflict instead of overwriting a concurrent write', async () => {
@@ -346,19 +422,22 @@ describe('service ask-or-change passthrough', () => {
 })
 
 describe('client ask-or-change surface', () => {
-  it('keeps the typed draft and reloads only on a revision conflict', () => {
+  it('keeps the typed draft and always re-reads after a failure', () => {
     const conflict = Object.assign(new Error('conflict'), { code: 'MEMORY_REVISION_CONFLICT' })
     expect(memoryAskFailure(conflict)).toEqual({
       message: '记忆已被其他操作更新，已重新加载最新版本，请重试。',
       reload: true,
     })
 
+    // A change-path failure is not necessarily a conflict: earlier proposals of
+    // the same call may already be stored, so the panel must re-read to show
+    // exactly what landed instead of hiding it.
     const unusable = Object.assign(new Error('Memory ask reply was not usable: no JSON object'), {
       code: 'INVALID_REQUEST',
     })
     expect(memoryAskFailure(unusable)).toEqual({
       message: 'Memory ask reply was not usable: no JSON object',
-      reload: false,
+      reload: true,
     })
   })
 
@@ -400,5 +479,275 @@ describe('client ask-or-change surface', () => {
     expect(markup).toContain('aria-label="问 / 改记忆"')
     expect(markup).toContain('placeholder="例如：我们一般怎么组织表格？"')
     expect(html).toContain('修改只写成「待确认」条目')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Service-level proposal semantics. The runtime tests above prove which writes
+// the ask path issues; these prove what the one revision-fenced entry write
+// does with `supersedes`, which is the half that applies or discards them.
+// ---------------------------------------------------------------------------
+
+class ProposalMemoryStore implements AgentTeamStore {
+  private assistants = new Map<string, AssistantTemplate>()
+  private assistantInstances = new Map<string, AssistantInstance>()
+  private assistantSessions = new Map<string, AssistantSession>()
+  private assistantMemory = new Map<string, AssistantMemory>()
+  private teams = new Map<string, TeamAggregate>()
+  private messages = new Map<string, TeamMessage>()
+  private activities = new Map<string, TeamActivity>()
+  private operations = new Map<string, Operation>()
+
+  getAssistant(id: string) { return this.assistants.get(id) }
+  listAssistants() { return [...this.assistants.values()] }
+  async putAssistant(value: AssistantTemplate) { this.assistants.set(value.id, value) }
+  updateAssistant(id: string, update: (current: AssistantTemplate) => AssistantTemplate) {
+    return updateProposalMap(this.assistants, id, update)
+  }
+  async deleteAssistant(id: string) { return this.assistants.delete(id) }
+
+  getAssistantInstance(id: string) { return this.assistantInstances.get(id) }
+  listAssistantInstances() { return [...this.assistantInstances.values()] }
+  async putAssistantInstance(value: AssistantInstance) { this.assistantInstances.set(value.id, value) }
+  updateAssistantInstance(id: string, update: (current: AssistantInstance) => AssistantInstance) {
+    return updateProposalMap(this.assistantInstances, id, update)
+  }
+  async deleteAssistantInstance(id: string) { return this.assistantInstances.delete(id) }
+
+  getAssistantMemory(assistantId: string) { return this.assistantMemory.get(assistantId) }
+  async putAssistantMemory(value: AssistantMemory) { this.assistantMemory.set(value.assistantId, value) }
+  updateAssistantMemory(
+    assistantId: string,
+    update: (current: AssistantMemory) => AssistantMemory,
+  ) {
+    return updateProposalMap(this.assistantMemory, assistantId, update)
+  }
+
+  getAssistantSession(id: string) { return this.assistantSessions.get(id) }
+  listAssistantSessions() { return [...this.assistantSessions.values()] }
+  async putAssistantSession(value: AssistantSession) { this.assistantSessions.set(value.id, value) }
+  updateAssistantSession(id: string, update: (current: AssistantSession) => AssistantSession) {
+    return updateProposalMap(this.assistantSessions, id, update)
+  }
+
+  getTeam(id: string) { return this.teams.get(id) }
+  listTeams() { return [...this.teams.values()] }
+  async putTeam(value: TeamAggregate) { this.teams.set(value.id, value) }
+  updateTeam(id: string, update: (current: TeamAggregate) => TeamAggregate) {
+    return updateProposalMap(this.teams, id, update)
+  }
+  async deleteTeam(id: string) { return this.teams.delete(id) }
+
+  listMessages(teamId: string) {
+    return [...this.messages.values()].filter(value => value.teamId === teamId)
+  }
+  async putMessage(value: TeamMessage) { this.messages.set(value.id, value) }
+  async deleteMessage(id: string) { return this.messages.delete(id) }
+
+  listActivities(teamId: string) {
+    return [...this.activities.values()].filter(value => value.teamId === teamId)
+  }
+  async putActivity(value: TeamActivity) { this.activities.set(value.id, value) }
+  async deleteActivity(id: string) { return this.activities.delete(id) }
+
+  getOperation(id: string) { return this.operations.get(id) }
+  listOperations() { return [...this.operations.values()] }
+  async putOperation(value: Operation) { this.operations.set(value.id, value) }
+  updateOperation(id: string, update: (current: Operation) => Operation) {
+    return updateProposalMap(this.operations, id, update)
+  }
+  async deleteOperation(id: string) { return this.operations.delete(id) }
+}
+
+async function updateProposalMap<T>(
+  map: Map<string, T>,
+  id: string,
+  update: (current: T) => T,
+): Promise<T> {
+  const current = map.get(id)
+  if (current === undefined) throw new Error(`Unknown record '${id}'`)
+  const next = update(current)
+  map.set(id, next)
+  return next
+}
+
+const ASSISTANT = 'instance-1'
+const PROPOSAL_CONFIG: Config = {
+  maxRequestBytes: 128 * 1024,
+  sseHeartbeatMs: 20_000,
+  runtimeConcurrency: 4,
+  directMemberChatDefault: true,
+  assistantBuilderProvider: '',
+  assistantBuilderModel: '',
+  assistantBuilderAgentPresetId: '',
+  assistantBuilderPermissionPresetId: '',
+}
+
+function createProposalService(): AgentTeamService {
+  const ctx = new Context()
+  ctx.provide('llm', {
+    listProviders: () => [{ id: 'openai', name: 'OpenAI' }],
+    listModels: async () => [{ id: 'codex', name: 'Codex' }],
+    resolveModelInfo: async (provider: string, model: string) => ({ provider, model }),
+  } as never)
+  ctx.provide('agentPresets', {
+    list: async () => [{ id: 'default', name: 'Default' }],
+    resolve: async (id: string) => ({ id, name: id }),
+    acquireScope: async () => ({ key: { kind: 'preset-scope' }, [Symbol.asyncDispose]: async () => {} }),
+  } as never)
+  ctx.provide('tools', { get: () => undefined, schemas: () => [] } as never)
+  ctx.provide('skills', { list: async () => [] } as never)
+  ctx.provide('permissionPresets', {
+    names: ['standard'],
+    optionOf: (name: string) => ({ value: name, name }),
+    set: () => {},
+  } as never)
+  ctx.provide('agents', { get: () => undefined } as never)
+  ctx.provide('sessions', { flush: async () => {} } as never)
+  ctx.provide('sessionPersistence', { list: async () => [] } as never)
+  const workspace = {
+    id: 'workspace-1',
+    path: '/tmp/dsh-memory-ask-proposals',
+    title: 'Workspace',
+    status: async () => 'ok' as const,
+  }
+  ctx.provide('workspaceRegistry', {
+    get: (id: string) => id === workspace.id ? workspace : undefined,
+    list: () => [workspace],
+  } as never)
+  return new AgentTeamService(ctx as never, PROPOSAL_CONFIG, new ProposalMemoryStore())
+}
+
+/** Seed one assistant instance through the service, then a target + proposal. */
+async function seedProposal(service: AgentTeamService): Promise<{
+  target: MemoryEntry
+  proposal: MemoryEntry
+  proposalRevision: number
+}> {
+  const row = instance({ id: ASSISTANT })
+  const store = (service as unknown as { store: ProposalMemoryStore }).store
+  await store.putAssistantInstance(row)
+  const created = await service.writeAssistantMemoryEntry(ASSISTANT, {
+    title: 'Tables',
+    body: 'Render data as tables.',
+  }, { expectedRevision: 0 })
+  const proposal = await service.writeAssistantMemoryEntry(ASSISTANT, {
+    title: 'Tables',
+    body: 'Render every dataset as a table.',
+    status: 'proposed',
+    supersedes: created.entry.id,
+  }, { expectedRevision: created.memory.revision })
+  return {
+    target: created.entry,
+    proposal: proposal.entry,
+    proposalRevision: proposal.memory.revision,
+  }
+}
+
+describe('assistant memory revision proposals (service)', () => {
+  it('applies a proposal and supersedes its target in one fenced write', async () => {
+    const service = createProposalService()
+    const seeded = await seedProposal(service)
+
+    const accepted = await service.writeAssistantMemoryEntry(ASSISTANT, {
+      id: seeded.proposal.id,
+      title: seeded.proposal.title,
+      body: seeded.proposal.body,
+      status: 'active',
+    }, { expectedRevision: seeded.proposalRevision })
+
+    expect(accepted.memory.revision).toBe(seeded.proposalRevision + 1)
+    const entries = accepted.memory.entries ?? []
+    expect(entries.find(value => value.id === seeded.target.id)).toMatchObject({
+      status: 'superseded',
+      body: 'Render data as tables.',
+    })
+    expect(entries.find(value => value.id === seeded.proposal.id)).toMatchObject({
+      status: 'active',
+      body: 'Render every dataset as a table.',
+      supersedes: seeded.target.id,
+    })
+    // Only the accepted body is injected now.
+    expect(memoryPrompt(accepted.memory, 'main')).toContain('Render every dataset as a table.')
+    expect(memoryPrompt(accepted.memory, 'main')).not.toContain('Render data as tables.\n')
+
+    const journal = accepted.memory.journal ?? []
+    const last = journal.at(-1)
+    const previous = journal.at(-2)
+    expect(last).toMatchObject({ action: 'supersede', entryId: seeded.target.id, revision: accepted.memory.revision })
+    expect(previous).toMatchObject({ action: 'accept', entryId: seeded.proposal.id, revision: accepted.memory.revision })
+  })
+
+  it('leaves the target active when the proposal is ignored', async () => {
+    const service = createProposalService()
+    const seeded = await seedProposal(service)
+
+    await service.writeAssistantMemoryEntry(ASSISTANT, {
+      id: seeded.proposal.id,
+      title: seeded.proposal.title,
+      body: seeded.proposal.body,
+      status: 'archived',
+    }, { expectedRevision: seeded.proposalRevision })
+
+    const entries = service.getAssistantMemory(ASSISTANT)?.entries ?? []
+    // Ignoring is a decision about the proposal only: the accepted entry keeps
+    // its body and stays injected.
+    expect(entries.find(value => value.id === seeded.target.id)).toMatchObject({
+      status: 'active',
+      body: 'Render data as tables.',
+    })
+    expect(entries.find(value => value.id === seeded.proposal.id)).toMatchObject({
+      status: 'archived',
+    })
+  })
+
+  it('refuses to demote an active entry back to proposed', async () => {
+    const service = createProposalService()
+    const seeded = await seedProposal(service)
+    const current = service.getAssistantMemory(ASSISTANT)!
+
+    await expect(service.writeAssistantMemoryEntry(ASSISTANT, {
+      id: seeded.target.id,
+      title: seeded.target.title,
+      body: 'Rewritten in place.',
+      status: 'proposed',
+    }, { expectedRevision: current.revision })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    expect(service.getAssistantMemory(ASSISTANT)?.entries?.find(
+      value => value.id === seeded.target.id,
+    )).toMatchObject({ status: 'active', body: 'Render data as tables.' })
+  })
+
+  it('refuses a proposal that names an unknown target', async () => {
+    const service = createProposalService()
+    const seeded = await seedProposal(service)
+
+    await expect(service.writeAssistantMemoryEntry(ASSISTANT, {
+      title: 'Bogus',
+      body: 'Names a missing entry.',
+      status: 'proposed',
+      supersedes: 'missing-entry',
+    }, { expectedRevision: seeded.proposalRevision })).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    })
+    expect(service.getAssistantMemory(ASSISTANT)?.entries).toHaveLength(2)
+  })
+
+  it('rejects a stale acceptance instead of applying half of it', async () => {
+    const service = createProposalService()
+    const seeded = await seedProposal(service)
+
+    await expect(service.writeAssistantMemoryEntry(ASSISTANT, {
+      id: seeded.proposal.id,
+      title: seeded.proposal.title,
+      body: seeded.proposal.body,
+      status: 'active',
+    }, { expectedRevision: seeded.proposalRevision - 1 })).rejects.toMatchObject({
+      code: 'MEMORY_REVISION_CONFLICT',
+    })
+
+    const entries = service.getAssistantMemory(ASSISTANT)?.entries ?? []
+    expect(entries.find(value => value.id === seeded.target.id)?.status).toBe('active')
+    expect(entries.find(value => value.id === seeded.proposal.id)?.status).toBe('proposed')
   })
 })

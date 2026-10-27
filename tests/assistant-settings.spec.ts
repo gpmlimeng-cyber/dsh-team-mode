@@ -214,8 +214,9 @@ describe('assistant memory count row wiring', () => {
     // the count row's one read runs again.
     expect(memoryPanel).toContain("export const ASSISTANT_MEMORY_CHANGED_EVENT")
     // Entry writes (add/edit and archive share one announce tail), legacy text,
-    // undo, ask-or-change, 全部忽略, and the two adoption paths (采纳 and 全部采纳).
-    expect((memoryPanel.match(/announceMemoryChange\(assistantId\)/g) ?? [])).toHaveLength(7)
+    // undo, ask-or-change, 全部忽略, the two adoption paths (采纳 and 全部采纳),
+    // and the focus/visibility re-read a capture write cannot otherwise reach.
+    expect((memoryPanel.match(/announceMemoryChange\(assistantId\)/g) ?? [])).toHaveLength(8)
     expect(pane).toContain('window.addEventListener(ASSISTANT_MEMORY_CHANGED_EVENT, onChanged)')
     expect(pane).toContain('if (detail?.assistantId === assistant.id) setMemoryReadNonce')
     // The read effect is keyed by the nonce, so an event is a fresh read.
@@ -234,6 +235,23 @@ describe('assistant memory count row wiring', () => {
     // Batch ignore archives through the same revision-fenced entry write path.
     expect(memoryPanel).toContain("status: 'archived'")
     expect(memoryPanel).toContain('expectedRevision: expected')
+  })
+
+  it('re-reads the block and the count row when the window becomes visible again', () => {
+    // An auto-capture write happens with no pane action, so the pane gets the
+    // one signal it has: focus / visibilitychange. The announce is what reaches
+    // the count row, which lives outside the block.
+    expect(memoryPanel).toContain("window.addEventListener('focus', refresh)")
+    expect(memoryPanel).toContain("window.addEventListener('visibilitychange', refresh)")
+    expect(memoryPanel).toContain("document.visibilityState === 'hidden'")
+    expect(memoryPanel).toContain('void load()')
+  })
+
+  it('re-reads after every ask-or-change failure, not only on a conflict', () => {
+    // The change path writes proposals one at a time; a later rejection can
+    // leave earlier proposals stored, so a failure must re-read to show them.
+    expect(memoryPanel).toContain('export function memoryAskFailure')
+    expect(memoryPanel).toContain('return { message: memoryError(cause), reload: true }')
   })
 })
 
@@ -731,5 +749,34 @@ describe('assistant create dialog state', () => {
     const html = renderCreateBody({ warning: '助手已创建，但分组未写入：未知分组' })
     expect(html).toContain('role="status"')
     expect(html).toContain('助手已创建，但分组未写入：未知分组')
+  })
+})
+
+describe('shared memory entry card and team memory section', () => {
+  const read = (path: string): string =>
+    readFileSync(new URL(`../src/client/${path}`, import.meta.url), 'utf8')
+  const card = read('memory-entry-card.tsx')
+  const assistantPanel = read('assistant-memory-panel.tsx')
+  const teamPanel = read('teams/TeamPanel.tsx')
+
+  it('renders entries through one exported card in a shared module', () => {
+    expect(card).toContain('export function MemoryEntryCard')
+    expect(card).toContain('entry.supersedes !== undefined')
+    // Both panels import the shared module; neither keeps its own renderer.
+    expect(assistantPanel).toContain("from './memory-entry-card.js'")
+    expect(teamPanel).toContain("from '../memory-entry-card.js'")
+    expect(assistantPanel).not.toContain('function memoryEntryCard(')
+    expect(teamPanel).not.toContain('article className={css.memoryEntryCard}')
+    // The team panel keeps its historical import path as a re-export.
+    expect(teamPanel).toContain("export { MemoryEntryCard } from '../memory-entry-card.js'")
+  })
+
+  it('renders the team memory section even before any team memory exists', () => {
+    // No gating on `team.memory !== undefined`: the section owns the empty
+    // state and the 添加记忆 action, so a team that never wrote memory can.
+    expect(teamPanel).toContain('<TeamMemorySection team={team} onChanged={onChanged} />')
+    expect(teamPanel).not.toContain('(compact || team.memory !== undefined) &&')
+    expect(teamPanel).toContain('还没有团队记忆')
+    expect(teamPanel).toContain('添加记忆')
   })
 })
