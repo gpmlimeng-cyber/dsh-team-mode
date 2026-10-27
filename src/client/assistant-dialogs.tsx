@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Button, IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconSparkleRegular, IconProjectAddOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconSparkleRegular, IconProjectAddOutlineRegular, IconSearchOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
 import {
   ASSISTANT_CREATE_SECTIONS,
@@ -441,9 +441,22 @@ function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.E
 /** Skills and MCP granted to the assistant: what it may reach for. */
 function CapabilitiesSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.Element {
   const { draft, capabilityError } = props
+  const [query, setQuery] = useState('')
   return (
     <>
       <SectionHeading title="能力" hint="这个助手能用的技能与 MCP" />
+      {/* One search over both groups, like the shipped plugin page. */}
+      <label className={css.capabilitySearch}>
+        <IconSearchOutlineRegular size={14} />
+        <input
+          type="search"
+          value={query}
+          aria-label="搜索技能与 MCP"
+          placeholder="搜索技能与 MCP"
+          disabled={disabled}
+          onChange={event => { setQuery(event.target.value) }}
+        />
+      </label>
       <CapabilityPicker
         label={`技能（已选 ${draft.skillAllowlist.length} 个）`}
         icon={<IconSparkleRegular size={14} />}
@@ -456,6 +469,7 @@ function CapabilitiesSection(props: AssistantCreateBodyProps, disabled: boolean)
         loading={props.capabilitiesLoading}
         error={props.capabilitiesError}
         disabled={disabled}
+        query={query}
         onChange={next => { props.onDraftChange({ skillAllowlist: next }) }}
       />
       <CapabilityPicker
@@ -470,6 +484,7 @@ function CapabilitiesSection(props: AssistantCreateBodyProps, disabled: boolean)
         loading={props.capabilitiesLoading}
         error={props.capabilitiesError}
         disabled={disabled}
+        query={query}
         onChange={next => { props.onDraftChange({ mcpServers: next }) }}
       />
       {capabilityError !== undefined && (

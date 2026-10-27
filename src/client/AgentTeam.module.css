@@ -1935,26 +1935,80 @@ textarea.input {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0 16px;
-  max-height: 248px;
+  max-height: 240px;
   overflow: auto;
-  padding: 10px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-1);
+  padding: 0 0 0 20px;
   --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
   --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+}
+
+/* One capability group, shaped like the shipped plugin page: chevron + title
+   with its one-line explanation, a count on the right, hairline between groups. */
+.capabilityGroup {
+  padding: 4px 0;
+}
+
+.capabilityGroupSummary {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.capabilityGroupSummary::-webkit-details-marker {
+  display: none;
+}
+
+.capabilityGroupChevron {
+  flex: none;
+  margin-top: 3px;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 120ms ease;
+}
+
+.capabilityGroup[open] .capabilityGroupChevron {
+  transform: rotate(90deg);
+}
+
+.capabilityGroupCopy {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.capabilityGroupTitle {
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.capabilityGroupHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.capabilityGroupMeta {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 20px;
 }
 
 /* Search above the capability rows; the field is chrome, not a setting. */
 .capabilitySearch {
   display: flex;
   align-items: center;
-  gap: 6px;
-  height: 28px;
-  padding: 0 8px;
-  margin: 2px 0 6px;
+  gap: 8px;
+  height: 36px;
+  padding: 0 12px;
+  margin: 2px 0 4px;
   border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm);
+  border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-tertiary);
 }
@@ -1977,8 +2031,7 @@ textarea.input {
   align-items: center;
   gap: 10px;
   min-width: 0;
-  padding: 8px 4px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  padding: 6px 4px;
   cursor: pointer;
 }
 

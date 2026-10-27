@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
+  IconChevronRightOutlineRegular,
   IconProjectAddOutlineRegular,
   IconSearchOutlineRegular,
   IconSparkleRegular,
@@ -83,6 +84,7 @@ export function CapabilityPicker({
   disabled,
   onChange,
   icon = <IconSparkleRegular size={14} />,
+  query = '',
 }: {
   label: string
   ariaLabel: string
@@ -97,8 +99,12 @@ export function CapabilityPicker({
   onChange: (next: string[]) => void
   /** Tile glyph, matching the shipped plugin list's per-row icon. */
   icon?: ReactNode
+  /**
+   * Filter text owned by the section: the shipped plugin page has one search
+   * over the whole page, not one per group.
+   */
+  query?: string
 }): JSX.Element {
-  const [query, setQuery] = useState('')
   const allRows = loading || error !== undefined
     ? []
     : capabilityRows(selected, options, missingDetail)
@@ -114,19 +120,15 @@ export function CapabilityPicker({
   }, [allRows, query])
 
   return (
-    <div className={css.field}>
-      <span className={css.label}>{label}</span>
-      <label className={css.capabilitySearch}>
-        <IconSearchOutlineRegular size={14} />
-        <input
-          type="search"
-          value={query}
-          aria-label={`${label}：搜索`}
-          placeholder="搜索名称或描述"
-          disabled={disabled}
-          onChange={event => { setQuery(event.target.value) }}
-        />
-      </label>
+    <details className={css.capabilityGroup} open>
+      <summary className={css.capabilityGroupSummary}>
+        <IconChevronRightOutlineRegular size={12} className={css.capabilityGroupChevron} />
+        <span className={css.capabilityGroupCopy}>
+          <span className={css.capabilityGroupTitle}>{label}</span>
+          <span className={css.capabilityGroupHint}>{hint}</span>
+        </span>
+        <span className={css.capabilityGroupMeta}>已选 {selected.length} 个</span>
+      </summary>
       <div className={css.skillPicker} role="group" aria-label={ariaLabel}>
         {loading && <span className={css.hint}>正在读取该 Agent Preset 的目录…</span>}
         {!loading && error !== undefined && (
@@ -161,8 +163,7 @@ export function CapabilityPicker({
           </div>
         ))}
       </div>
-      <span className={css.hint}>{hint}</span>
-    </div>
+    </details>
   )
 }
 
