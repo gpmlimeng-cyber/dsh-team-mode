@@ -120,8 +120,8 @@ describe('team avatar identity', () => {
     const solo = build(1)
     expect(solo.seats.map(seat => seat.kind)).toEqual(['face', 'you'])
     expect(solo.seats[0]?.size).toBe(24)
-    // The disc presses into the face, so the face carries a cut-out.
-    expect(solo.seats[0]?.holes.length).toBe(1)
+    // Neighbours are not cut out of each other: the ring separates them instead.
+    expect(solo.seats[0]?.holes).toEqual([])
     // No members: one neutral 36px seat, never an empty box.
     expect(teamAvatarStack({})).toEqual({
       faces: [],
@@ -131,18 +131,14 @@ describe('team avatar identity', () => {
     })
   })
 
-  it('cuts the neighbour gap into the earlier seat and draws what it counts', () => {
-    const two = build(2)
-    expect(two.seats[0]?.holes).toHaveLength(1)
-    expect(two.seats[0]?.holes[0]).toContain('radial-gradient')
-    expect(two.seats[1]?.holes).toHaveLength(0)
-    const four = build(4)
-    expect(four.seats[0]?.holes).toHaveLength(2)
-    expect(four.seats[3]?.holes).toHaveLength(0)
-    // `data-count` is seats.length: every drawn face, the +N disc, and — for a
-    // lone member — the companion disc that stands in for the reader.
+  it('never masks a neighbour out of an earlier seat, and draws what it counts', () => {
+    // A bite out of the earlier face reads as a damaged avatar with our mascots,
+    // so no seat carries holes; the 1px inset ring does the separating.
     for (const count of [1, 2, 3, 4, 5, 12]) {
       const stack = build(count)
+      for (const seat of stack.seats) expect(seat.holes).toEqual([])
+      // `data-count` is seats.length: faces, the +N disc, plus the lone
+      // member's companion disc.
       const drawn = stack.faces.length + (stack.extra > 0 ? 1 : 0) + (count === 1 ? 1 : 0)
       expect(stack.seats).toHaveLength(drawn)
     }

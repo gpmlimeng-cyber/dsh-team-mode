@@ -169,7 +169,11 @@ export function teamAvatarStack(
   // "you" disc in the opposite corner (t1 doc §1.2-4, mark.js:140-144).
   const solo = total === 1
   const base = clusterSeats(Math.min(total === 1 ? 2 : total, 4))
-  const holes = clusterHoles(base)
+  // No neighbour cut-outs: the reference masks the earlier face where the next
+  // one lands, but with our mascots (which fill their tile) that bite reads as a
+  // damaged avatar rather than a seam. The 1px inset ring keeps neighbours
+  // readable instead.
+  const holes = base.map((): string[] => [])
   // The `+N` disc sits at 92% of its seat with a 4% margin.
   const disc = (seat: { left: number; top: number; size: number }): { left: number; top: number; size: number } => ({
     left: seat.left + seat.size * 0.04,
