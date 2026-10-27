@@ -12302,6 +12302,21 @@ textarea.sidebarGroupBriefInput {
   white-space: nowrap;
 }
 
+/* A read that failed is reported as itself — never as an empty group — so the
+   notice carries the native retry button on the same row. */
+.groupBatchNotice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 /* ── Sidebar drag & drop ──────────────────────────────────────────────────
    The same affordances the native list draws: the source row dims, the header
    under the pointer highlights, and a dragged group header shows a 1px

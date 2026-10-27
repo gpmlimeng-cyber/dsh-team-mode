@@ -293,14 +293,29 @@ export function insertGroupOrder(
   return rest
 }
 
+/** One model reference; the thinking list is the union across these. */
+export interface GroupBatchModelRef {
+  provider: string
+  model: string
+}
+
 /** One assistant a group batch write targets, as the result list shows it. */
 export interface GroupBatchMember {
   id: string
   name: string
+  /**
+   * The model this assistant uses today. A thinking level is not a property of
+   * the batch: it is validated per assistant against this model, so the dialog
+   * needs the references to offer the union and the Host rejects the rows that
+   * cannot serve the picked level.
+   */
+  model: GroupBatchModelRef
 }
 
 /** What one batch write did to one assistant; no `error` means it landed. */
-export interface GroupBatchResult extends GroupBatchMember {
+export interface GroupBatchResult {
+  id: string
+  name: string
   error?: string
 }
 
@@ -315,15 +330,78 @@ export interface GroupBatchResult extends GroupBatchMember {
 export function groupBatchMembers<T>(
   group: string,
   items: readonly T[],
-  project: (item: T) => { id: string; name: string; group?: string; status: string },
+  project: (item: T) => {
+    id: string
+    name: string
+    group?: string
+    status: string
+    provider: string
+    model: string
+  },
 ): GroupBatchMember[] {
   const members: GroupBatchMember[] = []
   for (const item of items) {
     const row = project(item)
     if (row.group !== group || row.status === 'archived') continue
-    members.push({ id: row.id, name: row.name })
+    members.push({
+      id: row.id,
+      name: row.name,
+      model: { provider: row.provider, model: row.model },
+    })
   }
   return members
+}
+
+/**
+ * The distinct models a batch reads thinking levels from, in list order: the
+ * models the group's assistants already use, plus a model the user just picked
+ * (so a model change and its levels can travel in one apply). Duplicates are
+ * dropped, because one read per model is enough.
+ */
+export function groupBatchModelRefs(
+  members: readonly GroupBatchMember[],
+  extra?: GroupBatchModelRef,
+): GroupBatchModelRef[] {
+  const refs: GroupBatchModelRef[] = []
+  const seen = new Set<string>()
+  const add = (ref: GroupBatchModelRef): void => {
+    // The NUL separator cannot occur in a provider or model id, so two
+    // references can never collide into one key.
+    const key = `${ref.provider}\u0000${ref.model}`
+    if (seen.has(key)) return
+    seen.add(key)
+    refs.push(ref)
+  }
+  for (const member of members) add(member.model)
+  if (extra !== undefined) add(extra)
+  return refs
+}
+
+/** One thinking level a batch can send. */
+export interface GroupBatchLevel {
+  id: string
+  name: string
+}
+
+/**
+ * The thinking levels one batch offers: the union across the models the group's
+ * assistants use, in first-seen order with the first name for each id. A level
+ * is a plain id the Host validates per assistant, so a row whose own model does
+ * not serve it is refused on that row instead of blocking the whole batch.
+ */
+export function groupBatchLevels(
+  capabilities: readonly (readonly GroupBatchLevel[])[],
+): GroupBatchLevel[] {
+  const levels: GroupBatchLevel[] = []
+  const seen = new Set<string>()
+  for (const efforts of capabilities) {
+    for (const effort of efforts) {
+      if (seen.has(effort.id)) continue
+      seen.add(effort.id)
+      levels.push({ id: effort.id, name: effort.name })
+    }
+  }
+  return levels
 }
 
 /** The engine fields one apply writes; an absent field keeps its stored value. */
@@ -364,10 +442,11 @@ export function groupBatchPatch(draft: GroupBatchDraft): GroupBatchPatch | undef
  * Write one patch to every member, one assistant at a time, and report each
  * outcome in member order. A refusal is recorded and the loop continues: the
  * batch has no rollback, so an already-updated assistant stays updated while a
- * refused one keeps its own values and shows the Host's reason.
+ * refused one keeps its own values and shows the Host's reason. A batch therefore
+ * only needs the ids and names, not the model references it was read from.
  */
 export async function applyGroupBatch(
-  members: readonly GroupBatchMember[],
+  members: readonly { id: string; name: string }[],
   patch: GroupBatchPatch,
   write: (id: string, patch: GroupBatchPatch) => Promise<unknown>,
 ): Promise<GroupBatchResult[]> {

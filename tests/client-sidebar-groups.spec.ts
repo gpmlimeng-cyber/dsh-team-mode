@@ -8,7 +8,9 @@ import {
   SIDEBAR_GROUP_MAX_CHARS,
   UNGROUPED_PARTITION_ID,
   applyGroupBatch,
+  groupBatchLevels,
   groupBatchMembers,
+  groupBatchModelRefs,
   groupBatchPatch,
   groupMembershipCandidates,
   groupMembershipChanges,
@@ -19,6 +21,7 @@ import {
   sidebarGroupBriefUsage,
   sidebarGroupNameError,
   sidebarPartitions,
+  type GroupBatchMember,
   type SidebarGroupCandidate,
 } from '../src/client/sidebar-groups.js'
 
@@ -531,19 +534,38 @@ interface BatchRow {
   name: string
   group?: string
   status: string
+  provider: string
+  model: string
 }
 
-const batchRow = (id: string, status: string, group?: string): BatchRow => ({
+const batchRow = (
+  id: string,
+  status: string,
+  group?: string,
+  provider = 'deepseek',
+  model = 'deepseek-chat',
+): BatchRow => ({
   id,
   name: `name-${id}`,
   ...(group === undefined ? {} : { group }),
   status,
+  provider,
+  model,
 })
-const batchProject = (value: BatchRow): { id: string; name: string; group?: string; status: string } => ({
+const batchProject = (value: BatchRow): {
+  id: string
+  name: string
+  group?: string
+  status: string
+  provider: string
+  model: string
+} => ({
   id: value.id,
   name: value.name,
   ...(value.group === undefined ? {} : { group: value.group }),
   status: value.status,
+  provider: value.provider,
+  model: value.model,
 })
 
 describe('groupBatchMembers', () => {
@@ -551,13 +573,25 @@ describe('groupBatchMembers', () => {
     batchRow('a1', 'idle', 'work'),
     batchRow('elsewhere', 'idle', 'play'),
     batchRow('loose', 'idle'),
-    batchRow('a2', 'active', 'work'),
+    batchRow('a2', 'active', 'work', 'other', 'other-large'),
     batchRow('gone', 'archived', 'work'),
   ]
 
   it('lists only that group, and never an archived row', () => {
-    expect(groupBatchMembers('work', items, batchProject))
-      .toEqual([{ id: 'a1', name: 'name-a1' }, { id: 'a2', name: 'name-a2' }])
+    expect(groupBatchMembers('work', items, batchProject)).toEqual([
+      { id: 'a1', name: 'name-a1', model: { provider: 'deepseek', model: 'deepseek-chat' } },
+      { id: 'a2', name: 'name-a2', model: { provider: 'other', model: 'other-large' } },
+    ])
+  })
+
+  it('carries each row\'s own model, so a mixed-model group is visible', () => {
+    // The thinking list is a union over these references; dropping them would
+    // force the dialog back to one model's levels.
+    expect(groupBatchMembers('work', items, batchProject).map(member => member.model))
+      .toEqual([
+        { provider: 'deepseek', model: 'deepseek-chat' },
+        { provider: 'other', model: 'other-large' },
+      ])
   })
 
   it('takes no search query, so a typed filter cannot shrink the batch', () => {
@@ -569,6 +603,72 @@ describe('groupBatchMembers', () => {
 
   it('answers an empty list for a group without members', () => {
     expect(groupBatchMembers('empty', items, batchProject)).toEqual([])
+  })
+})
+
+describe('groupBatchModelRefs', () => {
+  const member = (id: string, provider: string, model: string): GroupBatchMember => ({
+    id,
+    name: id,
+    model: { provider, model },
+  })
+
+  it('lists each model once, in member order', () => {
+    const members = [
+      member('a', 'deepseek', 'deepseek-chat'),
+      member('b', 'other', 'other-large'),
+      member('c', 'deepseek', 'deepseek-chat'),
+    ]
+
+    expect(groupBatchModelRefs(members)).toEqual([
+      { provider: 'deepseek', model: 'deepseek-chat' },
+      { provider: 'other', model: 'other-large' },
+    ])
+  })
+
+  it('appends a model picked in the dialog, without duplicating one already used', () => {
+    const members = [member('a', 'deepseek', 'deepseek-chat')]
+
+    expect(groupBatchModelRefs(members, { provider: 'third', model: 'third-mini' }))
+      .toEqual([
+        { provider: 'deepseek', model: 'deepseek-chat' },
+        { provider: 'third', model: 'third-mini' },
+      ])
+    expect(groupBatchModelRefs(members, { provider: 'deepseek', model: 'deepseek-chat' }))
+      .toEqual([{ provider: 'deepseek', model: 'deepseek-chat' }])
+  })
+
+  it('answers no references for an empty group', () => {
+    expect(groupBatchModelRefs([])).toEqual([])
+  })
+})
+
+describe('groupBatchLevels', () => {
+  it('unions the levels of every model in the group, first seen wins', () => {
+    expect(groupBatchLevels([
+      [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }],
+      [{ id: 'high', name: 'High（另一个模型）' }, { id: 'max', name: 'Max' }],
+    ])).toEqual([
+      { id: 'low', name: 'Low' },
+      { id: 'high', name: 'High' },
+      { id: 'max', name: 'Max' },
+    ])
+  })
+
+  it('offers one level for a mixed-model group where only one model serves it', () => {
+    // m1 serves 'high', m2 serves only 'low'. The union is still offered and the
+    // Host refuses m2's row on its own, which is the designed per-row rejection.
+    const levels = groupBatchLevels([
+      [{ id: 'high', name: 'High' }],
+      [{ id: 'low', name: 'Low' }],
+    ])
+
+    expect(levels.map(level => level.id)).toEqual(['high', 'low'])
+  })
+
+  it('answers no levels when no model serves any (or a read failed)', () => {
+    expect(groupBatchLevels([])).toEqual([])
+    expect(groupBatchLevels([[], []])).toEqual([])
   })
 })
 
@@ -637,6 +737,37 @@ describe('applyGroupBatch', () => {
       { id: 'a2', name: '助手二', error: 'Unknown permission preset' },
       { id: 'a3', name: '助手三' },
     ])
+  })
+
+  it('applies a thinking-only level to a mixed-model group, refusing only the rows that cannot serve it', async () => {
+    // Two models: one serves 'high', the other does not. The batch sends the
+    // level alone — no provider/model — and the Host's refusal lands on that
+    // row while its neighbours still apply.
+    const patch = groupBatchPatch({ reasoningEffort: 'high' })
+    expect(patch).toEqual({ reasoningEffort: 'high' })
+    expect(Object.keys(patch ?? {})).not.toContain('provider')
+    expect(Object.keys(patch ?? {})).not.toContain('model')
+
+    const written: string[] = []
+    const results = await applyGroupBatch(
+      [
+        { id: 'small-model', name: '小模型助手' },
+        { id: 'big-model', name: '大模型助手' },
+      ],
+      patch as { reasoningEffort: string },
+      async id => {
+        written.push(id)
+        if (id === 'small-model') {
+          throw new Error("MODEL_REFERENCE_INVALID: model 'deepseek-chat' does not support effort 'high'")
+        }
+        return undefined
+      },
+    )
+
+    expect(written).toEqual(['small-model', 'big-model'])
+    expect(results.find(result => result.id === 'small-model')?.error)
+      .toContain('does not support effort')
+    expect(results.find(result => result.id === 'big-model')?.error).toBeUndefined()
   })
 
   it('names a non-Error refusal instead of dropping it', async () => {
@@ -709,6 +840,53 @@ describe('group batch settings source contract', () => {
     expect(dialog).toContain('个被拒绝')
     expect(dialog).toContain('还没有助手')
     expect(dialog).toContain('data-dsh-group-batch-empty')
+  })
+
+  it('treats thinking as its own axis over the group\'s models', () => {
+    // The union, read from every model the group uses — not from whichever model
+    // the model picker happens to hold.
+    expect(dialog).toContain('groupBatchModelRefs(')
+    expect(dialog).toContain('groupBatchLevels(')
+    expect(dialog).toContain("callAgentTeam('catalog.model.get'")
+    // The old rule: thinking disabled until a model was picked, levels from that
+    // one model. Both are gone.
+    expect(dialog).not.toContain('disabled={locked || pickedModel')
+    expect(dialog).not.toContain('useModelCapabilities')
+    expect(dialog).not.toContain('modelControlReasoning')
+    // A thinking pick is its own row value; the model picker stays untouched.
+    expect(dialog).toContain("options={thinkingOptions}")
+    expect(dialog).toContain("label: '模型默认'")
+    expect(dialog).toContain('档位来自组内各模型的并集')
+    // Per-row rejection stays the Host's call.
+    expect(dialog).toContain('不支持所选档位的助手会被单独拒绝')
+  })
+
+  it('offers a thinking-only patch without pairing it with a model', () => {
+    // groupBatchPatch already proves the patch shape; this pins that the dialog
+    // does not synthesise a model reference when only the level is picked.
+    expect(dialog).toContain('...(pickedProvider === \'\' || pickedModel === \'\'')
+    expect(dialog).toContain('reasoningEffort: thinkingPick.reasoningEffort')
+  })
+
+  it('never turns a failed catalog onto the empty state', () => {
+    // Three reads settle separately, so one failure cannot fake an empty group.
+    expect(dialog).toContain('Promise.allSettled')
+    expect(dialog).toContain('data-dsh-group-batch-failed-load')
+    expect(dialog).toContain('读取助手列表失败')
+    expect(dialog).toContain('重试')
+    expect(dialog).toContain('data-dsh-group-batch-catalog-error')
+    // The empty state is only reachable from a successful roster read.
+    const emptyAt = dialog.indexOf('data-dsh-group-batch-empty')
+    const failedAt = dialog.indexOf('data-dsh-group-batch-failed-load')
+    expect(failedAt).toBeGreaterThan(-1)
+    expect(emptyAt).toBeGreaterThan(failedAt)
+    expect(dialog).toContain('membersError !== undefined')
+  })
+
+  it('says teams are untouched when the group holds teams but no assistants', () => {
+    expect(dialog).toContain("callAgentTeam('team.list'")
+    expect(dialog).toContain('个团队，没有助手')
+    expect(dialog.match(/团队不受影响/g)?.length ?? 0).toBeGreaterThanOrEqual(2)
   })
 
   it('uses the native modal/button and no page-level layer', () => {

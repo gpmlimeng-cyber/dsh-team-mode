@@ -26,10 +26,8 @@ import {
   modelControlEffortRow,
   modelControlOptions,
   modelControlPick,
-  modelControlReasoning,
   type ModelControlModel,
 } from './model-control.js'
-import { useModelCapabilities } from './model-reasoning.js'
 import { SelectControl } from './select-control.js'
 import type { SelectControlOption } from './select-control.js'
 import { AnimatedModal } from './shared.js'
@@ -38,7 +36,9 @@ import {
   SIDEBAR_GROUP_MAX_CHARS,
   UNGROUPED_PARTITION_ID,
   applyGroupBatch,
+  groupBatchLevels,
   groupBatchMembers,
+  groupBatchModelRefs,
   groupBatchPatch,
   groupCreateRows,
   groupCreateSelection,
@@ -50,6 +50,7 @@ import {
   sidebarGroupBriefUsage,
   sidebarGroupNameError,
   toggleGroupCreateSelection,
+  type GroupBatchLevel,
   type GroupBatchMember,
   type GroupBatchResult,
   type GroupCreateRow,
@@ -708,42 +709,97 @@ function GroupBatchDialog({
 }): JSX.Element {
   const [catalog, setCatalog] = useState<CatalogView>()
   const [members, setMembers] = useState<GroupBatchMember[]>([])
+  const [groupTeams, setGroupTeams] = useState<number>()
   const [loaded, setLoaded] = useState(false)
   const [modelRow, setModelRow] = useState('')
   const [thinkingRow, setThinkingRow] = useState('')
   const [permission, setPermission] = useState('')
+  const [levels, setLevels] = useState<GroupBatchLevel[]>([])
+  const [levelsLoading, setLevelsLoading] = useState(false)
+  const [levelsError, setLevelsError] = useState<string>()
+  const [membersError, setMembersError] = useState<string>()
+  const [catalogError, setCatalogError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [results, setResults] = useState<GroupBatchResult[]>()
-  const [error, setError] = useState<string>()
+  const [reloadToken, setReloadToken] = useState(0)
 
+  // Three independent reads, settled separately on purpose: a failed catalog
+  // must not empty the roster (that reads as "this group has no assistants"),
+  // and a failed roster must not leave the dialog claiming both.
   useEffect(() => {
     let cancelled = false
-    void Promise.all([
+    setLoaded(false)
+    setMembersError(undefined)
+    setCatalogError(undefined)
+    void Promise.allSettled([
       callAgentTeam('catalog.get'),
       callAgentTeam('assistant.instance.list'),
-    ]).then(([nextCatalog, page]) => {
+      callAgentTeam('team.list'),
+    ]).then(([catalogResult, memberResult, teamResult]) => {
       if (cancelled) return
-      setCatalog(nextCatalog)
-      setMembers(groupBatchMembers(group, page.items, item => ({
-        id: item.id,
-        name: assistantInstanceName(item),
-        ...(item.group === undefined ? {} : { group: item.group }),
-        status: item.status,
-      })))
-    }).catch(cause => {
-      if (!cancelled) setError(messageOf(cause))
+      if (catalogResult.status === 'fulfilled') setCatalog(catalogResult.value)
+      else setCatalogError(messageOf(catalogResult.reason))
+      if (memberResult.status === 'fulfilled') {
+        setMembers(groupBatchMembers(group, memberResult.value.items, item => ({
+          id: item.id,
+          name: assistantInstanceName(item),
+          ...(item.group === undefined ? {} : { group: item.group }),
+          status: item.status,
+          provider: item.assistantSnapshot.provider,
+          model: item.assistantSnapshot.model,
+        })))
+      } else {
+        setMembersError(messageOf(memberResult.reason))
+      }
+      // Teams are only counted, never written: the empty-state copy says so.
+      setGroupTeams(teamResult.status === 'fulfilled'
+        ? teamResult.value.items.filter(team => team.group === group).length
+        : undefined)
     }).finally(() => {
       if (!cancelled) setLoaded(true)
     })
     return () => { cancelled = true }
-  }, [group])
+  }, [group, reloadToken])
 
   const modelPick = modelRow === '' ? undefined : modelControlPick(modelRow)
   const pickedProvider = modelPick?.provider ?? ''
   const pickedModel = modelPick?.model ?? ''
-  // The level list is the picked model's own, so it is read from that model only.
-  const capabilities = useModelCapabilities(pickedProvider, pickedModel)
-  const reasoning = modelControlReasoning(capabilities.value)
+  // A thinking level is a property of the assistants' models, not of the batch:
+  // the menu is the union over every model the group uses (plus a model picked
+  // here), so a mixed-model group can still get one level in one apply.
+  const modelRefs = useMemo(() => groupBatchModelRefs(
+    members,
+    pickedProvider === '' || pickedModel === ''
+      ? undefined
+      : { provider: pickedProvider, model: pickedModel },
+  ), [members, pickedModel, pickedProvider])
+
+  useEffect(() => {
+    let cancelled = false
+    if (modelRefs.length === 0) {
+      setLevels([])
+      setLevelsError(undefined)
+      setLevelsLoading(false)
+      return () => { cancelled = true }
+    }
+    setLevelsLoading(true)
+    setLevelsError(undefined)
+    void Promise.allSettled(modelRefs.map(ref => (
+      callAgentTeam('catalog.model.get', { provider: ref.provider, model: ref.model })
+    ))).then(settled => {
+      if (cancelled) return
+      setLevels(groupBatchLevels(settled.map(result => (
+        result.status === 'fulfilled' ? result.value.reasoning?.efforts ?? [] : []
+      ))))
+      const missing = settled.filter(result => result.status === 'rejected').length
+      setLevelsError(missing === 0
+        ? undefined
+        : `有 ${missing} 个模型的思考档位没读出来，列表可能不完整。`)
+    }).finally(() => {
+      if (!cancelled) setLevelsLoading(false)
+    })
+    return () => { cancelled = true }
+  }, [modelRefs])
 
   const modelOptions: SelectControlOption[] = useMemo(() => {
     const rows: ModelControlModel[] = (catalog?.providers ?? []).flatMap(provider => (
@@ -758,18 +814,18 @@ function GroupBatchDialog({
     return [{ value: '', label: '保持不变' }, ...modelControlOptions(rows, undefined)]
   }, [catalog])
 
+  // The union is offered whatever model is picked, so a thinking-only batch on
+  // a mixed-model group is a normal case instead of a disabled control. The
+  // clearing row says "模型默认" without naming one: each assistant falls back
+  // to its own model's default.
   const thinkingOptions: SelectControlOption[] = useMemo(() => [
     { value: '', label: '保持不变' },
-    ...(reasoning === undefined
-      ? []
-      : [
-          { value: modelControlEffortRow(''), label: reasoning.defaultLabel },
-          ...reasoning.levels.map(level => ({
-            value: modelControlEffortRow(level.id),
-            label: level.label,
-          })),
-        ]),
-  ], [reasoning])
+    { value: modelControlEffortRow(''), label: '模型默认' },
+    ...levels.map(level => ({
+      value: modelControlEffortRow(level.id),
+      label: level.name,
+    })),
+  ], [levels])
 
   const permissionOptions: SelectControlOption[] = useMemo(() => [
     { value: '', label: '保持不变' },
@@ -798,8 +854,9 @@ function GroupBatchDialog({
   const apply = async (): Promise<void> => {
     if (locked || patch === undefined || members.length === 0) return
     setBusy(true)
-    setError(undefined)
     setResults(undefined)
+    // applyGroupBatch never throws for a refused row, so there is no catch here:
+    // every outcome — including the Host's reason — comes back as a result row.
     const next = await applyGroupBatch(members, patch, (id, value) => (
       callAgentTeam('assistant.instance.update', { id, value })
     ))
@@ -817,7 +874,7 @@ function GroupBatchDialog({
       closeLabel="关闭"
       className={css.sidebarGroupDialog ?? ''}
       contentClassName={css.sidebarGroupDialogContent ?? ''}
-      footer={done || (loaded && members.length === 0)
+      footer={done || (loaded && (members.length === 0 || membersError !== undefined))
         ? (
           <Button variant="primary" type="button" onClick={onClose}>
             {done ? '完成' : '关闭'}
@@ -839,115 +896,128 @@ function GroupBatchDialog({
     >
       {!loaded
         ? <div className={css.dialogEmpty}>正在读取分组里的助手…</div>
-        : members.length === 0
+        : membersError !== undefined
           ? (
-            <div className={css.dialogEmpty} data-dsh-group-batch-empty>
-              「{group}」里还没有助手。先用分组标题旁的 + 把助手移进来，再批量设置。
+            // A failed roster read is not an empty group: saying "no assistants"
+            // here would be a lie the user cannot tell apart from the truth.
+            <div className={css.groupBatchNotice} role="alert" data-dsh-group-batch-failed-load>
+              <span>读取助手列表失败：{membersError}</span>
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => { setReloadToken(current => current + 1) }}
+              >
+                重试
+              </Button>
             </div>
           )
-          : (
-            <div className={css.groupBatchForm} data-dsh-group-batch>
-              <div className={css.groupBatchFields}>
-                <GroupBatchField
-                  label="模型"
-                  hint="模型和它的提供方一起写入，避免出现只有一半的模型引用。"
-                >
-                  <SelectControl
-                    ariaLabel="模型"
-                    value={modelRow}
-                    options={modelOptions}
-                    disabled={locked}
-                    onChange={next => {
-                      setModelRow(next)
-                      // The level rows belong to the model that was picked, so a
-                      // new model clears the level instead of carrying it over.
-                      setThinkingRow('')
-                    }}
-                  />
-                </GroupBatchField>
-                <GroupBatchField
-                  label="思考模式"
-                  hint={pickedModel === ''
-                    ? '先选择模型：思考档位跟着模型走，由模型自己列出。'
-                    : capabilities.loading
-                      ? '正在读取这个模型的思考档位…'
-                      : capabilities.error === undefined
-                        ? reasoning === undefined
-                          ? '这个模型没有可选的思考档位。'
-                          : undefined
-                        : `读取思考档位失败：${capabilities.error}`}
-                >
-                  <SelectControl
-                    ariaLabel="思考模式"
-                    value={thinkingRow}
-                    options={thinkingOptions}
-                    disabled={locked || pickedModel === ''}
-                    onChange={setThinkingRow}
-                  />
-                </GroupBatchField>
-                <GroupBatchField
-                  label="权限"
-                  hint="权限预设必须存在于当前目录；不存在的会被 Host 拒绝。"
-                >
-                  <SelectControl
-                    ariaLabel="权限"
-                    value={permission}
-                    options={permissionOptions}
-                    disabled={locked}
-                    onChange={setPermission}
-                  />
-                </GroupBatchField>
-                {patch === undefined && (
-                  <p className={css.groupBatchHint}>至少选择一项要修改的设置。</p>
-                )}
+          : members.length === 0
+            ? (
+              <div className={css.dialogEmpty} data-dsh-group-batch-empty>
+                {groupTeams === undefined || groupTeams === 0
+                  ? `「${group}」里还没有助手。用分组标题旁的 + 添加助手；批量设置只改助手，团队不受影响。`
+                  : `「${group}」里有 ${groupTeams} 个团队，没有助手。批量设置只改助手，团队不受影响。`}
               </div>
-              <section className={css.sidebarGroupSegment}>
-                <h4 className={css.sidebarGroupSegmentTitle}>
-                  组内助手（{members.length}）
-                  {done && (
-                    <span className={css.groupBatchSummary} role="status">
-                      已更新 {updated} 个，{failures.length} 个被拒绝
-                    </span>
+            )
+            : (
+              <div className={css.groupBatchForm} data-dsh-group-batch>
+                <div className={css.groupBatchFields}>
+                  <GroupBatchField
+                    label="模型"
+                    hint="模型和它的提供方一起写入，避免出现只有一半的模型引用。"
+                  >
+                    <SelectControl
+                      ariaLabel="模型"
+                      value={modelRow}
+                      options={modelOptions}
+                      disabled={locked}
+                      onChange={setModelRow}
+                    />
+                  </GroupBatchField>
+                  {/* 思考模式 is its own axis: the menu is the union over the
+                      group's models, so a mixed-model group can pick one level
+                      without touching any model. */}
+                  <GroupBatchField
+                    label="思考模式"
+                    hint={levelsLoading
+                      ? '正在读取组内模型的思考档位…'
+                      : levelsError !== undefined
+                        ? levelsError
+                        : levels.length === 0
+                          ? '组内助手用的模型都没有可选的思考档位。'
+                          : '档位来自组内各模型的并集；不支持所选档位的助手会被单独拒绝。'}
+                  >
+                    <SelectControl
+                      ariaLabel="思考模式"
+                      value={thinkingRow}
+                      options={thinkingOptions}
+                      disabled={locked}
+                      onChange={setThinkingRow}
+                    />
+                  </GroupBatchField>
+                  <GroupBatchField
+                    label="权限"
+                    hint="权限预设必须存在于当前目录；不存在的会被 Host 拒绝。"
+                  >
+                    <SelectControl
+                      ariaLabel="权限"
+                      value={permission}
+                      options={permissionOptions}
+                      disabled={locked}
+                      onChange={setPermission}
+                    />
+                  </GroupBatchField>
+                  {catalogError !== undefined && (
+                    <p className={css.groupBatchHint} data-dsh-group-batch-catalog-error>
+                      读取模型/权限目录失败：{catalogError}。现在只能改思考模式；重试后可以选模型和权限。
+                    </p>
                   )}
-                </h4>
-                <div className={css.groupBatchList}>
-                  {members.map(member => {
-                    const failure = failureOf.get(member.id)
-                    return (
-                      <div
-                        key={member.id}
-                        className={css.groupBatchRow}
-                        data-dsh-group-batch-row={member.id}
-                      >
-                        <span className={css.groupBatchName}>{member.name}</span>
-                        {done && (failure === undefined
-                          ? <span className={css.groupBatchOk}>已更新</span>
-                          : (
-                            <span
-                              className={css.groupBatchFailed}
-                              title={failure}
-                              data-dsh-group-batch-failed
-                            >
-                              {failure}
-                            </span>
-                          ))}
-                      </div>
-                    )
-                  })}
+                  {patch === undefined && (
+                    <p className={css.groupBatchHint}>至少选择一项要修改的设置。</p>
+                  )}
                 </div>
-                {failures.length > 0 && (
-                  <p className={css.groupBatchHint}>
-                    被拒绝的助手保持原来的设置；它们各自的拒绝原因就在上面那一行。
-                  </p>
-                )}
-              </section>
-            </div>
-          )}
-      {error !== undefined && (
-        <div className={css.inlineError} role="alert">
-          <IconWarningOutlineRegular size={12} /> {error}
-        </div>
-      )}
+                <section className={css.sidebarGroupSegment}>
+                  <h4 className={css.sidebarGroupSegmentTitle}>
+                    组内助手（{members.length}）
+                    {done && (
+                      <span className={css.groupBatchSummary} role="status">
+                        已更新 {updated} 个，{failures.length} 个被拒绝
+                      </span>
+                    )}
+                  </h4>
+                  <div className={css.groupBatchList}>
+                    {members.map(member => {
+                      const failure = failureOf.get(member.id)
+                      return (
+                        <div
+                          key={member.id}
+                          className={css.groupBatchRow}
+                          data-dsh-group-batch-row={member.id}
+                        >
+                          <span className={css.groupBatchName}>{member.name}</span>
+                          {done && (failure === undefined
+                            ? <span className={css.groupBatchOk}>已更新</span>
+                            : (
+                              <span
+                                className={css.groupBatchFailed}
+                                title={failure}
+                                data-dsh-group-batch-failed
+                              >
+                                {failure}
+                              </span>
+                            ))}
+                        </div>
+                      )
+                    })}
+                  </div>
+                  {failures.length > 0 && (
+                    <p className={css.groupBatchHint}>
+                      被拒绝的助手保持原来的设置；它们各自的拒绝原因就在上面那一行。
+                    </p>
+                  )}
+                </section>
+              </div>
+            )}
     </AnimatedModal>
   )
 }
