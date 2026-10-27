@@ -4714,43 +4714,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   min-width: 0;
 }
 
-.assistantSettingsAvatarTitle {
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.assistantSettingsAvatarHint {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 17px;
-}
-
-/* The mascot editor: one fixed-size preview beside the option grids. */
-.assistantMascotSection {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  min-width: 0;
-  padding-top: 2px;
-}
-
-.assistantMascotPreview {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-}
-
-.assistantMascotFields {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  flex: 1;
-}
-
 /* Mascot picker: five preview tiles per row; the chosen one gets the blue ring. */
 .mascotPicker {
   display: flex;
@@ -4868,15 +4831,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 
 .mascotPickerSwatch[aria-pressed='true'] img {
   outline-color: var(--dsw-alias-state-business-primary);
-}
-
-.assistantMascotToggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  line-height: 18px;
 }
 
 .assistantSettingsSummary {
@@ -12351,6 +12305,290 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   font-weight: 400;
 }
 
+/* ── Avatar hero + floating editor ────────────────────────────────────────
+   The pane shows only the avatar; the pencil at its corner floats the editor
+   under the hero, never wider than the sidebar track it sits in. */
+.assistantAvatarHero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  min-width: 0;
+  padding: 2px 0 6px;
+}
+
+.assistantAvatarAnchor {
+  flex: none;
+  line-height: 0;
+}
+
+.assistantAvatarTrigger {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dsw-radius-lg);
+  background: none;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.assistantAvatarTrigger:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-brand-primary));
+  outline-offset: 2px;
+}
+
+.assistantAvatarBadge {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: var(--dsw-alias-shadow-l1);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.assistantAvatarTrigger:hover .assistantAvatarBadge {
+  color: var(--dsw-alias-label-primary);
+}
+
+.assistantAvatarWho {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.assistantAvatarName {
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistantAvatarSub {
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.avatarEditor {
+  position: absolute;
+  top: calc(100% + 10px);
+  left: 0;
+  z-index: 30;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 320px;
+  /* The hero spans the pane, so 100% is the narrowest of 320px, the pane and
+     the host's own sidebar track; on a small screen it fills what there is. */
+  max-width: min(100%, var(--dsh-sidebar-width, 100%));
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-layer-1);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 18%);
+  color: var(--dsw-alias-label-primary);
+}
+
+.avatarEditorTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.avatarEditorTabs {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.avatarEditorReset,
+.avatarEditorRemove {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.avatarEditorReset:hover,
+.avatarEditorRemove:hover {
+  color: var(--dsw-alias-label-primary);
+  text-decoration: underline;
+}
+
+.avatarEditorReset:disabled,
+.avatarEditorRemove:disabled {
+  opacity: 0.5;
+  cursor: default;
+  text-decoration: none;
+}
+
+/* 移除照片 clears the upload only; it sits under the dropzone. */
+.avatarEditorRemove {
+  align-self: center;
+}
+
+.avatarEditorBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* One titled row per mascot dimension: 形状, 表情, then the colour row. */
+.avatarMascotSection {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.avatarMascotTitle {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.avatarMascotGrid {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.avatarMascotRow {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.avatarMascotOption {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 2px;
+  border: 1px solid transparent;
+  border-radius: var(--dsw-radius-md);
+  background: none;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.avatarMascotOption img {
+  width: 100%;
+  height: auto;
+}
+
+.avatarMascotOption:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.avatarMascotOption[aria-pressed='true'] {
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.avatarMascotOption:focus-visible,
+.avatarColor:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-brand-primary));
+  outline-offset: 1px;
+}
+
+/* A photo is what shows; say why no mascot row is marked. */
+.avatarMascotHint {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.avatarColorRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.avatarColor {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  overflow: hidden;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.avatarColor img {
+  width: 100%;
+  height: 100%;
+}
+
+.avatarColor[aria-pressed='true'] {
+  border-color: var(--dsw-alias-brand-primary);
+  box-shadow: 0 0 0 2px var(--dsw-alias-brand-primary);
+}
+
+.avatarDropzone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px 10px;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+}
+
+.avatarDropzone[data-over] {
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.avatarDropzonePreview {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--dsw-radius-md);
+  object-fit: cover;
+}
+
+.avatarDropzoneHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.avatarEditorError {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
 /* 设置 pane: one search field over every group, one sticky save bar. */
 .settingsSearch {
   display: flex;
@@ -12393,6 +12631,170 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
   line-height: 16px;
+}
+
+/* 概览: a read-only checkup — what is missing, what it is, where its limits are.
+   No card fill: the fold group is already the container. */
+.assistantOverview {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.assistantOverviewSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.assistantOverviewTitle {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.assistantOverviewTodos {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.assistantOverviewTodo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 48px;
+  margin: 0 -8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--dsw-radius-md);
+  background: none;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.assistantOverviewTodo:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.assistantOverviewTodo:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-brand-primary));
+  outline-offset: -2px;
+}
+
+.assistantOverviewTodoText {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.assistantOverviewArrow {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+}
+
+.assistantOverviewWho {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.assistantOverviewWhoName {
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistantOverviewDescription {
+  display: -webkit-box;
+  overflow: hidden;
+  /* The stored description is two lines here; the full text stays in the title. */
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: pre-line;
+}
+
+.assistantOverviewDescriptionEmpty {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.assistantOverviewDescriptionEmpty:hover {
+  color: var(--dsw-alias-label-primary);
+  text-decoration: underline;
+}
+
+.assistantOverviewMeta {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 17px;
+  overflow-wrap: anywhere;
+}
+
+.assistantOverviewListTitle {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.assistantOverviewList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.assistantOverviewList li {
+  position: relative;
+  padding-left: 10px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.assistantOverviewList li::before {
+  content: '·';
+  position: absolute;
+  left: 0;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.assistantOverviewNothing {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
 }
 
 .assistantDetailEmpty {
@@ -12850,8 +13252,4 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   justify-content: flex-start;
   flex-wrap: wrap;
   gap: 8px;
-}
-
-.assistantDetail .assistantMascotSection {
-  flex-wrap: wrap;
 }

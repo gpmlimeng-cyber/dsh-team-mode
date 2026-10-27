@@ -4,6 +4,7 @@ import {
   IconArchiveOutlineRegular,
   IconClockOutlineRegular,
   IconDatabaseOutlineRegular,
+  IconEditOutlineRegular,
   IconFlatListOutlineRegular,
   IconInfoOutlineRegular,
   IconPersonalizationOutlineRegular,
@@ -12,7 +13,6 @@ import {
   IconShieldOutlineRegular,
   IconSlidersTwoOutlineRegular,
   IconSparkleRegular,
-  Switch,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
@@ -20,36 +20,39 @@ import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import { assistantModelKey } from './assistant-form.js'
 import { CapabilityList, savableNames, useCapabilityCatalog } from './assistant-capabilities.js'
 import {
+  AssistantAvatarEditor,
+  AVATAR_EDITOR_ID,
+  avatarDraftFromInstance,
+  avatarDraftReset,
+  type AvatarDraft,
+} from './assistant-avatar-editor.js'
+import {
   assistantAvatarDataUrlError,
-  assistantAvatarFileError,
   assistantInstanceName,
 } from './assistant-instances.js'
 import {
-  AssistantDetailFacts,
   AutomationSection,
   HistorySection,
   PersonaSection,
-  assistantDetailSections,
+  assistantAutomationCount,
 } from './assistant-detail.js'
 import { AssistantMemorySection } from './assistant-memory-panel.js'
-import { PERMISSION_LABELS } from './labels.js'
-import { MemberAvatar } from './member-avatar.js'
-import { Mascot, usePrefersReducedMotion } from './mascot-view.js'
-import { MascotPicker } from './mascot-picker.js'
 import {
-  randomMascotDraft,
-  type MascotBodyFill,
-  type MascotEyes,
-  type MascotMotion,
-  type MascotShape,
-  type MascotSpacing,
-} from './mascot.js'
+  assistantOverviewLimits,
+  assistantOverviewTodos,
+  assistantOverviewWho,
+  type AssistantOverviewCounts,
+  type AssistantOverviewTodo,
+} from './assistant-overview.js'
+import { PERMISSION_LABELS, assistantMemoryView } from './labels.js'
+import { MemberAvatar } from './member-avatar.js'
+import { Mascot } from './mascot-view.js'
+import type { MascotMotion } from './mascot.js'
 import { defaultReasoningLabel, useModelCapabilities } from './model-reasoning.js'
 import { SelectControl } from './select-control.js'
 import type { SelectControlOption } from './select-control.js'
 import { SettingsRow, SettingsRows } from './settings-row.js'
 import { FoldGroup } from './fold-group.js'
-import { Field } from './shared.js'
 import css from './AgentTeam.module.css'
 import { isCoordinatorInstance } from '../domain/types.js'
 import type {
@@ -135,8 +138,8 @@ export interface AssistantSettingGroup {
  * the pane; everything else follows the screenshot.
  */
 export const ASSISTANT_SETTING_GROUPS: readonly AssistantSettingGroup[] = [
-  { id: 'overview', title: '概览', keywords: '概览 名称 状态 所属分组 会话 模板 workspace 总协调 创建时间' },
-  { id: 'identity', title: '身份与形象', keywords: '身份 形象 头像 显示名称 名称 吉祥物 动画 人设 说明' },
+  { id: 'overview', title: '概览', keywords: '概览 待办 待办清单 它是什么 能力边界 描述 模板 workspace 权限' },
+  { id: 'identity', title: '身份与形象', keywords: '身份 形象 头像 显示名称 名称 人设 说明' },
   { id: 'model', title: '模型与权限', keywords: '模型 provider model 思考模式 推理强度 权限预设 权限' },
   { id: 'capabilities', title: '技能与MCP', keywords: '技能 skills mcp 工具 server' },
   { id: 'memory', title: '记忆', keywords: '记忆 条目 旧版 变更 日志 待确认' },
@@ -185,19 +188,6 @@ function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }
 
-function formatCreatedAt(iso: string): string {
-  const parsed = new Date(iso)
-  if (Number.isNaN(parsed.getTime())) return iso
-  return parsed.toLocaleString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  })
-}
-
 /**
  * One assistant's settings, as an accordion: a search field over every group,
  * the groups themselves, and one sticky save bar. There is deliberately no
@@ -217,8 +207,10 @@ export function AssistantSettingsPane({
     overview: true,
   })
   const [name, setName] = useState(assistantInstanceName(assistant))
-  const [avatar, setAvatar] = useState(assistant.assistantSnapshot.avatar ?? '')
-  const [avatarChanged, setAvatarChanged] = useState(false)
+  // The avatar, its mascot options and its seed are one draft; the floating
+  // editor stages it and 保存 writes it.
+  const [avatarDraft, setAvatarDraft] = useState<AvatarDraft>(() => avatarDraftFromInstance(assistant))
+  const [avatarEditing, setAvatarEditing] = useState(false)
   const [templateName, setTemplateName] = useState<string>()
   const [workspaceTitle, setWorkspaceTitle] = useState<string>()
   const [catalog, setCatalog] = useState<CatalogView>()
@@ -235,17 +227,13 @@ export function AssistantSettingsPane({
   const [saved, setSaved] = useState(false)
   const [archiving, setArchiving] = useState(false)
   const [error, setError] = useState<string>()
-  const [mascotSeed, setMascotSeed] = useState(assistant.mascot?.seed ?? assistant.id)
-  const [mascotShape, setMascotShape] = useState(assistant.mascot?.shape ?? '')
-  const [mascotEyes, setMascotEyes] = useState(assistant.mascot?.eyes ?? '')
-  const [mascotSpacing, setMascotSpacing] = useState(assistant.mascot?.spacing ?? '')
-  const [mascotColor, setMascotColor] = useState(assistant.mascot?.color ?? '')
-  const [mascotFill, setMascotFill] = useState<MascotBodyFill>(assistant.mascot?.fill ?? 'solid')
-  const [mascotAnimated, setMascotAnimated] = useState(true)
   const [mascotMotion, setMascotMotion] = useState<MascotMotion>('idle')
   const [mascotMotionKey, setMascotMotionKey] = useState(0)
-  const reducedMotion = usePrefersReducedMotion()
+  const [overviewCounts, setOverviewCounts] = useState<AssistantOverviewCounts>({})
   const paneRef = useRef<HTMLDivElement>(null)
+  // The Session list selects this assistant's automations; it is also the key
+  // that makes the 概览 count re-read when a thread is added or removed.
+  const overviewSessionKey = [assistant.mainSessionId ?? '', ...(assistant.threadSessionIds ?? [])].join('\u0000')
 
   const busy = saving || archiving
   const modelCapabilities = useModelCapabilities(provider, model)
@@ -258,8 +246,8 @@ export function AssistantSettingsPane({
   useEffect(() => {
     let live = true
     setName(assistantInstanceName(assistant))
-    setAvatar(assistant.assistantSnapshot.avatar ?? '')
-    setAvatarChanged(false)
+    setAvatarDraft(avatarDraftFromInstance(assistant))
+    setAvatarEditing(false)
     setTemplateName(undefined)
     setWorkspaceTitle(undefined)
     setCatalog(undefined)
@@ -276,13 +264,6 @@ export function AssistantSettingsPane({
     setArchiving(false)
     setSaved(false)
     setError(undefined)
-    setMascotSeed(assistant.mascot?.seed ?? assistant.id)
-    setMascotShape(assistant.mascot?.shape ?? '')
-    setMascotEyes(assistant.mascot?.eyes ?? '')
-    setMascotSpacing(assistant.mascot?.spacing ?? '')
-    setMascotColor(assistant.mascot?.color ?? '')
-    setMascotFill(assistant.mascot?.fill ?? 'solid')
-    setMascotAnimated(true)
     setMascotMotion('idle')
     setMascotMotionKey(0)
     callAgentTeam('catalog.get')
@@ -312,6 +293,34 @@ export function AssistantSettingsPane({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- reset on identity, not on every list refresh
   }, [assistant.id])
 
+  // 概览 asks two questions the instance row cannot answer. Both reads degrade to
+  // `undefined`, which the report treats as "nothing to claim", never as "none".
+  useEffect(() => {
+    let live = true
+    setOverviewCounts({})
+    void assistantAutomationCount(assistant).then(count => {
+      if (live && count !== undefined) {
+        setOverviewCounts(current => ({ ...current, automations: count }))
+      }
+    })
+    void callAgentTeam('assistant.memory.get', { assistantId: assistant.id }).then(
+      value => {
+        if (!live) return
+        const view = assistantMemoryView(value.memory)
+        // Any stored entry — even an archived one, or a legacy note — means it
+        // does remember something, so the count only ever answers zero vs not.
+        setOverviewCounts(current => ({
+          ...current,
+          memory: view.empty ? 0 : Math.max(1, view.active.length + view.proposed.length + view.historyTotal),
+        }))
+      },
+      () => {
+        // The 记忆 group reports its own read failure; 概览 just stays silent.
+      },
+    )
+    return () => { live = false }
+  }, [assistant.id, overviewSessionKey])
+
   useEffect(() => {
     // A newly selected model may advertise a different set of reasoning efforts
     // (or none at all). Drop an unsupported effort so the select always shows a
@@ -323,32 +332,11 @@ export function AssistantSettingsPane({
     ))
   }, [modelCapabilities.loading, modelCapabilities.value])
 
-  function chooseAvatar(file: File): void {
-    const fileError = assistantAvatarFileError(file)
-    if (fileError !== undefined) {
-      setError(fileError)
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = () => {
-      if (typeof reader.result !== 'string') return
-      const dataUrlError = assistantAvatarDataUrlError(reader.result)
-      if (dataUrlError !== undefined) {
-        setError(dataUrlError)
-        return
-      }
-      setAvatar(reader.result)
-      setAvatarChanged(true)
-      setError(undefined)
-      setSaved(false)
-    }
-    reader.onerror = () => { setError('读取头像失败，请重试') }
-    reader.readAsDataURL(file)
-  }
+  const closeAvatarEditor = useCallback((): void => { setAvatarEditing(false) }, [])
 
-  function clearAvatar(): void {
-    setAvatar('')
-    setAvatarChanged(true)
+  /** Stage one avatar edit; the 保存 bar still owns writing it. */
+  function stageAvatar(update: (draft: AvatarDraft) => AvatarDraft): void {
+    setAvatarDraft(update)
     setError(undefined)
     setSaved(false)
   }
@@ -368,14 +356,14 @@ export function AssistantSettingsPane({
       setError('请选择权限预设')
       return
     }
-    const avatarError = assistantAvatarDataUrlError(avatar)
+    const avatarError = assistantAvatarDataUrlError(avatarDraft.avatar)
     if (avatarError !== undefined) {
       setError(avatarError)
       return
     }
     const snapshot = assistant.assistantSnapshot
     const value: UpdateAssistantInstanceInput = { name: displayName }
-    if (avatarChanged) value.avatar = avatar
+    if (avatarDraft.avatar !== (snapshot.avatar ?? '')) value.avatar = avatarDraft.avatar
     if (provider !== snapshot.provider || model !== snapshot.model) {
       // provider and model always travel together so the service can validate
       // the pair against the current model catalog.
@@ -403,12 +391,12 @@ export function AssistantSettingsPane({
       }
     }
     const nextMascot = {
-      seed: mascotSeed.trim() === '' ? assistant.id : mascotSeed.trim(),
-      ...(mascotShape === '' ? {} : { shape: mascotShape }),
-      ...(mascotEyes === '' ? {} : { eyes: mascotEyes }),
-      ...(mascotSpacing === '' ? {} : { spacing: mascotSpacing }),
-      ...(mascotColor === '' ? {} : { color: mascotColor }),
-      ...(mascotFill === 'radial' ? { fill: 'radial' as const } : {}),
+      seed: avatarDraft.seed.trim() === '' ? assistant.id : avatarDraft.seed.trim(),
+      ...(avatarDraft.mascot.shapeVariant === undefined ? {} : { shape: avatarDraft.mascot.shapeVariant }),
+      ...(avatarDraft.mascot.eyesVariant === undefined ? {} : { eyes: avatarDraft.mascot.eyesVariant }),
+      ...(avatarDraft.mascot.spacingVariant === undefined ? {} : { spacing: avatarDraft.mascot.spacingVariant }),
+      ...(avatarDraft.mascot.bodyColor === undefined ? {} : { color: avatarDraft.mascot.bodyColor }),
+      ...(avatarDraft.mascot.bodyColorFill === 'radial' ? { fill: 'radial' as const } : {}),
     }
     if (JSON.stringify(nextMascot) !== JSON.stringify(assistant.mascot)) value.mascot = nextMascot
     setSaving(true)
@@ -456,7 +444,12 @@ export function AssistantSettingsPane({
       : `${templateName}（${assistant.templateId}）`
   const workspaceLabel = workspaceTitle === undefined
     ? assistant.workspacePath
-    : `${workspaceTitle} — ${assistant.workspacePath}`
+    : workspaceTitle
+  // 概览 reports the saved state, not the form draft: only 保存 changes it.
+  const savedPermissionId = assistant.assistantSnapshot.permissionPresetId
+  const permissionLabel = PERMISSION_LABELS[savedPermissionId]
+    ?? catalog?.permissionPresets.find(option => option.value === savedPermissionId)?.name
+    ?? savedPermissionId
   const modelGroups = (catalog?.providers ?? []).map(providerEntry => ({
     provider: providerEntry,
     models: catalog?.models[providerEntry.id] ?? [],
@@ -494,13 +487,31 @@ export function AssistantSettingsPane({
     })),
   ]
   const reasoningEfforts = modelCapabilities.value?.reasoning?.efforts ?? []
-  const mascotOptions = {
-    ...(mascotShape === '' ? {} : { shapeVariant: mascotShape as MascotShape }),
-    ...(mascotEyes === '' ? {} : { eyesVariant: mascotEyes as MascotEyes }),
-    ...(mascotSpacing === '' ? {} : { spacingVariant: mascotSpacing as MascotSpacing }),
-    ...(mascotColor === '' ? {} : { bodyColor: mascotColor }),
-    bodyColorFill: mascotFill,
+  // 概览: a checklist, what this assistant is, and where its limits really are.
+  // The component only maps these three pure results.
+  const overviewLabels = {
+    template: templateLabel,
+    workspace: workspaceLabel,
+    permission: permissionLabel,
   }
+  const overviewTodos: AssistantOverviewTodo[] = assistantOverviewTodos(assistant, overviewCounts)
+  const overviewWho = assistantOverviewWho(assistant, overviewLabels)
+  const overviewLimits = assistantOverviewLimits(assistant, { ...overviewCounts, ...overviewLabels })
+  const jumpToOverviewTarget = (target: AssistantOverviewTodo['target']): void => {
+    // Searching hides every group the query does not match; clearing it is what
+    // keeps the target the user just asked for reachable.
+    setQuery('')
+    setOpenGroups(current => ({ ...current, [target]: true }))
+    requestAnimationFrame(() => {
+      paneRef.current?.querySelector(`[data-dsh-fold="${target}"]`)?.scrollIntoView({ block: 'start' })
+    })
+  }
+  // The subtitle names what the assistant is: its group, role and status.
+  const avatarSubtitle = [
+    assistant.group,
+    isCoordinatorInstance(assistant) ? '总协调' : undefined,
+    STATUS_LABELS[assistant.status],
+  ].filter((part): part is string => part !== undefined && part !== '').join(' · ')
 
   const searching = query.trim() !== ''
   const visible = visibleSettingGroups(query)
@@ -523,6 +534,49 @@ export function AssistantSettingsPane({
       data-expanded={expanded}
       ref={paneRef}
     >
+      {/* Only the avatar shows; the pencil at its corner floats the editor. */}
+      <div className={css.assistantAvatarHero} data-dsh-assistant-avatar-hero>
+        <div className={css.assistantAvatarAnchor}>
+          <button
+            type="button"
+            className={css.assistantAvatarTrigger}
+            data-dsh-avatar-trigger
+            aria-label="编辑头像"
+            aria-expanded={avatarEditing}
+            aria-controls={avatarEditing ? AVATAR_EDITOR_ID : undefined}
+            onClick={() => { setAvatarEditing(open => !open) }}
+          >
+            {avatarDraft.avatar === ''
+              ? (
+                <Mascot
+                  seed={avatarDraft.seed}
+                  options={avatarDraft.mascot}
+                  size={64}
+                  avatarShape="rounded"
+                  motion={mascotMotion}
+                  motionKey={mascotMotionKey}
+                />
+              )
+              : <MemberAvatar name={displayName} avatar={avatarDraft.avatar} size={64} />}
+            <span className={css.assistantAvatarBadge} aria-hidden="true">
+              <IconEditOutlineRegular size={12} />
+            </span>
+          </button>
+        </div>
+        <div className={css.assistantAvatarWho}>
+          <span className={css.assistantAvatarName}>{displayName}</span>
+          <span className={css.assistantAvatarSub}>{avatarSubtitle}</span>
+        </div>
+        {avatarEditing && (
+          <AssistantAvatarEditor
+            draft={avatarDraft}
+            disabled={busy}
+            onDraftChange={stageAvatar}
+            onReset={() => { stageAvatar(() => avatarDraftReset(assistant.id)) }}
+            onClose={closeAvatarEditor}
+          />
+        )}
+      </div>
       <label className={css.settingsSearch}>
         <IconSearchOutlineRegular size={14} />
         <input
@@ -549,49 +603,102 @@ export function AssistantSettingsPane({
           onToggle={open => { toggle('overview', open) }}
           dataKind="overview"
         >
-          <AssistantDetailFacts section={assistantDetailSections(assistant)[0]!} />
-          <dl className={css.assistantDetailFacts}>
-            {shows('助手模板') && (
-              <div className={css.assistantDetailFact}>
-                <dt className={css.assistantDetailFactLabel}>助手模板</dt>
-                <dd className={css.assistantDetailFactValue} title={assistant.templateId}>{templateLabel}</dd>
-              </div>
+          <div className={css.assistantOverview} data-dsh-assistant-overview>
+            {/* A checklist, not a score: nothing is rendered once nothing is missing. */}
+            {overviewTodos.length > 0 && (
+              <section
+                className={css.assistantOverviewSection}
+                aria-label="待办清单"
+                data-dsh-assistant-overview-todos
+              >
+                <span className={css.assistantOverviewTitle}>待办清单</span>
+                <ul className={css.assistantOverviewTodos}>
+                  {overviewTodos.map(todo => (
+                    <li key={todo.id}>
+                      <button
+                        type="button"
+                        className={css.assistantOverviewTodo}
+                        data-dsh-assistant-overview-todo={todo.id}
+                        onClick={() => { jumpToOverviewTarget(todo.target) }}
+                      >
+                        <span className={css.assistantOverviewTodoText}>{todo.text}</span>
+                        <span className={css.assistantOverviewArrow} aria-hidden="true">→</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             )}
-            {shows('Workspace') && (
-              <div className={css.assistantDetailFact}>
-                <dt className={css.assistantDetailFactLabel}>Workspace</dt>
-                <dd className={css.assistantDetailFactValue} title={assistant.workspacePath}>{workspaceLabel}</dd>
+
+            <section
+              className={css.assistantOverviewSection}
+              aria-label="它是什么"
+              data-dsh-assistant-overview-who
+            >
+              <span className={css.assistantOverviewTitle}>它是什么</span>
+              <div className={css.assistantOverviewWho}>
+                {avatarDraft.avatar === ''
+                  ? (
+                    <Mascot
+                      seed={avatarDraft.seed}
+                      options={avatarDraft.mascot}
+                      size={24}
+                      avatarShape="rounded"
+                      motion="idle"
+                    />
+                  )
+                  : <MemberAvatar name={overviewWho.name} avatar={avatarDraft.avatar} size={24} />}
+                <span className={css.assistantOverviewWhoName}>{overviewWho.name}</span>
               </div>
-            )}
-            {shows('总协调') && (
-              <div className={css.assistantDetailFact}>
-                <dt className={css.assistantDetailFactLabel}>总协调</dt>
-                <dd
-                  className={css.assistantDetailFactValue}
-                  data-dsh-assistant-settings-coordinator={String(isCoordinatorInstance(assistant))}
-                >
-                  {isCoordinatorInstance(assistant) ? '是' : '否'}
-                </dd>
-              </div>
-            )}
-            {shows('状态') && (
-              <div className={css.assistantDetailFact}>
-                <dt className={css.assistantDetailFactLabel}>状态</dt>
-                <dd
-                  className={css.assistantDetailFactValue}
-                  data-dsh-assistant-settings-status={assistant.status}
-                >
-                  {STATUS_LABELS[assistant.status]}
-                </dd>
-              </div>
-            )}
-            {shows('创建时间') && (
-              <div className={css.assistantDetailFact}>
-                <dt className={css.assistantDetailFactLabel}>创建时间</dt>
-                <dd className={css.assistantDetailFactValue}>{formatCreatedAt(assistant.createdAt)}</dd>
-              </div>
-            )}
-          </dl>
+              {overviewWho.description === ''
+                ? (
+                  <button
+                    type="button"
+                    className={css.assistantOverviewDescriptionEmpty}
+                    data-dsh-assistant-overview-description
+                    onClick={() => { jumpToOverviewTarget('identity') }}
+                  >
+                    还没有描述
+                  </button>
+                )
+                : (
+                  <p
+                    className={css.assistantOverviewDescription}
+                    title={overviewWho.description}
+                    data-dsh-assistant-overview-description
+                  >
+                    {overviewWho.description}
+                  </p>
+                )}
+              <p className={css.assistantOverviewMeta}>{overviewWho.meta.join(' · ')}</p>
+            </section>
+
+            <section
+              className={css.assistantOverviewSection}
+              aria-label="能力边界"
+              data-dsh-assistant-overview-limits
+            >
+              <span className={css.assistantOverviewTitle}>能力边界</span>
+              {overviewLimits.capable.length === 0
+                ? <p className={css.assistantOverviewNothing}>还没有授予任何能力</p>
+                : (
+                  <>
+                    <span className={css.assistantOverviewListTitle}>能做到</span>
+                    <ul className={css.assistantOverviewList} data-dsh-assistant-overview-capable>
+                      {overviewLimits.capable.map(line => <li key={line}>{line}</li>)}
+                    </ul>
+                  </>
+                )}
+              {overviewLimits.unable.length > 0 && (
+                <>
+                  <span className={css.assistantOverviewListTitle}>不会做</span>
+                  <ul className={css.assistantOverviewList} data-dsh-assistant-overview-unable>
+                    {overviewLimits.unable.map(line => <li key={line}>{line}</li>)}
+                  </ul>
+                </>
+              )}
+            </section>
+          </div>
         </FoldGroup>
       )}
 
@@ -604,36 +711,6 @@ export function AssistantSettingsPane({
           dataKind="identity"
         >
           <SettingsRows>
-            {shows('头像') && (
-              <SettingsRow
-                label="头像"
-                hint="支持 PNG、JPEG、WebP，最大 256KB；清空后显示吉祥物。"
-                control={(
-                  <>
-                    <MemberAvatar name={displayName} avatar={avatar} size={32} />
-                    <label className={css.avatarUpload}>
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp"
-                        className={css.avatarFileInput}
-                        disabled={busy}
-                        onChange={event => {
-                          const file = event.target.files?.[0]
-                          event.target.value = ''
-                          if (file !== undefined) chooseAvatar(file)
-                        }}
-                      />
-                      选择图片
-                    </label>
-                    {avatar !== '' && (
-                      <Button variant="outline" type="button" disabled={busy} onClick={clearAvatar}>
-                        清除
-                      </Button>
-                    )}
-                  </>
-                )}
-              />
-            )}
             {shows('显示名称') && (
               <SettingsRow
                 label="显示名称"
@@ -651,65 +728,6 @@ export function AssistantSettingsPane({
               />
             )}
           </SettingsRows>
-          <div className={css.assistantMascotSection} data-dsh-assistant-mascot>
-            <div className={css.assistantMascotPreview}>
-              <Mascot
-                seed={mascotSeed}
-                options={mascotOptions}
-                size={52}
-                avatarShape="rounded"
-                motion={mascotMotion}
-                motionKey={mascotMotionKey}
-                animated={mascotAnimated}
-              />
-              <Button
-                variant="outline"
-                type="button"
-                disabled={busy}
-                onClick={() => {
-                  const next = randomMascotDraft()
-                  setMascotSeed(next.seed)
-                  setMascotShape(next.shape)
-                  setMascotEyes(next.eyes)
-                  setMascotColor(next.color)
-                  // Picking a mascot means "show this one": an uploaded picture
-                  // would keep winning, so the choice would look ignored.
-                  setAvatar('')
-                  setAvatarChanged(true)
-                }}
-              >
-                随机
-              </Button>
-            </div>
-            <div className={css.assistantMascotFields}>
-              <span className={css.assistantSettingsAvatarTitle}>吉祥物</span>
-              <span className={css.assistantSettingsAvatarHint}>
-                选吉祥物会替换掉已上传的头像；同一个种子永远是同一只。
-              </span>
-              <MascotPicker
-                seed={mascotSeed}
-                value={mascotOptions}
-                disabled={busy}
-                onChange={next => {
-                  setMascotShape(next.shapeVariant ?? '')
-                  setMascotEyes(next.eyesVariant ?? '')
-                  setMascotColor(next.bodyColor ?? '')
-                  setMascotFill(next.bodyColorFill ?? 'solid')
-                  setAvatar('')
-                  setAvatarChanged(true)
-                }}
-              />
-              <div className={css.assistantMascotToggle}>
-                <span>{reducedMotion ? '动画（系统已要求减少动效）' : '动画'}</span>
-                <Switch
-                  label="动画"
-                  checked={mascotAnimated && !reducedMotion}
-                  disabled={busy || reducedMotion}
-                  onChange={next => { setMascotAnimated(next) }}
-                />
-              </div>
-            </div>
-          </div>
           <div className={css.assistantDetailBody} data-dsh-assistant-detail-section="persona">
             <PersonaSection instance={assistant} onSaved={() => { void onSaved() }} />
           </div>

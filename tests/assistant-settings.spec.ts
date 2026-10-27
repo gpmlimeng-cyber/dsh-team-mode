@@ -119,10 +119,13 @@ describe('assistant settings coordinator marker', () => {
     'utf8',
   )
 
-  it('shows 总协调 for every assistant, so 否 does not read as "unsupported"', () => {
-    expect(source).toContain('>总协调<')
-    expect(source).toContain("isCoordinatorInstance(assistant) ? '是' : '否'")
-    expect(source).toContain('data-dsh-assistant-settings-coordinator')
+  it('leaves 总协调 out of the duplicated fact table; the hero only marks true', () => {
+    // 概览 is a checkup now, not a copy of the detail facts: the coordinator
+    // role is set from the sidebar row menu and only named in the hero when on.
+    expect(source).not.toContain('>总协调<')
+    expect(source).not.toContain("isCoordinatorInstance(assistant) ? '是' : '否'")
+    expect(source).not.toContain('data-dsh-assistant-settings-coordinator')
+    expect(source).toContain("isCoordinatorInstance(assistant) ? '总协调' : undefined")
   })
 
   it('edits the same two capability lists the create dialog writes', () => {
@@ -299,8 +302,14 @@ describe('dialog furniture', () => {
     expect(activitySource).toContain('Switch')
     expect((activitySource.match(/<Switch/g) ?? [])).toHaveLength(2)
     expect(activitySource).not.toContain('type="checkbox"')
-    expect(settingsSource).toMatch(/<Switch\b/)
+    // The settings pane's only switch was the avatar animation toggle; the avatar
+    // block now lives in its own floating editor, which ships no checkbox either.
+    const avatarEditorSource = readFileSync(
+      new URL('../src/client/assistant-avatar-editor.tsx', import.meta.url),
+      'utf8',
+    )
     expect(settingsSource).not.toContain('type="checkbox"')
+    expect(avatarEditorSource).not.toContain('type="checkbox"')
   })
 
   it('shares one compact header rule across every AnimatedModal', () => {

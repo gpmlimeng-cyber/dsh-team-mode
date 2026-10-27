@@ -135,15 +135,26 @@ describe('stored fill', () => {
 })
 
 describe('assistant settings integration', () => {
-  it('replaces the four dropdowns with the shared picker and keeps 随机', () => {
-    const source = readFileSync(new URL('../src/client/assistant-settings-pane.tsx', import.meta.url), 'utf8')
-    expect(source).toContain("from './mascot-picker.js'")
-    expect(source).toContain('<MascotPicker')
+  it('moved the mascot picker out of the pane into the floating avatar editor', () => {
+    const pane = readFileSync(new URL('../src/client/assistant-settings-pane.tsx', import.meta.url), 'utf8')
+    const editor = readFileSync(new URL('../src/client/assistant-avatar-editor.tsx', import.meta.url), 'utf8')
+    // One avatar editor, not two: the pane mounts it and keeps no picker of its own.
+    expect(pane).toContain('<AssistantAvatarEditor')
+    expect(pane).not.toContain('<MascotPicker')
+    // The editor reuses the picker's option data instead of a second shape list.
+    expect(editor).toContain("from './mascot-picker.js'")
+    // Both mascot rows ask the picker for their options; the colour row keeps
+    // its own call. No MASCOT_SHAPES/MASCOT_EYES copy lives in the editor.
+    expect(editor).toContain('mascotPickerOptions(kind')
+    expect(editor).toContain("build('body', '形状')")
+    expect(editor).toContain("build('eyes', '表情')")
+    expect(editor).toContain("mascotPickerOptions('color')")
+    expect(editor).not.toContain('MASCOT_SHAPES')
+    expect(editor).not.toContain('MASCOT_EYES')
     for (const label of ['轮廓', '眼睛', '眼距', '配色']) {
-      expect(source).not.toContain(`label="${label}"`)
+      expect(pane).not.toContain(`label="${label}"`)
     }
-    expect(source).toContain('随机')
-    expect(source).toContain("{ fill: 'radial' as const }")
+    expect(pane).toContain("{ fill: 'radial' as const }")
   })
 })
 

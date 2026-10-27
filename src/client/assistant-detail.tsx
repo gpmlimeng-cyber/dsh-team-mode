@@ -477,6 +477,23 @@ export function openAssistantAutomations(): boolean {
   return true
 }
 
+/**
+ * How many automations this assistant has, for 概览. `undefined` when the
+ * deployment composes no Schedule Remote or the catalog read failed: the
+ * overview must not report "没有自动化" without evidence.
+ */
+export async function assistantAutomationCount(
+  instance: Pick<AssistantInstanceView, 'mainSessionId' | 'threadSessionIds'>,
+): Promise<number | undefined> {
+  const read = automationSource?.catalog
+  if (read === undefined) return undefined
+  try {
+    return assistantAutomationRows(instance, await read()).length
+  } catch {
+    return undefined
+  }
+}
+
 export interface AutomationPanelState {
   /** True until the Host catalog read settles. */
   loading: boolean

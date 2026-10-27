@@ -123,14 +123,20 @@ export function mascotPickerOptions(
   }))
 }
 
-function isSelected(kind: MascotPickerKind, option: MascotPickerOption, value: MascotOptions): boolean {
+/** Whether one option is the chosen one for its section. */
+export function mascotPickerSelected(
+  kind: MascotPickerKind,
+  option: MascotPickerOption,
+  value: MascotOptions,
+): boolean {
   if (kind === 'eyes') return value.eyesVariant === option.value
   if (kind === 'body') return value.shapeVariant === option.value
   return value.bodyColor === option.value
     && (value.bodyColorFill ?? 'solid') === (option.fill ?? 'solid')
 }
 
-function pick(kind: MascotPickerKind, option: MascotPickerOption): MascotOptions {
+/** The mascot-option change one option click means. */
+export function mascotPickerPick(kind: MascotPickerKind, option: MascotPickerOption): MascotOptions {
   if (kind === 'eyes') return { eyesVariant: option.value as MascotEyes }
   if (kind === 'body') return { shapeVariant: option.value as MascotShape }
   return { bodyColor: option.value, bodyColorFill: option.fill ?? 'solid' }
@@ -181,10 +187,10 @@ export function MascotPicker({
                 className={section.kind === 'color'
                   ? `${css.mascotPickerOption} ${css.mascotPickerSwatch}`
                   : css.mascotPickerOption}
-                aria-pressed={isSelected(section.kind, option, value)}
+                aria-pressed={mascotPickerSelected(section.kind, option, value)}
                 aria-label={option.label}
                 title={option.label}
-                onClick={() => { onChange({ ...value, ...pick(section.kind, option) }) }}
+                onClick={() => { onChange({ ...value, ...mascotPickerPick(section.kind, option) }) }}
               >
                 <img src={option.preview} alt="" draggable={false} />
               </button>

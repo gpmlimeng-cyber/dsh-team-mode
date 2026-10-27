@@ -46,6 +46,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
 const {
   AutomationPanel,
   SCHEDULES_PANEL_ID,
+  assistantAutomationCount,
   assistantAutomationNextRun,
   assistantAutomationRows,
   assistantAutomationSessionIds,
@@ -170,6 +171,129 @@ describe('assistant settings pane', () => {
     expect(view).toContain('保存')
   })
 
+  it('heads the page with the avatar, its name and subtitle behind one edit button', () => {
+    const html = renderPanel(instance())
+    const view = text(html)
+
+    expect(html).toContain('data-dsh-assistant-avatar-hero')
+    // A 64px avatar, the name, and the existing group/status as the subtitle.
+    expect(html).toMatch(/data-dsh-assistant-avatar-hero[\s\S]*?width:64px/)
+    expect(view).toContain('小码')
+    expect(view).toContain('前端 · 空闲')
+    // The edit affordance is a real, keyboard-focusable button.
+    expect(html).toMatch(/<button[^>]*aria-label="编辑头像"[^>]*aria-expanded="false"/)
+    expect(html).not.toContain('disabled="" aria-label="编辑头像"')
+    // Clicking is what expands it: a fresh render mounts no panel at all.
+    expect(html).not.toContain('data-dsh-avatar-editor')
+    // And there is no second avatar control left in 身份与形象.
+    expect(view).not.toContain('选择图片')
+    expect(html).not.toContain('data-dsh-assistant-mascot')
+  })
+
+  function instanceWith(patch: {
+    instructions?: string
+    skills?: string[]
+    mcp?: string[]
+  }): AssistantInstanceView {
+    const base = instance()
+    return {
+      ...base,
+      assistantSnapshot: {
+        ...base.assistantSnapshot,
+        instructions: patch.instructions ?? '',
+        skillAllowlist: patch.skills ?? [],
+        mcpServers: patch.mcp ?? [],
+      },
+    }
+  }
+
+  it('renders 概览 as the three-part checkup, not the old fact table', () => {
+    const html = renderPanel(instanceWith({}))
+    const view = text(html)
+
+    expect(html).toContain('data-dsh-assistant-overview')
+    expect(html).toContain('data-dsh-assistant-overview-todos')
+    expect(html).toContain('data-dsh-assistant-overview-who')
+    expect(html).toContain('data-dsh-assistant-overview-limits')
+
+    expect(view).toContain('待办清单')
+    expect(view).toContain('它是什么')
+    expect(view).toContain('能力边界')
+    expect(view).toContain('能做到')
+    // The three known gaps here: description, skills, MCP. Counts are not read
+    // in a static render, so 自动化 / 记忆 make no claim yet.
+    expect(html.match(/data-dsh-assistant-overview-todo=/g)).toHaveLength(3)
+    expect(view).toContain('写一段描述，让它知道自己是干什么的')
+    expect(view).toContain('还没有授予任何技能')
+    expect(view).toContain('还没有可用的 MCP 工具')
+    expect(view).not.toContain('没有自动化任务')
+    // Every row is a whole-row button with the jump arrow on the right.
+    expect((html.match(/→/g) ?? [])).toHaveLength(3)
+    // The description keeps two lines here; the full text stays in the title.
+    const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+    const description = css.slice(css.indexOf('.assistantOverviewDescription {'))
+    expect(description.slice(0, description.indexOf('}'))).toContain('-webkit-line-clamp: 2')
+    // Who: the 24px avatar, the name, the missing-description jump and the meta.
+    expect(html).toContain('还没有描述')
+    expect(view).toContain('小码')
+    expect(view).toContain('模板：template-1')
+    expect(view).toContain('Workspace：/tmp/workspace-1')
+    expect(view).toContain('权限：工作区可写')
+    // Limits: the real workspace sentence, and no invented negative.
+    expect(view).toContain('运行在「/tmp/workspace-1」工作区，权限：工作区可写')
+    expect(html).not.toContain('data-dsh-assistant-overview-unable')
+
+    // The old read-only duplicate is gone from the settings page.
+    expect(view).not.toContain('创建时间')
+    expect(html).not.toContain('data-dsh-assistant-settings-status')
+    expect(html).not.toContain('data-dsh-assistant-settings-coordinator')
+  })
+
+  it('drops the checklist entirely once nothing is missing', () => {
+    const html = renderPanel(instanceWith({
+      instructions: '写代码',
+      skills: ['research'],
+      mcp: ['files'],
+    }))
+    const view = text(html)
+
+    // No empty shell, no completion badge: just the other two sections.
+    expect(html).not.toContain('data-dsh-assistant-overview-todos')
+    expect(view).not.toContain('待办清单')
+    expect(html).toContain('data-dsh-assistant-overview-who')
+    expect(view).toContain('写代码')
+    expect(view).toContain('可以使用 1 个技能（research）')
+    expect(view).toContain('可以调用 1 个 MCP 工具')
+  })
+
+  it('jumps inside the pane: opens the target group and scrolls to it', () => {
+    const pane = source('assistant-settings-pane.tsx')
+
+    expect(pane).toContain('querySelector(`[data-dsh-fold="${target}"]`)')
+    expect(pane).toContain(".scrollIntoView({ block: 'start' })")
+    expect(pane).toContain("setOpenGroups(current => ({ ...current, [target]: true }))")
+    // A search hides non-matching groups, so the jump clears it first.
+    expect(pane).toContain("setQuery('')")
+    // 概览 is read-only: the block maps the pure results and calls nothing that writes.
+    const overviewBlock = pane.slice(
+      pane.indexOf('data-dsh-assistant-overview'),
+      pane.indexOf("isVisible('identity')"),
+    )
+    expect(overviewBlock).toContain('jumpToOverviewTarget')
+    expect(overviewBlock).not.toContain('callAgentTeam')
+    expect(overviewBlock).not.toContain('setAvatarDraft')
+    expect(overviewBlock).not.toContain('<Button')
+  })
+
+  it('matches 概览 by its own sections without stealing the other groups’ words', () => {
+    expect(visibleSettingGroups('待办')).toEqual(['overview'])
+    expect(visibleSettingGroups('能力边界')).toEqual(['overview'])
+    // 技能 / MCP / 自动化 / 记忆 still belong to the groups that edit them.
+    expect(visibleSettingGroups('技能')).toEqual(['capabilities'])
+    expect(visibleSettingGroups('自动化')).toEqual(['automations'])
+    expect(visibleSettingGroups('记忆')).toEqual(['memory'])
+  })
+
   it('opens only 概览 by default', () => {
     const html = renderPanel(instance())
 
@@ -210,7 +334,10 @@ describe('settings search', () => {
   it('narrows to the matching group by title or keyword', () => {
     expect(visibleSettingGroups('模型')).toEqual(['model'])
     expect(visibleSettingGroups('技能')).toEqual(['capabilities'])
-    expect(visibleSettingGroups('吉祥物')).toEqual(['identity'])
+    expect(visibleSettingGroups('显示名称')).toEqual(['identity'])
+    // The mascot/animation controls moved out of 身份与形象 into the avatar
+    // editor at the page header, so the old word no longer names a group.
+    expect(visibleSettingGroups('吉祥物')).toEqual([])
     expect(visibleSettingGroups('归档')).toContain('archive')
   })
 
@@ -292,6 +419,29 @@ describe('assistant automations', () => {
     installAssistantAutomations({ open: () => { opened.push('panel') } })
     expect(openAssistantAutomations()).toBe(true)
     expect(opened).toEqual(['panel'])
+    installAssistantAutomations(undefined)
+  })
+
+  it('counts this assistant\'s automations for 概览, and admits when it cannot', async () => {
+    const entries = [
+      entry({ id: 'mine-1' }),
+      entry({ id: 'mine-2', sessionId: 'session-thread-1' }),
+      entry({ id: 'someone-else', sessionId: 'session-someone-else' }),
+    ]
+
+    // No Schedule Remote composed: no count, so 概览 makes no claim.
+    installAssistantAutomations(undefined)
+    expect(await assistantAutomationCount(instance())).toBeUndefined()
+
+    installAssistantAutomations({ open: () => undefined, catalog: async () => entries })
+    expect(await assistantAutomationCount(instance())).toBe(2)
+
+    installAssistantAutomations({
+      open: () => undefined,
+      catalog: async () => { throw new Error('catalog down') },
+    })
+    expect(await assistantAutomationCount(instance())).toBeUndefined()
+
     installAssistantAutomations(undefined)
   })
 })
