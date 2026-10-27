@@ -1014,10 +1014,13 @@ function moveNativeMoreToFooter(row: HTMLElement): void {
   anchor.style.flex = '0 0 auto'
   anchor.style.margin = '0'
   if (button !== null) {
+    // Match the two proxy actions byte for byte: same box, same ink, same hover.
     button.style.width = '28px'
     button.style.height = '28px'
     button.style.padding = '0'
     button.style.justifyContent = 'center'
+    button.style.color = 'var(--dsw-alias-label-secondary)'
+    button.style.borderRadius = 'var(--dsw-radius-sm)'
   }
   if (label !== null) label.style.display = 'none'
   row.append(anchor)
