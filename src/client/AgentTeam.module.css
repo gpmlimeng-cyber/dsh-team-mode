@@ -3015,7 +3015,7 @@ textarea.input {
   top: -8px;
   bottom: -8px;
   left: -18px;
-  width: 280px;
+  width: 220px;
   background: var(--dsw-specific-sidebar-fill);
   z-index: -1;
 }

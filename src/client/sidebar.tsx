@@ -1302,6 +1302,12 @@ export function SidebarPortal({
       // can report a temporary zero rect, and the next layout pass would not
       // necessarily run. It is removed only when the sidebar unmounts.
       element.style.visibility = 'visible'
+      // The mode band must not paint over the native collapse control: lift the
+      // row above it, keep the row transparent, and only the toggle hit-testable.
+      row.style.position = 'relative'
+      row.style.zIndex = '2147483002'
+      row.style.pointerEvents = 'none'
+      if (toggle !== null) toggle.style.pointerEvents = 'auto'
     }
 
     /** Lay the pinned BOT row over 新会话, or over the visible team column when
