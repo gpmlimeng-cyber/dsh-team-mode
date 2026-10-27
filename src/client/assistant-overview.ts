@@ -23,6 +23,16 @@ export interface AssistantOverviewCounts {
   memory?: number | undefined
 }
 
+/**
+ * M1's one summary line, and the whole of its copy: how many memory entries the
+ * assistant keeps, and the way into the 记忆 group. Zero is never shown as a
+ * number — the empty memory says 还没有记录 instead of claiming "0 条", so the
+ * line can only ever report a count it actually read.
+ */
+export function assistantMemoryCountLine(count: number): string {
+  return count === 0 ? '记忆 · 还没有记录' : `记忆 · ${count} 条 · 管理 →`
+}
+
 /** Labels resolved by the pane from the catalog / snapshot. */
 export interface AssistantOverviewLabels {
   template: string

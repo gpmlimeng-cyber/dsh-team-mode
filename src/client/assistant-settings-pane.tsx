@@ -35,8 +35,9 @@ import {
   PersonaSection,
   assistantAutomationCount,
 } from './assistant-detail.js'
-import { AssistantMemorySection } from './assistant-memory-panel.js'
+import { ASSISTANT_MEMORY_CHANGED_EVENT, AssistantMemorySection } from './assistant-memory-panel.js'
 import {
+  assistantMemoryCountLine,
   assistantOverviewLimits,
   assistantOverviewTodos,
   assistantOverviewWho,
@@ -194,6 +195,31 @@ function messageOf(cause: unknown): string {
 }
 
 /**
+ * M1: the memory count row of 概览 — `记忆 · N 条 · 管理 →`, or
+ * `记忆 · 还没有记录` when it remembers nothing. The pane is one accordion, so
+ * "management" here is the group itself: `onManage` is the existing overview
+ * jump, which clears the search and opens + scrolls to 记忆.
+ */
+export function AssistantOverviewMemoryRow({
+  count,
+  onManage,
+}: {
+  count: number
+  onManage: () => void
+}): JSX.Element {
+  return (
+    <button
+      type="button"
+      className={css.assistantOverviewTodo}
+      data-dsh-memory-count={count}
+      onClick={onManage}
+    >
+      <span className={css.assistantOverviewTodoText}>{assistantMemoryCountLine(count)}</span>
+    </button>
+  )
+}
+
+/**
  * One assistant's settings, as an accordion: a search field over every group,
  * the groups themselves, and one sticky save bar. There is deliberately no
  * modal and no second copy of the fields — this *is* 助手设置.
@@ -235,6 +261,13 @@ export function AssistantSettingsPane({
   const [mascotMotion, setMascotMotion] = useState<MascotMotion>('idle')
   const [mascotMotionKey, setMascotMotionKey] = useState(0)
   const [overviewCounts, setOverviewCounts] = useState<AssistantOverviewCounts>({})
+  // M1's number: the assistant-scoped entries assistant.memory.get answered
+  // with. It stays `undefined` until that read lands, so the count row never
+  // claims "还没有记录" for a read that has not happened.
+  const [memoryEntryCount, setMemoryEntryCount] = useState<number>()
+  // Bumped by the 记忆 block after each of its writes; it re-runs the one read
+  // above so the count row never lags behind an edit made in this same pane.
+  const [memoryReadNonce, setMemoryReadNonce] = useState(0)
   const paneRef = useRef<HTMLDivElement>(null)
   // The Session list selects this assistant's automations; it is also the key
   // that makes the 概览 count re-read when a thread is added or removed.
@@ -303,6 +336,7 @@ export function AssistantSettingsPane({
   useEffect(() => {
     let live = true
     setOverviewCounts({})
+    setMemoryEntryCount(undefined)
     void assistantAutomationCount(assistant).then(count => {
       if (live && count !== undefined) {
         setOverviewCounts(current => ({ ...current, automations: count }))
@@ -312,11 +346,15 @@ export function AssistantSettingsPane({
       value => {
         if (!live) return
         const view = assistantMemoryView(value.memory)
+        // The assistant-scoped entries the read answered with: exactly the rows
+        // the 记忆 block lists, so its count row and the block never disagree.
+        const entries = view.active.length + view.proposed.length + view.historyTotal
+        setMemoryEntryCount(entries)
         // Any stored entry — even an archived one, or a legacy note — means it
         // does remember something, so the count only ever answers zero vs not.
         setOverviewCounts(current => ({
           ...current,
-          memory: view.empty ? 0 : Math.max(1, view.active.length + view.proposed.length + view.historyTotal),
+          memory: view.empty ? 0 : Math.max(1, entries),
         }))
       },
       () => {
@@ -324,7 +362,18 @@ export function AssistantSettingsPane({
       },
     )
     return () => { live = false }
-  }, [assistant.id, overviewSessionKey])
+  }, [assistant.id, overviewSessionKey, memoryReadNonce])
+
+  // M1: a write inside the 记忆 block announces itself, because only this
+  // count row lives outside the block and would otherwise keep the old N.
+  useEffect(() => {
+    const onChanged = (event: Event): void => {
+      const detail = (event as CustomEvent<{ assistantId?: string } | undefined>).detail
+      if (detail?.assistantId === assistant.id) setMemoryReadNonce(value => value + 1)
+    }
+    window.addEventListener(ASSISTANT_MEMORY_CHANGED_EVENT, onChanged)
+    return () => { window.removeEventListener(ASSISTANT_MEMORY_CHANGED_EVENT, onChanged) }
+  }, [assistant.id])
 
   useEffect(() => {
     // A newly selected model may advertise a different set of reasoning efforts
@@ -613,6 +662,14 @@ export function AssistantSettingsPane({
           dataKind="overview"
         >
           <div className={css.assistantOverview} data-dsh-assistant-overview>
+            {/* M1: the memory count and its one-step way in. It appears only
+                once the read answered — an unread count makes no claim. */}
+            {memoryEntryCount !== undefined && (
+              <AssistantOverviewMemoryRow
+                count={memoryEntryCount}
+                onManage={() => { jumpToOverviewTarget('memory') }}
+              />
+            )}
             {/* A checklist, not a score: nothing is rendered once nothing is missing. */}
             {overviewTodos.length > 0 && (
               <section

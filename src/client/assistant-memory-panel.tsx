@@ -42,6 +42,22 @@ function memoryTime(value: string): string {
 }
 
 /**
+ * Every successful write in the 记忆 block announces itself. The count row in
+ * 概览 reads the same document through its own `assistant.memory.get`, so this
+ * event is what keeps its N live after a write — the pane renders that row
+ * beside, not above, the block that owns the writes.
+ */
+export const ASSISTANT_MEMORY_CHANGED_EVENT = 'dsh-team-mode:assistant-memory-changed'
+
+function announceMemoryChange(assistantId: string): void {
+  try {
+    window.dispatchEvent(new CustomEvent(ASSISTANT_MEMORY_CHANGED_EVENT, { detail: { assistantId } }))
+  } catch {
+    // A blocked dispatch only leaves the count stale until the pane re-reads.
+  }
+}
+
+/**
  * `assistant.memory.undo` returns the same `{ memory, entry }` envelope as an
  * entry write. The panel stores the memory document, not the envelope.
  */
@@ -136,6 +152,7 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       setLegacyDraft(result.memory.content)
       setDraft(undefined)
       setConfirmClear(undefined)
+      announceMemoryChange(assistantId)
     } catch (cause) {
       const message = memoryError(cause)
       setError(message)
@@ -169,6 +186,7 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       setMemory(result.memory)
       setLegacyDraft(result.memory.content)
       setConfirmClear(undefined)
+      announceMemoryChange(assistantId)
     } catch (cause) {
       const message = memoryError(cause)
       setError(message)
@@ -193,6 +211,7 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       setLegacyDraft(next.content)
       setLegacyEditing(false)
       setConfirmClear(undefined)
+      announceMemoryChange(assistantId)
     } catch (cause) {
       const message = memoryError(cause)
       setError(message)
@@ -216,6 +235,7 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       setMemory(next)
       setLegacyDraft(next.content)
       setConfirmClear(undefined)
+      announceMemoryChange(assistantId)
     } catch (cause) {
       setError(memoryError(cause))
       if (memoryErrorCode(cause) === 'MEMORY_UNDO_STALE') void load()

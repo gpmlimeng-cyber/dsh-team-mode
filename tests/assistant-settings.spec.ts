@@ -56,6 +56,9 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     readOnly: true,
   })
   const Icon = (): unknown => createElement('span')
+  // The settings pane builds one icon per group at module scope, so every icon
+  // it imports must exist here even when the test never renders the pane.
+  const PaneIcon = Icon
   return {
     Button,
     Checkbox,
@@ -68,12 +71,23 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     IconChevronRightOutlineRegular: Icon,
     IconSparkleRegular: Icon,
     IconProjectAddOutlineRegular: Icon,
+    IconArchiveOutlineRegular: PaneIcon,
+    IconClockOutlineRegular: PaneIcon,
+    IconDatabaseOutlineRegular: PaneIcon,
+    IconEditOutlineRegular: PaneIcon,
+    IconFlatListOutlineRegular: PaneIcon,
+    IconInfoOutlineRegular: PaneIcon,
+    IconPersonalizationOutlineRegular: PaneIcon,
+    IconSlidersTwoOutlineRegular: PaneIcon,
+    IconShieldOutlineRegular: PaneIcon,
     Modal: Stub,
   }
 })
 
 const { memoryAfterUndo } = await import('../src/client/assistant-memory-panel.js')
 const { AssistantCreateBody, AssistantCreateFooter } = await import('../src/client/assistant-dialogs.js')
+const { AssistantOverviewMemoryRow } = await import('../src/client/assistant-settings-pane.js')
+const { assistantMemoryCountLine } = await import('../src/client/assistant-overview.js')
 
 const NOW = '2026-10-23T00:00:00.000Z'
 
@@ -110,6 +124,91 @@ describe('assistant settings memory panel', () => {
     expect(next.content).toBe('Restored note.')
     expect(next.revision).toBe(4)
     expect(next.entries?.[0]?.body).toBe('Be terse.')
+  })
+})
+
+function plainText(html: string): string {
+  return html.replace(/<[^>]*>/g, '')
+}
+
+describe('assistant 概览 memory count row (M1)', () => {
+  function row(count: number, onManage: () => void = () => undefined): string {
+    return renderToStaticMarkup(createElement(AssistantOverviewMemoryRow, { count, onManage }))
+  }
+
+  it('is one line: 记忆 · N 条 · 管理 →', () => {
+    const html = row(12)
+
+    expect(plainText(html)).toBe('记忆 · 12 条 · 管理 →')
+    // One real button carrying the count — not a link, not a menu, not a row
+    // that writes anything by itself.
+    expect(html).toMatch(/<button[^>]*type="button"[^>]*data-dsh-memory-count="12"/)
+    expect(html).not.toContain('<input')
+  })
+
+  it('says 还没有记录 instead of 0 when it remembers nothing', () => {
+    expect(assistantMemoryCountLine(0)).toBe('记忆 · 还没有记录')
+    expect(plainText(row(0))).toBe('记忆 · 还没有记录')
+    expect(plainText(row(0))).not.toContain('0')
+    // A single entry is already a count, never the empty sentence.
+    expect(assistantMemoryCountLine(1)).toBe('记忆 · 1 条 · 管理 →')
+  })
+
+  it('hands the click to the pane: the row itself owns no navigation', () => {
+    const onManage = vi.fn()
+    const element = AssistantOverviewMemoryRow({ count: 3, onManage }) as {
+      props: { onClick: () => void }
+    }
+
+    element.props.onClick()
+    expect(onManage).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('assistant memory count row wiring', () => {
+  const pane = readFileSync(
+    new URL('../src/client/assistant-settings-pane.tsx', import.meta.url),
+    'utf8',
+  )
+  const memoryPanel = readFileSync(
+    new URL('../src/client/assistant-memory-panel.tsx', import.meta.url),
+    'utf8',
+  )
+
+  it('takes N from the assistant.memory.get read the pane already makes', () => {
+    expect(pane).toContain("callAgentTeam('assistant.memory.get'")
+    // The assistant-scoped entries that read answered with — the same rows the
+    // 记忆 block lists — not a second endpoint and not a stored counter.
+    expect(pane).toContain(
+      'const entries = view.active.length + view.proposed.length + view.historyTotal',
+    )
+    expect(pane).toContain('setMemoryEntryCount(entries)')
+    expect(pane).toContain('count={memoryEntryCount}')
+    expect(pane).toContain('<AssistantMemorySection assistantId={assistant.id} />')
+  })
+
+  it('renders the row in 概览, where the jump to 记忆 already lives', () => {
+    const overview = pane.slice(
+      pane.indexOf('data-dsh-assistant-overview'),
+      pane.indexOf("isVisible('identity')"),
+    )
+
+    expect(overview).toContain('<AssistantOverviewMemoryRow')
+    expect(overview).toContain("jumpToOverviewTarget('memory')")
+    // The jump is the overview mechanism, not a new one: the pane owns exactly
+    // one jump handler and the row borrows it.
+    expect((pane.match(/const jumpToOverviewTarget/g) ?? [])).toHaveLength(1)
+  })
+
+  it('re-reads after a write inside the 记忆 block instead of going stale', () => {
+    // The block keeps its own document; every successful write announces it so
+    // the count row's one read runs again.
+    expect(memoryPanel).toContain("export const ASSISTANT_MEMORY_CHANGED_EVENT")
+    expect((memoryPanel.match(/announceMemoryChange\(assistantId\)/g) ?? [])).toHaveLength(4)
+    expect(pane).toContain('window.addEventListener(ASSISTANT_MEMORY_CHANGED_EVENT, onChanged)')
+    expect(pane).toContain('if (detail?.assistantId === assistant.id) setMemoryReadNonce')
+    // The read effect is keyed by the nonce, so an event is a fresh read.
+    expect(pane).toContain('[assistant.id, overviewSessionKey, memoryReadNonce]')
   })
 })
 
