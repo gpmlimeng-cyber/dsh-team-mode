@@ -12403,7 +12403,9 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   padding: 2px 6px 2px 9px;
   border: 0;
   border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-interactive-bg-hover);
+  /* A real fill, not a hover tint: on the dialog's white surface the previous
+     token was invisible, which read as a bare label instead of a picker. */
+  background: var(--dsw-alias-bg-module-platform);
   color: var(--dsw-alias-label-primary);
   font: inherit;
   font-size: 12px;
