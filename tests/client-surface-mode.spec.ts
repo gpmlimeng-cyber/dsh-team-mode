@@ -147,9 +147,11 @@ describe('sidebar surface switch', () => {
     expect(assistant).toContain('assistantId: isCoordinatorInstance(instance) ? null : instance.id')
   })
 
-  it('puts a right-aligned 搜索 / 筛选 / 新建 group on the brand row', () => {
+  it('puts a right-aligned 筛选 / 新建 group and a search field on the brand stack', () => {
     expect(sidebar).toContain('brandActions')
-    expect(sidebar).toContain('aria-label="搜索"')
+    // 搜索 became a field on its own row rather than a button in the action group.
+    expect(sidebar).toContain('data-dsh-brand-search')
+    expect(sidebar).not.toContain('aria-label="搜索"')
     expect(sidebar).toContain('aria-label="筛选"')
     expect(sidebar).toContain('aria-label="新建"')
     // DeepSeek mode forwards to the shipped controls; DeepBot uses our own.

@@ -1228,10 +1228,26 @@ export function SidebarPortal({
       if (element.parentElement !== stickyRow) {
         stickyRow.insertBefore(element, brand ?? stickyRow.firstElementChild ?? toggle)
       }
-      // Hide every native brand/logo sibling, not just the first _brand match:
-      // the shipped row can render a wordmark node beside the toggle.
-      for (const child of Array.from(stickyRow.children)) {
-        if (child !== element && child !== toggle) (child as HTMLElement).style.display = 'none'
+      // Hide every native brand node, not just the row's own children: the
+      // shipped shell also renders a wordmark outside the row (and the brand
+      // mark/name slot outlets can sit one level up), and any of them leaves an
+      // empty band above the list.
+      const shellRoot = stickyRow.closest<HTMLElement>('[class*="_root"]') ?? stickyRow.parentElement
+      const hideNativeBrand = (node: Element): void => {
+        const candidate = node as HTMLElement
+        if (candidate === element || candidate === toggle) return
+        if (candidate.contains(element) || candidate.contains(toggle)) return
+        if (candidate.contains(document.getElementById(SIDEBAR_HOST_ID))) return
+        candidate.style.display = 'none'
+      }
+      for (const child of Array.from(stickyRow.children)) hideNativeBrand(child)
+      if (shellRoot !== null) {
+        for (const node of Array.from(shellRoot.querySelectorAll([
+          '[data-slot="sidebar.brand.mark"]',
+          '[data-slot="sidebar.brand.name"]',
+          '[class*="_brand"]',
+          '[class*="_wordmark"]',
+        ].join(',')))) hideNativeBrand(node)
       }
       element.dataset.dshBrandInline = ''
       element.style.position = 'static'
@@ -1249,8 +1265,12 @@ export function SidebarPortal({
       stickyRow.style.zIndex = '20'
       stickyRow.style.background = 'var(--dsw-specific-sidebar-fill)'
       stickyRow.style.pointerEvents = 'auto'
-      stickyRow.style.height = '40px'
+      // Two rows now (mode + actions, then the search field), so the row grows.
+      stickyRow.style.height = 'auto'
       stickyRow.style.minHeight = '40px'
+      // macOS draws the traffic lights over the top-left of the window: keep the
+      // mode control clear of them instead of sliding under them.
+      stickyRow.style.paddingLeft = getSurfaceMode() === 'team' ? '78px' : ''
       stickyRow.style.paddingTop = '6px'
       stickyRow.style.paddingBottom = '6px'
       stickyRow.style.marginBottom = '0'
@@ -1758,61 +1778,10 @@ export function SidebarPortal({
   return (
     <>
       {brandHost !== undefined && createPortal(
-        <>
-          <SurfaceModeSwitch mode={mode} onChange={switchMode} />
-          {searchOpen ? (
-            <div className={css.sidebarTeamSearch}>
-              <IconSearchOutlineRegular size={14} />
-              <input
-                autoFocus
-                type="search"
-                value={search}
-                placeholder="搜索"
-                aria-label="搜索侧栏"
-                onChange={(event) => {
-                  const value = event.target.value
-                  setSearch(value)
-                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: value }))
-                }}
-                onBlur={() => {
-                  if (search !== '') return
-                  setSearchOpen(false)
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Escape') return
-                  setSearch('')
-                  setSearchOpen(false)
-                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
-                }}
-              />
-              <button
-                type="button"
-                className={css.sidebarTeamSearchClear}
-                aria-label="清除搜索"
-                onClick={() => {
-                  setSearch('')
-                  setSearchOpen(false)
-                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
-                }}
-              >
-                <IconCloseFillRegular size={14} />
-              </button>
-            </div>
-          ) : (
+        <div className={css.brandStack}>
+          <div className={css.brandTopRow}>
+            <SurfaceModeSwitch mode={mode} onChange={switchMode} />
             <div className={css.brandActions}>
-              <button
-                type="button"
-                className={css.brandAction}
-                aria-label="搜索"
-                title="搜索"
-                onClick={() => {
-                  // DeepSeek mode forwards to the shipped search; DeepBot expands ours.
-                  if (mode === 'native' && clickNativeAction(/搜索|search/i)) return
-                  setSearchOpen(true)
-                }}
-              >
-                <IconSearchOutlineRegular />
-              </button>
               <button
                 type="button"
                 className={css.brandAction}
@@ -1822,8 +1791,6 @@ export function SidebarPortal({
                 onClick={(event) => {
                   // DeepSeek mode opens the shipped grouping/sort/filter menu.
                   if (mode === 'native' && clickNativeAction(/筛选|排序|分组|filter|sort/i)) return
-                  // Hand the brand button over so the menu drops from this row,
-                  // not from the section header far below.
                   window.dispatchEvent(
                     new CustomEvent(SIDEBAR_MENU_EVENT, { detail: event.currentTarget }),
                   )
@@ -1868,10 +1835,50 @@ export function SidebarPortal({
                 )}
               />
             </div>
+          </div>
+          {/* The search button became a field on its own row: one input drives
+              both lists, and the row is always there instead of hiding behind a
+              toggle. DeepSeek mode keeps the shipped search. */}
+          {mode === 'team' && (
+            <div className={css.sidebarTeamSearch} data-dsh-brand-search>
+              <IconSearchOutlineRegular size={14} />
+              <input
+                autoFocus={searchOpen}
+                type="search"
+                value={search}
+                placeholder="搜索团队或助手"
+                aria-label="搜索侧栏"
+                onChange={(event) => {
+                  const value = event.target.value
+                  setSearch(value)
+                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: value }))
+                }}
+                onFocus={() => { setSearchOpen(true) }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape') return
+                  setSearch('')
+                  window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
+                }}
+              />
+              {search !== '' && (
+                <button
+                  type="button"
+                  className={css.sidebarTeamSearchClear}
+                  aria-label="清除搜索"
+                  onClick={() => {
+                    setSearch('')
+                    window.dispatchEvent(new CustomEvent(SIDEBAR_SEARCH_EVENT, { detail: '' }))
+                  }}
+                >
+                  <IconCloseFillRegular size={14} />
+                </button>
+              )}
+            </div>
           )}
-        </>,
+        </div>,
         brandHost,
       )}
+
       {host !== undefined && createPortal(
         <>
           {mode === 'team' && (

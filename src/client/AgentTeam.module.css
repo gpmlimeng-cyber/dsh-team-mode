@@ -3010,6 +3010,24 @@ textarea.input {
 
 
 /* Right-aligned icon actions on the brand row: 搜索 / 筛选 / 新建. */
+/* Stacked brand chrome: the mode row on top, the search field underneath. */
+.brandStack {
+  display: flex;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.brandTopRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  min-width: 0;
+}
+
 .brandActions {
   display: inline-flex;
   flex: 0 0 auto;
