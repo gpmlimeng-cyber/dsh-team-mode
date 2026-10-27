@@ -3722,7 +3722,10 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 /* One shape language for every sidebar identity: the assistant avatar is the
    same rounded square as the team mark. Both use a percentage radius so the
    corner stays the same at 32px and 34px. */
-.sidebarAssistantAvatar .sidebarAssistantAvatarShape {
+/* Every assistant portrait (sidebar row, new-chat panel, detail panel) uses this
+   shape: one rounded-square language. An uploaded picture keeps the shipped
+   plate; only the mascot drops it (see .mascotTile). */
+.sidebarAssistantAvatarShape {
   corner-shape: superellipse(1);
   border-radius: 25% !important;
 }
@@ -3741,7 +3744,9 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   flex: none;
   overflow: hidden;
   corner-shape: superellipse(1);
-  background: color-mix(in srgb, var(--dsw-alias-label-primary) 4%, transparent);
+  /* No plate behind the mascot: it reads as the assistant itself, not as an
+     icon on a tile. */
+  background: transparent;
 }
 
 .mascotCircle {
