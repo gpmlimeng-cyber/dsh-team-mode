@@ -262,9 +262,10 @@ export function AssistantSettingsPane({
   const [mascotMotionKey, setMascotMotionKey] = useState(0)
   const [overviewCounts, setOverviewCounts] = useState<AssistantOverviewCounts>({})
   // M1's number: the assistant-scoped entries assistant.memory.get answered
-  // with. It stays `undefined` until that read lands, so the count row never
-  // claims "还没有记录" for a read that has not happened.
-  const [memoryEntryCount, setMemoryEntryCount] = useState<number>()
+  // with, tagged with the instance it belongs to. `undefined` means the read has
+  // not answered yet, so the count row never claims "还没有记录" for an unread
+  // memory — and a re-read after a write keeps the old line instead of blinking.
+  const [memoryEntryCount, setMemoryEntryCount] = useState<{ assistantId: string; count: number }>()
   // Bumped by the 记忆 block after each of its writes; it re-runs the one read
   // above so the count row never lags behind an edit made in this same pane.
   const [memoryReadNonce, setMemoryReadNonce] = useState(0)
@@ -336,7 +337,6 @@ export function AssistantSettingsPane({
   useEffect(() => {
     let live = true
     setOverviewCounts({})
-    setMemoryEntryCount(undefined)
     void assistantAutomationCount(assistant).then(count => {
       if (live && count !== undefined) {
         setOverviewCounts(current => ({ ...current, automations: count }))
@@ -349,7 +349,7 @@ export function AssistantSettingsPane({
         // The assistant-scoped entries the read answered with: exactly the rows
         // the 记忆 block lists, so its count row and the block never disagree.
         const entries = view.active.length + view.proposed.length + view.historyTotal
-        setMemoryEntryCount(entries)
+        setMemoryEntryCount({ assistantId: assistant.id, count: entries })
         // Any stored entry — even an archived one, or a legacy note — means it
         // does remember something, so the count only ever answers zero vs not.
         setOverviewCounts(current => ({
@@ -664,9 +664,9 @@ export function AssistantSettingsPane({
           <div className={css.assistantOverview} data-dsh-assistant-overview>
             {/* M1: the memory count and its one-step way in. It appears only
                 once the read answered — an unread count makes no claim. */}
-            {memoryEntryCount !== undefined && (
+            {memoryEntryCount?.assistantId === assistant.id && (
               <AssistantOverviewMemoryRow
-                count={memoryEntryCount}
+                count={memoryEntryCount.count}
                 onManage={() => { jumpToOverviewTarget('memory') }}
               />
             )}

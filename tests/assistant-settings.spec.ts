@@ -182,8 +182,11 @@ describe('assistant memory count row wiring', () => {
     expect(pane).toContain(
       'const entries = view.active.length + view.proposed.length + view.historyTotal',
     )
-    expect(pane).toContain('setMemoryEntryCount(entries)')
-    expect(pane).toContain('count={memoryEntryCount}')
+    expect(pane).toContain('count={memoryEntryCount.count}')
+    // The count is tagged with the instance it was read for, so switching
+    // helpers can never show the previous assistant's number.
+    expect(pane).toContain('setMemoryEntryCount({ assistantId: assistant.id, count: entries })')
+    expect(pane).toContain('memoryEntryCount?.assistantId === assistant.id')
     expect(pane).toContain('<AssistantMemorySection assistantId={assistant.id} />')
   })
 
