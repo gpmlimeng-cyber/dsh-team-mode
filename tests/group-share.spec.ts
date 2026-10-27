@@ -610,6 +610,74 @@ describe('Group import', () => {
     })
   })
 
+  it('reports a team member\'s unavailable skill, MCP and effort instead of discarding them', async () => {
+    const { service, store } = await createHarness()
+    const document = teamDocument()
+    const team = document.teams[0]!
+    const [leader, member] = team.members
+    // Team-only document: no `assistants` rows to carry the availability map.
+    const withGhosts: GroupExportDocument = {
+      ...document,
+      assistants: [],
+      teams: [{
+        ...team,
+        members: [
+          {
+            ...leader!,
+            profile: profile({
+              name: 'Writer',
+              model: 'gpt-5-mini',
+              reasoningEffort: 'medium',
+              skillAllowlist: ['review', 'ghost-skill'],
+              mcpServers: ['github', 'ghost-mcp'],
+            }),
+          },
+          member!,
+        ],
+      }],
+    }
+
+    const preview = await service.previewGroupImport(withGhosts, WORKSPACE_ID)
+    expect(preview.skills).toEqual([
+      { name: 'ghost-skill', available: false },
+      { name: 'review', available: true },
+    ])
+    expect(preview.mcpServers).toEqual([
+      { name: 'ghost-mcp', available: false },
+      { name: 'github', available: true },
+    ])
+    expect(preview.teams[0]?.members[0]).toMatchObject({
+      displayName: '组长',
+      permissionPresetId: 'workspace-write',
+      dropped: {
+        skills: ['ghost-skill'],
+        mcpServers: ['ghost-mcp'],
+        reasoningEffort: 'medium',
+      },
+    })
+    // The member that asked for nothing unavailable reports nothing.
+    expect(preview.teams[0]?.members[1]?.dropped).toBeUndefined()
+    const warnings = preview.warnings.join('\n')
+    expect(warnings).toContain(
+      "Team '研究组' member '组长': dropped unavailable skill(s) ghost-skill; "
+      + "MCP server(s) ghost-mcp; reasoning effort 'medium'",
+    )
+
+    // Apply reports the same drops and lands only what this machine resolves.
+    const result = await service.importGroup(withGhosts, WORKSPACE_ID, preview.planHash)
+    expect(result.warnings).toEqual(preview.warnings)
+    const template = store.listAssistants().find(assistant => assistant.name === 'Writer')
+    expect(template).toMatchObject({ skillAllowlist: ['review'], mcpServers: ['github'] })
+    expect(template?.reasoningEffort).toBeUndefined()
+    const created = store.listTeams()[0]
+    const createdLeader = Object.values(created?.members ?? {}).find(slot => slot.role === 'leader')
+    expect(createdLeader?.reasoningEffort).toBeUndefined()
+    expect(createdLeader?.assistantSnapshot).toMatchObject({
+      skillAllowlist: ['review'],
+      mcpServers: ['github'],
+    })
+  })
+
   it('skips a team with two leaders instead of materializing half a roster', async () => {
     const { service, store } = await createHarness()
     const document = teamDocument()

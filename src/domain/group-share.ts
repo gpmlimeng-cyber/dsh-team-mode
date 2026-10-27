@@ -149,6 +149,12 @@ export interface GroupImportMemberPlan {
   templateName: string
   permissionPresetId: string
   reasoningEffort?: string
+  /**
+   * Skill/MCP/effort values this machine could not resolve, so the member (and
+   * the template behind it) is created without them. Never silently dropped:
+   * the same entries also appear in the preview warnings.
+   */
+  dropped?: GroupImportDropped
 }
 
 export interface GroupImportTeamPlan {

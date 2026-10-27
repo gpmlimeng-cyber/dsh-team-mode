@@ -3929,7 +3929,11 @@ export class AgentTeamService extends Service {
       }
       // Resolve the whole roster before creating anything: a half-valid team
       // must not be materialized and then abandoned.
-      const roster: Array<{ member: PortableTeamMember, profile: PortableAssistantProfile }> = []
+      const roster: Array<{
+        member: PortableTeamMember
+        profile: PortableAssistantProfile
+        dropped: GroupImportDropped
+      }> = []
       let failure: string | undefined
       for (const member of team.members) {
         const resolved = await this.resolvePortableProfile(member.profile, cache)
@@ -3942,7 +3946,7 @@ export class AgentTeamService extends Service {
           failure = `member '${member.displayName}': unknown permission preset '${permissionPresetId}'`
           break
         }
-        roster.push({ member, profile: resolved.profile })
+        roster.push({ member, profile: resolved.profile, dropped: resolved.dropped })
       }
       if (failure !== undefined) {
         skip(failure)
@@ -3950,28 +3954,37 @@ export class AgentTeamService extends Service {
       }
       const memberPlans: GroupImportMemberPlan[] = []
       const takenMemberNames = new Set<string>()
-      for (const { member, profile } of roster) {
+      for (const { member, profile, dropped } of roster) {
         const template = this.templatePlanFor(profile, templates, takenTemplates)
         const displayName = uniqueName(member.displayName, takenMemberNames, GROUP_SHARE_NAME_MAX_CHARS)
         takenMemberNames.add(displayName)
         const permissionPresetId = (member.permissionPresetId ?? profile.permissionPresetId).trim()
+        // A member's availability is the same policy as an Assistant row's, so
+        // every reference it names is marked here too — a team-only document
+        // must not report an empty skill/MCP list.
+        markAvailability(skillAvailability, member.profile.skillAllowlist, dropped.skills)
+        markAvailability(mcpAvailability, member.profile.mcpServers, dropped.mcpServers)
         const efforts = cache.efforts.get(`${profile.provider}/${profile.model}`) ?? []
         const requestedEffort = member.reasoningEffort ?? profile.reasoningEffort
         const reasoningEffort = requestedEffort !== undefined && efforts.includes(requestedEffort)
           ? requestedEffort
           : undefined
+        // The member loses what its template loses, plus any slot override the
+        // model cannot do. Both are reported instead of letting the cleaned
+        // profile look like the document never asked for them.
+        const memberDropped: GroupImportDropped = { ...dropped }
         if (member.reasoningEffort !== undefined && reasoningEffort === undefined) {
-          warnings.push(
-            `Member '${displayName}': dropped reasoning effort '${member.reasoningEffort}' `
-            + `(not supported by ${profile.provider}/${profile.model})`,
-          )
+          memberDropped.reasoningEffort = member.reasoningEffort
         }
+        const warning = droppedWarning(`Team '${team.name}' member '${displayName}'`, memberDropped)
+        if (warning !== undefined) warnings.push(warning)
         memberPlans.push({
           displayName,
           role: member.role,
           templateName: template.plannedName,
           permissionPresetId,
           ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+          ...(hasDropped(memberDropped) ? { dropped: memberDropped } : {}),
         })
       }
       const plannedName = uniqueName(team.name, takenTeams, GROUP_SHARE_NAME_MAX_CHARS)
@@ -4133,6 +4146,9 @@ export class AgentTeamService extends Service {
     workspaceId: string,
   ): Promise<GroupImportResult> {
     const rows: GroupImportResultRow[] = []
+    // Apply never re-resolves references: the plan's availability decisions
+    // (including a member's dropped skill/MCP/effort) ride into the result, so
+    // the outcome report cannot disagree with the preview the user approved.
     const warnings = [...plan.warnings]
     // The group itself is the one hard prerequisite: if it cannot be created
     // (a race, or the list filled up) the import aborts before any row lands.
