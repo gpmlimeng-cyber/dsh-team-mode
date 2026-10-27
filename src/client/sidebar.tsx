@@ -78,7 +78,6 @@ import type { WorkspaceChoice } from './types.js'
 import { LeaderMark } from './team-member-chrome.js'
 import { AssistantLibraryDialog } from './assistant-library-dialog.js'
 import { NewChatPanel } from './new-chat-panel.js'
-import { AVATAR_PREVIEW_ENABLED, AvatarPreviewRows } from './avatar-preview.js'
 import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-groups.js'
 import {
   SidebarGroupDialogs,
@@ -96,7 +95,7 @@ const SURFACE_MODE_EVENT = 'dsh-team-mode:surface-mode-change'
  * One cluster seat: its absolute box, plus the mask layers that cut the gap
  * into the neighbours drawn after it (the reference's `mask-composite` pair).
  */
-export function teamAvatarSeatStyle(seat: TeamAvatarSeat): CSSProperties {
+function teamAvatarSeatStyle(seat: TeamAvatarSeat): CSSProperties {
   const style: CSSProperties = {
     left: seat.left,
     top: seat.top,
@@ -1002,7 +1001,6 @@ export function SidebarTeamSection({
           <p className={css.sidebarTeamTaskHint}>{TEAM_TASK_CREATE_HINT}</p>
         </div>
       </AnimatedModal>
-      {AVATAR_PREVIEW_ENABLED && <AvatarPreviewRows />}
       <SidebarGroupDialogs
         dialog={groupDialog}
         groups={groups}

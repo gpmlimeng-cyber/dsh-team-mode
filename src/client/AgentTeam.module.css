@@ -11733,22 +11733,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   background: color-mix(in srgb, var(--dsw-alias-label-primary) 12%, transparent);
 }
 
-/* TEMPORARY: the avatar-count preview block. Delete with avatar-preview.tsx. */
-.avatarPreview {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 8px 0;
-  padding: 8px;
-  border: 1px dashed var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-md);
-}
-
-.avatarPreviewTitle {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-}
-
 .sidebarTeamAvatarChip {
   display: inline-flex;
   align-items: center;
