@@ -207,7 +207,7 @@ describe('assistant memory count row wiring', () => {
     // The block keeps its own document; every successful write announces it so
     // the count row's one read runs again.
     expect(memoryPanel).toContain("export const ASSISTANT_MEMORY_CHANGED_EVENT")
-    expect((memoryPanel.match(/announceMemoryChange\(assistantId\)/g) ?? [])).toHaveLength(5)
+    expect((memoryPanel.match(/announceMemoryChange\(assistantId\)/g) ?? [])).toHaveLength(4)
     expect(pane).toContain('window.addEventListener(ASSISTANT_MEMORY_CHANGED_EVENT, onChanged)')
     expect(pane).toContain('if (detail?.assistantId === assistant.id) setMemoryReadNonce')
     // The read effect is keyed by the nonce, so an event is a fresh read.

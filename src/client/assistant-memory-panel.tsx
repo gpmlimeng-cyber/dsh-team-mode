@@ -232,6 +232,14 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
     }
   }
 
+  /** Shared tail of every entry write: store the document, then announce it. */
+  function applyEntryWrite(result: AssistantMemoryEntryWriteView): void {
+    setMemory(result.memory)
+    setLegacyDraft(result.memory.content)
+    setConfirmClear(undefined)
+    announceMemoryChange(assistantId)
+  }
+
   async function writeEntry(): Promise<void> {
     if (draft === undefined || busy) return
     const title = draft.title.trim()
@@ -253,11 +261,8 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
           ...(draft.key.trim() === '' ? {} : { key: draft.key.trim() }),
         },
       })
-      setMemory(result.memory)
-      setLegacyDraft(result.memory.content)
+      applyEntryWrite(result)
       setDraft(undefined)
-      setConfirmClear(undefined)
-      announceMemoryChange(assistantId)
     } catch (cause) {
       const message = memoryError(cause)
       setError(message)
@@ -288,10 +293,7 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
           status: 'archived',
         },
       })
-      setMemory(result.memory)
-      setLegacyDraft(result.memory.content)
-      setConfirmClear(undefined)
-      announceMemoryChange(assistantId)
+      applyEntryWrite(result)
     } catch (cause) {
       const message = memoryError(cause)
       setError(message)
