@@ -10,7 +10,7 @@ const SHARED_RULES = [
   'You are part of a team that shares one Workspace. All members can read and write the same files, so coordinate before touching overlapping paths.',
   'The durable team mailbox and the shared task board are the coordination protocol; chat history is not shared between members.',
   'Available team tools: team_members, team_read_messages, team_send_message, team_interrupt_agent, team_mode_goal_create, team_mode_goal_list, team_mode_goal_update, team_mode_task_create, team_mode_task_update, team_mode_task_claim, team_mode_task_list, team_mode_inbox, team_escalations, team_memory_propose, team_memory_list, team_memory_accept, team_list_assistants, team_describe_assistant, team_spawn_agent, team_rename_agent, team_clear_agent_context, team_shutdown_agent.',
-  'Team memory holds durable team decisions and project facts, not task status or chat transcripts. Team memory_list shows proposals and active entries; members propose with team_memory_propose and the Leader decides with team_memory_accept. Only active entries are loaded into prompts.',
+  'Team memory holds durable team decisions and project facts, not task status or chat transcripts. Team memory_list shows proposals and active entries; members propose with team_memory_propose and the Leader decides with team_memory_accept. Only the Leader’s prompt loads active entries.',
   'Use team_read_messages at the start of a turn, or team_mode_inbox for a read-only view of assigned tasks, claimable work, unread mail and approvals (it never marks mail read). Use team_mode_task_list before claiming or reporting work. Put durable decisions and results in the task board or mailbox, not only in your private context.',
   'A review or verification task completes only with verdict=pass; to fail it, pass verdict=needs_revision or reject together with findings. Only the task owner records a verdict, and a Leader who is not the owner must reassign the task first.',
   'Tasks may carry optional due_at/remind_at times (ISO 8601). When remind_at passes, the runtime sends one system reminder to the owner (or the Leader); it never starts, completes, reassigns, or verifies the task. Set or clear them with team_mode_task_create/team_mode_task_update; a later remind_at re-arms a task already reminded.',
@@ -60,7 +60,7 @@ export function memberPrompt(team: TeamAggregate, member: TeamMemberSlot): strin
   ].filter((line): line is string => line !== undefined).join('\n\n')
 }
 
-/** Team memory is core context: active entries only, bounded, injected every turn. */
+/** Team memory is Leader context: active entries only, bounded, read every turn. */
 const TEAM_MEMORY_PROMPT_LIMIT = 2_000
 const TEAM_MEMORY_ENTRY_TITLE_LIMIT = 80
 const TEAM_MEMORY_ENTRY_BODY_LIMIT = 200
@@ -79,7 +79,7 @@ export function teamMemoryPrompt(team: TeamAggregate): string {
   if (active.length === 0) return ''
   const header = [
     'Team memory — decisions and facts this team has agreed on.',
-    'Read-only in this prompt: propose with team_memory_propose, inspect with team_memory_list; only the Leader accepts.',
+    'Read-only context: write with team_memory_propose, inspect with team_memory_list, and decide member proposals with team_memory_accept.',
   ].join(' ')
   const entries = active.map(entry => `- ${memoryEntryLine(entry)}`).join('\n')
   return `${header}\n${boundedText(entries, TEAM_MEMORY_PROMPT_LIMIT)}`
@@ -88,6 +88,17 @@ export function teamMemoryPrompt(team: TeamAggregate): string {
 function memoryEntryLine(entry: MemoryEntry): string {
   const label = entry.key === undefined ? entry.title : `${entry.key}: ${entry.title}`
   return `${truncate(label, TEAM_MEMORY_ENTRY_TITLE_LIMIT)}: ${boundedText(entry.body, TEAM_MEMORY_ENTRY_BODY_LIMIT)}`
+}
+
+/**
+ * Team memory is Leader context only. An ordinary member never receives the
+ * block: it reads as "the team agreed", yet a member cannot tell who decided
+ * it, so the team page (where proposals and decisions are visible) is the one
+ * place a member-facing surface can show it. Leadership is resolved live from
+ * the aggregate, so a Leader change reaches the next turn without a restart.
+ */
+export function teamMemoryPromptFor(team: TeamAggregate, slotId: string): string {
+  return team.members[slotId]?.role === 'leader' ? teamMemoryPrompt(team) : ''
 }
 
 /** Assistant memory is background context, not an agreement; bound it tightly. */
@@ -241,4 +252,15 @@ export function rosterPrompt(team: TeamAggregate): string {
     'Mailbox: team_read_messages returns unread first, then recent; team_send_message to `*` broadcasts to every active member except the sender. Message summaries are for mailbox previews; the full body is retained.',
     'If the user asks for a roster/plan, the Leader proposes it first; only spawn or assign after approval.',
   ].join('\n')
+}
+
+/**
+ * The live roster section: the roster for every member, plus team memory for
+ * the Leader only. One helper keeps the runtime's section and its tests
+ * reading the same composition.
+ */
+export function teamContextPrompt(team: TeamAggregate, slotId: string): string {
+  return [rosterPrompt(team), teamMemoryPromptFor(team, slotId)]
+    .filter(line => line !== '')
+    .join('\n\n')
 }

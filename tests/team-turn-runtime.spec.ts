@@ -17,6 +17,7 @@ import type {
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import type { AgentTeamStore } from '../src/storage/store.js'
 import type { TeamCommandHandler } from '../src/runtime/team-command-handler.js'
+import { teamContextPrompt } from '../src/runtime/team-prompts.js'
 import { TeamRuntime } from '../src/runtime/team-runtime.js'
 
 const config: Config = {
@@ -719,5 +720,26 @@ describe('team turn runtime wiring', () => {
       .toBe(false)
     // The task remains exactly as created: the routine never executes it.
     expect(service.getTeam(team.id).tasks[task.taskId]?.status).toBe(task.status)
+  })
+
+  it('gives the roster section team memory to the Leader and to no member', async () => {
+    const { ctx, service, store } = createHarness()
+    const team = await twoMemberTeam(service, store)
+    const memberId = Object.keys(team.members).find(id => id !== team.leaderSlotId)!
+    await service.writeUserTeamMemory(
+      team.id,
+      { title: 'Release', body: 'Ship on Friday.' },
+      { expectedMemoryRevision: 0 },
+    )
+    const latest = service.getTeam(team.id)
+
+    const leaderPrompt = teamContextPrompt(latest, team.leaderSlotId)
+    expect(leaderPrompt).toContain('Team memory')
+    expect(leaderPrompt).toContain('Ship on Friday.')
+
+    const memberPrompt = teamContextPrompt(latest, memberId)
+    expect(memberPrompt).toContain('Team roster')
+    expect(memberPrompt).not.toContain('Team memory')
+    expect(memberPrompt).not.toContain('Ship on Friday.')
   })
 })

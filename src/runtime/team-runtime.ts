@@ -52,8 +52,7 @@ import { createThreadSession, type CreatedThreadSession } from './thread-session
 import {
   linkedAssistantMemoryPrompt,
   memberPrompt,
-  rosterPrompt,
-  teamMemoryPrompt,
+  teamContextPrompt,
 } from './team-prompts.js'
 import {
   allowedInheritedToolNames,
@@ -1859,12 +1858,12 @@ export class TeamRuntime {
           order: 11,
           // Roster and team memory are one live section: both are read from the
           // aggregate on every turn, so an accepted entry reaches the next turn
-          // without restarting the member Session.
+          // without restarting the member Session. `teamContextPrompt` gives
+          // team memory to the Leader only; an ordinary member prompt never
+          // carries it.
           text: () => {
             const latest = this.service.getTeam(team.id)
-            return [rosterPrompt(latest), teamMemoryPrompt(latest)]
-              .filter(line => line !== '')
-              .join('\n\n')
+            return teamContextPrompt(latest, member.id)
           },
         })
         registerTeamTools(agentCtx, {

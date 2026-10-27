@@ -2087,6 +2087,46 @@ function memoryTime(value: string): string {
 }
 
 /**
+ * The shared renderer for a structured memory entry: it reads only the entry
+ * and caller-provided actions, so assistant and team memory can use the same
+ * card. Team-scoped rows are always `team-safe` (their container has no
+ * private meaning), and history rows render the same way with no actions.
+ */
+export function MemoryEntryCard({
+  entry,
+  actions,
+}: {
+  entry: MemoryEntry
+  actions?: ReactNode
+}): JSX.Element {
+  return (
+    <article className={css.memoryEntryCard}>
+      <div className={css.memoryEntryHeader}>
+        <strong>{entry.title}</strong>
+        <span className={css.memoryBadges}>
+          <span className={`${css.memoryBadge} ${entry.visibility === 'private' ? css.memoryBadgePrivate : ''}`}>
+            {memoryVisibilityLabel(entry.visibility)}
+          </span>
+          <span className={`${css.memoryBadge} ${entry.status === 'proposed' ? css.memoryBadgeProposed : ''}`}>
+            {memoryStatusLabel(entry.status)}
+          </span>
+          <span className={css.memoryBadge}>v{entry.revision}</span>
+        </span>
+      </div>
+      {entry.body !== '' && <p className={css.memoryEntryBody}>{entry.body}</p>}
+      <div className={css.memoryEntryMeta}>
+        <span>
+          {memorySourceLabel(entry.source)}
+          {entry.key === undefined ? '' : ` · ${entry.key}`}
+          {` · ${memoryTime(entry.updatedAt)}`}
+        </span>
+        {actions}
+      </div>
+    </article>
+  )
+}
+
+/**
  * Team memory lives inside the team aggregate, so the panel renders straight
  * from `team.memory` and refetches through `onChanged` after every mutation.
  * Only team-safe team entries reach the view (see `teamMemoryView`); private
@@ -2175,32 +2215,6 @@ function TeamMemorySection({
     }
   }
 
-  function entryCard(entry: MemoryEntry, actions?: JSX.Element): JSX.Element {
-    return (
-      <article key={entry.id} className={css.memoryEntryCard}>
-        <div className={css.memoryEntryHeader}>
-          <strong>{entry.title}</strong>
-          <span className={css.memoryBadges}>
-            <span className={css.memoryBadge}>{memoryVisibilityLabel(entry.visibility)}</span>
-            <span className={`${css.memoryBadge} ${entry.status === 'proposed' ? css.memoryBadgeProposed : ''}`}>
-              {memoryStatusLabel(entry.status)}
-            </span>
-            <span className={css.memoryBadge}>v{entry.revision}</span>
-          </span>
-        </div>
-        {entry.body !== '' && <p className={css.memoryEntryBody}>{entry.body}</p>}
-        <div className={css.memoryEntryMeta}>
-          <span>
-            {memorySourceLabel(entry.source)}
-            {entry.key === undefined ? '' : ` · ${entry.key}`}
-            {` · ${memoryTime(entry.updatedAt)}`}
-          </span>
-          {actions}
-        </div>
-      </article>
-    )
-  }
-
   return (
     <section className={css.teamMemorySection} aria-label="团队记忆">
       <div className={css.teamSectionHeader}>
@@ -2228,50 +2242,60 @@ function TeamMemorySection({
       {view.proposed.length > 0 && (
         <div className={css.memoryGroup}>
           <strong className={css.memoryGroupTitle}>待确认提案 · {view.proposed.length}</strong>
-          {view.proposed.map(entry => entryCard(
-            entry,
-            <span className={css.memoryEntryActions}>
-              <button
-                type="button"
-                className={css.memoryAction}
-                disabled={deciding !== undefined}
-                onClick={() => { void decide(entry.id, 'accept') }}
-              >
-                {deciding === entry.id ? '处理中…' : '接受'}
-              </button>
-              <button
-                type="button"
-                className={css.memoryAction}
-                disabled={deciding !== undefined}
-                onClick={() => { void decide(entry.id, 'reject') }}
-              >
-                驳回
-              </button>
-            </span>,
+          {view.proposed.map(entry => (
+            <MemoryEntryCard
+              key={entry.id}
+              entry={entry}
+              actions={(
+                <span className={css.memoryEntryActions}>
+                  <button
+                    type="button"
+                    className={css.memoryAction}
+                    disabled={deciding !== undefined}
+                    onClick={() => { void decide(entry.id, 'accept') }}
+                  >
+                    {deciding === entry.id ? '处理中…' : '接受'}
+                  </button>
+                  <button
+                    type="button"
+                    className={css.memoryAction}
+                    disabled={deciding !== undefined}
+                    onClick={() => { void decide(entry.id, 'reject') }}
+                  >
+                    驳回
+                  </button>
+                </span>
+              )}
+            />
           ))}
         </div>
       )}
       {view.active.length > 0 && (
         <div className={css.memoryGroup}>
           <strong className={css.memoryGroupTitle}>生效记忆 · {view.active.length}</strong>
-          {view.active.map(entry => entryCard(
-            entry,
-            <button
-              type="button"
-              className={css.memoryAction}
-              disabled={saving || deciding !== undefined}
-              onClick={() => {
-                setError(undefined)
-                setDraft({
-                  id: entry.id,
-                  title: entry.title,
-                  body: entry.body,
-                  key: entry.key ?? '',
-                })
-              }}
-            >
-              编辑
-            </button>,
+          {view.active.map(entry => (
+            <MemoryEntryCard
+              key={entry.id}
+              entry={entry}
+              actions={(
+                <button
+                  type="button"
+                  className={css.memoryAction}
+                  disabled={saving || deciding !== undefined}
+                  onClick={() => {
+                    setError(undefined)
+                    setDraft({
+                      id: entry.id,
+                      title: entry.title,
+                      body: entry.body,
+                      key: entry.key ?? '',
+                    })
+                  }}
+                >
+                  编辑
+                </button>
+              )}
+            />
           ))}
         </div>
       )}
@@ -2288,7 +2312,7 @@ function TeamMemorySection({
           </button>
           {historyOpen && (
             <>
-              {view.history.map(entry => entryCard(entry))}
+              {view.history.map(entry => <MemoryEntryCard key={entry.id} entry={entry} />)}
               {view.historyTotal > view.history.length && (
                 <p className={css.memoryEmpty}>仅显示最近 {view.history.length} 条历史记录。</p>
               )}

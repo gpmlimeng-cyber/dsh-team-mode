@@ -448,7 +448,7 @@ export function registerTeamTools(
 
   register(defineTool({
     name: 'team_memory_list',
-    description: 'List this team’s memory entries with status, visibility, key, author slot, and revisions. Proposed entries wait for the Leader; only active entries are loaded into team prompts. Other teams and DM Sessions never see this memory. Read-only: query/status/limit narrow the returned entries without changing anything.',
+    description: 'List this team’s memory entries with status, visibility, key, author slot, and revisions. Proposed entries wait for the Leader; only active entries are loaded into the Leader’s prompt. Other teams and DM Sessions never see this memory. Read-only: query/status/limit narrow the returned entries without changing anything.',
     parameters: {
       query: { type: 'string', description: 'Case-insensitive text matched against entry key, title, and body.' },
       status: {
