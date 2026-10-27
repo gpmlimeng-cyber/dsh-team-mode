@@ -774,6 +774,12 @@ const assistantInstanceOverrides = {
   instructions: z.string().optional(),
   pinned: z.boolean().optional(),
   /**
+   * Capability allowlists of the snapshot. Absent keeps the template's lists
+   * (a direct Assistant starts empty); an empty array clears them.
+   */
+  skillAllowlist: z.array(nonEmpty).optional(),
+  mcpServers: z.array(nonEmpty).optional(),
+  /**
    * Offline mascot identity, accepted at creation like `instructions`, so the
    * create dialog writes the picked look in the same call instead of a
    * follow-up update. Absent means the avatar-less fallback is the initials.
@@ -821,6 +827,9 @@ export const updateAssistantInstanceInputSchema = z.object({
   model: nonEmpty.optional(),
   reasoningEffort: z.string().trim().optional(),
   permissionPresetId: nonEmpty.optional(),
+  /** Replace the capability allowlists; absent keeps them, `[]` clears them. */
+  skillAllowlist: z.array(nonEmpty).optional(),
+  mcpServers: z.array(nonEmpty).optional(),
   /** Replace the mascot identity; absent keeps the stored one. */
   mascot: assistantMascotSchema.optional(),
 }).strict()

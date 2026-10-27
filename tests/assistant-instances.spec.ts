@@ -223,6 +223,7 @@ describe('Assistant instances', () => {
       agentPresetId: 'default',
       permissionPresetId: 'read-only',
       pinned: true,
+      skillAllowlist: ['research'],
     })
 
     expect(instance.templateId).toBe('template-1')
@@ -238,7 +239,7 @@ describe('Assistant instances', () => {
       reasoningEffort: 'low',
       agentPresetId: 'default',
       permissionPresetId: 'read-only',
-      skillAllowlist: ['code-review'],
+      skillAllowlist: ['research'],
       mcpServers: [],
       prompts: ['Plan the work'],
     })
@@ -282,7 +283,7 @@ describe('Assistant instances', () => {
     await expect(service.createAssistantInstance(withoutWorkspace as never)).rejects.toBeInstanceOf(Error)
     await expect(service.createAssistantInstance({ ...base, templateId: '' } as never))
       .rejects.toBeInstanceOf(Error)
-    await expect(service.createAssistantInstance({ ...base, skillAllowlist: [] } as never))
+    await expect(service.createAssistantInstance({ ...base, unknownField: true } as never))
       .rejects.toBeInstanceOf(Error)
     expect(store.listAssistantInstances()).toEqual([])
   })
@@ -330,6 +331,100 @@ describe('Assistant instances', () => {
     })).rejects.toMatchObject({ code: 'PRESET_REFERENCE_INVALID' })
 
     expect(store.listAssistantInstances()).toEqual([])
+  })
+
+  it('creates a direct instance carrying the Skills and MCP Servers it was given', async () => {
+    const { service, store } = createHarness()
+
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Equipped',
+      provider: 'openai',
+      model: 'gpt-5',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+      skillAllowlist: ['code-review', ' code-review ', 'research'],
+      mcpServers: ['github'],
+    })
+
+    expect(instance.assistantSnapshot.skillAllowlist).toEqual(['code-review', 'research'])
+    expect(instance.assistantSnapshot.mcpServers).toEqual(['github'])
+    expect(store.getAssistantInstance(instance.id)?.assistantSnapshot).toEqual(instance.assistantSnapshot)
+
+    // Without the fields the snapshot keeps the empty lists older rows carry.
+    const legacy = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Legacy',
+      provider: 'openai',
+      model: 'gpt-5',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+    })
+    expect(legacy.assistantSnapshot.skillAllowlist).toEqual([])
+    expect(legacy.assistantSnapshot.mcpServers).toEqual([])
+    expect((await service.updateAssistantInstance(legacy.id, { pinned: true }))
+      .assistantSnapshot).toMatchObject({ skillAllowlist: [], mcpServers: [] })
+  })
+
+  it('rejects an unusable Skill or a missing MCP Server with its name', async () => {
+    const { service, store } = createHarness()
+    const base = {
+      workspaceId: 'workspace-1',
+      name: 'Equipped',
+      provider: 'openai',
+      model: 'gpt-5',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+    }
+
+    await expect(service.createAssistantInstance({ ...base, skillAllowlist: ['Not A Skill'] }))
+      .rejects.toMatchObject({
+        code: 'SKILL_REFERENCE_INVALID',
+        message: expect.stringContaining('Not A Skill'),
+      })
+    await expect(service.createAssistantInstance({ ...base, mcpServers: ['gitlab'] }))
+      .rejects.toMatchObject({
+        code: 'MCP_REFERENCE_INVALID',
+        message: expect.stringContaining('gitlab'),
+      })
+    expect(store.listAssistantInstances()).toEqual([])
+  })
+
+  it('adds and clears Skills and MCP Servers on update', async () => {
+    const { service, store } = createHarness()
+    const created = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Equipped',
+      provider: 'openai',
+      model: 'gpt-5',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+      skillAllowlist: ['code-review'],
+    })
+
+    const added = await service.updateAssistantInstance(created.id, {
+      skillAllowlist: ['code-review', 'research'],
+      mcpServers: ['github'],
+    })
+    expect(added.revision).toBe(created.revision + 1)
+    expect(added.assistantSnapshot.skillAllowlist).toEqual(['code-review', 'research'])
+    expect(added.assistantSnapshot.mcpServers).toEqual(['github'])
+    expect(store.getAssistantInstance(created.id)).toEqual(added)
+
+    await expect(service.updateAssistantInstance(created.id, { skillAllowlist: ['Not A Skill'] }))
+      .rejects.toMatchObject({
+        code: 'SKILL_REFERENCE_INVALID',
+        message: expect.stringContaining('Not A Skill'),
+      })
+
+    // Clearing is a real change, not a no-op.
+    const cleared = await service.updateAssistantInstance(created.id, {
+      skillAllowlist: [],
+      mcpServers: [],
+    })
+    expect(cleared.revision).toBe(added.revision + 1)
+    expect(cleared.assistantSnapshot.skillAllowlist).toEqual([])
+    expect(cleared.assistantSnapshot.mcpServers).toEqual([])
   })
 
   it('allows duplicate display names', async () => {
@@ -1308,6 +1403,16 @@ function createHarness(): { service: AgentTeamService; store: MemoryStore } {
       if (id !== 'default') throw new Error(`Unknown agent preset '${id}'`)
       return { id, name: 'Default' }
     },
+    // Catalog reads lease the preset revision's scope and release it through
+    // Symbol.asyncDispose.
+    acquireScope: async () => ({
+      key: { kind: 'preset-scope' },
+      [Symbol.asyncDispose]: async () => {},
+    }),
+  } as never)
+  // The only MCP Server the `default` preset can reach in catalog reads.
+  ctx.provide('tools', {
+    schemas: () => [{ name: 'mcp__github__list_issues', description: 'List issues.' }],
   } as never)
   const store = new MemoryStore()
   return { service: new AgentTeamService(ctx, config, store), store }

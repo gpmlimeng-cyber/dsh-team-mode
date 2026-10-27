@@ -873,11 +873,12 @@ export class AgentTeamService extends Service {
   }
 
   /**
-   * Rewrite the instance-local display name/avatar, pin flag, and engine
-   * settings on the stored snapshot. Model references and reasoning efforts are
-   * validated exactly like assistant templates, and permission presets must
-   * exist in the current catalog. The referenced template is untouched, and a
-   * patch that changes nothing is a no-op rather than a revision bump.
+   * Rewrite the instance-local display name/avatar, pin flag, capability
+   * allowlists, and engine settings on the stored snapshot. Model references and
+   * reasoning efforts are validated exactly like assistant templates, and
+   * permission presets must exist in the current catalog. The referenced
+   * template is untouched, and a patch that changes nothing is a no-op rather
+   * than a revision bump.
    *
    * The snapshot only affects Sessions created or resumed after this call.
    * Already-live Sessions (the visible main Session in particular) keep their
@@ -946,6 +947,14 @@ export class AgentTeamService extends Service {
       provider,
       model,
       permissionPresetId: permissionPresetId ?? current.assistantSnapshot.permissionPresetId,
+      // Capability allowlists follow the same rule: an absent patch keeps the
+      // stored lists, and an empty array clears them.
+      ...(patch.skillAllowlist === undefined
+        ? {}
+        : { skillAllowlist: unique(patch.skillAllowlist) }),
+      ...(patch.mcpServers === undefined
+        ? {}
+        : { mcpServers: unique(patch.mcpServers) }),
       ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
     }
     const pinned = patch.pinned ?? current.pinned
@@ -964,10 +973,17 @@ export class AgentTeamService extends Service {
       || snapshot.model !== current.assistantSnapshot.model
       || snapshot.reasoningEffort !== current.assistantSnapshot.reasoningEffort
       || snapshot.permissionPresetId !== current.assistantSnapshot.permissionPresetId
+      || JSON.stringify(snapshot.skillAllowlist) !== JSON.stringify(current.assistantSnapshot.skillAllowlist)
+      || JSON.stringify(snapshot.mcpServers) !== JSON.stringify(current.assistantSnapshot.mcpServers)
       || pinned !== current.pinned
       || group !== current.group
       || JSON.stringify(mascot) !== JSON.stringify(current.mascot)
     if (!changed) return current
+    // The capability lists are the only snapshot fields this patch can make
+    // invalid on its own (model and permission presets are checked above), so
+    // they run through the same reference rules as creation.
+    if (patch.skillAllowlist !== undefined) this.assertSkillNames(snapshot.skillAllowlist)
+    if (patch.mcpServers !== undefined) await this.assertMcpServers(snapshot.mcpServers, snapshot.agentPresetId)
     const next = await this.store.updateAssistantInstance(id, value => {
       const { group: _previousGroup, ...rest } = value
       return {
@@ -3674,14 +3690,8 @@ export class AgentTeamService extends Service {
   }
 
   private async validateAssistantReferences(input: CreateAssistantInput): Promise<void> {
-    const invalidSkill = input.skillAllowlist.find(name => !isSkillName(name))
-    if (invalidSkill !== undefined) {
-      throw new AgentTeamError('SKILL_REFERENCE_INVALID', `Invalid Skill name '${invalidSkill}'`)
-    }
-    const invalidMcpServer = input.mcpServers.find(name => !isMcpServerName(name))
-    if (invalidMcpServer !== undefined) {
-      throw new AgentTeamError('MCP_REFERENCE_INVALID', `Invalid MCP Server name '${invalidMcpServer}'`)
-    }
+    this.assertSkillNames(input.skillAllowlist)
+    await this.assertMcpServers(input.mcpServers, input.agentPresetId)
     await this.validateReasoningEffort(input.provider, input.model, input.reasoningEffort)
     try {
       await this.ctx.agentPresets.resolve(input.agentPresetId)
@@ -3699,17 +3709,35 @@ export class AgentTeamService extends Service {
         `Unknown permission preset '${input.permissionPresetId}'`,
       )
     }
-    if (input.mcpServers.length > 0) {
-      const catalog = await this.mcpCatalog(input.agentPresetId)
-      const available = new Set(catalog.servers.map(server => server.name))
-      const missing = input.mcpServers.filter(name => !available.has(name))
-      if (missing.length > 0) {
-        throw new AgentTeamError(
-          'MCP_REFERENCE_INVALID',
-          `Agent Preset '${input.agentPresetId}' cannot access MCP Server(s): ${missing.join(', ')}`,
-          { missing },
-        )
-      }
+  }
+
+  /**
+   * Skill and MCP reference rules shared by every write path (templates,
+   * instance creation, instance updates). Skill names are checked against the
+   * public name grammar; MCP Servers must also exist in the preset's catalog.
+   */
+  private assertSkillNames(names: readonly string[]): void {
+    const invalidSkill = names.find(name => !isSkillName(name))
+    if (invalidSkill !== undefined) {
+      throw new AgentTeamError('SKILL_REFERENCE_INVALID', `Invalid Skill name '${invalidSkill}'`)
+    }
+  }
+
+  private async assertMcpServers(names: readonly string[], agentPresetId: string): Promise<void> {
+    const invalidMcpServer = names.find(name => !isMcpServerName(name))
+    if (invalidMcpServer !== undefined) {
+      throw new AgentTeamError('MCP_REFERENCE_INVALID', `Invalid MCP Server name '${invalidMcpServer}'`)
+    }
+    if (names.length === 0) return
+    const catalog = await this.mcpCatalog(agentPresetId)
+    const available = new Set(catalog.servers.map(server => server.name))
+    const missing = names.filter(name => !available.has(name))
+    if (missing.length > 0) {
+      throw new AgentTeamError(
+        'MCP_REFERENCE_INVALID',
+        `Agent Preset '${agentPresetId}' cannot access MCP Server(s): ${missing.join(', ')}`,
+        { missing },
+      )
     }
   }
 
@@ -3917,6 +3945,8 @@ interface AssistantSnapshotOverrides {
   agentPresetId?: string | undefined
   permissionPresetId?: string | undefined
   instructions?: string | undefined
+  skillAllowlist?: string[] | undefined
+  mcpServers?: string[] | undefined
 }
 
 interface DirectAssistantSnapshotInput {
@@ -3928,12 +3958,14 @@ interface DirectAssistantSnapshotInput {
   agentPresetId: string
   permissionPresetId: string
   instructions?: string | undefined
+  skillAllowlist?: string[] | undefined
+  mcpServers?: string[] | undefined
 }
 
 /**
  * Build the snapshot of a template-less Assistant. The snapshot is owned by the
- * new instance (`assistantId` equals its id) and starts at revision 1 with no
- * Skills, MCP Servers, or prompts.
+ * new instance (`assistantId` equals its id) and starts at revision 1 with the
+ * Skills and MCP Servers the caller named (none otherwise) and no prompts.
  */
 function directAssistantSnapshot(id: string, input: DirectAssistantSnapshotInput): AssistantSnapshot {
   const avatar = input.avatar?.trim()
@@ -3949,8 +3981,8 @@ function directAssistantSnapshot(id: string, input: DirectAssistantSnapshotInput
     ...(reasoningEffort === undefined || reasoningEffort === '' ? {} : { reasoningEffort }),
     agentPresetId: input.agentPresetId.trim(),
     permissionPresetId: input.permissionPresetId.trim(),
-    skillAllowlist: [],
-    mcpServers: [],
+    skillAllowlist: unique(input.skillAllowlist ?? []),
+    mcpServers: unique(input.mcpServers ?? []),
     prompts: [],
   }
 }
@@ -3981,6 +4013,12 @@ function applyAssistantSnapshotOverrides(
       ? {}
       : { permissionPresetId: overrides.permissionPresetId.trim() }),
     ...(overrides.instructions === undefined ? {} : { instructions: overrides.instructions }),
+    ...(overrides.skillAllowlist === undefined
+      ? {}
+      : { skillAllowlist: unique(overrides.skillAllowlist) }),
+    ...(overrides.mcpServers === undefined
+      ? {}
+      : { mcpServers: unique(overrides.mcpServers) }),
     ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
   }
 }
