@@ -18,6 +18,7 @@ import {
   IconUserOutlineRegular,
   IconUsersOutlineRegular,
   IconEllipsisOutlineRegular,
+  IconPanelLeftOutlineRegular,
   IconPinFillRegular,
   IconPinOutlineRegular,
   IconProjectAddOutlineRegular,
@@ -1245,12 +1246,14 @@ export function SidebarTeamSection({
 }
 
 
-import { BRAND_HOST_ID, SIDEBAR_HOST_ID, STEWARD_HOST_ID } from './sidebar-hosts.js'
+import { SIDEBAR_HOST_ID } from './sidebar-hosts.js'
 
 /** Brand-row 筛选 button opens the section's own filter/sort menu. */
 const SIDEBAR_MENU_EVENT = 'dsh-team-mode:sidebar-menu'
-/** Measured indentation from the plugin host to its section titles. */
-let brandColumnOffset = 4
+/** Mount point for the mode row, inside the shipped sidebar column. */
+const MODE_ROW_HOST_ID = 'dsh-team-mode-mode-row-host'
+/** Marks the shipped sidebar column the mode row is mounted into. */
+const TEAM_ROOT_ATTR = 'data-dsh-team-root'
 /** Mount point for the BOT footer actions that replace native sidebar entries. */
 const BOT_FOOTER_HOST_ID = 'dsh-team-mode-footer-host'
 /** Marks a native node this plugin hid for the BOT surface. */
@@ -1503,9 +1506,9 @@ function syncBotSidebar(mode: SurfaceMode): void {
   for (const entry of BOT_DROPPED_ENTRIES) {
     const native = entry.find()
     if (native === null) continue
-    // Keep the box: the pinned BOT row is laid over it, so the two share one
-    // geometry instead of the row guessing its own margins.
-    native.style.visibility = 'hidden'
+    // No box and no gap: the coordinator row is in the list's own flow now, so
+    // an empty 38px button slot would just push the list down.
+    native.style.display = 'none'
     native.setAttribute(BOT_HIDDEN_ATTR, '')
   }
 
@@ -1549,7 +1552,7 @@ export function SidebarPortal({
   /** Open a helper's detail on the host's right Sidebar; false when it refused. */
 }): JSX.Element | null {
   const [host, setHost] = useState<HTMLElement>()
-  const [brandHost, setBrandHost] = useState<HTMLElement>()
+  const [modeRowHost, setModeRowHost] = useState<HTMLElement>()
   const [search, setSearch] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
   const [createMenuOpen, setCreateMenuOpen] = useState(false)
@@ -1608,8 +1611,20 @@ export function SidebarPortal({
     if (next === 'native') void leaveTeamSession()
   }
 
+  /**
+   * The mode row takes the shipped brand row's slot, and that row owns the only
+   * 收起侧栏 control. Forward the click to it instead of reimplementing the
+   * toggle: hiding a row does not stop its button from working.
+   */
+  const collapseNativeSidebar = (): void => {
+    document
+      .querySelector<HTMLElement>('[class*="_logoRow"] button[class*="_toggle"]')
+      ?.click()
+  }
+
   useEffect(() => {
     let current: HTMLElement | undefined
+    let modeRow: HTMLElement | undefined
     let scrollRoot: HTMLElement | undefined
     let nativeList: HTMLElement | undefined
     let nativeListStyle: { flex: string; height: string; maxHeight: string; overflow: string } | undefined
@@ -1623,90 +1638,35 @@ export function SidebarPortal({
     )
 
     /**
-     * Replace the shipped brand row content with the DSH/BOT switch.
+     * Mount the DSH/BOT switch row in the shipped sidebar column.
      *
-     * The row itself stays — it carries the fixed-header spacing above the
-     * scrolling region. Only the original brand button is hidden, and our host
-     * is mounting point for the switch.
+     * It replaces the brand row in place — same slot, same metrics — so it sits
+     * in the column's own flow: no <body> node, no fixed position, no measured
+     * rect. The shipped brand row is hidden in its favour while the column is
+     * wide; the rail keeps it, and our row hides itself there.
      */
-    const ensureBrand = (): void => {
+    const ensureModeRow = (): void => {
       const logoRow = document.querySelector<HTMLElement>('[class*="_logoRow"]')
-      if (logoRow === null) return
-      const brand = logoRow.querySelector<HTMLElement>('[class*="_brand"]')
-      if (brand !== null) brand.style.display = 'none'
-      // The shipped brand row is React-owned: a node inserted into it is removed
-      // on its next render, taking the portalled control with it. The host lives
-      // on <body> instead and is positioned over the empty row.
-      let element = document.getElementById(BRAND_HOST_ID)
+      const root = logoRow?.parentElement
+      if (logoRow === null || root === null || root === undefined) return
+      root.setAttribute(TEAM_ROOT_ATTR, '')
+      let element = document.getElementById(MODE_ROW_HOST_ID)
       if (element === null || !element.isConnected) {
         element = document.createElement('div')
-        element.id = BRAND_HOST_ID
-        element.className = css.sidebarBrandHost ?? ''
-        element.style.position = 'fixed'
-        element.style.zIndex = '50'
-        element.style.transform = 'translateY(-50%)'
-        document.body.append(element)
-        setBrandHost(element)
-      }
-      const rect = logoRow.getBoundingClientRect()
-      // One column for both modes: the plugin host exists in DeepSeek and DeepBot
-      // alike, while the group headers only exist in DeepBot. The offset from
-      // host to the first header is measured where one is present and then
-      // reused, so the control does not jump sideways when the mode changes.
-      const teamHost = document.getElementById(SIDEBAR_HOST_ID)
-      const teamRect = teamHost?.getBoundingClientRect()
-      let columnLeft: number | undefined
-      let columnWidth: number | undefined
-      if (teamHost !== null && teamRect !== undefined) {
-        const hostLeft = teamRect.left
-        const titleLeft = document
-          .querySelector<HTMLElement>('[data-dsh-sidebar-title]')
-          ?.getBoundingClientRect().left
-        if (titleLeft !== undefined && titleLeft > 0 && hostLeft > 0) {
-          brandColumnOffset = Math.round(titleLeft - hostLeft)
-        }
-        if (hostLeft > 0 && teamRect.width > 0) {
-          // Same column as the sections below: start where their titles start and
-          // end where their own action buttons end, so the two button groups line
-          // up on both edges.
-          columnLeft = hostLeft + brandColumnOffset
-          columnWidth = Math.max(0, teamRect.width - brandColumnOffset)
-        }
-      }
-      element.style.left = `${Math.round(columnLeft ?? rect.left + 16)}px`
-      element.style.top = `${Math.round(rect.top + rect.height / 2)}px`
-      element.style.width = `${Math.round(columnWidth ?? Math.max(0, rect.width - 32))}px`
-      element.style.visibility = rect.width > 0 && rect.height > 0 ? 'visible' : 'hidden'
-    }
-
-    /** Lay the pinned BOT row exactly over the shipped 新会话 button box. */
-    const ensureSteward = (): void => {
-      const newSession = document.querySelector<HTMLElement>('[class*="_newSession"]')
-      let element = document.getElementById(STEWARD_HOST_ID)
-      if (getSurfaceMode() !== 'team' || newSession === null) {
-        element?.remove()
+        element.id = MODE_ROW_HOST_ID
+        element.className = css.sidebarModeRowHost ?? ''
+        element.setAttribute('data-dsh-team-mode-mode-row', '')
+        root.insertBefore(element, logoRow)
+        modeRow = element
+        setModeRowHost(element)
         return
       }
-      if (element === null || !element.isConnected) {
-        element = document.createElement('div')
-        element.id = STEWARD_HOST_ID
-        element.className = css.stewardHost ?? ''
-        element.style.position = 'fixed'
-        element.style.zIndex = '5'
-        document.body.append(element)
-      }
-      const rect = newSession.getBoundingClientRect()
-      element.style.left = `${Math.round(rect.left)}px`
-      element.style.top = `${Math.round(rect.top)}px`
-      element.style.width = `${Math.round(rect.width)}px`
-      // Height is the row's own: it has to read like a 单聊 assistant row, not
-      // like the 新会话 button it is pinned over.
-      element.style.height = ''
+      if (element.parentElement !== root) root.insertBefore(element, logoRow)
+      if (element.className !== css.sidebarModeRowHost) element.className = css.sidebarModeRowHost ?? ''
     }
 
     const ensure = (): void => {
-      ensureBrand()
-      ensureSteward()
+      ensureModeRow()
       syncBotSidebar(getSurfaceMode())
       const anchor = anchorElement()
       if (anchor === null) return
@@ -1809,6 +1769,9 @@ export function SidebarPortal({
         nativeList.style.overflow = nativeListStyle.overflow
       }
       current?.remove()
+      const modeRowRoot = modeRow?.parentElement ?? null
+      modeRow?.remove()
+      modeRowRoot?.removeAttribute(TEAM_ROOT_ATTR)
     }
   }, [])
 
@@ -2164,7 +2127,7 @@ export function SidebarPortal({
 
   return (
     <>
-      {brandHost !== undefined && createPortal(
+      {modeRowHost !== undefined && createPortal(
         <>
           <SurfaceModeSwitch mode={mode} onChange={switchMode} />
           {searchOpen ? (
@@ -2288,8 +2251,18 @@ export function SidebarPortal({
               />
             </div>
           )}
+          <button
+            type="button"
+            className={css.brandAction}
+            aria-label="收起侧栏"
+            title="收起侧栏"
+            data-dsh-team-mode-collapse
+            onClick={collapseNativeSidebar}
+          >
+            <IconPanelLeftOutlineRegular size={16} />
+          </button>
         </>,
-        brandHost,
+        modeRowHost,
       )}
       <AssistantLibraryDialog open={libraryOpen} onClose={() => { setLibraryOpen(false) }} />
       {newChatOpen && (
@@ -2306,11 +2279,13 @@ export function SidebarPortal({
         <>
           {mode === 'team' && (
             <>
-              <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
+              {/* The assistant section leads with the coordinator row; the CSS
+                  order on the host keeps 群聊 above 单聊. */}
               <AssistantSidebarSection
                 openSession={openSession}
                 pickWorkspace={pickWorkspace}
               />
+              <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
             </>
           )}
         </>,

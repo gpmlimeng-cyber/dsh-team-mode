@@ -3100,19 +3100,37 @@ textarea.input {
   overflow: hidden;
 }
 
-/* Host for the DSH/BOT switch, mounted where the shipped brand row was. The
-   row keeps its own height so the fixed header spacing is unchanged. */
-/* Body-level overlay pinned over the shipped brand row: mode control on the
-   left, search on the right. Width and position come from the row's rect. */
-.sidebarBrandHost {
+/* The mode row: the shipped brand row's own slot in the sidebar column, in the
+   column's flow above the scroll viewport. It borrows the native row's metrics
+   (60px, 8px/4px padding, 4px gap below) so swapping the two changes nothing —
+   and it cannot overdraw the list, because it is not positioned at all. */
+.sidebarModeRowHost {
   box-sizing: border-box;
   display: flex;
+  flex: none;
   align-items: center;
-  justify-content: space-between;
   gap: 8px;
+  height: 60px;
+  margin-bottom: 4px;
+  padding: 8px 0 8px 4px;
   min-width: 0;
-  /* No fill: the mode row must read as part of the column, not as its own band. */
   background: transparent;
+}
+
+/* The shipped row yields its slot while the column is wide; the rail keeps it,
+   and the mode row hides itself there instead. */
+[data-dsh-team-root]:not([class*='_collapsed']) [class*='_logoRow'] {
+  display: none;
+}
+
+[data-dsh-team-root][class*='_collapsed'] .sidebarModeRowHost {
+  display: none;
+}
+
+/* The 搜索 / 筛选 / 新建 group keeps to the right edge, next to the collapse
+   control that follows it; the search field takes the width instead. */
+.sidebarModeRowHost .brandActions {
+  margin-left: auto;
 }
 
 
@@ -3283,15 +3301,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   outline-offset: 3px;
 }
 
-/* Pinned default bot: only the host is ours; the row itself is the 单聊
-   assistant row's own markup and styles. */
-.stewardHost {
-  box-sizing: border-box;
-  display: block;
-  margin: 0;
-  padding: 0;
-}
-
 /* The coordinator's crown: the same mark the team Leader uses, in the accent
    tone so it reads as a role rather than as another status glyph. */
 .sidebarAssistantCrown {
@@ -3325,16 +3334,30 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   }
 }
 
+/* The team column's stack: coordinator row, 群聊, 单聊. The sections mount in a
+   different order than they read (the assistant section owns the coordinator),
+   so `order` restores the visual sequence without a portal. */
 .sidebarTeamHost {
+  display: flex;
   flex: none;
+  flex-direction: column;
   width: 100%;
   min-width: 0;
 }
 
 .sidebarTeamSection {
+  order: 1;
   flex: none;
   min-width: 0;
   padding: 0;
+}
+
+/* Pinned coordinator (总协调): an ordinary row ahead of the lists. The row
+   inside it is the 单聊 assistant row's own markup and styles. */
+.sidebarCoordinatorRow {
+  order: 0;
+  flex: none;
+  min-width: 0;
 }
 
 .sidebarTeamToggle {
@@ -3818,6 +3841,7 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 
 /* Assistant (“单聊”) section: same header/row geometry as the team section. */
 .sidebarAssistantSection {
+  order: 2;
   padding: 0;
 }
 
@@ -13100,14 +13124,14 @@ textarea.sidebarGroupBriefInput {
 }
 
 @media (max-width: 760px) {
-  .sidebarBrandHost .brandModeTrigger {
+  .sidebarModeRowHost .brandModeTrigger {
     font-size: 17px;
     letter-spacing: -0.02em;
   }
-  .sidebarBrandHost .brandActions {
+  .sidebarModeRowHost .brandActions {
     gap: 0;
   }
-  .sidebarBrandHost .brandAction {
+  .sidebarModeRowHost .brandAction {
     width: 24px;
   }
 }

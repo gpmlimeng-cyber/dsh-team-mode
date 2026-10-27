@@ -108,21 +108,36 @@ describe('sidebar surface switch', () => {
     expect(gateAt).toBeGreaterThan(switchAt)
   })
 
-  it('mounts the switch where the shipped brand row was', () => {
-    // Host ids live in one module so the shell and the assistant section agree.
-    expect(sidebar).toContain('BRAND_HOST_ID')
-    expect(sidebar).toContain("from './sidebar-hosts.js'")
-    expect(sidebar).toContain('[class*="_logoRow"]')
-    expect(sidebar).toContain('ensureBrand')
-    // The row itself survives; only the original brand button is hidden.
-    expect(sidebar).toContain('brand.style.display')
+  it('mounts the switch in the sidebar column, not on <body>', () => {
+    // The row replaces the shipped brand row in place: same column, same flow.
+    expect(sidebar).toContain('ensureModeRow')
+    expect(sidebar).toContain("document.querySelector<HTMLElement>('[class*=\"_logoRow\"]')")
+    expect(sidebar).toContain('root.insertBefore(element, logoRow)')
+    expect(sidebar).toContain("'data-dsh-team-mode-mode-row'")
+    expect(sidebar).toContain("'data-dsh-team-root'")
+    // No body host, no fixed overlay, no measured placement, no global layer.
+    expect(sidebar).not.toContain('BRAND_HOST_ID')
+    expect(sidebar).not.toContain('STEWARD_HOST_ID')
+    expect(sidebar).not.toContain('document.body.append(element)')
+    expect(sidebar).not.toContain("position = 'fixed'")
+    expect(sidebar).not.toContain('zIndex')
+    expect(sidebar).not.toContain('brandColumnOffset')
+    // The shipped row's own collapse control is reused, not reimplemented.
+    expect(sidebar).toContain('collapseNativeSidebar')
+    expect(sidebar).toContain('[class*="_toggle"]')
+    expect(sidebar).toContain('data-dsh-team-mode-collapse')
   })
 
-  it('renders the pinned coordinator with the real assistant row', () => {
+  it('renders the pinned coordinator as a normal row in the team column', () => {
     const assistant = readClientSource('assistant-sidebar.tsx')
     expect(assistant).toContain('renderAssistantRow')
-    expect(assistant).toContain('createPortal(renderAssistantRow(coordinator)')
-    expect(assistant).toContain('coordinatorAssistant')
+    expect(assistant).toContain('coordinatorAssistant(instances)')
+    expect(assistant).toContain('data-dsh-assistant-coordinator-row')
+    expect(assistant).toContain('css.sidebarCoordinatorRow')
+    // No second host to wait for and no body/portal layer of its own.
+    expect(assistant).not.toContain('createPortal')
+    expect(assistant).not.toContain('STEWARD_HOST_ID')
+    expect(assistant).not.toContain('useStewardHost')
     // The row is removed from the list, not duplicated.
     expect(assistant).toMatch(/filter\(instance => instance\.id !== coordinatorId\)/)
   })
@@ -250,7 +265,20 @@ describe('surface switch styling', () => {
     // The team host stays; only the native siblings after it are hidden.
     expect(styles).toContain("[data-dsh-team-mode='sidebar'] ~ *")
     expect(styles).toContain("html[data-dsh-surface-mode='team']")
-    expect(styles).toContain('.sidebarBrandHost')
+    expect(styles).toContain('.sidebarModeRowHost')
+  })
+
+  it('styles the mode row as the shipped row slot instead of a fixed band', () => {
+    const row = /\.sidebarModeRowHost\s*\{([^}]*)\}/.exec(styles)?.[1] ?? ''
+    expect(row).toContain('height: 60px')
+    expect(row).toContain('padding: 8px 0 8px 4px')
+    expect(row).toContain('flex: none')
+    expect(row).not.toContain('position')
+    // The shipped row yields its slot only while the column is wide.
+    expect(styles).toContain("[data-dsh-team-root]:not([class*='_collapsed']) [class*='_logoRow']")
+    expect(styles).toContain("[data-dsh-team-root][class*='_collapsed'] .sidebarModeRowHost")
+    // The action group keeps to the right edge, before the collapse control.
+    expect(styles).toMatch(/\.sidebarModeRowHost \.brandActions\s*\{[^}]*margin-left: auto/)
   })
 
   it('styles the BOT footer actions as icon buttons on semantic tokens', () => {

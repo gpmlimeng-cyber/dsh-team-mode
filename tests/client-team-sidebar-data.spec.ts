@@ -947,6 +947,27 @@ describe('roster CSS and sidebar structure', () => {
     expect(sidebar).toContain('openSession(row.sessionId)')
   })
 
+  it('stacks the mode row, the coordinator and both lists in one column', () => {
+    // The row takes the shipped brand row's slot: same column, normal flow.
+    expect(sidebar).toContain('root.insertBefore(element, logoRow)')
+    expect(css).toContain("[data-dsh-team-root]:not([class*='_collapsed']) [class*='_logoRow']")
+    // The assistant section owns the coordinator and mounts first; `order` on
+    // the host puts 群聊 back between them and keeps 单聊 last.
+    expect(sidebar.indexOf('<AssistantSidebarSection'))
+      .toBeLessThan(sidebar.indexOf('<SidebarTeamSection'))
+    expect(css).toMatch(/\.sidebarTeamHost\s*\{[^}]*display: flex/)
+    expect(css).toMatch(/\.sidebarTeamSection\s*\{[^}]*order: 1/)
+    expect(css).toMatch(/\.sidebarAssistantSection\s*\{[^}]*order: 2/)
+    expect(css).toMatch(/\.sidebarCoordinatorRow\s*\{[^}]*order: 0/)
+  })
+
+  it('drops the shipped 新会话 box instead of leaving a hole under the row', () => {
+    // The pinned row used to sit on that box; in the list's flow the box would
+    // only be 38px of blank space.
+    expect(sidebar).toMatch(/BOT_DROPPED_ENTRIES[\s\S]{0,400}display = 'none'/)
+    expect(sidebar).not.toContain("style.visibility = 'hidden'")
+  })
+
   it('draws an explicit loading and load-failure state instead of an empty list', () => {
     expect(sidebar).toContain('正在加载团队…')
     expect(sidebar).toContain('role="status"')

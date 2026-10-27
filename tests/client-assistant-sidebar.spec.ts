@@ -189,4 +189,19 @@ describe('assistant sidebar source contract', () => {
     expect(source).not.toContain('size={34}')
     expect(moduleCss).toMatch(/\.sidebarAssistantAvatar\s*\{[^}]*width: 36px;[^}]*height: 36px;/)
   })
+
+  it('keeps the coordinator in the team column instead of a body host', () => {
+    // The pinned 总协调 row leads the lists as one more row: it scrolls with
+    // them, needs no host polling, and owns no fixed position or z-index.
+    expect(source).toContain('data-dsh-assistant-coordinator-row')
+    expect(source).toContain('css.sidebarCoordinatorRow')
+    expect(source).not.toContain('createPortal')
+    expect(source).not.toContain('useStewardHost')
+    expect(source).not.toContain('STEWARD_HOST_ID')
+    expect(source).not.toContain('requestAnimationFrame')
+    expect(moduleCss).toMatch(/\.sidebarCoordinatorRow\s*\{[^}]*order: 0/)
+    expect(moduleCss).toMatch(/\.sidebarCoordinatorRow\s*\{[^}]*flex: none/)
+    // The coordinator is still not repeated in the list.
+    expect(source).toMatch(/filter\(instance => instance\.id !== coordinatorId\)/)
+  })
 })

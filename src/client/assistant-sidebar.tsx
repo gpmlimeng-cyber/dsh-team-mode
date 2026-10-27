@@ -49,8 +49,6 @@ import {
   relativeAssistantTime,
   visibleAssistantInstances,
 } from './assistant-instances.js'
-import { createPortal } from 'react-dom'
-import { STEWARD_HOST_ID } from './sidebar-hosts.js'
 import {
   AssistantConversationList,
   assistantConversationExpanded,
@@ -179,28 +177,6 @@ export function assistantMenuEntries(
  * instance's main Session in the Host and hands off to the shipped conversation
  * view; Phase 0 deliberately has no assistant-specific chat UI.
  */
-
-/** Wait for the shell to create its steward host on <body>. */
-function useStewardHost(): HTMLElement | undefined {
-  const [element, setElement] = useState<HTMLElement>()
-  useEffect(() => {
-    let cancelled = false
-    let frames = 0
-    const tick = (): void => {
-      if (cancelled) return
-      const found = document.getElementById(STEWARD_HOST_ID)
-      if (found !== null) {
-        setElement(found)
-        return
-      }
-      if (frames++ < 180) requestAnimationFrame(tick)
-    }
-    tick()
-    return () => { cancelled = true }
-  }, [])
-  return element
-}
-
 export function AssistantSidebarSection({
   openSession,
   pickWorkspace,
@@ -973,229 +949,233 @@ export function AssistantSidebarSection({
     )
   }
 
-  const stewardHost = useStewardHost()
   // The pinned row exists only when the field says so; no name or template guess.
   const coordinator = useMemo(() => coordinatorAssistant(instances), [instances])
-  const stewardRow = coordinator === undefined || stewardHost === undefined
-    ? null
-    : createPortal(renderAssistantRow(coordinator), stewardHost)
 
   return (
-    <section
-      className={`${css.sidebarTeamSection} ${css.sidebarAssistantSection}`}
-      aria-label="单聊"
-      data-dsh-assistant-section
-      data-dsh-assistant-display-mode={mode}
-    >
-      {notice !== undefined && (
-        <div className={css.sidebarAssistantNotice} role="status" data-dsh-assistant-notice>
-          <span className={css.sidebarAssistantNoticeBadge} aria-hidden="true">!</span>
-          <button
-            type="button"
-            className={css.sidebarAssistantNoticeOpen}
-            onClick={() => {
-              const entry = allPending.find(item => item.task.id === notice.taskId)
-              setNotice(undefined)
-              if (entry !== undefined) {
-                selectAssistant(notice.assistantId)
-                void openThreadTask(entry.instance, entry.task)
-              }
-            }}
-            title={`${notice.name} · ${notice.title} · 打开任务`}
-          >
-            <span className={css.sidebarAssistantNoticeTitle}>{notice.title}</span>
-            <span className={css.sidebarAssistantNoticeMeta}>{notice.name} · 待你处理</span>
-          </button>
-          <button
-            type="button"
-            className={css.sidebarAssistantNoticeClose}
-            onClick={() => { setNotice(undefined) }}
-            aria-label="关闭通知"
-          >
-            <IconCloseFillRegular size={11} />
-          </button>
+    <>
+      {/* The coordinator leads the team list as an ordinary row: it scrolls with
+          the list and borrows the 单聊 row's own markup and height. */}
+      {coordinator !== undefined && (
+        <div className={css.sidebarCoordinatorRow} data-dsh-assistant-coordinator-row>
+          {renderAssistantRow(coordinator)}
         </div>
       )}
-      {attentionItems.length > 0 && (
-        <div
-          className={css.sidebarAssistantAttention}
-          role="region"
-          aria-label="待你处理的助手任务"
-          data-dsh-assistant-attention
-        >
-          <div className={css.sidebarAssistantAttentionTitle}>
-            <span>待你处理</span>
-            <span className={css.sidebarAssistantAttentionCount}>{attentionItems.length}</span>
+      <section
+        className={`${css.sidebarTeamSection} ${css.sidebarAssistantSection}`}
+        aria-label="单聊"
+        data-dsh-assistant-section
+        data-dsh-assistant-display-mode={mode}
+      >
+        {notice !== undefined && (
+          <div className={css.sidebarAssistantNotice} role="status" data-dsh-assistant-notice>
+            <span className={css.sidebarAssistantNoticeBadge} aria-hidden="true">!</span>
+            <button
+              type="button"
+              className={css.sidebarAssistantNoticeOpen}
+              onClick={() => {
+                const entry = allPending.find(item => item.task.id === notice.taskId)
+                setNotice(undefined)
+                if (entry !== undefined) {
+                  selectAssistant(notice.assistantId)
+                  void openThreadTask(entry.instance, entry.task)
+                }
+              }}
+              title={`${notice.name} · ${notice.title} · 打开任务`}
+            >
+              <span className={css.sidebarAssistantNoticeTitle}>{notice.title}</span>
+              <span className={css.sidebarAssistantNoticeMeta}>{notice.name} · 待你处理</span>
+            </button>
+            <button
+              type="button"
+              className={css.sidebarAssistantNoticeClose}
+              onClick={() => { setNotice(undefined) }}
+              aria-label="关闭通知"
+            >
+              <IconCloseFillRegular size={11} />
+            </button>
           </div>
-          {attentionItems.map(({ instance, task }) => {
-            const interactions = interactionsByTask[task.id] ?? []
-            const approval = interactions.find(item => item.kind === 'approval')
-            return (
-              <div key={task.id} className={css.sidebarAssistantAttentionItem}>
-                <button
-                  type="button"
-                  className={css.sidebarAssistantAttentionRow}
-                  onClick={() => { void openThreadTask(instance, task) }}
-                  title={`${task.title} · ${assistantInstanceName(instance)} · 待你处理`}
-                >
-                  <span className={css.sidebarAssistantAttentionBadge} aria-hidden="true">!</span>
-                  <span className={css.sidebarAssistantAttentionCopy}>
-                    <span className={css.sidebarAssistantAttentionTask}>{task.title}</span>
-                    <span className={css.sidebarAssistantAttentionMeta}>
-                      {assistantInstanceName(instance)} · {approval === undefined ? '待你处理' : '请求审批'}
+        )}
+        {attentionItems.length > 0 && (
+          <div
+            className={css.sidebarAssistantAttention}
+            role="region"
+            aria-label="待你处理的助手任务"
+            data-dsh-assistant-attention
+          >
+            <div className={css.sidebarAssistantAttentionTitle}>
+              <span>待你处理</span>
+              <span className={css.sidebarAssistantAttentionCount}>{attentionItems.length}</span>
+            </div>
+            {attentionItems.map(({ instance, task }) => {
+              const interactions = interactionsByTask[task.id] ?? []
+              const approval = interactions.find(item => item.kind === 'approval')
+              return (
+                <div key={task.id} className={css.sidebarAssistantAttentionItem}>
+                  <button
+                    type="button"
+                    className={css.sidebarAssistantAttentionRow}
+                    onClick={() => { void openThreadTask(instance, task) }}
+                    title={`${task.title} · ${assistantInstanceName(instance)} · 待你处理`}
+                  >
+                    <span className={css.sidebarAssistantAttentionBadge} aria-hidden="true">!</span>
+                    <span className={css.sidebarAssistantAttentionCopy}>
+                      <span className={css.sidebarAssistantAttentionTask}>{task.title}</span>
+                      <span className={css.sidebarAssistantAttentionMeta}>
+                        {assistantInstanceName(instance)} · {approval === undefined ? '待你处理' : '请求审批'}
+                      </span>
                     </span>
-                  </span>
-                </button>
-                {approval !== undefined && (
-                  <div className={css.sidebarAssistantApproval}>
-                    <div className={css.sidebarAssistantApprovalTool}>
-                      审批 · <span className={css.sidebarAssistantApprovalName}>{approval.toolName}</span>
-                    </div>
-                    {approval.reason !== undefined && approval.reason.trim() !== '' && (
-                      <div className={css.sidebarAssistantApprovalReason}>{approval.reason}</div>
-                    )}
-                    {approvalHistoryState[approval.toolName] !== undefined && (
-                      <div className={css.sidebarAssistantApprovalHistory}>
-                        上次：{approvalDecisionLabel(approvalHistoryState[approval.toolName]!)}
+                  </button>
+                  {approval !== undefined && (
+                    <div className={css.sidebarAssistantApproval}>
+                      <div className={css.sidebarAssistantApprovalTool}>
+                        审批 · <span className={css.sidebarAssistantApprovalName}>{approval.toolName}</span>
                       </div>
-                    )}
-                    <div className={css.sidebarAssistantApprovalActions}>
-                      <button
-                        type="button"
-                        className={css.sidebarAssistantApprovalAllow}
-                        disabled={interactionBusy === approval.id}
-                        onClick={() => { void respondInteraction(task.id, approval.id, 'allowed-once', approval.toolName) }}
-                      >
-                        允许一次
-                      </button>
-                      <button
-                        type="button"
-                        className={css.sidebarAssistantApprovalDeny}
-                        disabled={interactionBusy === approval.id}
-                        onClick={() => { void respondInteraction(task.id, approval.id, 'rejected', approval.toolName) }}
-                      >
-                        拒绝
-                      </button>
+                      {approval.reason !== undefined && approval.reason.trim() !== '' && (
+                        <div className={css.sidebarAssistantApprovalReason}>{approval.reason}</div>
+                      )}
+                      {approvalHistoryState[approval.toolName] !== undefined && (
+                        <div className={css.sidebarAssistantApprovalHistory}>
+                          上次：{approvalDecisionLabel(approvalHistoryState[approval.toolName]!)}
+                        </div>
+                      )}
+                      <div className={css.sidebarAssistantApprovalActions}>
+                        <button
+                          type="button"
+                          className={css.sidebarAssistantApprovalAllow}
+                          disabled={interactionBusy === approval.id}
+                          onClick={() => { void respondInteraction(task.id, approval.id, 'allowed-once', approval.toolName) }}
+                        >
+                          允许一次
+                        </button>
+                        <button
+                          type="button"
+                          className={css.sidebarAssistantApprovalDeny}
+                          disabled={interactionBusy === approval.id}
+                          onClick={() => { void respondInteraction(task.id, approval.id, 'rejected', approval.toolName) }}
+                        >
+                          拒绝
+                        </button>
+                      </div>
                     </div>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-          {approvalFeedback !== undefined && (
-            <div className={css.sidebarAssistantApprovalFeedback} role="status">{approvalFeedback}</div>
-          )}
-          {interactionError !== undefined && (
-            <div className={css.sidebarAssistantInteractionError} role="alert">{interactionError}</div>
-          )}
-        </div>
-      )}
-      <div id="dsh-team-mode-assistant-list" className={css.sidebarTeamList}>
-        {message !== undefined && (
-          <div className={css.sidebarTeamError} role="alert">
-            <span>{instances.length === 0 ? `助手数据加载失败：${message}` : message}</span>
-            {instances.length === 0 && (
-              <button
-                type="button"
-                className={css.sidebarTeamRetry}
-                onClick={() => { void load() }}
-              >
-                重试
-              </button>
+                  )}
+                </div>
+              )
+            })}
+            {approvalFeedback !== undefined && (
+              <div className={css.sidebarAssistantApprovalFeedback} role="status">{approvalFeedback}</div>
+            )}
+            {interactionError !== undefined && (
+              <div className={css.sidebarAssistantInteractionError} role="alert">{interactionError}</div>
             )}
           </div>
         )}
-        {!loaded
-          ? (
-            <div className={css.sidebarTeamEmpty} role="status" data-dsh-assistant-loading>
-              正在加载助手…
+        <div id="dsh-team-mode-assistant-list" className={css.sidebarTeamList}>
+          {message !== undefined && (
+            <div className={css.sidebarTeamError} role="alert">
+              <span>{instances.length === 0 ? `助手数据加载失败：${message}` : message}</span>
+              {instances.length === 0 && (
+                <button
+                  type="button"
+                  className={css.sidebarTeamRetry}
+                  onClick={() => { void load() }}
+                >
+                  重试
+                </button>
+              )}
             </div>
-            )
-          : visible.length === 0
-            ? message !== undefined && instances.length === 0
-              ? null
-              : query.trim() !== ''
-                ? <div className={css.sidebarTeamEmpty}>没有匹配的助手</div>
-                : (
-                  <>
-                    <div className={css.sidebarAssistantEmpty}>
-                      <div className={css.sidebarTeamEmpty}>还没有助手</div>
-                      <button
-                        type="button"
-                        className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
-                        onClick={openCreate}
+          )}
+          {!loaded
+            ? (
+              <div className={css.sidebarTeamEmpty} role="status" data-dsh-assistant-loading>
+                正在加载助手…
+              </div>
+              )
+            : visible.length === 0
+              ? message !== undefined && instances.length === 0
+                ? null
+                : query.trim() !== ''
+                  ? <div className={css.sidebarTeamEmpty}>没有匹配的助手</div>
+                  : (
+                    <>
+                      <div className={css.sidebarAssistantEmpty}>
+                        <div className={css.sidebarTeamEmpty}>还没有助手</div>
+                        <button
+                          type="button"
+                          className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
+                          onClick={openCreate}
+                        >
+                          <span className={css.sidebarTeamSlot} aria-hidden="true">
+                            <IconPlusOutlineRegular size={16} />
+                          </span>
+                          <span className={css.sidebarTeamEmptyTitle}>新建助手</span>
+                        </button>
+                      </div>
+                      {/* The one 新建分组 entry for the whole workspace; the team
+                          section above leaves it here so it is not offered twice. */}
+                      <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
+                    </>
+                    )
+              : (
+                <>
+                  {partitions.map(partition => {
+                    const group = partition.group
+                    return (
+                      <SidebarGroupPartition
+                        key={partition.id}
+                        label={sidebarPartitionLabel(group, partitioned, '默认分组')}
+                        count={partition.items.length}
+                        collapsed={collapsedPartitions[partition.id] === true}
+                        onToggle={() => { togglePartition(partition.id) }}
+                        drag={drag.partition({ ...(group === undefined ? {} : { group }) })}
+                        {...(group === undefined
+                          ? {}
+                          : {
+                              onAddEntries: () => { setGroupDialog({ kind: 'members', group }) },
+                              menuItems: sidebarGroupMenuItems(groups, group),
+                              onSelect: (id: string) => { void selectGroupMenu(group, id) },
+                            })}
                       >
-                        <span className={css.sidebarTeamSlot} aria-hidden="true">
-                          <IconPlusOutlineRegular size={16} />
-                        </span>
-                        <span className={css.sidebarTeamEmptyTitle}>新建助手</span>
-                      </button>
-                    </div>
-                    {/* The one 新建分组 entry for the whole workspace; the team
-                        section above leaves it here so it is not offered twice. */}
-                    <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
-                  </>
-                  )
-            : (
-              <>
-                {partitions.map(partition => {
-                  const group = partition.group
-                  return (
-                    <SidebarGroupPartition
-                      key={partition.id}
-                      label={sidebarPartitionLabel(group, partitioned, '默认分组')}
-                      count={partition.items.length}
-                      collapsed={collapsedPartitions[partition.id] === true}
-                      onToggle={() => { togglePartition(partition.id) }}
-                      drag={drag.partition({ ...(group === undefined ? {} : { group }) })}
-                      {...(group === undefined
-                        ? {}
-                        : {
-                            onAddEntries: () => { setGroupDialog({ kind: 'members', group }) },
-                            menuItems: sidebarGroupMenuItems(groups, group),
-                            onSelect: (id: string) => { void selectGroupMenu(group, id) },
-                          })}
-                    >
-                      {partition.items.map(renderAssistantRow)}
-                    </SidebarGroupPartition>
-                  )
-                })}
-                <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
-              </>
-            )}
-      </div>
-      <AssistantCreateDialog
-        open={createOpen}
-        onClose={() => { setCreateOpen(false) }}
-        openSession={openSession}
-        onCreated={load}
-        onAddWorkspace={pickWorkspace}
-      />
-      {taskAssistant !== undefined && (
-        <AssistantTaskDialog
-          open={taskDialogOpen}
-          assistant={taskAssistant}
-          tasks={tasks}
-          onClose={() => { setTaskDialogOpen(false) }}
+                        {partition.items.map(renderAssistantRow)}
+                      </SidebarGroupPartition>
+                    )
+                  })}
+                  <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
+                </>
+              )}
+        </div>
+        <AssistantCreateDialog
+          open={createOpen}
+          onClose={() => { setCreateOpen(false) }}
           openSession={openSession}
+          onCreated={load}
+          onAddWorkspace={pickWorkspace}
         />
-      )}
-      {checkpointAssistant !== undefined && (
-        <AssistantCheckpointDialog
-          open={checkpointDialogOpen}
-          assistant={checkpointAssistant}
-          onClose={() => { setCheckpointDialogOpen(false) }}
-          openSession={openSession}
+        {taskAssistant !== undefined && (
+          <AssistantTaskDialog
+            open={taskDialogOpen}
+            assistant={taskAssistant}
+            tasks={tasks}
+            onClose={() => { setTaskDialogOpen(false) }}
+            openSession={openSession}
+          />
+        )}
+        {checkpointAssistant !== undefined && (
+          <AssistantCheckpointDialog
+            open={checkpointDialogOpen}
+            assistant={checkpointAssistant}
+            onClose={() => { setCheckpointDialogOpen(false) }}
+            openSession={openSession}
+          />
+        )}
+        <SidebarGroupDialogs
+          dialog={groupDialog}
+          groups={groups}
+          onClose={() => { setGroupDialog(undefined) }}
+          onListChanged={adoptGroups}
+          onChanged={() => { void load() }}
         />
-      )}
-      {stewardRow}
-      <SidebarGroupDialogs
-        dialog={groupDialog}
-        groups={groups}
-        onClose={() => { setGroupDialog(undefined) }}
-        onListChanged={adoptGroups}
-        onChanged={() => { void load() }}
-      />
-    </section>
+      </section>
+    </>
   )
 }
