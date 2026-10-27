@@ -193,6 +193,20 @@ describe('Agent Team transport contracts', () => {
     expectTypeOf<AgentTeamResult<'team.group.set'>>().toEqualTypeOf<TeamView>()
   })
 
+  it('maps the three team thread writes onto the latest team', () => {
+    expect(AGENT_TEAM_METHODS).toContain('team.thread.create')
+    expect(AGENT_TEAM_METHODS).toContain('team.thread.rename')
+    expect(AGENT_TEAM_METHODS).toContain('team.thread.archive')
+    expectTypeOf<AgentTeamPayload<'team.thread.create'>>().toEqualTypeOf<{ id: string }>()
+    expectTypeOf<AgentTeamPayload<'team.thread.rename'>>()
+      .toEqualTypeOf<{ id: string; threadId: string; title: string }>()
+    expectTypeOf<AgentTeamPayload<'team.thread.archive'>>()
+      .toEqualTypeOf<{ id: string; threadId: string }>()
+    expectTypeOf<AgentTeamResult<'team.thread.create'>>().toEqualTypeOf<TeamView>()
+    expectTypeOf<AgentTeamResult<'team.thread.rename'>>().toEqualTypeOf<TeamView>()
+    expectTypeOf<AgentTeamResult<'team.thread.archive'>>().toEqualTypeOf<TeamView>()
+  })
+
   it('maps the sidebar group list as one read and four ordered-list writes', () => {
     expect(AGENT_TEAM_METHODS).toContain('sidebar.groups.list')
     expect(AGENT_TEAM_METHODS).toContain('sidebar.groups.create')
@@ -399,6 +413,71 @@ describe('team.checkpoint.handoff wire shape', () => {
   })
 })
 
+describe('team.thread wire shape', () => {
+  it('dispatches create, rename and archive and answers with the team view', async () => {
+    const routes = new Map<string, (req: IncomingMessage, res: ServerResponse) => unknown>()
+    const ctx = {
+      webServer: {
+        register(route: { path: string; handler: (req: IncomingMessage, res: ServerResponse) => unknown }) {
+          routes.set(route.path, route.handler)
+          return () => { routes.delete(route.path) }
+        },
+      },
+      connection: { requestRejection: () => undefined },
+      logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn() },
+    } as never
+    const team = (revision: number) => ({ id: 'team-1', revision }) as TeamView
+    const createThread = vi.fn(async () => team(2))
+    const renameThread = vi.fn(async () => team(3))
+    const archiveThread = vi.fn(async () => team(4))
+    const service = {
+      subscribe: () => () => {},
+      createThread,
+      renameThread,
+      archiveThread,
+    } as unknown as AgentTeamService
+    registerWebTransport(
+      ctx,
+      { maxRequestBytes: 1024, sseHeartbeatMs: 60_000 } as Config,
+      service,
+    )
+    const handler = routes.get(AGENT_TEAM_API_PATH)!
+    const post = async (method: string, payload: unknown) => {
+      const outgoing = response()
+      await handler(request(JSON.stringify({ requestId: method, method, payload })), outgoing)
+      return { status: outgoing.status, body: JSON.parse(outgoing.body) as { ok: boolean; value: TeamView } }
+    }
+
+    const created = await post('team.thread.create', { id: 'team-1' })
+    expect(created.status).toBe(200)
+    expect(created.body.value.revision).toBe(2)
+    expect(createThread).toHaveBeenCalledWith('team-1', {}, {})
+
+    const renamed = await post('team.thread.rename', {
+      id: 'team-1',
+      threadId: 'thread-1',
+      title: '新对话',
+    })
+    expect(renamed.status).toBe(200)
+    expect(renamed.body.value.revision).toBe(3)
+    expect(renameThread).toHaveBeenCalledWith('team-1', 'thread-1', '新对话', {})
+
+    const archived = await post('team.thread.archive', { id: 'team-1', threadId: 'thread-1' })
+    expect(archived.status).toBe(200)
+    expect(archived.body.value.revision).toBe(4)
+    expect(archiveThread).toHaveBeenCalledWith('team-1', 'thread-1', {})
+
+    // The aggregate revision fence travels on the request, not inside the payload.
+    const fenced = response()
+    await handler(request(JSON.stringify({
+      requestId: 'r4',
+      method: 'team.thread.archive',
+      expectedRevision: 3,
+      payload: { id: 'team-1', threadId: 'thread-1' },
+    })), fenced)
+    expect(archiveThread).toHaveBeenLastCalledWith('team-1', 'thread-1', { expectedRevision: 3 })
+  })
+})
 describe('assistant.coordinator wire shape', () => {
   it('reads the coordinator and clears it through one set method', async () => {
     const routes = new Map<string, (req: IncomingMessage, res: ServerResponse) => unknown>()

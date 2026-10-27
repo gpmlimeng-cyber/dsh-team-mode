@@ -115,6 +115,15 @@ function harness(overrides: {
     renameGroup: vi.fn(async (_from: string, to: string) => [to]),
     deleteGroup: vi.fn(async () => ['工作']),
     setGroupOrder: vi.fn(async (names: readonly string[]) => [...names]),
+    createThread: vi.fn(async (teamId: string) => ({ id: teamId, revision: 2 })),
+    renameThread: vi.fn(async (teamId: string, threadId: string, title: string) => ({
+      id: teamId,
+      threads: { [threadId]: { id: threadId, title } },
+    })),
+    archiveThread: vi.fn(async (teamId: string, threadId: string) => ({
+      id: teamId,
+      archivedThreadId: threadId,
+    })),
   } as unknown as AgentTeamService
   const transport = registerWebTransport(
     ctx,
@@ -368,6 +377,61 @@ describe('web transport authentication and upload contract', () => {
     expect(blank.status).toBe(400)
     expect(JSON.parse(blank.body)).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
     expect(service.deleteGroup).toHaveBeenCalledTimes(1)
+  })
+
+  it('dispatches the three team thread writes with strict payloads', async () => {
+    const { call, service } = harness()
+    const post = (method: string, payload: unknown) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ requestId: method, method, payload }),
+    }))
+
+    const created = await post('team.thread.create', { id: 'team-1' })
+    expect(created.status).toBe(200)
+    expect(JSON.parse(created.body)).toMatchObject({ ok: true, value: { id: 'team-1', revision: 2 } })
+    expect(service.createThread).toHaveBeenCalledWith('team-1', {}, {})
+
+    const renamed = await post('team.thread.rename', {
+      id: 'team-1',
+      threadId: 'thread-1',
+      title: '新对话',
+    })
+    expect(renamed.status).toBe(200)
+    expect(JSON.parse(renamed.body)).toMatchObject({
+      ok: true,
+      value: { id: 'team-1', threads: { 'thread-1': { title: '新对话' } } },
+    })
+    expect(service.renameThread).toHaveBeenCalledWith('team-1', 'thread-1', '新对话', {})
+
+    const archived = await post('team.thread.archive', { id: 'team-1', threadId: 'thread-1' })
+    expect(archived.status).toBe(200)
+    expect(JSON.parse(archived.body)).toMatchObject({
+      ok: true,
+      value: { id: 'team-1', archivedThreadId: 'thread-1' },
+    })
+    expect(service.archiveThread).toHaveBeenCalledWith('team-1', 'thread-1', {})
+
+    // Strict payloads: fields the contract does not carry are refused, not ignored.
+    for (const method of ['team.thread.create', 'team.thread.rename', 'team.thread.archive']) {
+      const payload = method === 'team.thread.create'
+        ? { id: 'team-1', extra: true }
+        : { id: 'team-1', threadId: 'thread-1', title: 'x', extra: true }
+      const rejected = await post(method, payload)
+      expect(rejected.status).toBe(400)
+      expect(JSON.parse(rejected.body)).toMatchObject({
+        ok: false,
+        error: { code: 'INVALID_REQUEST' },
+      })
+    }
+    expect(service.createThread).toHaveBeenCalledTimes(1)
+    expect(service.renameThread).toHaveBeenCalledTimes(1)
+    expect(service.archiveThread).toHaveBeenCalledTimes(1)
+
+    // A blank title is refused before the service sees it.
+    const blank = await post('team.thread.rename', { id: 'team-1', threadId: 'thread-1', title: '  ' })
+    expect(blank.status).toBe(400)
+    expect(JSON.parse(blank.body)).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+    expect(service.renameThread).toHaveBeenCalledTimes(1)
   })
 
   it('returns a typed error for an unknown method', async () => {

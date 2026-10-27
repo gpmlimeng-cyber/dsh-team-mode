@@ -96,6 +96,9 @@ export const AGENT_TEAM_METHODS = [
   'team.reset',
   'team.message.list',
   'team.message.send',
+  'team.thread.create',
+  'team.thread.rename',
+  'team.thread.archive',
   'team.workbench.get',
   'team.member.stop',
   'team.member.contextReset',
@@ -545,6 +548,12 @@ export interface AgentTeamRequestMap {
     result: TeamMessage
   }
   'team.workbench.get': { payload: { id: string }; result: TeamWorkbenchView }
+  /** One more conversation layer inside a team; the runtime materializes its Session. */
+  'team.thread.create': { payload: { id: string }; result: TeamView }
+  /** Rename one thread: only its title changes, never its Session. */
+  'team.thread.rename': { payload: { id: string; threadId: string; title: string }; result: TeamView }
+  /** Move one thread off the active list; its Session is retained, not deleted. */
+  'team.thread.archive': { payload: { id: string; threadId: string }; result: TeamView }
   'team.member.stop': { payload: { teamId: string; slotId: string }; result: { accepted: boolean } }
   'team.member.contextReset': {
     payload: { teamId: string; slotId: string }

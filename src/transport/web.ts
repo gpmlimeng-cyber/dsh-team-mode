@@ -509,6 +509,26 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       return service.sendUserMessage(payload.teamId, payload.content, payload.targetSlotId)
     }
     case 'team.workbench.get': return service.getWorkbench(idPayload.parse(request.payload).id)
+    case 'team.thread.create': {
+      // The Session is minted by the runtime path the service already owns, so the
+      // transport only carries the team id; a default Leader speaker is assumed.
+      return service.createThread(idPayload.parse(request.payload).id, {}, options)
+    }
+    case 'team.thread.rename': {
+      const payload = z.object({
+        id: z.string().trim().min(1).max(200),
+        threadId: z.string().trim().min(1).max(200),
+        title: z.string().trim().min(1).max(80),
+      }).strict().parse(request.payload)
+      return service.renameThread(payload.id, payload.threadId, payload.title, options)
+    }
+    case 'team.thread.archive': {
+      const payload = z.object({
+        id: z.string().trim().min(1).max(200),
+        threadId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.archiveThread(payload.id, payload.threadId, options)
+    }
     case 'team.member.stop': {
       const payload = z.object({ teamId: z.string().min(1), slotId: z.string().min(1) }).strict().parse(request.payload)
       await service.stopMember(payload.teamId, payload.slotId)
