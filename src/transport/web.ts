@@ -283,7 +283,12 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       const payload = z.object({
         assistantId: z.string().trim().min(1).max(200),
       }).strict().parse(request.payload)
-      return { memory: service.getAssistantMemory(payload.assistantId) ?? null }
+      return {
+        memory: service.getAssistantMemory(payload.assistantId) ?? null,
+        // Read beside the document so the memory block's one read renders the
+        // switch too; an unknown id has no row and reads as off.
+        memoryAutoCapture: service.getAssistantMemoryAutoCapture(payload.assistantId),
+      }
     }
     case 'assistant.memory.write': {
       const payload = z.object({
@@ -325,6 +330,13 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
         text: z.string(),
       }).strict().parse(request.payload)
       return service.askAssistantMemory(payload.assistantId, payload.text)
+    }
+    case 'assistant.memory.autoCapture.set': {
+      const payload = z.object({
+        assistantId: z.string().trim().min(1).max(200),
+        enabled: z.boolean(),
+      }).strict().parse(request.payload)
+      return service.setAssistantMemoryAutoCapture(payload.assistantId, payload.enabled)
     }
     case 'assistant.checkpoint.create': {
       const payload = z.object({

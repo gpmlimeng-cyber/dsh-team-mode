@@ -59,6 +59,8 @@ export const AGENT_TEAM_METHODS = [
   'assistant.memory.undo',
   /** One explicit ask-or-change request; the fixed union decides answer vs change. */
   'assistant.memory.ask',
+  /** Persist the per-assistant auto-capture switch; result is the updated row. */
+  'assistant.memory.autoCapture.set',
   'assistant.checkpoint.create',
   'assistant.checkpoint.list',
   'assistant.checkpoint.handoff',
@@ -365,6 +367,11 @@ export interface WorkspaceUploadView {
 /** A missing assistant memory document is null, not an invented empty row. */
 export interface AssistantMemoryView {
   memory: AssistantMemory | null
+  /**
+   * Persisted auto-capture switch read beside the document, so the 记忆 block's
+   * one read can render the switch without a second request. Absent is off.
+   */
+  memoryAutoCapture: boolean
 }
 
 export interface AssistantMemoryEntryWriteView {
@@ -464,6 +471,11 @@ export interface AgentTeamRequestMap {
   'assistant.memory.ask': {
     payload: { assistantId: string; text: string }
     result: MemoryAskResult
+  }
+  /** Persisted opt-in auto-capture switch; absent/off is the default. */
+  'assistant.memory.autoCapture.set': {
+    payload: { assistantId: string; enabled: boolean }
+    result: AssistantInstance
   }
   'assistant.checkpoint.create': {
     payload: { assistantId: string; note?: string }

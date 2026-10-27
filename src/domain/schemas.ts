@@ -138,6 +138,12 @@ export const assistantInstanceSchema = z.object({
    * workspace may carry it; `setCoordinatorInstance` is the only writer.
    */
   coordinator: z.boolean().optional(),
+  /**
+   * Per-assistant auto-capture switch. Added without a schema-version bump: a
+   * row stored before it existed carries no field and reads as off. The row is
+   * the source of truth; the runtime replays it on attach.
+   */
+  memoryAutoCapture: z.boolean().optional(),
   /** Offline mascot identity; absent means the avatar-less fallback is the initials. */
   mascot: assistantMascotSchema.optional(),
   revision: z.int().positive(),
@@ -855,6 +861,11 @@ export const updateAssistantInstanceInputSchema = z.object({
   pinned: z.boolean().optional(),
   /** Sidebar group; an empty string clears it (same convention as teams). */
   group: z.string().optional(),
+  /**
+   * Opt-in auto-capture; absent keeps the stored switch. The dedicated
+   * `assistant.memory.autoCapture.set` path is what the memory UI uses.
+   */
+  memoryAutoCapture: z.boolean().optional(),
   provider: nonEmpty.optional(),
   model: nonEmpty.optional(),
   reasoningEffort: z.string().trim().optional(),

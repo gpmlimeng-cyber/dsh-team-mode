@@ -1,4 +1,4 @@
-import type { Context } from '@deepseek-ai/cordis'
+import { Context } from '@deepseek-ai/cordis'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import type { SessionEvent } from '@deepseek-ai/dsh-session'
 import { describe, expect, it, vi } from 'vitest'
@@ -10,7 +10,8 @@ import type {
   WriteAssistantMemoryEntryInput,
 } from '../src/domain/types.js'
 import { AssistantRuntime } from '../src/runtime/assistant-runtime.js'
-import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
+import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
+import type { AgentTeamStore } from '../src/storage/store.js'
 
 const NOW = '2026-10-27T00:00:00.000Z'
 const MAIN_SESSION = 'session-main'
@@ -503,5 +504,108 @@ describe('memory auto-capture', () => {
     await settle()
 
     expect(h.requests).toHaveLength(0)
+  })
+})
+
+/** The slice of the store the switch persistence path touches. */
+class SwitchStore {
+  constructor(readonly rows: Map<string, AssistantInstance>) {}
+
+  getAssistantInstance(id: string): AssistantInstance | undefined {
+    return this.rows.get(id)
+  }
+
+  listAssistantInstances(): AssistantInstance[] {
+    return [...this.rows.values()]
+  }
+
+  async updateAssistantInstance(
+    id: string,
+    update: (value: AssistantInstance) => AssistantInstance,
+  ): Promise<AssistantInstance> {
+    const current = this.rows.get(id)
+    if (current === undefined) throw new Error(`missing instance '${id}'`)
+    const next = update(current)
+    this.rows.set(id, next)
+    return next
+  }
+}
+
+/** The two runtime calls the service switch path makes, without a real Session. */
+function switchRuntime() {
+  const flags = new Map<string, boolean>()
+  return {
+    flags,
+    setMemoryAutoCapture: vi.fn((assistantId: string, enabled: boolean) => {
+      if (enabled) flags.set(assistantId, true)
+      else flags.delete(assistantId)
+      return enabled
+    }),
+  }
+}
+
+function switchHarness(rows: Map<string, AssistantInstance>) {
+  const store = new SwitchStore(rows) as unknown as AgentTeamStore
+  const service = new AgentTeamService(new Context(), config, store)
+  const runtime = switchRuntime()
+  service.attachAssistantRuntime(runtime as unknown as AssistantRuntime)
+  return { rows, store, service, runtime }
+}
+
+describe('auto-capture switch persistence', () => {
+  it('stores the switch on the instance row and replays it after a restart', async () => {
+    const { rows, store, service, runtime } = switchHarness(new Map([
+      ['instance-1', instance()],
+    ]))
+
+    // Default off: a row stored before the switch existed carries no field.
+    expect(runtime.flags.has('instance-1')).toBe(false)
+
+    const enabled = await service.setAssistantMemoryAutoCapture('instance-1', true)
+    expect(enabled.memoryAutoCapture).toBe(true)
+    expect(rows.get('instance-1')?.memoryAutoCapture).toBe(true)
+    expect(runtime.flags.get('instance-1')).toBe(true)
+
+    // Restart: the row survives, the fresh runtime cache starts empty, and
+    // attaching replays the persisted "on" so capture does not silently stop.
+    const restarted = switchRuntime()
+    const restartedService = new AgentTeamService(new Context(), config, store)
+    restartedService.attachAssistantRuntime(restarted as unknown as AssistantRuntime)
+    expect(restarted.flags.get('instance-1')).toBe(true)
+
+    const disabled = await restartedService.setAssistantMemoryAutoCapture('instance-1', false)
+    expect(disabled.memoryAutoCapture).toBe(false)
+    expect(rows.get('instance-1')?.memoryAutoCapture).toBe(false)
+    expect(restarted.flags.has('instance-1')).toBe(false)
+
+    const third = switchRuntime()
+    new AgentTeamService(new Context(), config, store)
+      .attachAssistantRuntime(third as unknown as AssistantRuntime)
+    expect(third.flags.has('instance-1')).toBe(false)
+  })
+
+  it('keeps the switch when a generic instance update omits it', async () => {
+    const { rows, service } = switchHarness(new Map([
+      ['instance-1', instance({ memoryAutoCapture: true })],
+    ]))
+
+    const updated = await service.updateAssistantInstance('instance-1', { pinned: true })
+
+    expect(updated.memoryAutoCapture).toBe(true)
+    expect(rows.get('instance-1')?.memoryAutoCapture).toBe(true)
+  })
+
+  it('persists an explicit off through a generic instance update too', async () => {
+    const { rows, service, runtime } = switchHarness(new Map([
+      ['instance-1', instance({ memoryAutoCapture: true })],
+    ]))
+
+    const updated = await service.updateAssistantInstance('instance-1', {
+      memoryAutoCapture: false,
+    })
+
+    expect(updated.memoryAutoCapture).toBe(false)
+    expect(rows.get('instance-1')?.memoryAutoCapture).toBe(false)
+    expect(runtime.flags.has('instance-1')).toBe(false)
   })
 })

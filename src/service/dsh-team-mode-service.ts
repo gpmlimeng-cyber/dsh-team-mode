@@ -377,6 +377,12 @@ export class AgentTeamService extends Service {
   attachAssistantRuntime(runtime: AssistantRuntime): void {
     if (this.assistantRuntime !== undefined) throw new Error('Assistant runtime is already attached')
     this.assistantRuntime = runtime
+    // The switch lives on the persisted instance row while the capture path reads
+    // the runtime's cache every completed turn. Replay the enabled rows on attach
+    // so a restart cannot silently stop capturing for an assistant left on.
+    for (const instance of this.store.listAssistantInstances()) {
+      if (instance.memoryAutoCapture === true) runtime.setMemoryAutoCapture(instance.id, true)
+    }
   }
 
   startWorkspaceTracking(): void {
@@ -985,6 +991,8 @@ export class AgentTeamService extends Service {
     if (patch.group !== undefined) this.assertKnownGroup(group)
     // Absent keeps the stored mascot; the value itself is validated by the schema.
     const mascot = patch.mascot ?? current.mascot
+    // The auto-capture switch is stored on the instance row; absent keeps it.
+    const memoryAutoCapture = patch.memoryAutoCapture ?? current.memoryAutoCapture
     const changed = snapshot.name !== current.assistantSnapshot.name
       || snapshot.avatar !== current.assistantSnapshot.avatar
       || snapshot.instructions !== current.assistantSnapshot.instructions
@@ -997,6 +1005,7 @@ export class AgentTeamService extends Service {
       || pinned !== current.pinned
       || group !== current.group
       || JSON.stringify(mascot) !== JSON.stringify(current.mascot)
+      || memoryAutoCapture !== current.memoryAutoCapture
     if (!changed) return current
     // The capability lists are the only snapshot fields this patch can make
     // invalid on its own (model and permission presets are checked above), so
@@ -1011,12 +1020,32 @@ export class AgentTeamService extends Service {
         pinned,
         ...(group === undefined ? {} : { group }),
         ...(mascot === undefined ? {} : { mascot }),
+        ...(memoryAutoCapture === undefined ? {} : { memoryAutoCapture }),
         revision: value.revision + 1,
         updatedAt: new Date().toISOString(),
       }
     })
     this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.updated')
+    // The runtime cache is what the capture path reads on every completed turn,
+    // so a persisted switch change is reflected there as part of the same call.
+    this.assistantRuntime?.setMemoryAutoCapture(next.id, memoryAutoCapture === true)
     return next
+  }
+
+  /**
+   * Persist the per-assistant auto-capture switch (the row is what survives a
+   * restart) and keep the runtime's in-memory cache in step. The dedicated UI
+   * path goes through here so the two copies of the switch cannot diverge.
+   */
+  async setAssistantMemoryAutoCapture(
+    assistantId: string,
+    enabled: boolean,
+  ): Promise<AssistantInstance> {
+    const instance = await this.updateAssistantInstance(assistantId, { memoryAutoCapture: enabled })
+    // updateAssistantInstance returns early when the value already matches, so
+    // sync here as well: replaying the same value must still reach the runtime.
+    this.assistantRuntime?.setMemoryAutoCapture(instance.id, enabled)
+    return instance
   }
 
   /**
@@ -1118,6 +1147,19 @@ export class AgentTeamService extends Service {
       throw new AgentTeamError('INVALID_REQUEST', 'Assistant instance id cannot be empty')
     }
     return this.store.getAssistantMemory(id)
+  }
+
+  /**
+   * The persisted auto-capture switch for one Assistant instance. A missing row
+   * or a row stored before the switch existed reads as off; this is a plain
+   * store read so rendering the switch never creates a row.
+   */
+  getAssistantMemoryAutoCapture(assistantId: string): boolean {
+    const id = assistantId.trim()
+    if (id === '') {
+      throw new AgentTeamError('INVALID_REQUEST', 'Assistant instance id cannot be empty')
+    }
+    return this.store.getAssistantInstance(id)?.memoryAutoCapture === true
   }
 
   /**

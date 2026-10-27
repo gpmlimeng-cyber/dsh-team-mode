@@ -165,6 +165,9 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
   const [askText, setAskText] = useState('')
   const [asking, setAsking] = useState(false)
   const [askResult, setAskResult] = useState<MemoryAskResult>()
+  const [autoCapture, setAutoCapture] = useState(false)
+  const [switchingAutoCapture, setSwitchingAutoCapture] = useState(false)
+  const [ignoringProposals, setIgnoringProposals] = useState(false)
   const view = useMemo(() => assistantMemoryView(memory), [memory])
   const revision = memory?.revision ?? 0
   const journal = memory?.journal ?? []
@@ -176,6 +179,7 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       const value = await callAgentTeam('assistant.memory.get', { assistantId })
       setMemory(value.memory)
       setLegacyDraft(value.memory?.content ?? '')
+      setAutoCapture(value.memoryAutoCapture)
     } catch (cause) {
       setLoadError(`读取记忆失败：${messageOf(cause)}`)
     } finally {
@@ -192,6 +196,7 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
         if (!live) return
         setMemory(value.memory)
         setLegacyDraft(value.memory?.content ?? '')
+        setAutoCapture(value.memoryAutoCapture)
       })
       .catch((cause: unknown) => {
         if (live) setLoadError(`读取记忆失败：${messageOf(cause)}`)
@@ -229,6 +234,74 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       if (failure.reload) void load()
     } finally {
       setAsking(false)
+    }
+  }
+
+  /**
+   * Persist the per-assistant auto-capture switch. The runtime re-reads it on
+   * every completed turn, so this is the only place that can turn the extra
+   * model call on or off; a failure leaves the displayed value unchanged.
+   */
+  async function setAutoCaptureEnabled(enabled: boolean): Promise<void> {
+    if (switchingAutoCapture) return
+    setSwitchingAutoCapture(true)
+    setError(undefined)
+    try {
+      const next = await callAgentTeam('assistant.memory.autoCapture.set', {
+        assistantId,
+        enabled,
+      })
+      setAutoCapture(next.memoryAutoCapture === true)
+    } catch (cause) {
+      setError(memoryError(cause))
+    } finally {
+      setSwitchingAutoCapture(false)
+    }
+  }
+
+  /**
+   * 全部忽略 archives every current proposal through the same revision-fenced
+   * entry write path as one-by-one archiving: each write is fenced by the
+   * revision the previous write returned, so a concurrent edit aborts the batch
+   * instead of losing a proposal. Archived text still counts as handled by the
+   * capture dedupe, which is why ignoring is sticky across reloads.
+   */
+  async function ignoreProposals(): Promise<void> {
+    if (busy || ignoringProposals) return
+    const proposed = view.proposed
+    if (proposed.length === 0) return
+    setIgnoringProposals(true)
+    setError(undefined)
+    try {
+      let next: AssistantMemory | null = memory ?? null
+      let expected = revision
+      for (const entry of proposed) {
+        const result = await callAgentTeam('assistant.memory.entry.write', {
+          assistantId,
+          expectedRevision: expected,
+          entry: {
+            id: entry.id,
+            title: entry.title,
+            body: entry.body,
+            visibility: entry.visibility,
+            status: 'archived',
+          },
+        })
+        next = result.memory
+        expected = result.memory.revision
+      }
+      if (next !== null) {
+        setMemory(next)
+        setLegacyDraft(next.content)
+        setConfirmClear(undefined)
+      }
+      announceMemoryChange(assistantId)
+    } catch (cause) {
+      setError(memoryError(cause))
+      // A partial batch may have archived earlier entries; re-read the truth.
+      void load()
+    } finally {
+      setIgnoringProposals(false)
     }
   }
 
@@ -383,6 +456,25 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
           </Button>
         </span>
       </div>
+      <div className={css.memoryGroup}>
+        <div className={css.memoryGroupTitleRow}>
+          <label className={css.settingsRowLabel}>
+            <input
+              type="checkbox"
+              checked={autoCapture}
+              disabled={switchingAutoCapture || busy}
+              onChange={event => { void setAutoCaptureEnabled(event.target.checked) }}
+            />
+            自动记录
+          </label>
+          <span className={css.memoryBadges}>
+            <span className={css.memoryBadge}>{autoCapture ? '已开启' : '默认关闭'}</span>
+          </span>
+        </div>
+        <p className={css.assistantMemoryHint}>
+          开启后每完成一轮对话会多一次模型调用（额外费用）；捕获只写成「待确认」条目，不会自动采纳，采纳后才会生效。
+        </p>
+      </div>
       <p className={css.assistantMemoryHint}>
         只注入本助手的主会话与后台任务；「团队可见」条目也只有显式关联到本实例的团队成员才会读取。
       </p>
@@ -525,7 +617,17 @@ export function AssistantMemorySection({ assistantId }: { assistantId: string })
       )}
       {view.proposed.length > 0 && (
         <div className={css.memoryGroup}>
-          <strong className={css.memoryGroupTitle}>待确认 · {view.proposed.length}</strong>
+          <div className={css.memoryGroupTitleRow}>
+            <strong className={css.memoryGroupTitle}>待确认 · {view.proposed.length}</strong>
+            <button
+              type="button"
+              className={css.memoryAction}
+              disabled={busy || ignoringProposals}
+              onClick={() => { void ignoreProposals() }}
+            >
+              {ignoringProposals ? '忽略中…' : '全部忽略'}
+            </button>
+          </div>
           {view.proposed.map(entry => memoryEntryCard(entry))}
         </div>
       )}

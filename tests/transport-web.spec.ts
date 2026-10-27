@@ -116,6 +116,12 @@ function harness(overrides: {
       memoryText === 'remember'
         ? { kind: 'change', entries: [{ id: 'mem-1', status: 'proposed' }] }
         : { kind: 'answer', answer: memoryText }),
+    setAssistantMemoryAutoCapture: vi.fn(async (assistantId: string, enabled: boolean) => ({
+      id: assistantId,
+      memoryAutoCapture: enabled,
+    })),
+    getAssistantMemory: vi.fn(() => ({ assistantId: 'instance-1', revision: 2 })),
+    getAssistantMemoryAutoCapture: vi.fn(() => true),
     openAssistantTask: vi.fn(async (taskId: string) => ({
       task: { id: taskId, status: 'completed' },
       sessionId: 'session-worker',
@@ -380,6 +386,73 @@ describe('web transport authentication and upload contract', () => {
     expect(missing.status).toBe(400)
     const blankId = await post({ assistantId: '  ', text: 'x' })
     expect(blankId.status).toBe(400)
+  })
+
+  it('returns the auto-capture switch beside the memory document', async () => {
+    const { call, service } = harness()
+    const reply = await call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        requestId: 'r1',
+        method: 'assistant.memory.get',
+        payload: { assistantId: 'instance-1' },
+      }),
+    }))
+
+    expect(reply.status).toBe(200)
+    expect(JSON.parse(reply.body)).toMatchObject({
+      ok: true,
+      value: {
+        memory: { assistantId: 'instance-1', revision: 2 },
+        memoryAutoCapture: true,
+      },
+    })
+    expect(service.getAssistantMemoryAutoCapture).toHaveBeenCalledWith('instance-1')
+  })
+
+  it('dispatches assistant.memory.autoCapture.set with a strict payload', async () => {
+    const { call, service } = harness()
+    const post = (payload: unknown) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        requestId: 'r1',
+        method: 'assistant.memory.autoCapture.set',
+        payload,
+      }),
+    }))
+
+    const enabled = await post({ assistantId: 'instance-1', enabled: true })
+    expect(enabled.status).toBe(200)
+    expect(JSON.parse(enabled.body)).toMatchObject({
+      ok: true,
+      value: { id: 'instance-1', memoryAutoCapture: true },
+    })
+    expect(service.setAssistantMemoryAutoCapture).toHaveBeenLastCalledWith('instance-1', true)
+
+    const disabled = await post({ assistantId: 'instance-1', enabled: false })
+    expect(disabled.status).toBe(200)
+    expect(JSON.parse(disabled.body)).toMatchObject({
+      ok: true,
+      value: { id: 'instance-1', memoryAutoCapture: false },
+    })
+    expect(service.setAssistantMemoryAutoCapture).toHaveBeenLastCalledWith('instance-1', false)
+
+    // Strict: unknown keys, a non-boolean switch, and a missing switch all fail.
+    for (const payload of [
+      { assistantId: 'instance-1', enabled: true, expectedRevision: 2 },
+      { assistantId: 'instance-1', enabled: 'yes' },
+      { assistantId: 'instance-1' },
+      { enabled: true },
+      { assistantId: '  ', enabled: true },
+    ]) {
+      const rejected = await post(payload)
+      expect(rejected.status).toBe(400)
+      expect(JSON.parse(rejected.body)).toMatchObject({
+        ok: false,
+        error: { code: 'INVALID_REQUEST' },
+      })
+    }
+    expect(service.setAssistantMemoryAutoCapture).toHaveBeenCalledTimes(2)
   })
 
   it('dispatches assistant.task.open', async () => {

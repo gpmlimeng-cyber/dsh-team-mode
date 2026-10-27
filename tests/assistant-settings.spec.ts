@@ -187,6 +187,8 @@ describe('assistant memory count row wiring', () => {
     // helpers can never show the previous assistant's number.
     expect(pane).toContain('setMemoryEntryCount({ assistantId: assistant.id, count: entries })')
     expect(pane).toContain('memoryEntryCount?.assistantId === assistant.id')
+    // The block's one memory read also carries the persisted auto-capture
+    // switch, so the pane passes no extra state path down to it.
     expect(pane).toContain('<AssistantMemorySection assistantId={assistant.id} />')
   })
 
@@ -207,11 +209,27 @@ describe('assistant memory count row wiring', () => {
     // The block keeps its own document; every successful write announces it so
     // the count row's one read runs again.
     expect(memoryPanel).toContain("export const ASSISTANT_MEMORY_CHANGED_EVENT")
-    expect((memoryPanel.match(/announceMemoryChange\(assistantId\)/g) ?? [])).toHaveLength(4)
+    // Entry writes (add/edit and archive share one announce tail), legacy text,
+    // undo, ask-or-change, and 全部忽略.
+    expect((memoryPanel.match(/announceMemoryChange\(assistantId\)/g) ?? [])).toHaveLength(5)
     expect(pane).toContain('window.addEventListener(ASSISTANT_MEMORY_CHANGED_EVENT, onChanged)')
     expect(pane).toContain('if (detail?.assistantId === assistant.id) setMemoryReadNonce')
     // The read effect is keyed by the nonce, so an event is a fresh read.
     expect(pane).toContain('[assistant.id, overviewSessionKey, memoryReadNonce]')
+  })
+
+  it('renders the default-off auto-capture switch and a batch ignore', () => {
+    expect(memoryPanel).toContain('自动记录')
+    expect(memoryPanel).toContain('type="checkbox"')
+    expect(memoryPanel).toContain('默认关闭')
+    // The extra model call is stated, not hidden: it costs money every turn.
+    expect(memoryPanel).toContain('额外费用')
+    expect(memoryPanel).toContain('只写成「待确认」条目')
+    expect(memoryPanel).toContain("callAgentTeam('assistant.memory.autoCapture.set'")
+    expect(memoryPanel).toContain('全部忽略')
+    // Batch ignore archives through the same revision-fenced entry write path.
+    expect(memoryPanel).toContain("status: 'archived'")
+    expect(memoryPanel).toContain('expectedRevision: expected')
   })
 })
 
