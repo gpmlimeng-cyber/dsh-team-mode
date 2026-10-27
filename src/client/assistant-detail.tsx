@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Button,
-  DisclosureRow,
   IconClockOutlineRegular,
   IconDatabaseOutlineRegular,
   IconEditOutlineRegular,
@@ -11,49 +10,15 @@ import {
   IconShieldOutlineRegular,
   IconSlidersTwoOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import { callAgentTeam, subscribeAgentTeam } from './api.js'
-import {
-  assistantAvatarSource,
-  assistantInstanceName,
-} from './assistant-instances.js'
-import { AssistantSettingsDialog } from './assistant-settings-dialog.js'
+import { callAgentTeam } from './api.js'
+import { assistantAvatarSource, assistantInstanceName } from './assistant-instances.js'
 import {
   assistantInstanceStatusLabel,
-  assistantMemoryView,
   PERMISSION_LABELS,
-  type MemoryPanelView,
 } from './labels.js'
-import { MemberAvatar } from './member-avatar.js'
-import { openAssistantSession, selectAssistant, useAgentTeamUi } from './store.js'
+import { openAssistantSession } from './store.js'
 import css from './AgentTeam.module.css'
 import type { AssistantInstanceView } from '../transport/contracts.js'
-
-/**
- * The page type this plugin owns on the host's right Sidebar.
- *
- * Both constants are chosen against the contract note
- * `docs/superpowers/notes/2026-10-26-sidebar-right.md`: `kind` is an open string
- * that no shipped type uses, and `id` is a package name because it is also the
- * key the body registers under in `sidebar.right.pane.tab`.
- */
-export const DETAIL_TAB_KIND = 'team-mode'
-export const DETAIL_TAB_ID = '@limeng/dsh-team-mode/detail'
-export const DETAIL_TAB_TITLE = '助手详情'
-
-/** The one instruction the pane shows before a helper is chosen on the left. */
-export const DETAIL_EMPTY_TEXT = '从左侧选择一个助手'
-
-export type AssistantDetailSectionId =
-  | 'overview'
-  | 'identity'
-  | 'model'
-  | 'permission'
-  | 'persona'
-  | 'memory'
-  | 'automations'
-  | 'history'
 
 /** The four read-only blocks, all read from one `assistant.instance.list` row. */
 export type AssistantDetailFactSectionId = 'overview' | 'identity' | 'model' | 'permission'
@@ -161,45 +126,7 @@ export function assistantHistoryRows(
   return rows
 }
 
-const SECTION_ICONS: Record<AssistantDetailSectionId, JSX.Element> = {
-  overview: <IconInfoOutlineRegular size={14} />,
-  identity: <IconPersonalizationOutlineRegular size={14} />,
-  model: <IconSlidersTwoOutlineRegular size={14} />,
-  permission: <IconShieldOutlineRegular size={14} />,
-  persona: <IconEditOutlineRegular size={14} />,
-  memory: <IconDatabaseOutlineRegular size={14} />,
-  automations: <IconClockOutlineRegular size={14} />,
-  history: <IconFlatListOutlineRegular size={14} />,
-}
-
-function DetailSection({
-  id,
-  title,
-  open,
-  onToggle,
-  children,
-}: {
-  id: AssistantDetailSectionId
-  title: string
-  open: boolean
-  onToggle: () => void
-  children: ReactNode
-}): JSX.Element {
-  return (
-    <DisclosureRow
-      icon={SECTION_ICONS[id]}
-      title={title}
-      open={open}
-      expandable
-      expandOnRowClick
-      onToggle={onToggle}
-    >
-      {children}
-    </DisclosureRow>
-  )
-}
-
-function AssistantDetailFacts({
+export function AssistantDetailFacts({
   section,
 }: {
   section: AssistantDetailSection
@@ -292,7 +219,7 @@ export function PersonaPanel({
 }
 
 /** Hook wrapper: the draft, the save, and the error the section shows in place. */
-function PersonaSection({
+export function PersonaSection({
   instance,
   onSaved,
 }: {
@@ -343,102 +270,6 @@ function PersonaSection({
       onSave={save}
       onReset={() => { setDraft(instructions); setError(undefined); setSaved(false) }}
     />
-  )
-}
-
-export interface MemoryPanelState {
-  loading: boolean
-  error?: string | undefined
-  view?: MemoryPanelView | undefined
-}
-
-/**
- * 记忆: a read-only view plus the jump to the existing editor. The editor itself
- * lives in the assistant settings dialog, which this panel reuses — nothing here
- * writes memory.
- */
-export function MemoryPanel({
-  state,
-  onEdit,
-}: {
-  state: MemoryPanelState
-  onEdit: () => void
-}): JSX.Element {
-  const view = state.view
-  return (
-    <div className={css.assistantDetailBody} data-dsh-assistant-detail-section="memory">
-      {state.loading && <p className={css.assistantDetailHint}>正在读取记忆…</p>}
-      {state.error !== undefined && <DetailError message={state.error} />}
-      {!state.loading && state.error === undefined && view !== undefined && (
-        view.empty
-          ? <p className={css.assistantDetailHint}>还没有记忆条目</p>
-          : (
-            <>
-              <p className={css.assistantDetailHint}>
-                {`共 ${view.active.length + view.proposed.length + view.history.length} 条，修订 ${view.revision}`}
-              </p>
-              {view.content !== '' && (
-                <div className={css.assistantDetailMemoryEntry}>
-                  <span className={css.assistantDetailMemoryTitle}>旧版备注</span>
-                  <span className={css.assistantDetailMemoryBody}>{view.content}</span>
-                </div>
-              )}
-              <ul className={css.assistantDetailMemoryList}>
-                {[...view.active, ...view.proposed].map(entry => (
-                  <li key={entry.id} className={css.assistantDetailMemoryEntry}>
-                    <span className={css.assistantDetailMemoryTitle}>{entry.title}</span>
-                    {entry.status === 'proposed' && (
-                      <span className={css.assistantDetailHistoryBadge}>待确认</span>
-                    )}
-                    {entry.body !== '' && (
-                      <span className={css.assistantDetailMemoryBody}>{entry.body}</span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </>
-          )
-      )}
-      <div className={css.assistantDetailActions}>
-        <Button type="button" size="sm" variant="outline" onClick={onEdit}>
-          在助手设置中编辑记忆
-        </Button>
-      </div>
-    </div>
-  )
-}
-
-/** Hook wrapper: one `assistant.memory.get` read and the reused settings dialog. */
-function MemorySection({ instance }: { instance: AssistantInstanceView }): JSX.Element {
-  const [state, setState] = useState<MemoryPanelState>({ loading: true })
-  const [editorOpen, setEditorOpen] = useState(false)
-
-  const load = useCallback((): void => {
-    setState({ loading: true })
-    void callAgentTeam('assistant.memory.get', { assistantId: instance.id }).then(
-      value => { setState({ loading: false, view: assistantMemoryView(value.memory) }) },
-      cause => {
-        setState({ loading: false, error: detailErrorMessage('读取记忆失败', cause) })
-      },
-    )
-  }, [instance.id])
-
-  useEffect(() => { load() }, [load])
-
-  return (
-    <>
-      <MemoryPanel state={state} onEdit={() => { setEditorOpen(true) }} />
-      {/* Mounted on demand only: the shipped dialog reads the model catalog when
-          it is created, and an unopened panel must not pay for that. */}
-      {editorOpen && (
-        <AssistantSettingsDialog
-          open
-          assistant={instance}
-          onClose={() => { setEditorOpen(false) }}
-          onSaved={() => { load() }}
-        />
-      )}
-    </>
   )
 }
 
@@ -502,7 +333,7 @@ export function HistoryPanel({
   )
 }
 
-function HistorySection({
+export function HistorySection({
   instance,
   onChanged,
 }: {
@@ -724,7 +555,7 @@ export function AutomationPanel({
 }
 
 /** Hook wrapper: one Host catalog read, plus the jump to the Host's own panel. */
-function AutomationSection({ instance }: { instance: AssistantInstanceView }): JSX.Element {
+export function AutomationSection({ instance }: { instance: AssistantInstanceView }): JSX.Element {
   const [state, setState] = useState<AutomationPanelState>({ loading: true })
   const [jumpError, setJumpError] = useState<string>()
   const sessionKey = assistantAutomationSessionIds(instance).join('\u0000')
@@ -760,206 +591,4 @@ function AutomationSection({ instance }: { instance: AssistantInstanceView }): J
       {jumpError !== undefined && <DetailError message={jumpError} />}
     </>
   )
-}
-
-/**
- * The panel body. Sections default open and are collapsible, which is also what
- * makes the whole panel keyboard reachable: `DisclosureRow` renders the row as a
- * focusable, Enter/Space-operable target.
- *
- * Closing the pane itself is the host's Esc shortcut — no key handler here.
- */
-export function AssistantDetailPanel({
-  instance,
-  notice,
-  expanded,
-  onRefresh,
-}: {
-  instance?: AssistantInstanceView | undefined
-  /** Shown instead of the empty instruction while the list is loading or failed. */
-  notice?: string | undefined
-  expanded?: boolean | undefined
-  /** Re-read the instance row after an inline write changed it. */
-  onRefresh?: (() => void) | undefined
-}): JSX.Element {
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
-  if (instance === undefined) {
-    return (
-      <div
-        className={css.assistantDetail}
-        data-dsh-assistant-detail
-        data-dsh-assistant-detail-empty
-        data-expanded={expanded}
-      >
-        <p className={css.assistantDetailEmpty} role="status">{notice ?? DETAIL_EMPTY_TEXT}</p>
-      </div>
-    )
-  }
-  const sections = assistantDetailSections(instance)
-  const avatar = assistantAvatarSource(instance)
-  const toggle = (id: AssistantDetailSectionId, open: boolean): void => {
-    setCollapsed(current => ({ ...current, [id]: open }))
-  }
-  const isOpen = (id: AssistantDetailSectionId): boolean => collapsed[id] !== true
-  return (
-    <div className={css.assistantDetail} data-dsh-assistant-detail data-expanded={expanded}>
-      {sections.map(section => (
-        <DetailSection
-          key={section.id}
-          id={section.id}
-          title={section.title}
-          open={isOpen(section.id)}
-          onToggle={() => { toggle(section.id, isOpen(section.id)) }}
-        >
-          {section.id === 'identity' && (
-            <div className={css.assistantDetailIdentity}>
-              <MemberAvatar
-                name={assistantInstanceName(instance)}
-                avatar={avatar}
-                size={40}
-                className={css.assistantDetailAvatar ?? ''}
-              />
-              {avatar === undefined && (
-                <span className={css.assistantDetailAvatarNote}>未设置头像，用名称首字</span>
-              )}
-            </div>
-          )}
-          <AssistantDetailFacts section={section} />
-        </DetailSection>
-      ))}
-      <DetailSection
-        id="persona"
-        title="人设"
-        open={isOpen('persona')}
-        onToggle={() => { toggle('persona', isOpen('persona')) }}
-      >
-        <PersonaSection instance={instance} {...(onRefresh === undefined ? {} : { onSaved: onRefresh })} />
-      </DetailSection>
-      <DetailSection
-        id="memory"
-        title="记忆"
-        open={isOpen('memory')}
-        onToggle={() => { toggle('memory', isOpen('memory')) }}
-      >
-        <MemorySection instance={instance} />
-      </DetailSection>
-      <DetailSection
-        id="automations"
-        title="自动化"
-        open={isOpen('automations')}
-        onToggle={() => { toggle('automations', isOpen('automations')) }}
-      >
-        <AutomationSection instance={instance} />
-      </DetailSection>
-      <DetailSection
-        id="history"
-        title="会话历史"
-        open={isOpen('history')}
-        onToggle={() => { toggle('history', isOpen('history')) }}
-      >
-        <HistorySection instance={instance} {...(onRefresh === undefined ? {} : { onChanged: onRefresh })} />
-      </DetailSection>
-    </div>
-  )
-}
-
-interface InstancesState {
-  instances: AssistantInstanceView[]
-  loading: boolean
-  error?: string
-}
-
-/** Read the one row this panel shows through the existing list transport. */
-function useAssistantInstances(enabled: boolean): InstancesState & { refresh: () => void } {
-  const [state, setState] = useState<InstancesState>({ instances: [], loading: enabled })
-  const [nonce, setNonce] = useState(0)
-  const refresh = useCallback(() => { setNonce(value => value + 1) }, [])
-  useEffect(() => {
-    if (!enabled) {
-      setState({ instances: [], loading: false })
-      return
-    }
-    let live = true
-    const read = (): void => {
-      void callAgentTeam('assistant.instance.list').then(
-        value => { if (live) setState({ instances: value.items, loading: false }) },
-        cause => {
-          if (!live) return
-          setState({
-            instances: [],
-            loading: false,
-            error: cause instanceof Error ? cause.message : String(cause),
-          })
-        },
-      )
-    }
-    setState({ instances: [], loading: true })
-    read()
-    const unsubscribe = subscribeAgentTeam(read, () => {}, read)
-    return () => {
-      live = false
-      unsubscribe()
-    }
-  }, [enabled, nonce])
-  return { ...state, refresh }
-}
-
-/**
- * The `sidebar.right.pane.tab` entry: the framework hands it `useTabInfo`, and
- * the row it describes is whichever helper the sidebar has selected.
- *
- * The tab record is not needed beyond the shell's own state, so the only thing
- * read from it is whether the pane is expanded; the selection itself lives in
- * the plugin's UI store, which the row menu writes before opening this tab.
- */
-export function AssistantDetailBody({
-  useTabInfo,
-}: PropsRuntime<'sidebar.right.pane.tab'>): JSX.Element {
-  const { sidebar } = useTabInfo()
-  const { selectedAssistantId } = useAgentTeamUi()
-  const { instances, loading, error, refresh } = useAssistantInstances(
-    selectedAssistantId !== undefined,
-  )
-  const instance = instances.find(candidate => candidate.id === selectedAssistantId)
-  const notice = error !== undefined
-    ? `助手数据加载失败：${error}`
-    : loading
-      ? '正在加载助手…'
-      : DETAIL_EMPTY_TEXT
-  return (
-    <AssistantDetailPanel
-      {...(instance === undefined ? {} : { instance })}
-      notice={instance === undefined ? notice : undefined}
-      expanded={sidebar.expanded}
-      onRefresh={refresh}
-    />
-  )
-}
-
-/** The services the open action needs; the host's face, narrowed to two reads. */
-export interface DetailSidebar {
-  mounted: { getSnapshot(): string | undefined }
-  openTab(kind: string): void
-}
-
-/**
- * Open (or focus) the detail tab for one helper.
- *
- * Selection is written first so the body — mounted in the same module graph —
- * renders this row on its first paint. The guard is the contract note's: every
- * write throws while no Session surface is mounted, so a hero screen gets `false`
- * and the row can say why instead of appearing dead.
- */
-export function openAssistantDetail(
-  sidebar: DetailSidebar | undefined,
-  assistantId: string,
-): boolean {
-  selectAssistant(assistantId)
-  if (sidebar === undefined || sidebar.mounted.getSnapshot() === undefined) return false
-  try {
-    sidebar.openTab(DETAIL_TAB_KIND)
-    return true
-  } catch {
-    return false
-  }
 }

@@ -25,6 +25,9 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     'IconSettingsOutlineRegular', 'IconSlidersTwoOutlineRegular', 'IconSparkleRegular', 'IconUserOutlineRegular', 'IconUsersOutlineRegular',
     'IconStopFillRegular', 'IconThinkOutlineRegular', 'IconTrashOutlineRegular',
     'IconUsersOutlineRegular', 'IconWarningOutlineRegular', 'IconWarningTriangleOutlineRegular',
+    'IconInfoOutlineRegular', 'IconPersonalizationOutlineRegular', 'IconShieldOutlineRegular',
+    'IconArchiveOutlineRegular', 'IconClockOutlineRegular', 'IconDatabaseOutlineRegular',
+    'IconFlatListOutlineRegular', 'Switch',
   ]
   return Object.fromEntries(names.map(name => [name, Stub]))
 })

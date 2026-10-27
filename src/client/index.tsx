@@ -14,11 +14,14 @@ import {
   DETAIL_TAB_ID,
   DETAIL_TAB_KIND,
   DETAIL_TAB_TITLE,
+  OPEN_ASSISTANT_SETTINGS_EVENT,
+  applyAssistantDetail,
+  assistantDetailTarget,
+} from './assistant-settings-pane.js'
+import {
   SCHEDULES_PANEL_ID,
   installAssistantAutomations,
-  openAssistantDetail,
   type AssistantAutomationEntry,
-  type DetailSidebar,
 } from './assistant-detail.js'
 import { TeamMainAgentPanel } from './team-main-agent.js'
 import {
@@ -108,23 +111,33 @@ function useConversationSessionId(): string | undefined {
 
 export function apply(ctx: AgentTeamClientContext): void {
   installTeamLocale(ctx as unknown as TeamLocaleContext)
-  // The assistant detail lives on the host's native right Sidebar: one page
-  // type plus its body. Both registrations are optional-scoped — a build without
-  // `sidebarRightTabs` contributes nothing and the settings dialog stays the only
-  // entry — and the service reference is captured here so the row menu can open
-  // the tab without importing the host's package at run time.
-  let sidebarRight: DetailSidebar | undefined
+  // 助手设置 lives on the host's native right Sidebar: one page type plus its
+  // body, both optional-scoped. The row menu publishes an event; this listener
+  // owns the layout write, so no component ever calls `openTab` itself. The
+  // target assistant id rides the module-level state injected into the body, so
+  // an idle pane never follows the list's selection.
   ctx.inject(['sidebarRight', 'sidebarRightTabs'], native => {
-    sidebarRight = native.sidebarRight
     native.effect(() => native.sidebarRightTabs.register({
       id: DETAIL_TAB_ID,
       kind: DETAIL_TAB_KIND,
       title: () => DETAIL_TAB_TITLE,
-    }), 'assistant detail tab type')
+    }), 'assistant settings tab type')
+    native.effect(() => {
+      const open = (event: Event): void => {
+        const detail = (event as CustomEvent<{ assistantId?: string }>).detail
+        if (detail?.assistantId === undefined) return
+        if (!applyAssistantDetail(native.sidebarRight, detail.assistantId)) {
+          reportNavigationError('助手设置只能在会话中打开：请先打开一个助手会话')
+        }
+      }
+      window.addEventListener(OPEN_ASSISTANT_SETTINGS_EVENT, open)
+      return () => { window.removeEventListener(OPEN_ASSISTANT_SETTINGS_EVENT, open) }
+    }, 'assistant settings open listener')
     native.slots.inject('sidebar.right.pane.tab', () => native.slots.register({
       name: 'sidebar.right.pane.tab',
       // The seat dispatches by the type's `id`, not by `kind`.
       key: DETAIL_TAB_ID,
+      inject: () => ({ state: assistantDetailTarget }),
     }, AssistantDetailBody))
   })
   // Slot names for the conversation package are shipped without .d.ts in this
@@ -224,7 +237,6 @@ export function apply(ctx: AgentTeamClientContext): void {
         openTeamPage={openTeamPage}
         onOpenNativeLanding={openNativeLanding}
         pickWorkspace={pickWorkspace}
-        openAssistantDetail={assistantId => openAssistantDetail(sidebarRight, assistantId)}
       />
     </>
   )

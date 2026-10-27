@@ -72,7 +72,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
   }
 })
 
-const { memoryAfterUndo } = await import('../src/client/assistant-settings-dialog.js')
+const { memoryAfterUndo } = await import('../src/client/assistant-memory-panel.js')
 const { AssistantCreateBody, AssistantCreateFooter } = await import('../src/client/assistant-dialogs.js')
 
 const NOW = '2026-10-23T00:00:00.000Z'
@@ -115,7 +115,7 @@ describe('assistant settings memory panel', () => {
 
 describe('assistant settings coordinator marker', () => {
   const source = readFileSync(
-    new URL('../src/client/assistant-settings-dialog.tsx', import.meta.url),
+    new URL('../src/client/assistant-settings-pane.tsx', import.meta.url),
     'utf8',
   )
 
@@ -128,7 +128,7 @@ describe('assistant settings coordinator marker', () => {
   it('edits the same two capability lists the create dialog writes', () => {
     // Both lists are shown, seeded from the saved snapshot, and written back
     // through the instance update only when they actually changed.
-    expect((source.match(/<CapabilityPicker/g) ?? [])).toHaveLength(2)
+    expect((source.match(/<CapabilityList/g) ?? [])).toHaveLength(2)
     expect(source).toContain('assistant.assistantSnapshot.skillAllowlist')
     expect(source).toContain('assistant.assistantSnapshot.mcpServers')
     expect(source).toContain('value.skillAllowlist =')
@@ -261,7 +261,7 @@ describe('dialog furniture', () => {
     'utf8',
   )
   const settingsSource = readFileSync(
-    new URL('../src/client/assistant-settings-dialog.tsx', import.meta.url),
+    new URL('../src/client/assistant-settings-pane.tsx', import.meta.url),
     'utf8',
   )
   const activitySource = readFileSync(
@@ -373,7 +373,7 @@ describe('assistant create dialog sections', () => {
     // Order inside the pane: name first, then the folded description.
     expect(html.indexOf('助手名称')).toBeLessThan(html.indexOf('aria-label="描述"'))
     // Folded by default: the textarea is in the DOM but the block is closed.
-    expect(html).toMatch(/<details[^>]*data-dsh-assistant-create-description(?![^>]*\bopen\b)/)
+    expect(html).toMatch(/<details[^>]*data-dsh-fold="create-description"(?![^>]*\bopen\b)/)
   })
 
   it('model and environment writes workspace, model, reasoning and preset', () => {
@@ -390,8 +390,9 @@ describe('assistant create dialog sections', () => {
   it('capabilities have their own section and start unchecked for a direct create', () => {
     const html = renderCreateBody({ activeSection: 'capabilities' })
     expect(html).toContain('>技能与MCP<')
-    expect(html).toContain('技能（已选 0 个）')
-    expect(html).toContain('MCP（已选 0 个）')
+    expect(html).toContain('>技能<')
+    expect(html).toContain('>MCP<')
+    expect(html).toContain('已选 0 个')
     expect(html).toContain('该 Agent Preset 没有可用的 Skill。')
     expect(html).toContain('该 Agent Preset 没有可用的 MCP Server。')
   })
@@ -403,8 +404,7 @@ describe('assistant create dialog sections', () => {
       skills: [{ name: 'research', detail: '查资料' }],
       mcpServers: [{ name: 'github', detail: '4 个工具' }],
     })
-    expect(resolved).toContain('技能（已选 1 个）')
-    expect(resolved).toContain('MCP（已选 1 个）')
+    expect(resolved).toContain('已选 1 个')
     expect(resolved).toContain('>research<')
     expect(resolved).toContain('查资料')
     expect(resolved).toContain('4 个工具')

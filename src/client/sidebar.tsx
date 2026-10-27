@@ -1302,7 +1302,6 @@ export function SidebarPortal({
   openTeamPage,
   onOpenNativeLanding,
   pickWorkspace,
-  openAssistantDetail,
 }: {
   openSession: (sessionId: string) => void
   openTeamPage: (teamId: string) => void
@@ -1310,7 +1309,6 @@ export function SidebarPortal({
   /** The shipped directory picker, for a conversation created in a folder. */
   pickWorkspace: () => Promise<WorkspaceChoice | null>
   /** Open a helper's detail on the host's right Sidebar; false when it refused. */
-  openAssistantDetail?: (assistantId: string) => boolean
 }): JSX.Element | null {
   const [host, setHost] = useState<HTMLElement>()
   const [brandHost, setBrandHost] = useState<HTMLElement>()
@@ -2074,7 +2072,6 @@ export function SidebarPortal({
               <AssistantSidebarSection
                 openSession={openSession}
                 pickWorkspace={pickWorkspace}
-                {...(openAssistantDetail === undefined ? {} : { onOpenDetail: openAssistantDetail })}
               />
             </>
           )}

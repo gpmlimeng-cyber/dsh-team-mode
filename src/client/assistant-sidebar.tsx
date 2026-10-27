@@ -9,7 +9,6 @@ import {
   IconFolderOpenOutlineRegular,
   IconNewChatOutlineRegular,
   IconPinFillRegular,
-  IconPanelLeftOutlineRegular,
   IconPinOutlineRegular,
   IconPlusOutlineRegular,
   IconProjectAddOutlineRegular,
@@ -21,7 +20,7 @@ import { selectAssistant, useAgentTeamUi } from './store.js'
 import { AssistantCheckpointDialog } from './assistant-checkpoint-dialog.js'
 import { AssistantCreateDialog } from './assistant-dialogs.js'
 import { useAssistantDisplayMode } from './assistant-display-mode.js'
-import { AssistantSettingsDialog } from './assistant-settings-dialog.js'
+import { openAssistantDetail } from './assistant-settings-pane.js'
 import {
   approvalDecisionLabel,
   approvalHistory,
@@ -153,10 +152,8 @@ export function assistantMenuEntries(
       icon: <IconFolderOpenOutlineRegular size={14} />,
     },
     { id: 'checkpoint', label: '检查点与交接', icon: <IconChecklistOutlineRegular size={14} /> },
+    // 助手设置 opens the host's right Sidebar tab; there is no dialog anymore.
     { id: 'settings', label: '助手设置', icon: <IconEditOutlineRegular size={14} /> },
-    // Coexists with the dialog above: the same row can open as a right-Sidebar
-    // page, and 助手设置 keeps working exactly as before.
-    { id: 'detail', label: '在面板中打开', icon: <IconPanelLeftOutlineRegular size={14} /> },
     {
       id: 'pin',
       label: pinned ? '取消置顶' : '置顶',
@@ -207,12 +204,9 @@ function useStewardHost(): HTMLElement | undefined {
 export function AssistantSidebarSection({
   openSession,
   pickWorkspace,
-  onOpenDetail,
 }: {
   openSession: (sessionId: string) => void
   pickWorkspace: () => Promise<WorkspaceChoice | null>
-  /** Open the row's detail on the host's right Sidebar; false when it refused. */
-  onOpenDetail?: (assistantId: string) => boolean
 }): JSX.Element {
   const { selectedAssistantId } = useAgentTeamUi()
   const [instances, setInstances] = useState<AssistantInstanceView[]>([])
@@ -260,8 +254,6 @@ export function AssistantSidebarSection({
   const [menuOpenId, setMenuOpenId] = useState<string>()
   const [taskAssistantId, setTaskAssistantId] = useState<string>()
   const [taskDialogOpen, setTaskDialogOpen] = useState(false)
-  const [settingsAssistant, setSettingsAssistant] = useState<AssistantInstance>()
-  const [settingsDialogOpen, setSettingsDialogOpen] = useState(false)
   const [checkpointAssistant, setCheckpointAssistant] = useState<AssistantInstance>()
   const [checkpointDialogOpen, setCheckpointDialogOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
@@ -407,8 +399,8 @@ export function AssistantSidebarSection({
   }
 
   const openSettings = (instance: AssistantInstance): void => {
-    setSettingsAssistant(instance)
-    setSettingsDialogOpen(true)
+    // The pane is the host's; the event → listener path does the layout write.
+    openAssistantDetail(instance.id)
     setMenuOpenId(undefined)
   }
 
@@ -872,13 +864,6 @@ export function AssistantSidebarSection({
               setMenuOpenId(undefined)
               if (id === 'checkpoint') openCheckpoint(instance)
               else if (id === 'settings') openSettings(instance)
-              else if (id === 'detail') {
-                // The pane is the host's; refusing means no Session surface is
-                // mounted, which the row reports instead of going quietly dead.
-                if (onOpenDetail?.(instance.id) === false) {
-                  setError('右侧面板只能在会话中打开：请先打开一个助手会话')
-                }
-              }
               else if (id === 'pin') void togglePin(instance)
               else if (id === 'group') {
                 setGroupDialog({
@@ -1197,14 +1182,6 @@ export function AssistantSidebarSection({
           assistant={checkpointAssistant}
           onClose={() => { setCheckpointDialogOpen(false) }}
           openSession={openSession}
-        />
-      )}
-      {settingsAssistant !== undefined && (
-        <AssistantSettingsDialog
-          open={settingsDialogOpen}
-          assistant={settingsAssistant}
-          onClose={() => { setSettingsDialogOpen(false) }}
-          onSaved={load}
         />
       )}
       {stewardRow}

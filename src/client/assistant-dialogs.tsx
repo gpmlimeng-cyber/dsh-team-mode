@@ -38,6 +38,7 @@ import { SelectControl } from './select-control.js'
 import type { SelectControlOption } from './select-control.js'
 import { SettingsRow, SettingsRows } from './settings-row.js'
 import { AnimatedModal } from './shared.js'
+import { FoldGroup } from './fold-group.js'
 import css from './AgentTeam.module.css'
 import type { AssistantTemplate } from '../domain/types.js'
 import type { CatalogView } from '../transport/contracts.js'
@@ -269,16 +270,11 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
             />
           )}
         />
-        <details className={css.assistantCreateFold} data-dsh-assistant-create-description>
-          <summary className={css.assistantCreateFoldSummary}>
-            <span className={css.assistantCreateFoldCopy}>
-              <span className={css.assistantCreateFoldTitle}>描述</span>
-              <span className={css.settingsRowHint}>
-                写入助手的系统提示；留空则使用 Agent Preset 默认。只影响之后创建或恢复的会话。
-              </span>
-            </span>
-            <span className={css.assistantCreateFoldAction}>编辑</span>
-          </summary>
+        <FoldGroup
+          title="描述"
+          hint="写入助手的系统提示；留空则使用 Agent Preset 默认。只影响之后创建或恢复的会话。"
+          dataKind="create-description"
+        >
           <textarea
             className={`${css.input} ${css.assistantCreateDescription}`}
             aria-label="描述"
@@ -288,7 +284,7 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
             placeholder="例如：你负责整理需求并给出可执行的实现建议；先读代码再回答。"
             onChange={event => { props.onDraftChange({ instructions: event.target.value }) }}
           />
-        </details>
+        </FoldGroup>
         {groupOptions.visible && (
           <SettingsRow
             label="分组"
@@ -457,7 +453,7 @@ function CapabilitiesSection(props: AssistantCreateBodyProps, disabled: boolean)
         />
       </label>
       <CapabilityPicker
-        label={`技能（已选 ${draft.skillAllowlist.length} 个）`}
+        label="技能"
         icon={<IconSparkleRegular size={14} />}
         ariaLabel="选择助手可使用的 Skills"
         hint="运行时按任务需要加载具体 Skill 指令；一个都不选表示不开放 Skill。"
@@ -472,7 +468,7 @@ function CapabilitiesSection(props: AssistantCreateBodyProps, disabled: boolean)
         onChange={next => { props.onDraftChange({ skillAllowlist: next }) }}
       />
       <CapabilityPicker
-        label={`MCP（已选 ${draft.mcpServers.length} 个）`}
+        label="MCP"
         icon={<IconProjectAddOutlineRegular size={14} />}
         ariaLabel="选择助手可使用的 MCP Server"
         hint="MCP 连接与密钥由 Harness Profile/Preset 管理；一个都不选表示不开放 Server 工具。"

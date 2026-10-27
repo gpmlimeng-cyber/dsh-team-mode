@@ -165,7 +165,8 @@ describe('one select implementation', () => {
       .sort()
     expect(importers).toEqual([
       'assistant-dialogs.tsx',
-      'assistant-settings-dialog.tsx',
+      'assistant-memory-panel.tsx',
+      'assistant-settings-pane.tsx',
       'assistants/AssistantPanel.tsx',
       'team-activity.tsx',
       'team-board.tsx',

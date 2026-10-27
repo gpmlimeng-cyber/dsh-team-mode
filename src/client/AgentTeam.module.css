@@ -1941,41 +1941,37 @@ textarea.input {
   padding: 0;
 }
 
-/* One capability group, shaped like the shipped plugin page: chevron + title
-   with its one-line explanation, a count on the right, hairline between groups. */
-.capabilityGroup {
-  padding: 4px 0;
+/* The one fold shape of this plugin — create-dialog sections, capability
+   groups and every settings-pane group render through FoldGroup: icon + title
+   (+ hint) on the left, optional meta/action and the chevron on the right. */
+.foldGroup {
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  min-width: 0;
 }
 
-.capabilityGroup .skillPicker {
-  padding: 0;
-}
-
-.capabilityGroupSummary {
+.foldGroupSummary {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
-  padding: 4px 0;
+  min-height: 36px;
+  padding: 6px 0;
   cursor: pointer;
   list-style: none;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
 }
 
-.capabilityGroupSummary::-webkit-details-marker {
+.foldGroupSummary::-webkit-details-marker {
   display: none;
 }
 
-.capabilityGroupChevron {
+.foldGroupIcon {
   flex: none;
-  margin-top: 3px;
+  display: inline-flex;
   color: var(--dsw-alias-label-tertiary);
-  transition: transform 120ms ease;
 }
 
-.capabilityGroup[open] .capabilityGroupChevron {
-  transform: rotate(90deg);
-}
-
-.capabilityGroupCopy {
+.foldGroupCopy {
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -1983,23 +1979,40 @@ textarea.input {
   flex: 1 1 auto;
 }
 
-.capabilityGroupTitle {
-  color: var(--dsw-alias-label-primary);
-  font-size: 14px;
+.foldGroupTitle {
+  font-size: 13px;
   line-height: 20px;
 }
 
-.capabilityGroupHint {
+.foldGroupHint {
   color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 17px;
+  font-size: 11px;
+  line-height: 16px;
 }
 
-.capabilityGroupMeta {
+.foldGroupMeta {
   flex: none;
   color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
+  font-size: 11px;
   line-height: 20px;
+}
+
+.foldGroupChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  transition: transform 120ms ease;
+}
+
+.foldGroup[open] .foldGroupChevron {
+  transform: rotate(90deg);
+}
+
+.foldGroupBody {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0 10px;
 }
 
 /* Search above the capability rows; the field is chrome, not a setting. */
@@ -4531,51 +4544,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 
 /* 描述 stays folded until asked for: identity is the common case, the system
    prompt is not. */
-.assistantCreateFold {
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  padding-top: 6px;
-}
-
-.assistantCreateFoldSummary {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 4px 0;
-  color: var(--dsw-alias-label-primary);
-  font-size: 13px;
-  cursor: pointer;
-  list-style: none;
-}
-
-/* The hint lives on the title row, so the fold explains itself while closed. */
-.assistantCreateFoldCopy {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.assistantCreateFoldTitle {
-  font-size: 13px;
-}
-
-/* "编辑" reads as a control but toggles the fold: it rides the summary row. */
-.assistantCreateFoldAction {
-  flex: none;
-  padding: 1px 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.assistantCreateFoldSummary::-webkit-details-marker {
-  display: none;
-}
-
 /* 描述 is a note, not an essay: two rows, and the textarea keeps the name
    input's width because both live in the same row grid. */
 .assistantCreateDescription {
@@ -4736,10 +4704,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 4px;
-}
-
-.assistantSettingsDialog {
-  width: min(560px, calc(100vw - 32px));
 }
 
 .assistantSettingsForm {
@@ -12306,6 +12270,50 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   font-weight: 400;
 }
 
+/* 设置 pane: one search field over every group, one sticky save bar. */
+.settingsSearch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.settingsSearch input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  outline: none;
+}
+
+.settingsSaveBar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 8px 0 2px;
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.settingsSaveHint {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
 .assistantDetailEmpty {
   margin: 0;
   padding: 24px 12px;
@@ -12746,4 +12754,23 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 .settingsRowControl > .input {
   width: 100%;
+}
+
+/* The right pane is narrower than the dialogs these rows came from: stack the
+   label above its control and let a control wrap, so nothing runs past the
+   edge. Only the pane stacks — the create/settings dialogs keep their row. */
+.assistantDetail .settingsRow {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.assistantDetail .settingsRowControl {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.assistantDetail .assistantMascotSection {
+  flex-wrap: wrap;
 }

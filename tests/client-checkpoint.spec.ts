@@ -27,6 +27,9 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     'IconSearchOutlineRegular', 'IconSlidersTwoOutlineRegular', 'IconSparkleRegular',
     'IconWarningOutlineRegular',
     'IconLoadingOutlineRegular',
+    'IconInfoOutlineRegular', 'IconPersonalizationOutlineRegular', 'IconShieldOutlineRegular',
+    'IconArchiveOutlineRegular', 'IconClockOutlineRegular', 'IconDatabaseOutlineRegular',
+    'IconFlatListOutlineRegular', 'Switch',
   ]
   return Object.fromEntries(names.map(name => [name, Stub]))
 })
@@ -187,7 +190,6 @@ describe('assistant menu entries', () => {
         'new-thread-folder',
         'checkpoint',
         'settings',
-        'detail',
         'pin',
         'group',
         'coordinator',

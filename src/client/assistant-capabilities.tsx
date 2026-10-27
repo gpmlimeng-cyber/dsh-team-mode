@@ -1,13 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import {
-  IconChevronRightOutlineRegular,
-  IconProjectAddOutlineRegular,
-  IconSearchOutlineRegular,
-  IconSparkleRegular,
-  Switch,
-} from '@deepseek-ai/dsh-client-ui-primitives'
+import { IconSparkleRegular, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
+import { FoldGroup } from './fold-group.js'
 import css from './AgentTeam.module.css'
 
 /**
@@ -66,29 +61,9 @@ function toggled(selected: readonly string[], name: string, next: boolean): stri
     : selected.filter(entry => entry !== name)
 }
 
-/**
- * One Skill/MCP multi-select. It is the shipped `Checkbox` in the shipped
- * two-column option grid — not a new control — so the create dialog, the
- * settings dialog and the template editor read the same way.
- */
-export function CapabilityPicker({
-  label,
-  ariaLabel,
-  hint,
-  emptyText,
-  missingDetail,
-  selected,
-  options,
-  loading,
-  error,
-  disabled,
-  onChange,
-  icon = <IconSparkleRegular size={14} />,
-  query = '',
-}: {
-  label: string
+/** Shared props of one Skill/MCP multi-select's rows. */
+export interface CapabilityListProps {
   ariaLabel: string
-  hint: string
   emptyText: string
   missingDetail: string
   selected: readonly string[]
@@ -99,12 +74,28 @@ export function CapabilityPicker({
   onChange: (next: string[]) => void
   /** Tile glyph, matching the shipped plugin list's per-row icon. */
   icon?: ReactNode
-  /**
-   * Filter text owned by the section: the shipped plugin page has one search
-   * over the whole page, not one per group.
-   */
+  /** Filter text owned by the surrounding pane: one search over all settings. */
   query?: string
-}): JSX.Element {
+}
+
+/**
+ * The rows of one Skill/MCP multi-select: the shipped `Checkbox`-style switch in
+ * the shipped option grid, with loading, error and empty states. Callers wrap it
+ * in a fold — the picker below, or the settings pane's own group.
+ */
+export function CapabilityList({
+  ariaLabel,
+  emptyText,
+  missingDetail,
+  selected,
+  options,
+  loading,
+  error,
+  disabled,
+  onChange,
+  icon = <IconSparkleRegular size={14} />,
+  query = '',
+}: CapabilityListProps): JSX.Element {
   const allRows = loading || error !== undefined
     ? []
     : capabilityRows(selected, options, missingDetail)
@@ -120,50 +111,65 @@ export function CapabilityPicker({
   }, [allRows, query])
 
   return (
-    <details className={css.capabilityGroup} open>
-      <summary className={css.capabilityGroupSummary}>
-        <IconChevronRightOutlineRegular size={12} className={css.capabilityGroupChevron} />
-        <span className={css.capabilityGroupCopy}>
-          <span className={css.capabilityGroupTitle}>{label}</span>
-          <span className={css.capabilityGroupHint}>{hint}</span>
-        </span>
-        <span className={css.capabilityGroupMeta}>已选 {selected.length} 个</span>
-      </summary>
-      <div className={css.skillPicker} role="group" aria-label={ariaLabel}>
-        {loading && <span className={css.hint}>正在读取该 Agent Preset 的目录…</span>}
-        {!loading && error !== undefined && (
-          <span className={css.inlineError} role="alert">读取失败：{error}</span>
-        )}
-        {!loading && error === undefined && allRows.length === 0 && (
-          <span className={css.hint}>{emptyText}</span>
-        )}
-        {!loading && error === undefined && allRows.length > 0 && rows.length === 0 && (
-          <span className={css.hint}>没有匹配「{query.trim()}」的条目。</span>
-        )}
-        {rows.map(row => (
-          <div
-            key={row.name}
-            className={row.unavailable ? `${css.skillOption} ${css.skillOptionUnavailable}` : css.skillOption}
-            data-capability-unavailable={row.unavailable ? 'true' : undefined}
-          >
-            <span className={css.skillOptionIcon} aria-hidden="true">{icon}</span>
-            <span className={css.skillOptionText}>
-              <span className={css.skillOptionTitle}>
-                {row.unavailable ? `${row.name}（不可用）` : row.name}
-              </span>
-              <small className={row.unavailable ? css.skillOptionReason : css.skillOptionDesc}>{row.detail}</small>
+    <div className={css.skillPicker} role="group" aria-label={ariaLabel}>
+      {loading && <span className={css.hint}>正在读取该 Agent Preset 的目录…</span>}
+      {!loading && error !== undefined && (
+        <span className={css.inlineError} role="alert">读取失败：{error}</span>
+      )}
+      {!loading && error === undefined && allRows.length === 0 && (
+        <span className={css.hint}>{emptyText}</span>
+      )}
+      {!loading && error === undefined && allRows.length > 0 && rows.length === 0 && (
+        <span className={css.hint}>没有匹配「{query.trim()}」的条目。</span>
+      )}
+      {rows.map(row => (
+        <div
+          key={row.name}
+          className={row.unavailable ? `${css.skillOption} ${css.skillOptionUnavailable}` : css.skillOption}
+          data-capability-unavailable={row.unavailable ? 'true' : undefined}
+        >
+          <span className={css.skillOptionIcon} aria-hidden="true">{icon}</span>
+          <span className={css.skillOptionText}>
+            <span className={css.skillOptionTitle}>
+              {row.unavailable ? `${row.name}（不可用）` : row.name}
             </span>
-            <Switch
-              checked={row.checked}
-              label={row.unavailable ? `${row.name}（不可用）` : row.name}
-              title={row.unavailable ? row.detail : undefined}
-              disabled={disabled || row.unavailable}
-              onChange={next => { onChange(toggled(selected, row.name, next)) }}
-            />
-          </div>
-        ))}
-      </div>
-    </details>
+            <small className={row.unavailable ? css.skillOptionReason : css.skillOptionDesc}>{row.detail}</small>
+          </span>
+          <Switch
+            checked={row.checked}
+            label={row.unavailable ? `${row.name}（不可用）` : row.name}
+            title={row.unavailable ? row.detail : undefined}
+            disabled={disabled || row.unavailable}
+            onChange={next => { onChange(toggled(selected, row.name, next)) }}
+          />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * One Skill/MCP multi-select inside the shared fold: the create dialog and the
+ * template editor stack these, the settings pane uses {@link CapabilityList}
+ * directly because its own group already is the fold.
+ */
+export function CapabilityPicker({
+  label,
+  hint,
+  ...list
+}: CapabilityListProps & { label: string; hint: string }): JSX.Element {
+  const [open, setOpen] = useState(true)
+  return (
+    <FoldGroup
+      title={label}
+      hint={hint}
+      meta={`已选 ${list.selected.length} 个`}
+      open={open}
+      onToggle={setOpen}
+      dataKind="capability"
+    >
+      <CapabilityList {...list} />
+    </FoldGroup>
   )
 }
 
