@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import type { Config } from '../config.js'
 import { AgentTeamError, isAgentTeamError } from '../domain/errors.js'
+import { GROUP_SHARE_MAX_REQUEST_BYTES } from '../domain/group-share.js'
 import { SIDEBAR_GROUP_BRIEF_MAX_CHARS } from '../domain/schemas.js'
 import type { AgentTeamService, AgentTeamChange } from '../service/dsh-team-mode-service.js'
 import {
@@ -26,6 +27,19 @@ const requestSchema = z.object({
 }).strict()
 
 const idPayload = z.object({ id: z.string().trim().min(1) }).strict()
+/**
+ * The two import methods carry a whole portable document, so they are read
+ * against the portable ceiling instead of the general request cap. Every other
+ * method keeps `config.maxRequestBytes`: the limit is per method, not global.
+ */
+const GROUP_IMPORT_METHODS: ReadonlySet<string> = new Set([
+  'sidebar.groups.import.preview',
+  'sidebar.groups.import',
+])
+const groupImportPayload = z.object({
+  document: z.unknown(),
+  workspaceId: z.string().trim().min(1).max(200),
+}).strict()
 /**
  * A sidebar group label, non-blank after trim. The 40-char limit stays in the
  * service so its rejection carries the limit instead of a bare Zod error.
@@ -162,12 +176,25 @@ async function handleApi(
   }
 
   let parsed: AgentTeamRequest
+  let bodyBytes: number
   try {
-    const body = await readJson(request, config.maxRequestBytes)
-    parsed = requestSchema.parse(body) as AgentTeamRequest
+    const body = await readJson(
+      request,
+      Math.max(config.maxRequestBytes, GROUP_SHARE_MAX_REQUEST_BYTES),
+    )
+    bodyBytes = body.bytes
+    parsed = requestSchema.parse(body.value) as AgentTeamRequest
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Invalid request'
     writeJson(response, 400, failure('unknown', 'INVALID_REQUEST', message))
+    return
+  }
+  if (bodyBytes > config.maxRequestBytes && !GROUP_IMPORT_METHODS.has(parsed.method)) {
+    writeJson(response, 400, failure(
+      parsed.requestId,
+      'INVALID_REQUEST',
+      `Request body exceeds ${config.maxRequestBytes} bytes`,
+    ))
     return
   }
 
@@ -798,6 +825,20 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       }).strict().parse(request.payload)
       return service.setGroupBrief(payload.name, payload.brief)
     }
+    case 'sidebar.groups.export': {
+      const payload = z.object({ name: sidebarGroupLabel }).strict().parse(request.payload)
+      return service.exportGroup(payload.name)
+    }
+    case 'sidebar.groups.import.preview': {
+      const payload = groupImportPayload.parse(request.payload)
+      return service.previewGroupImport(payload.document, payload.workspaceId)
+    }
+    case 'sidebar.groups.import': {
+      const payload = groupImportPayload.extend({
+        expectedPlanHash: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.importGroup(payload.document, payload.workspaceId, payload.expectedPlanHash)
+    }
     case 'team.dissolve': {
       const payload = z.object({ teamId: z.string().min(1), confirmation: z.string() }).strict().parse(request.payload)
       await service.dissolveTeam(payload.teamId, payload.confirmation, options)
@@ -806,7 +847,15 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
   }
 }
 
-async function readJson(request: IncomingMessage, limit: number): Promise<unknown> {
+/**
+ * Read one JSON body. The byte count is returned with the value so the caller
+ * can hold a general method to `config.maxRequestBytes` while the two import
+ * methods use the larger portable-document ceiling.
+ */
+async function readJson(
+  request: IncomingMessage,
+  limit: number,
+): Promise<{ value: unknown; bytes: number }> {
   const chunks: Buffer[] = []
   let size = 0
   for await (const chunk of request) {
@@ -816,7 +865,7 @@ async function readJson(request: IncomingMessage, limit: number): Promise<unknow
     chunks.push(buffer)
   }
   if (chunks.length === 0) throw new AgentTeamError('INVALID_REQUEST', 'Request body is empty')
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+  return { value: JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown, bytes: size }
 }
 
 async function readBytes(request: IncomingMessage, limit: number): Promise<Uint8Array> {

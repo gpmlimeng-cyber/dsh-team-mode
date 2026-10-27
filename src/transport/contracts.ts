@@ -1,3 +1,8 @@
+import type {
+  GroupExportDocument,
+  GroupImportPreview,
+  GroupImportResult,
+} from '../domain/group-share.js'
 import type { MemoryAskResult } from '../domain/memory.js'
 import type {
   AddTeamMemberInput,
@@ -90,6 +95,10 @@ export const AGENT_TEAM_METHODS = [
   /** User-only group brief read/write; no agent tool exposes these. */
   'sidebar.groups.briefs',
   'sidebar.groups.brief.set',
+  /** Portable group JSON: one read-only export, then preview and apply. */
+  'sidebar.groups.export',
+  'sidebar.groups.import.preview',
+  'sidebar.groups.import',
   'team.list',
   'team.get',
   'team.createDraft',
@@ -559,6 +568,29 @@ export interface AgentTeamRequestMap {
   'sidebar.groups.brief.set': {
     payload: { name: string; brief: string }
     result: SidebarGroupRecord
+  }
+  /**
+   * Snapshot one group as portable JSON: name, brief, Assistant profiles and
+   * team rosters only. Read-only, and it never carries ids, sessions, memory,
+   * conversations or avatar bytes.
+   */
+  'sidebar.groups.export': { payload: { name: string }; result: GroupExportDocument }
+  /**
+   * Preview an import against one workspace: planned names (with conflict
+   * suffixes), rows to create, rows to skip and why, and dropped references.
+   * Writes nothing; the returned `planHash` is the apply fence.
+   */
+  'sidebar.groups.import.preview': {
+    payload: { document: unknown; workspaceId: string }
+    result: GroupImportPreview
+  }
+  /**
+   * Apply a previewed document. `expectedPlanHash` must match the plan this
+   * document produces now, so a changed target is refused instead of imported.
+   */
+  'sidebar.groups.import': {
+    payload: { document: unknown; workspaceId: string; expectedPlanHash: string }
+    result: GroupImportResult
   }
   'team.list': { payload: undefined; result: PageView<TeamView> }
   'team.get': { payload: { id: string }; result: TeamView }

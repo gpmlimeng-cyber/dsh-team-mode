@@ -141,6 +141,38 @@ function harness(overrides: {
       memoryKey: 'key-work',
       updatedAt: '2026-01-01T00:00:00.000Z',
     })),
+    exportGroup: vi.fn((name: string) => ({
+      kind: 'dsh-team-mode/group-export',
+      schemaVersion: 1,
+      exportedAt: '2026-01-01T00:00:00.000Z',
+      group: { name, brief: 'Working brief.' },
+      assistants: [{ profile: { name: 'Reviewer' } }],
+      teams: [],
+    })),
+    previewGroupImport: vi.fn(async (document: unknown, workspaceId: string) => ({
+      schemaVersion: 1,
+      group: { requested: '工作', plannedName: '工作 (2)', renamed: true, briefChars: 12 },
+      assistants: [],
+      templates: [],
+      teams: [],
+      skills: [],
+      mcpServers: [],
+      warnings: [],
+      counts: { assistants: 0, templates: 0, teams: 0, members: 0, skipped: 0 },
+      planHash: 'hash-1',
+      document,
+      workspaceId,
+    })),
+    importGroup: vi.fn(async (document: unknown, workspaceId: string, expectedPlanHash: string) => ({
+      schemaVersion: 1,
+      groupName: '工作 (2)',
+      rows: [],
+      warnings: [],
+      counts: { created: 1, reused: 0, skipped: 0, rejected: 0 },
+      document,
+      workspaceId,
+      expectedPlanHash,
+    })),
     createThread: vi.fn(async (teamId: string) => ({ id: teamId, revision: 2 })),
     createTeamThread: vi.fn(async (teamId: string) => ({ id: teamId, revision: 2 })),
     renameThread: vi.fn(async (teamId: string, threadId: string, title: string) => ({
@@ -577,6 +609,84 @@ describe('web transport authentication and upload contract', () => {
       error: { code: 'INVALID_REQUEST' },
     })
     expect(service.setGroupBrief).toHaveBeenCalledTimes(1)
+  })
+
+  it('dispatches the portable group export, preview and apply with strict payloads', async () => {
+    const { call, service } = harness()
+    const post = (method: string, payload: unknown) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ requestId: method, method, payload }),
+    }))
+
+    const exported = await post('sidebar.groups.export', { name: ' 工作 ' })
+    expect(exported.status).toBe(200)
+    expect(JSON.parse(exported.body)).toMatchObject({
+      ok: true,
+      value: { kind: 'dsh-team-mode/group-export', schemaVersion: 1, group: { name: '工作' } },
+    })
+    expect(service.exportGroup).toHaveBeenCalledWith('工作')
+
+    const document = { kind: 'dsh-team-mode/group-export', schemaVersion: 1 }
+    const previewed = await post('sidebar.groups.import.preview', {
+      document,
+      workspaceId: 'workspace-1',
+    })
+    expect(previewed.status).toBe(200)
+    expect(JSON.parse(previewed.body)).toMatchObject({
+      ok: true,
+      value: { schemaVersion: 1, planHash: 'hash-1', group: { plannedName: '工作 (2)' } },
+    })
+    expect(service.previewGroupImport).toHaveBeenCalledWith(document, 'workspace-1')
+
+    const applied = await post('sidebar.groups.import', {
+      document,
+      workspaceId: 'workspace-1',
+      expectedPlanHash: 'hash-1',
+    })
+    expect(applied.status).toBe(200)
+    expect(JSON.parse(applied.body)).toMatchObject({ ok: true, value: { groupName: '工作 (2)' } })
+    expect(service.importGroup).toHaveBeenCalledWith(document, 'workspace-1', 'hash-1')
+
+    // The fence is required, and an unknown field is refused rather than ignored.
+    const unfenced = await post('sidebar.groups.import', { document, workspaceId: 'workspace-1' })
+    expect(unfenced.status).toBe(400)
+    expect(JSON.parse(unfenced.body)).toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_REQUEST' },
+    })
+    const extra = await post('sidebar.groups.import.preview', {
+      document,
+      workspaceId: 'workspace-1',
+      overwrite: true,
+    })
+    expect(extra.status).toBe(400)
+    expect(service.previewGroupImport).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads the import body against the portable ceiling but keeps other methods capped', async () => {
+    const { call, service } = harness()
+    const post = (method: string, payload: unknown) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ requestId: method, method, payload }),
+    }))
+
+    // `maxRequestBytes` is 1024 in this harness. A normal method stays capped...
+    const large = await post('sidebar.groups.create', { name: 'x'.repeat(4000) })
+    expect(large.status).toBe(400)
+    expect(JSON.parse(large.body)).toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_REQUEST', message: 'Request body exceeds 1024 bytes' },
+    })
+    expect(service.createGroup).not.toHaveBeenCalled()
+
+    // ...while an import document of the same size is read and dispatched.
+    const document = { kind: 'dsh-team-mode/group-export', schemaVersion: 1, padding: 'x'.repeat(4000) }
+    const previewed = await post('sidebar.groups.import.preview', {
+      document,
+      workspaceId: 'workspace-1',
+    })
+    expect(previewed.status).toBe(200)
+    expect(service.previewGroupImport).toHaveBeenCalledWith(document, 'workspace-1')
   })
 
   it('dispatches the three team thread writes with strict payloads', async () => {

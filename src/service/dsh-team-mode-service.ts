@@ -1,6 +1,7 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
+import type { ZodError } from 'zod'
 import { isModelInvocable, isSkillName, isUserInvocable } from '@deepseek-ai/dsh-skill'
 import type { Config } from '../config.js'
 import { CHIEF_ASSISTANT } from '../domain/chief.js'
@@ -11,6 +12,30 @@ import {
   type MemoryAskResult,
 } from '../domain/memory.js'
 import { isMcpServerName, mcpServerFromToolName } from '../domain/mcp.js'
+import {
+  GROUP_SHARE_KIND,
+  GROUP_SHARE_MAX_DOCUMENT_BYTES,
+  GROUP_SHARE_NAME_MAX_CHARS,
+  GROUP_SHARE_SCHEMA_VERSION,
+  groupExportDocumentSchema,
+  largestPortableFields,
+  portableDocumentBytes,
+  portableProfileFromSnapshot,
+  samePortableProfile,
+  uniqueName,
+  type GroupExportDocument,
+  type GroupImportAssistantPlan,
+  type GroupImportDropped,
+  type GroupImportMemberPlan,
+  type GroupImportPreview,
+  type GroupImportResult,
+  type GroupImportResultRow,
+  type GroupImportTeamPlan,
+  type GroupImportTemplatePlan,
+  type PortableAssistantEntry,
+  type PortableAssistantProfile,
+  type PortableTeamMember,
+} from '../domain/group-share.js'
 import {
   createAssistantInputSchema,
   addTeamMemberInputSchema,
@@ -3654,6 +3679,615 @@ export class AgentTeamService extends Service {
     }
   }
 
+  /**
+   * Snapshot one group as a portable document. Read-only, and deliberately
+   * narrow: no ids, sessions, memory, conversations, avatars or workspace
+   * bindings travel (see `domain/group-share.ts`). Archived teams and archived
+   * Assistant instances are left out; the caller sees only what can come back.
+   */
+  exportGroup(name: string): GroupExportDocument {
+    const label = requireGroupLabel(name)
+    const record = this.groupRecords().find(item => item.name === label)
+    if (record === undefined) {
+      throw new AgentTeamError('INVALID_REQUEST', `Unknown group '${label}'`, { group: label })
+    }
+    const assistants = this.store.listAssistantInstances()
+      .filter(instance => instance.group === label && instance.status !== 'archived')
+      .sort((left, right) => left.assistantSnapshot.name.localeCompare(right.assistantSnapshot.name)
+        || left.id.localeCompare(right.id))
+      .map(instance => this.portableAssistantEntry(instance))
+    const teams = this.store.listTeams()
+      .filter(team => team.group === label
+        && team.archivedAt === undefined
+        && team.state !== 'deleting'
+        && team.state !== 'delete_blocked')
+      .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+      .map(team => ({
+        name: team.name,
+        directMemberChat: team.directMemberChat,
+        members: orderedTeamMembers(team).map(member => this.portableTeamMember(member)),
+      }))
+    const document: GroupExportDocument = {
+      kind: GROUP_SHARE_KIND,
+      schemaVersion: GROUP_SHARE_SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      group: { name: record.name, brief: record.brief },
+      assistants,
+      teams,
+      skills: uniqueSorted([
+        ...assistants.flatMap(entry => entry.profile.skillAllowlist),
+        ...teams.flatMap(team => team.members.flatMap(member => member.profile.skillAllowlist)),
+      ]),
+      mcpServers: uniqueSorted([
+        ...assistants.flatMap(entry => entry.profile.mcpServers),
+        ...teams.flatMap(team => team.members.flatMap(member => member.profile.mcpServers)),
+      ]),
+    }
+    // Parsing our own output is the cheapest guarantee that the document can
+    // come back: a name or persona this format cannot carry is refused here
+    // with its field path instead of failing on the importing machine.
+    const parsed = groupExportDocumentSchema.safeParse(document)
+    if (!parsed.success) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Group '${label}' cannot be exported — ${portableIssue(parsed.error)}`,
+        { group: label, issues: portableIssues(parsed.error) },
+      )
+    }
+    const bytes = portableDocumentBytes(parsed.data)
+    if (bytes > GROUP_SHARE_MAX_DOCUMENT_BYTES) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Group '${label}' exports ${bytes} bytes, above the ${GROUP_SHARE_MAX_DOCUMENT_BYTES}-byte `
+        + `portable limit; largest fields: ${largestPortableFields(parsed.data).join(', ') || 'none'}`,
+        { group: label, bytes, limit: GROUP_SHARE_MAX_DOCUMENT_BYTES },
+      )
+    }
+    return parsed.data
+  }
+
+  /**
+   * Compute what an import would do, without writing anything. The returned
+   * plan is also the fence: `importGroup` recomputes it and refuses a document
+   * whose plan no longer hashes to the previewed one.
+   */
+  async previewGroupImport(rawDocument: unknown, workspaceId: string): Promise<GroupImportPreview> {
+    const document = this.parsePortableGroupDocument(rawDocument)
+    const targetWorkspaceId = await this.requireImportWorkspace(workspaceId)
+    const plan = await this.buildGroupImportPlan(document)
+    return { ...plan, planHash: groupImportPlanHash(document, plan) }
+  }
+
+  /**
+   * Apply a previewed document, one item at a time. Nothing is written before
+   * the whole document parses and the plan hash matches; after that there is no
+   * rollback, so a failure leaves the new group partially filled and the report
+   * says exactly what landed (created/reused/skipped/rejected with a reason).
+   * Existing groups and Assistants are never modified: a name collision only
+   * earns a ` (2)` suffix.
+   */
+  async importGroup(
+    rawDocument: unknown,
+    workspaceId: string,
+    expectedPlanHash: string,
+  ): Promise<GroupImportResult> {
+    const document = this.parsePortableGroupDocument(rawDocument)
+    const targetWorkspaceId = await this.requireImportWorkspace(workspaceId)
+    const plan = await this.buildGroupImportPlan(document)
+    const planHash = groupImportPlanHash(document, plan)
+    // `errors.ts` is outside this change's file scope, so the fence reuses
+    // INVALID_REQUEST with an explicit "preview again" message instead of a new
+    // STALE_PREVIEW code; the web transport answers 400 either way.
+    if (expectedPlanHash.trim() !== planHash) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        'The import preview is out of date; preview this document again before importing',
+        { expectedPlanHash: expectedPlanHash.trim(), planHash },
+      )
+    }
+    return this.applyGroupImport(document, { ...plan, planHash }, targetWorkspaceId)
+  }
+
+  /** One Assistant-instance row: portable profile plus the row-only preferences. */
+  private portableAssistantEntry(instance: AssistantInstance): PortableAssistantEntry {
+    return {
+      profile: portableProfileFromSnapshot(instance.assistantSnapshot),
+      ...(instance.mascot === undefined ? {} : { mascot: instance.mascot }),
+      ...(instance.memoryAutoCapture === undefined ? {} : { memoryAutoCapture: instance.memoryAutoCapture }),
+    }
+  }
+
+  /** One team-member row: the template materialization input plus slot values. */
+  private portableTeamMember(member: TeamMemberSlot): PortableTeamMember {
+    return {
+      displayName: member.displayName,
+      role: member.role,
+      profile: portableProfileFromSnapshot(member.assistantSnapshot),
+      permissionPresetId: member.permissionPresetId,
+      ...(member.reasoningEffort === undefined ? {} : { reasoningEffort: member.reasoningEffort }),
+    }
+  }
+
+  /** Refuse a document before any schema work: size first, then shape. */
+  private parsePortableGroupDocument(raw: unknown): GroupExportDocument {
+    let bytes: number
+    try {
+      bytes = portableDocumentBytes(raw)
+    } catch {
+      throw new AgentTeamError('INVALID_REQUEST', 'The import document is not JSON serializable')
+    }
+    if (bytes > GROUP_SHARE_MAX_DOCUMENT_BYTES) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `The import document is ${bytes} bytes, above the ${GROUP_SHARE_MAX_DOCUMENT_BYTES}-byte portable limit`,
+        { bytes, limit: GROUP_SHARE_MAX_DOCUMENT_BYTES },
+      )
+    }
+    const parsed = groupExportDocumentSchema.safeParse(raw)
+    if (!parsed.success) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `The import document is not a portable group export — ${portableIssue(parsed.error)}`,
+        { issues: portableIssues(parsed.error) },
+      )
+    }
+    return parsed.data
+  }
+
+  /** One workspace for the whole import: workspace ids and paths are not portable. */
+  private async requireImportWorkspace(workspaceId: string): Promise<string> {
+    const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(workspaceId))
+    if (workspace === undefined || await workspace.status() !== 'ok') {
+      throw new AgentTeamError('WORKSPACE_UNAVAILABLE', `Workspace '${workspaceId}' is unavailable`)
+    }
+    return String(workspace.id)
+  }
+
+  /**
+   * Turn a document into the exact write plan: conflict-suffixed names, rows
+   * this machine cannot honour skipped with a reason, references it cannot
+   * resolve dropped with a warning. Pure with respect to the store — the only
+   * reads are the catalogs and the current names.
+   */
+  private async buildGroupImportPlan(
+    document: GroupExportDocument,
+  ): Promise<Omit<GroupImportPreview, 'planHash'>> {
+    const groupNames = this.listGroups()
+    if (groupNames.length >= SIDEBAR_GROUP_MAX_COUNT) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `At most ${SIDEBAR_GROUP_MAX_COUNT} sidebar groups are allowed; delete one before importing`,
+        { limit: SIDEBAR_GROUP_MAX_COUNT },
+      )
+    }
+    const plannedGroupName = uniqueName(document.group.name, groupNames, SIDEBAR_GROUP_MAX_CHARS)
+    const cache: ImportCatalogCache = {
+      presets: new Map(),
+      efforts: new Map(),
+      skills: new Map(),
+      mcpServers: new Map(),
+    }
+    const warnings: string[] = [
+      // The format never carries avatar photo bytes; say so before the user
+      // wonders why the imported Assistants look different.
+      'Portable documents carry mascot identities, not avatar photos; imported Assistants fall back to their mascot or initials.',
+    ]
+    const skillAvailability = new Map<string, boolean>()
+    const mcpAvailability = new Map<string, boolean>()
+
+    const takenInstances = new Set(
+      this.store.listAssistantInstances().map(instance => instance.assistantSnapshot.name),
+    )
+    const assistants: GroupImportAssistantPlan[] = []
+    for (const entry of document.assistants) {
+      const resolved = await this.resolvePortableProfile(entry.profile, cache)
+      if (!resolved.ok) {
+        assistants.push({
+          name: entry.profile.name,
+          plannedName: entry.profile.name,
+          action: 'skip',
+          reason: resolved.reason,
+        })
+        warnings.push(`Assistant '${entry.profile.name}' skipped: ${resolved.reason}`)
+        continue
+      }
+      const plannedName = uniqueName(resolved.profile.name, takenInstances, GROUP_SHARE_NAME_MAX_CHARS)
+      takenInstances.add(plannedName)
+      markAvailability(skillAvailability, entry.profile.skillAllowlist, resolved.dropped.skills)
+      markAvailability(mcpAvailability, entry.profile.mcpServers, resolved.dropped.mcpServers)
+      const warning = droppedWarning(`Assistant '${entry.profile.name}'`, resolved.dropped)
+      if (warning !== undefined) warnings.push(warning)
+      assistants.push({
+        name: entry.profile.name,
+        plannedName,
+        action: 'create',
+        profile: resolved.profile,
+        ...(entry.mascot === undefined ? {} : { mascot: entry.mascot }),
+        ...(entry.memoryAutoCapture === undefined ? {} : { memoryAutoCapture: entry.memoryAutoCapture }),
+        ...(hasDropped(resolved.dropped) ? { dropped: resolved.dropped } : {}),
+      })
+    }
+
+    const takenTeams = new Set(this.store.listTeams().map(team => team.name))
+    const takenTemplates = new Set(this.store.listAssistants().map(assistant => assistant.name))
+    const templates: GroupImportTemplatePlan[] = []
+    const teams: GroupImportTeamPlan[] = []
+    const memberLimit = this.config.maxTeamMembers ?? 8
+    for (const team of document.teams) {
+      const skip = (reason: string): void => {
+        teams.push({ name: team.name, plannedName: team.name, action: 'skip', reason, members: [] })
+        warnings.push(`Team '${team.name}' skipped: ${reason}`)
+      }
+      if (team.members.length > memberLimit) {
+        skip(`it has ${team.members.length} members and this deployment allows ${memberLimit}`)
+        continue
+      }
+      const leaders = team.members.filter(member => member.role === 'leader')
+      if (leaders.length !== 1) {
+        skip(`it declares ${leaders.length} leaders; exactly one is required`)
+        continue
+      }
+      // Resolve the whole roster before creating anything: a half-valid team
+      // must not be materialized and then abandoned.
+      const roster: Array<{ member: PortableTeamMember, profile: PortableAssistantProfile }> = []
+      let failure: string | undefined
+      for (const member of team.members) {
+        const resolved = await this.resolvePortableProfile(member.profile, cache)
+        if (!resolved.ok) {
+          failure = `member '${member.displayName}': ${resolved.reason}`
+          break
+        }
+        const permissionPresetId = (member.permissionPresetId ?? resolved.profile.permissionPresetId).trim()
+        if (!this.ctx.permissionPresets.names.includes(permissionPresetId)) {
+          failure = `member '${member.displayName}': unknown permission preset '${permissionPresetId}'`
+          break
+        }
+        roster.push({ member, profile: resolved.profile })
+      }
+      if (failure !== undefined) {
+        skip(failure)
+        continue
+      }
+      const memberPlans: GroupImportMemberPlan[] = []
+      const takenMemberNames = new Set<string>()
+      for (const { member, profile } of roster) {
+        const template = this.templatePlanFor(profile, templates, takenTemplates)
+        const displayName = uniqueName(member.displayName, takenMemberNames, GROUP_SHARE_NAME_MAX_CHARS)
+        takenMemberNames.add(displayName)
+        const permissionPresetId = (member.permissionPresetId ?? profile.permissionPresetId).trim()
+        const efforts = cache.efforts.get(`${profile.provider}/${profile.model}`) ?? []
+        const requestedEffort = member.reasoningEffort ?? profile.reasoningEffort
+        const reasoningEffort = requestedEffort !== undefined && efforts.includes(requestedEffort)
+          ? requestedEffort
+          : undefined
+        if (member.reasoningEffort !== undefined && reasoningEffort === undefined) {
+          warnings.push(
+            `Member '${displayName}': dropped reasoning effort '${member.reasoningEffort}' `
+            + `(not supported by ${profile.provider}/${profile.model})`,
+          )
+        }
+        memberPlans.push({
+          displayName,
+          role: member.role,
+          templateName: template.plannedName,
+          permissionPresetId,
+          ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
+        })
+      }
+      const plannedName = uniqueName(team.name, takenTeams, GROUP_SHARE_NAME_MAX_CHARS)
+      takenTeams.add(plannedName)
+      teams.push({
+        name: team.name,
+        plannedName,
+        action: 'create',
+        ...(team.directMemberChat === undefined ? {} : { directMemberChat: team.directMemberChat }),
+        members: memberPlans,
+      })
+    }
+
+    const createdTeams = teams.filter(team => team.action === 'create')
+    return {
+      schemaVersion: 1,
+      group: {
+        requested: document.group.name,
+        plannedName: plannedGroupName,
+        renamed: plannedGroupName !== document.group.name,
+        briefChars: document.group.brief.length,
+      },
+      assistants,
+      templates,
+      teams,
+      skills: availabilityList(skillAvailability),
+      mcpServers: availabilityList(mcpAvailability),
+      warnings,
+      counts: {
+        assistants: assistants.filter(row => row.action === 'create').length,
+        templates: templates.filter(row => row.action === 'create').length,
+        teams: createdTeams.length,
+        members: createdTeams.reduce((total, team) => total + team.members.length, 0),
+        skipped: assistants.filter(row => row.action === 'skip').length
+          + teams.filter(team => team.action === 'skip').length,
+      },
+    }
+  }
+
+  /**
+   * One Assistant template per distinct portable profile: an exact local match
+   * is reused (importing twice must not double the library), anything else gets
+   * a conflict-suffixed name of its own.
+   */
+  private templatePlanFor(
+    profile: PortableAssistantProfile,
+    plans: GroupImportTemplatePlan[],
+    taken: Set<string>,
+  ): GroupImportTemplatePlan {
+    const planned = plans.find(candidate => samePortableProfile(candidate.profile, profile))
+    if (planned !== undefined) return planned
+    const existing = this.findPortableTemplate(profile)
+    if (existing !== undefined) {
+      const reuse: GroupImportTemplatePlan = {
+        name: profile.name,
+        plannedName: existing.name,
+        action: 'reuse',
+        profile,
+      }
+      plans.push(reuse)
+      return reuse
+    }
+    const plannedName = uniqueName(profile.name, taken, GROUP_SHARE_NAME_MAX_CHARS)
+    taken.add(plannedName)
+    const create: GroupImportTemplatePlan = {
+      name: profile.name,
+      plannedName,
+      action: 'create',
+      profile,
+    }
+    plans.push(create)
+    return create
+  }
+
+  /** The local Assistant template whose portable profile matches exactly. */
+  private findPortableTemplate(profile: PortableAssistantProfile): AssistantTemplate | undefined {
+    return this.store.listAssistants().find(assistant => samePortableProfile(
+      portableProfileFromSnapshot(snapshotAssistant(assistant)),
+      profile,
+    ))
+  }
+
+  /**
+   * Decide whether one portable profile can land here: model, agent preset and
+   * permission preset must resolve (else the row is skipped), while skill and
+   * MCP references this machine cannot resolve are dropped with a warning.
+   */
+  private async resolvePortableProfile(
+    profile: PortableAssistantProfile,
+    cache: ImportCatalogCache,
+  ): Promise<
+    | { ok: false, reason: string }
+    | { ok: true, profile: PortableAssistantProfile, dropped: GroupImportDropped }
+  > {
+    const presetId = profile.agentPresetId.trim()
+    let presetOk = cache.presets.get(presetId)
+    if (presetOk === undefined) {
+      presetOk = await this.ctx.agentPresets.resolve(presetId).then(() => true, () => false)
+      cache.presets.set(presetId, presetOk)
+    }
+    if (!presetOk) return { ok: false, reason: `unknown agent preset '${presetId}'` }
+    if (!this.ctx.permissionPresets.names.includes(profile.permissionPresetId.trim())) {
+      return { ok: false, reason: `unknown permission preset '${profile.permissionPresetId.trim()}'` }
+    }
+    const modelKey = `${profile.provider}/${profile.model}`
+    let efforts = cache.efforts.get(modelKey)
+    if (efforts === undefined) {
+      efforts = await this.modelCapabilities(profile.provider, profile.model)
+        .then(capabilities => capabilities.reasoning?.efforts.map(effort => effort.id) ?? [], () => null)
+      cache.efforts.set(modelKey, efforts)
+    }
+    if (efforts === null) return { ok: false, reason: `unknown model '${modelKey}'` }
+    const skills = await this.availableReferences(presetId, cache.skills, () => this.skillCatalog(presetId)
+      .then(catalog => new Set(catalog.skills.map(skill => skill.name))))
+    const mcpServers = await this.availableReferences(presetId, cache.mcpServers, () => this.mcpCatalog(presetId)
+      .then(catalog => new Set(catalog.servers.map(server => server.name))))
+    const keptSkills = profile.skillAllowlist.filter(name => isSkillName(name) && skills.has(name))
+    const keptMcpServers = profile.mcpServers.filter(name => isMcpServerName(name) && mcpServers.has(name))
+    const requestedEffort = profile.reasoningEffort?.trim() || undefined
+    const keptEffort = requestedEffort !== undefined && efforts.includes(requestedEffort)
+      ? requestedEffort
+      : undefined
+    const dropped: GroupImportDropped = {}
+    const droppedSkills = profile.skillAllowlist.filter(name => !keptSkills.includes(name))
+    if (droppedSkills.length > 0) dropped.skills = droppedSkills
+    const droppedMcpServers = profile.mcpServers.filter(name => !keptMcpServers.includes(name))
+    if (droppedMcpServers.length > 0) dropped.mcpServers = droppedMcpServers
+    if (requestedEffort !== undefined && keptEffort === undefined) dropped.reasoningEffort = requestedEffort
+    const { reasoningEffort: _ignored, ...rest } = profile
+    return {
+      ok: true,
+      profile: {
+        ...rest,
+        skillAllowlist: keptSkills,
+        mcpServers: keptMcpServers,
+        ...(keptEffort === undefined ? {} : { reasoningEffort: keptEffort }),
+      },
+      dropped,
+    }
+  }
+
+  /** Cached catalog read; an unreadable catalog reads as "nothing available". */
+  private async availableReferences(
+    presetId: string,
+    cache: Map<string, Set<string>>,
+    read: () => Promise<Set<string>>,
+  ): Promise<Set<string>> {
+    const cached = cache.get(presetId)
+    if (cached !== undefined) return cached
+    const names = await read().then(value => value, () => new Set<string>())
+    cache.set(presetId, names)
+    return names
+  }
+
+  /** The per-item write pass; see `importGroup` for the failure contract. */
+  private async applyGroupImport(
+    document: GroupExportDocument,
+    plan: GroupImportPreview,
+    workspaceId: string,
+  ): Promise<GroupImportResult> {
+    const rows: GroupImportResultRow[] = []
+    const warnings = [...plan.warnings]
+    // The group itself is the one hard prerequisite: if it cannot be created
+    // (a race, or the list filled up) the import aborts before any row lands.
+    await this.createGroup(plan.group.plannedName)
+    rows.push({
+      kind: 'group',
+      name: plan.group.requested,
+      plannedName: plan.group.plannedName,
+      status: 'created',
+    })
+    if (document.group.brief !== '') await this.setGroupBrief(plan.group.plannedName, document.group.brief)
+
+    for (const row of plan.assistants) {
+      if (row.action !== 'create' || row.profile === undefined) {
+        rows.push({ kind: 'assistant', name: row.name, status: 'skipped', reason: row.reason ?? 'not portable' })
+        continue
+      }
+      try {
+        const instance = await this.createAssistantInstance({
+          workspaceId,
+          name: row.plannedName,
+          instructions: row.profile.instructions,
+          provider: row.profile.provider,
+          model: row.profile.model,
+          ...(row.profile.reasoningEffort === undefined ? {} : { reasoningEffort: row.profile.reasoningEffort }),
+          agentPresetId: row.profile.agentPresetId,
+          permissionPresetId: row.profile.permissionPresetId,
+          skillAllowlist: [...row.profile.skillAllowlist],
+          mcpServers: [...row.profile.mcpServers],
+          ...(row.mascot === undefined ? {} : { mascot: row.mascot }),
+        })
+        await this.updateAssistantInstance(instance.id, {
+          group: plan.group.plannedName,
+          ...(row.memoryAutoCapture === undefined ? {} : { memoryAutoCapture: row.memoryAutoCapture }),
+        })
+        rows.push({ kind: 'assistant', name: row.name, plannedName: row.plannedName, status: 'created' })
+      } catch (error) {
+        rows.push({
+          kind: 'assistant',
+          name: row.name,
+          plannedName: row.plannedName,
+          status: 'rejected',
+          reason: errorMessage(error),
+        })
+      }
+    }
+
+    const templateIds = new Map<string, string>()
+    for (const template of plan.templates) {
+      const existing = this.findPortableTemplate(template.profile)
+      if (existing !== undefined) {
+        templateIds.set(template.plannedName, existing.id)
+        rows.push({ kind: 'template', name: template.name, plannedName: existing.name, status: 'reused' })
+        continue
+      }
+      try {
+        const created = await this.createAssistant({
+          name: template.plannedName,
+          instructions: template.profile.instructions,
+          provider: template.profile.provider,
+          model: template.profile.model,
+          ...(template.profile.reasoningEffort === undefined
+            ? {}
+            : { reasoningEffort: template.profile.reasoningEffort }),
+          agentPresetId: template.profile.agentPresetId,
+          permissionPresetId: template.profile.permissionPresetId,
+          skillAllowlist: [...template.profile.skillAllowlist],
+          mcpServers: [...template.profile.mcpServers],
+        })
+        templateIds.set(template.plannedName, created.id)
+        rows.push({ kind: 'template', name: template.name, plannedName: template.plannedName, status: 'created' })
+      } catch (error) {
+        rows.push({
+          kind: 'template',
+          name: template.name,
+          plannedName: template.plannedName,
+          status: 'rejected',
+          reason: errorMessage(error),
+        })
+      }
+    }
+
+    for (const team of plan.teams) {
+      if (team.action !== 'create') {
+        rows.push({ kind: 'team', name: team.name, status: 'skipped', reason: team.reason ?? 'not portable' })
+        continue
+      }
+      const missing = team.members.find(member => !templateIds.has(member.templateName))
+      if (missing !== undefined) {
+        rows.push({
+          kind: 'team',
+          name: team.name,
+          plannedName: team.plannedName,
+          status: 'skipped',
+          reason: `its Assistant template '${missing.templateName}' was not created`,
+        })
+        continue
+      }
+      try {
+        const created = await this.createTeamDraft({
+          name: team.plannedName,
+          workspaceId,
+          ...(team.directMemberChat === undefined ? {} : { directMemberChat: team.directMemberChat }),
+          members: team.members.map(member => ({
+            assistantId: templateIds.get(member.templateName) as string,
+            role: member.role,
+          })),
+        })
+        // The draft rebuilds each slot from its template, so the slot values the
+        // export recorded separately are only written where they differ. Slot
+        // order is the member order this call passed in.
+        const slots = Object.values(created.members)
+        for (const [index, slot] of slots.entries()) {
+          const member = team.members[index]
+          if (member === undefined) continue
+          try {
+            if (slot.displayName !== member.displayName) {
+              await this.renameMember(created.id, slot.id, member.displayName)
+            }
+            if (slot.permissionPresetId !== member.permissionPresetId) {
+              await this.setMemberPermissionPreset(created.id, slot.id, member.permissionPresetId)
+            }
+            if ((slot.reasoningEffort ?? '') !== (member.reasoningEffort ?? '')) {
+              await this.setMemberReasoningEffort(created.id, slot.id, member.reasoningEffort)
+            }
+          } catch (error) {
+            warnings.push(
+              `Team '${team.plannedName}' member '${member.displayName}': ${errorMessage(error)}`,
+            )
+          }
+        }
+        await this.setTeamGroup(created.id, plan.group.plannedName)
+        rows.push({ kind: 'team', name: team.name, plannedName: team.plannedName, status: 'created' })
+      } catch (error) {
+        rows.push({
+          kind: 'team',
+          name: team.name,
+          plannedName: team.plannedName,
+          status: 'rejected',
+          reason: errorMessage(error),
+        })
+      }
+    }
+
+    const counts = { created: 0, reused: 0, skipped: 0, rejected: 0 }
+    for (const row of rows) counts[row.status] += 1
+    return {
+      schemaVersion: 1,
+      groupName: plan.group.plannedName,
+      rows,
+      warnings,
+      counts,
+    }
+  }
+
   async setTeamArchived(
     teamId: string,
     archived: boolean,
@@ -5104,4 +5738,98 @@ function assertMemberHasNoOpenTasks(team: TeamAggregate, slotId: string): void {
       { taskIds: open.map(task => task.id) },
     )
   }
+}
+
+/**
+ * Per-import memo of catalog answers. One preview and one apply each build a
+ * fresh cache, so a catalog change between them changes the plan hash and the
+ * stale preview is refused instead of applying a different plan.
+ */
+interface ImportCatalogCache {
+  presets: Map<string, boolean>
+  /** `provider/model` → supported effort ids, or `null` for an unknown model. */
+  efforts: Map<string, string[] | null>
+  skills: Map<string, Set<string>>
+  mcpServers: Map<string, Set<string>>
+}
+
+/** Leader first, then the stored member order, then anything left over. */
+function orderedTeamMembers(team: TeamAggregate): TeamMemberSlot[] {
+  const seen = new Set<string>()
+  const ordered: TeamMemberSlot[] = []
+  const push = (id: string): void => {
+    const member = team.members[id]
+    if (member === undefined || seen.has(id)) return
+    seen.add(id)
+    ordered.push(member)
+  }
+  push(team.leaderSlotId)
+  for (const id of team.memberOrder ?? []) push(id)
+  for (const id of Object.keys(team.members)) push(id)
+  return ordered
+}
+
+/** Fence over the document plus the plan it produced. */
+function groupImportPlanHash(
+  document: GroupExportDocument,
+  plan: Omit<GroupImportPreview, 'planHash'>,
+): string {
+  return createHash('sha256').update(JSON.stringify({ document, plan })).digest('hex')
+}
+
+/** `field.path: message` for the first schema problem, for a readable rejection. */
+function portableIssue(error: ZodError): string {
+  const issue = error.issues[0]
+  if (issue === undefined) return 'document does not match the portable group schema'
+  const path = issue.path.map(String).join('.')
+  return `${path === '' ? 'document' : path}: ${issue.message}`
+}
+
+function portableIssues(error: ZodError): Array<{ path: string, message: string }> {
+  return error.issues.map(issue => ({
+    path: issue.path.map(String).join('.'),
+    message: issue.message,
+  }))
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'unknown error'
+}
+
+function hasDropped(dropped: GroupImportDropped): boolean {
+  return dropped.skills !== undefined
+    || dropped.mcpServers !== undefined
+    || dropped.reasoningEffort !== undefined
+}
+
+function droppedWarning(label: string, dropped: GroupImportDropped): string | undefined {
+  const parts: string[] = []
+  if (dropped.skills !== undefined) parts.push(`skill(s) ${dropped.skills.join(', ')}`)
+  if (dropped.mcpServers !== undefined) parts.push(`MCP server(s) ${dropped.mcpServers.join(', ')}`)
+  if (dropped.reasoningEffort !== undefined) {
+    parts.push(`reasoning effort '${dropped.reasoningEffort}'`)
+  }
+  return parts.length === 0 ? undefined : `${label}: dropped unavailable ${parts.join('; ')}`
+}
+
+/** A name is available unless some profile that referenced it had to drop it. */
+function markAvailability(
+  availability: Map<string, boolean>,
+  referenced: readonly string[],
+  dropped: readonly string[] | undefined,
+): void {
+  for (const name of referenced) {
+    if (!availability.has(name)) availability.set(name, true)
+  }
+  for (const name of dropped ?? []) availability.set(name, false)
+}
+
+function availabilityList(availability: Map<string, boolean>): Array<{ name: string, available: boolean }> {
+  return [...availability.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, available]) => ({ name, available }))
+}
+
+function uniqueSorted(values: readonly string[]): string[] {
+  return [...new Set(values)].sort()
 }
