@@ -29,9 +29,11 @@ export function assistantModelOptionLabel(
 
 /**
  * The create dialog's sections. Every one of these writes a real instance
- * field; Memory/Skills/Routines/Access/Voice are deliberately absent so the
+ * field; Memory/Routines/Access/Voice are deliberately absent so the
  * navigation can never offer a tab that has nothing to save (see
  * `ASSISTANT_CREATE_UNSUPPORTED` and docs/research/assistant-create-parity-audit.md).
+ * Skills and MCP Servers live inside 模型与环境 because they follow the
+ * Agent Preset that section already picks.
  */
 export const ASSISTANT_CREATE_SECTIONS = [
   { key: 'identity', label: '身份' },
@@ -52,11 +54,6 @@ export const ASSISTANT_CREATE_UNSUPPORTED = [
     key: 'memory',
     title: '记忆',
     detail: '创建后在助手设置/记忆面板维护（持久记忆条目），创建时没有草稿。',
-  },
-  {
-    key: 'skills',
-    title: '技能',
-    detail: '实例快照不开放技能与 MCP 字段；只有「助手模板库」能配置，实例创建不继承。',
   },
   {
     key: 'routines',
@@ -93,6 +90,9 @@ export interface AssistantCreateDraft {
   mascotColor: string
   /** Body paint: solid for every flat swatch, radial for the chrome ball. */
   mascotFill: string
+  /** Skills and MCP Servers the assistant may use; empty means none. */
+  skillAllowlist: string[]
+  mcpServers: string[]
 }
 
 export function emptyAssistantCreateDraft(): AssistantCreateDraft {
@@ -112,6 +112,8 @@ export function emptyAssistantCreateDraft(): AssistantCreateDraft {
     mascotEyes: '',
     mascotColor: '',
     mascotFill: '',
+    skillAllowlist: [],
+    mcpServers: [],
   }
 }
 
@@ -148,10 +150,11 @@ export function enabledAssistantRoles(
 
 /**
  * Apply one starting role exactly once. The role is a convenience: its name,
- * persona, avatar and engine defaults are copied into the draft, but a value the
- * catalog no longer offers is skipped rather than written into a create call
- * that would certainly fail. The template itself is never sent (`templateId`),
- * so the instance stays a directly configured Assistant.
+ * persona, avatar, engine defaults and capabilities are copied into the draft,
+ * but a value the catalog no longer offers is skipped rather than written into
+ * a create call that would certainly fail. The template itself is never sent
+ * (`templateId`), so the instance stays a directly configured Assistant — which
+ * is why the capabilities have to travel through the draft to reach it.
  */
 export function applyStartingRole(
   draft: AssistantCreateDraft,
@@ -165,6 +168,8 @@ export function applyStartingRole(
     | 'reasoningEffort'
     | 'agentPresetId'
     | 'permissionPresetId'
+    | 'skillAllowlist'
+    | 'mcpServers'
   >,
   catalog: CatalogView | undefined,
 ): AssistantCreateDraft {
@@ -179,6 +184,8 @@ export function applyStartingRole(
     instructions: template.instructions,
     avatar: template.avatar ?? '',
     reasoningEffort: template.reasoningEffort ?? '',
+    skillAllowlist: [...template.skillAllowlist],
+    mcpServers: [...template.mcpServers],
     ...(pairInCatalog ? { provider: template.provider, model: template.model } : {}),
     ...(agentPreset !== undefined && agentPreset.broken === undefined
       ? { agentPresetId: agentPreset.id }
@@ -217,6 +224,8 @@ export function assistantCreatePayload(draft: AssistantCreateDraft): CreateAssis
     instructions: draft.instructions.trim(),
     ...(draft.avatar === '' ? {} : { avatar: draft.avatar }),
     ...(draft.reasoningEffort === '' ? {} : { reasoningEffort: draft.reasoningEffort }),
+    ...(draft.skillAllowlist.length === 0 ? {} : { skillAllowlist: draft.skillAllowlist }),
+    ...(draft.mcpServers.length === 0 ? {} : { mcpServers: draft.mcpServers }),
     ...(mascot === undefined ? {} : { mascot }),
   }
 }

@@ -2010,6 +2010,17 @@ textarea.input {
   -webkit-line-clamp: 2;
 }
 
+/* A stored Skill/MCP the current Agent Preset no longer offers: kept visible
+   with its reason instead of vanishing from the picker. */
+.skillOptionUnavailable {
+  background: transparent;
+  border: 1px dashed var(--dsw-alias-state-warn-secondary);
+}
+
+.skillOptionReason {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
 .empty {
   min-height: 300px;
   display: grid;

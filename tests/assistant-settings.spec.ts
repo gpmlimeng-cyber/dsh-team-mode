@@ -21,7 +21,25 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     { type: props.type ?? 'button', disabled: props.disabled, form: props.form },
     props.children as never,
   )
-  return { Button, Modal: Stub }
+  // The capability picker is the shipped Checkbox; keep the native input so
+  // checked/disabled state stays readable from the rendered markup.
+  const Checkbox = (props: {
+    checked: boolean
+    label: string
+    disabled?: boolean
+    title?: string
+  }): unknown => createElement(
+    'label',
+    { title: props.title },
+    createElement('input', {
+      type: 'checkbox',
+      checked: props.checked,
+      disabled: props.disabled,
+      readOnly: true,
+    }),
+    createElement('span', undefined, props.label),
+  )
+  return { Button, Checkbox, Modal: Stub }
 })
 
 const { memoryAfterUndo } = await import('../src/client/assistant-settings-dialog.js')
@@ -76,6 +94,17 @@ describe('assistant settings coordinator marker', () => {
     expect(source).toContain("isCoordinatorInstance(assistant) ? '是' : '否'")
     expect(source).toContain('data-dsh-assistant-settings-coordinator')
   })
+
+  it('edits the same two capability lists the create dialog writes', () => {
+    // Both lists are shown, seeded from the saved snapshot, and written back
+    // through the instance update only when they actually changed.
+    expect((source.match(/<CapabilityPicker/g) ?? [])).toHaveLength(2)
+    expect(source).toContain('assistant.assistantSnapshot.skillAllowlist')
+    expect(source).toContain('assistant.assistantSnapshot.mcpServers')
+    expect(source).toContain('value.skillAllowlist =')
+    expect(source).toContain('value.mcpServers =')
+    expect(source).toMatch(/callAgentTeam\('assistant\.instance\.update'/)
+  })
 })
 
 const CREATE_DRAFT: AssistantCreateDraft = {
@@ -94,6 +123,8 @@ const CREATE_DRAFT: AssistantCreateDraft = {
   mascotEyes: '',
   mascotColor: '',
   mascotFill: '',
+  skillAllowlist: [],
+  mcpServers: [],
 }
 
 function baseCreateBodyProps(): AssistantCreateBodyProps {
@@ -119,6 +150,10 @@ function baseCreateBodyProps(): AssistantCreateBodyProps {
     reasoningOptions: [{ id: 'high', label: 'High' }],
     defaultReasoning: '模型默认（Medium）',
     capabilityError: undefined,
+    skills: [],
+    mcpServers: [],
+    capabilitiesLoading: false,
+    capabilitiesError: undefined,
     agentPresets: [{ id: 'standard', name: 'Standard' }],
     permissionPresets: [{ value: 'workspace-write', name: 'Workspace write' }],
     onSectionChange: () => undefined,
@@ -177,20 +212,21 @@ describe('assistant create dialog shell', () => {
     expect(html).not.toContain('起始角色')
   })
 
-  it('explains the five unsupported areas instead of offering them as tabs', () => {
+  it('explains the remaining unsupported areas instead of offering them as tabs', () => {
     const html = renderCreateBody()
     expect(html).toContain('<details')
-    expect(html).toContain('<summary>还有 5 项创建时不提供</summary>')
+    expect(html).toContain('<summary>还有 4 项创建时不提供</summary>')
     expect(html).toContain('aria-label="未提供的区块"')
     for (const text of [
       '创建后在助手设置/记忆面板维护',
-      '实例快照不开放技能与 MCP 字段',
       '本插件没有按助手的定时任务',
       '只保留 Workspace',
       '通知沿用 DSH 全局行为',
     ]) {
       expect(html).toContain(text)
     }
+    // Skills and MCP are real instance fields now, so they are not listed as missing.
+    expect(html).not.toContain('实例快照不开放技能与 MCP 字段')
   })
 
   it('shows the workspace banner only when it was supplied', () => {
@@ -258,6 +294,41 @@ describe('assistant create dialog sections', () => {
     expect(html).toContain('模型默认（Medium）')
     expect(html).toContain('Agent Preset')
     expect(html).toContain('>Standard<')
+  })
+
+  it('capabilities are part of 模型与环境 and start unchecked for a direct create', () => {
+    const html = renderCreateBody({ activeSection: 'model' })
+    expect(html).toContain('>能力<')
+    expect(html).toContain('技能（已选 0 个）')
+    expect(html).toContain('MCP（已选 0 个）')
+    expect(html).toContain('该 Agent Preset 没有可用的 Skill。')
+    expect(html).toContain('该 Agent Preset 没有可用的 MCP Server。')
+  })
+
+  it('ticks the catalog entries a role brought in and disables the lost ones', () => {
+    const resolved = renderCreateBody({
+      activeSection: 'model',
+      draft: { ...CREATE_DRAFT, skillAllowlist: ['research'], mcpServers: ['github'] },
+      skills: [{ name: 'research', detail: '查资料' }],
+      mcpServers: [{ name: 'github', detail: '4 个工具' }],
+    })
+    expect(resolved).toContain('技能（已选 1 个）')
+    expect(resolved).toContain('MCP（已选 1 个）')
+    expect(resolved).toContain('>research<')
+    expect(resolved).toContain('查资料')
+    expect(resolved).toContain('4 个工具')
+    expect(resolved).not.toContain('不可用')
+
+    const stale = renderCreateBody({
+      activeSection: 'model',
+      draft: { ...CREATE_DRAFT, skillAllowlist: ['retired-skill'] },
+      skills: [{ name: 'research', detail: '查资料' }],
+    })
+    // A stored Skill the preset no longer offers stays visible, refused and explained.
+    expect(stale).toContain('retired-skill（不可用）')
+    expect(stale).toContain('该 Agent Preset 不再提供这个 Skill，保存时不会带上')
+    expect(stale).toMatch(/data-capability-unavailable="true"/)
+    expect(stale).toMatch(/<input[^>]*type="checkbox"[^>]*disabled=""/)
   })
 
   it('permissions writes the preset and states the coordinator is set elsewhere', () => {

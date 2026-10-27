@@ -20,6 +20,12 @@ import {
   type AssistantCreateSection,
 } from './assistant-form.js'
 import { avatarPickerUploadError, avatarPickerValueError } from './avatar-picker.js'
+import {
+  CapabilityPicker,
+  savableNames,
+  useCapabilityCatalog,
+  type CapabilityOption,
+} from './assistant-capabilities.js'
 import { MASCOT_EYES, MASCOT_SHAPES, nextMascotSeed, randomMascotDraft, type MascotEyes, type MascotOptions, type MascotShape } from './mascot.js'
 import { MascotPicker } from './mascot-picker.js'
 import { Mascot } from './mascot-view.js'
@@ -69,6 +75,11 @@ export interface AssistantCreateBodyProps {
   reasoningOptions: ReadonlyArray<{ id: string; label: string }>
   defaultReasoning: string
   capabilityError: string | undefined
+  /** Skills and MCP Servers of the draft's Agent Preset (its live catalog). */
+  skills: readonly CapabilityOption[]
+  mcpServers: readonly CapabilityOption[]
+  capabilitiesLoading: boolean
+  capabilitiesError: string | undefined
   agentPresets: ReadonlyArray<{ id: string; name: string }>
   permissionPresets: ReadonlyArray<{ value: string; name: string }>
   onSectionChange: (section: AssistantCreateSection) => void
@@ -378,6 +389,33 @@ function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.E
         </select>
         <span className={css.hint}>决定工具与策略包；创建时定死，之后不可修改。</span>
       </Field>
+      <SectionHeading title="能力" hint="这个助手能用的技能与 MCP" />
+      <CapabilityPicker
+        label={`技能（已选 ${draft.skillAllowlist.length} 个）`}
+        ariaLabel="选择助手可使用的 Skills"
+        hint="运行时按任务需要加载具体 Skill 指令；一个都不选表示不开放 Skill。"
+        emptyText="该 Agent Preset 没有可用的 Skill。"
+        missingDetail="该 Agent Preset 不再提供这个 Skill，保存时不会带上"
+        selected={draft.skillAllowlist}
+        options={props.skills}
+        loading={props.capabilitiesLoading}
+        error={props.capabilitiesError}
+        disabled={disabled}
+        onChange={next => { props.onDraftChange({ skillAllowlist: next }) }}
+      />
+      <CapabilityPicker
+        label={`MCP（已选 ${draft.mcpServers.length} 个）`}
+        ariaLabel="选择助手可使用的 MCP Server"
+        hint="MCP 连接与密钥由 Harness Profile/Preset 管理；一个都不选表示不开放 Server 工具。"
+        emptyText="该 Agent Preset 没有可用的 MCP Server。"
+        missingDetail="该 Agent Preset 不再提供这个 MCP Server，保存时不会带上"
+        selected={draft.mcpServers}
+        options={props.mcpServers}
+        loading={props.capabilitiesLoading}
+        error={props.capabilitiesError}
+        disabled={disabled}
+        onChange={next => { props.onDraftChange({ mcpServers: next }) }}
+      />
       {capabilityError !== undefined && (
         <div className={css.inlineError} role="alert">读取模型能力失败：{capabilityError}</div>
       )}
@@ -487,7 +525,7 @@ export function AssistantCreateBody(props: AssistantCreateBodyProps): JSX.Elemen
         </section>
       </div>
       <details className={css.assistantCreateUnavailable}>
-        <summary>还有 5 项创建时不提供</summary>
+        <summary>还有 {ASSISTANT_CREATE_UNSUPPORTED.length} 项创建时不提供</summary>
         <ul aria-label="未提供的区块">
           {ASSISTANT_CREATE_UNSUPPORTED.map(item => (
             <li key={item.key}><strong>{item.title}</strong>：{item.detail}</li>
@@ -570,6 +608,9 @@ export function AssistantCreateDialog({
   const [reasoningLabels, setReasoningLabels] = useState<Record<string, string>>({})
 
   const modelCapabilities = useModelCapabilities(draft.provider, draft.model)
+  const capabilities = useCapabilityCatalog(draft.agentPresetId)
+  // Only a read that succeeded can tell "this preset lost it" from "not read".
+  const capabilitiesJudged = capabilities.loaded
   const locked = createdId !== undefined
 
   useEffect(() => {
@@ -786,7 +827,16 @@ export function AssistantCreateDialog({
     }
     // A direct Assistant carries its complete configuration; omitting
     // templateId is what makes the service build a template-less instance.
-    const payload = assistantCreatePayload(draft)
+    // A row the catalog already lost stays visible in the picker but is not
+    // sent: it would be refused, and the row says so. While the catalog is
+    // unknown nothing can be judged, so the selection travels as it is.
+    const payload = assistantCreatePayload(capabilitiesJudged
+      ? {
+          ...draft,
+          skillAllowlist: savableNames(draft.skillAllowlist, capabilities.skills),
+          mcpServers: savableNames(draft.mcpServers, capabilities.mcpServers),
+        }
+      : draft)
     setSaving(true)
     setError(undefined)
     setWarning(undefined)
@@ -859,6 +909,10 @@ export function AssistantCreateDialog({
           reasoningOptions={reasoningOptions}
           defaultReasoning={defaultReasoningLabel(modelCapabilities.value)}
           capabilityError={modelCapabilities.error}
+          skills={capabilities.skills}
+          mcpServers={capabilities.mcpServers}
+          capabilitiesLoading={capabilities.loading}
+          capabilitiesError={capabilities.error}
           agentPresets={agentPresets}
           permissionPresets={permissionPresets}
           onSectionChange={setActiveSection}

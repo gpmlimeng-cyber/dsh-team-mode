@@ -576,9 +576,10 @@ describe('assistant create sections', () => {
       .toEqual(['身份', '人设', '模型与环境', '权限'])
   })
 
-  it('explains the five unsupported areas instead of rendering tabs for them', () => {
+  it('explains the remaining unsupported areas instead of rendering tabs for them', () => {
+    // Skills and MCP Servers became real instance fields, so they left this list.
     expect(ASSISTANT_CREATE_UNSUPPORTED.map(item => item.key))
-      .toEqual(['memory', 'skills', 'routines', 'access', 'voice'])
+      .toEqual(['memory', 'routines', 'access', 'voice'])
     const sectionKeys = new Set<string>(ASSISTANT_CREATE_SECTIONS.map(section => section.key))
     for (const item of ASSISTANT_CREATE_UNSUPPORTED) {
       expect(sectionKeys.has(item.key)).toBe(false)
@@ -651,6 +652,19 @@ describe('applyStartingRole', () => {
     })
     // Group choice is not a template field: the user's placement survives.
     expect(applied.group).toBe('工作')
+  })
+
+  it('carries the template capabilities into the draft, so a role keeps its Skills and MCP', () => {
+    const catalog = createCatalog()
+    const applied = applyStartingRole(readyDraft(catalog), createTemplate({
+      skillAllowlist: ['research', 'review'],
+      mcpServers: ['github'],
+    }), catalog)
+    expect(applied.skillAllowlist).toEqual(['research', 'review'])
+    expect(applied.mcpServers).toEqual(['github'])
+    // The dialog never sends `templateId`; the payload is the only thing the
+    // instance is built from, so the copies have to be real drafts.
+    expect(assistantCreatePayload(applied).skillAllowlist).toEqual(['research', 'review'])
   })
 
   it('never writes an engine value the catalog no longer offers', () => {
@@ -758,6 +772,22 @@ describe('assistantCreatePayload', () => {
     expect(unseeded).not.toHaveProperty('mascot')
   })
 
+  it('carries picked Skills and MCP Servers, and omits both when none are picked', () => {
+    const catalog = createCatalog()
+    const payload = assistantCreatePayload({
+      ...readyDraft(catalog),
+      skillAllowlist: ['research'],
+      mcpServers: ['github'],
+    })
+    expect(payload.skillAllowlist).toEqual(['research'])
+    expect(payload.mcpServers).toEqual(['github'])
+    expect(createAssistantInstanceInputSchema.safeParse(payload).success).toBe(true)
+
+    const bare = assistantCreatePayload(readyDraft(catalog))
+    expect(bare).not.toHaveProperty('skillAllowlist')
+    expect(bare).not.toHaveProperty('mcpServers')
+  })
+
   it('names the first missing required field', () => {
     const catalog = createCatalog()
     const draft = readyDraft(catalog)
@@ -855,8 +885,9 @@ describe('assistant create layout source contract', () => {
     expect(updateAt).toBeLessThan(ensureAt)
     expect(submit).toContain('setWarning(')
     expect(submit).toContain('value: { group: draft.group }')
-    // The mascot now travels in the create payload, not the follow-up update.
-    expect(submit).toContain('assistantCreatePayload(draft)')
+    // The mascot and the capability allowlists travel in the create payload,
+    // not in the follow-up update.
+    expect(submit).toContain('assistantCreatePayload(')
     expect(submit).not.toContain('mascot')
   })
 
@@ -865,7 +896,7 @@ describe('assistant create layout source contract', () => {
     expect(source).toContain("callAgentTeam('sidebar.groups.list')")
     // The create payload comes from the pure builder, which never carries a
     // template id: this stays a directly configured Assistant.
-    expect(source).toContain('assistantCreatePayload(draft)')
+    expect(source).toContain('assistantCreatePayload(')
     expect(source).not.toContain("'assistant.create'")
   })
 })

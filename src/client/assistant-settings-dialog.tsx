@@ -3,6 +3,11 @@ import type { FormEvent } from 'react'
 import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
 import {
+  CapabilityPicker,
+  savableNames,
+  useCapabilityCatalog,
+} from './assistant-capabilities.js'
+import {
   assistantAvatarDataUrlError,
   assistantAvatarFileError,
   assistantInstanceName,
@@ -66,9 +71,9 @@ function formatCreatedAt(iso: string): string {
 
 /**
  * Edit one Assistant instance's local identity and engine settings. The model,
- * reasoning effort, and permission preset are validated against the live
- * catalog and saved on the instance snapshot; the referenced template is never
- * changed. Workspace remains fixed after creation.
+ * reasoning effort, permission preset, Skills and MCP Servers are validated
+ * against the live catalog and saved on the instance snapshot; the referenced
+ * template is never changed. Workspace remains fixed after creation.
  */
 export function AssistantSettingsDialog({
   open,
@@ -93,6 +98,8 @@ export function AssistantSettingsDialog({
   const [model, setModel] = useState(assistant.assistantSnapshot.model)
   const [reasoningEffort, setReasoningEffort] = useState(assistant.assistantSnapshot.reasoningEffort ?? '')
   const [permissionPresetId, setPermissionPresetId] = useState(assistant.assistantSnapshot.permissionPresetId)
+  const [selectedSkills, setSelectedSkills] = useState<string[]>([...assistant.assistantSnapshot.skillAllowlist])
+  const [selectedMcpServers, setSelectedMcpServers] = useState<string[]>([...assistant.assistantSnapshot.mcpServers])
   const [confirmArchive, setConfirmArchive] = useState(false)
   const [saving, setSaving] = useState(false)
   const [archiving, setArchiving] = useState(false)
@@ -112,6 +119,9 @@ export function AssistantSettingsDialog({
 
   const busy = saving || archiving
   const modelCapabilities = useModelCapabilities(provider, model)
+  // The Agent Preset is fixed at creation, so this catalog never changes for
+  // one instance: whatever it lists is exactly what a save may carry.
+  const capabilities = useCapabilityCatalog(assistant.assistantSnapshot.agentPresetId)
 
   useEffect(() => {
     if (!open) return
@@ -128,6 +138,8 @@ export function AssistantSettingsDialog({
     setModel(assistant.assistantSnapshot.model)
     setReasoningEffort(assistant.assistantSnapshot.reasoningEffort ?? '')
     setPermissionPresetId(assistant.assistantSnapshot.permissionPresetId)
+    setSelectedSkills([...assistant.assistantSnapshot.skillAllowlist])
+    setSelectedMcpServers([...assistant.assistantSnapshot.mcpServers])
     setConfirmArchive(false)
     setSaving(false)
     setArchiving(false)
@@ -250,6 +262,18 @@ export function AssistantSettingsDialog({
     if (permissionPresetId !== snapshot.permissionPresetId) {
       value.permissionPresetId = permissionPresetId
     }
+    // Only a successful catalog read can say a stored reference is gone; the
+    // picker shows such a row as unavailable, and it is not written back.
+    if (capabilities.loaded) {
+      const nextSkills = savableNames(selectedSkills, capabilities.skills)
+      if (JSON.stringify(nextSkills) !== JSON.stringify(snapshot.skillAllowlist)) {
+        value.skillAllowlist = nextSkills
+      }
+      const nextMcpServers = savableNames(selectedMcpServers, capabilities.mcpServers)
+      if (JSON.stringify(nextMcpServers) !== JSON.stringify(snapshot.mcpServers)) {
+        value.mcpServers = nextMcpServers
+      }
+    }
     const nextMascot = {
       seed: mascotSeed.trim() === '' ? assistant.id : mascotSeed.trim(),
       ...(mascotShape === '' ? {} : { shape: mascotShape }),
@@ -338,7 +362,7 @@ export function AssistantSettingsDialog({
       open={open}
       onClose={close}
       title="助手设置"
-      description="修改显示名称、头像、模型、思考模式与权限；Workspace 在创建后保持只读。"
+      description="修改显示名称、头像、模型、思考模式、权限、技能与 MCP；Workspace 在创建后保持只读。"
       closeLabel="关闭"
       className={css.assistantSettingsDialog ?? ''}
     >
@@ -526,6 +550,38 @@ export function AssistantSettingsDialog({
             权限只影响之后创建或恢复的会话；已打开的主会话保持原权限。
           </span>
         </Field>
+        <CapabilityPicker
+          label={`技能（已选 ${selectedSkills.length} 个）`}
+          ariaLabel="选择助手可使用的 Skills"
+          hint="运行时会按任务需要加载具体 Skill 指令；一个都不选表示不开放 Skill。"
+          emptyText="该 Agent Preset 没有可用的 Skill。"
+          missingDetail="该 Agent Preset 不再提供这个 Skill，保存时不会带上"
+          selected={selectedSkills}
+          options={capabilities.skills}
+          loading={capabilities.loading}
+          error={capabilities.error}
+          disabled={busy}
+          onChange={next => {
+            setSelectedSkills(next)
+            setError(undefined)
+          }}
+        />
+        <CapabilityPicker
+          label={`MCP（已选 ${selectedMcpServers.length} 个）`}
+          ariaLabel="选择助手可使用的 MCP Server"
+          hint="MCP 连接与密钥由 Harness Profile/Preset 管理；一个都不选表示不开放 Server 工具。"
+          emptyText="该 Agent Preset 没有可用的 MCP Server。"
+          missingDetail="该 Agent Preset 不再提供这个 MCP Server，保存时不会带上"
+          selected={selectedMcpServers}
+          options={capabilities.mcpServers}
+          loading={capabilities.loading}
+          error={capabilities.error}
+          disabled={busy}
+          onChange={next => {
+            setSelectedMcpServers(next)
+            setError(undefined)
+          }}
+        />
         <div className={css.assistantSettingsSummary} aria-label="助手信息">
           <div className={css.assistantSettingsSummaryRow}>
             <span className={css.assistantSettingsSummaryLabel}>助手模板</span>
