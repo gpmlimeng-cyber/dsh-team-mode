@@ -375,3 +375,85 @@ describe('native menu unification for the floating pickers', () => {
     expect(css).not.toContain('.teamMentionPopover {')
   })
 })
+
+describe('native overlays for member add and the enlarged conversation', () => {
+  const chrome = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
+  const teamPanel = readFileSync(new URL('../src/client/teams/TeamPanel.tsx', import.meta.url), 'utf8')
+  const columnCss = readFileSync(
+    new URL('../src/client/workbench/ConversationColumn.module.css', import.meta.url),
+    'utf8',
+  )
+  const components = readFileSync(new URL('../src/client/components.tsx', import.meta.url), 'utf8')
+  const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+  const memberAddCss = css.slice(css.indexOf('.memberAddWrap {'), css.indexOf('.memberAddHeader {'))
+  const expandedColumnCss = columnCss.slice(
+    columnCss.indexOf('.conversationColumnExpanded {'),
+    columnCss.indexOf('.conversationColumnExpanded .columnHeader {'),
+  )
+
+  it('adds a member from a portalled host Menu anchored to the ＋ button', () => {
+    expect(chrome).toContain('<Menu')
+    expect(chrome).toContain('portal')
+    expect(chrome).toContain('listClassName={css.memberAddMenu}')
+    expect(chrome).toContain('aria-haspopup="menu"')
+    expect(chrome).toContain('role="menuitem"')
+    // The bespoke scrim, dialog semantics and page Escape listener are gone.
+    expect(chrome).not.toContain('memberAddScrim')
+    expect(chrome).not.toContain('memberAddPanel')
+    expect(chrome).not.toContain('aria-haspopup="dialog"')
+    expect(chrome).not.toContain("document.addEventListener('keydown'")
+    expect(chrome).not.toContain('useRef')
+  })
+
+  it('keeps the member-add content and every action', () => {
+    for (const copy of [
+      '添加成员',
+      '同一助手可被反复添加',
+      '搜索助手',
+      '没有可加入团队的助手',
+      '没有匹配的助手',
+      '没有合适的？让 Leader 帮你安排。',
+      '告诉 Leader →',
+    ]) {
+      expect(chrome).toContain(copy)
+    }
+    expect(chrome).toContain("callAgentTeam('team.addMember'")
+    expect(chrome).toContain('keepChatView(leader.sessionId)')
+    expect(memberAddCss.length).toBeGreaterThan(0)
+    expect(memberAddCss).not.toContain('position: fixed')
+    expect(memberAddCss).not.toContain('position: absolute')
+    expect(memberAddCss).not.toContain('z-index')
+    // The scrim class is gone entirely.
+    expect(css).not.toContain('.memberAddScrim')
+    expect(css).not.toContain('.memberAddPanel')
+  })
+
+  it('enlarges a conversation in a headless host Modal instead of a fixed layer', () => {
+    expect(teamPanel).toContain('headless')
+    expect(teamPanel).toContain('css.conversationExpandedModal')
+    expect(teamPanel).toContain('conversationCss.conversationColumnExpanded')
+    // The column is no longer enlarged in place, and no bespoke backdrop or
+    // page Escape listener is left.
+    expect(teamPanel).not.toContain('conversationFocusBackdrop')
+    expect(teamPanel).not.toContain("window.addEventListener('keydown'")
+    expect(teamPanel).not.toContain('expanded={expandedSlotId === member.id}')
+    expect(css).not.toContain('.conversationFocusBackdrop')
+    // The one remaining expanded instance keeps the same wiring.
+    expect(teamPanel).toContain('onSent={load}')
+    expect(teamPanel).toContain('onTeamChanged={onChanged}')
+    expect(teamPanel).toContain('onExpandedChange={next => { if (!next) setExpandedSlotId(undefined) }}')
+    // The modal frame owns the size; the column styles stay presentation-only.
+    expect(css).toContain('.conversationExpandedModal')
+    expect(expandedColumnCss.length).toBeGreaterThan(0)
+    expect(expandedColumnCss).not.toContain('position: fixed')
+    expect(expandedColumnCss).not.toContain('z-index')
+    expect(expandedColumnCss).not.toContain('animation:')
+  })
+
+  it('removes the dead floating launcher and its CSS', () => {
+    expect(components).not.toContain('FloatingTeamLauncher')
+    expect(components).not.toContain('AgentTeamOverlay')
+    expect(components).not.toContain('floatingLauncher')
+    expect(css).not.toContain('floatingTeamLauncher')
+  })
+})

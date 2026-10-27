@@ -29,6 +29,7 @@ import { checkpointNoteError } from '../assistant-checkpoint.js'
 import { AssistantPanel } from '../assistants/AssistantPanel.js'
 import { MemoryEntryCard } from '../memory-entry-card.js'
 import css from '../AgentTeam.module.css'
+import conversationCss from '../workbench/ConversationColumn.module.css'
 import { GlobalOverview, openAssistantSession } from '../global-overview.js'
 import { CrownIcon } from '../icons/CrownIcon.js'
 import {
@@ -302,14 +303,6 @@ function TeamWorkbench({
   useEffect(() => {
     if (expandedSlotId !== undefined && team.members[expandedSlotId] === undefined) setExpandedSlotId(undefined)
   }, [expandedSlotId, team.members])
-  useEffect(() => {
-    if (expandedSlotId === undefined) return
-    const closeOnEscape = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') setExpandedSlotId(undefined)
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => { window.removeEventListener('keydown', closeOnEscape) }
-  }, [expandedSlotId])
 
   function toggleMember(slotId: string): void {
     setVisibleSlots(current => toggleVisibleMemberSlot(current, slotId))
@@ -337,6 +330,7 @@ function TeamWorkbench({
   const conversations = new Map(snapshot?.conversations.map(item => [item.slotId, item]) ?? [])
   const wakingCount = members.filter(member => member.lastRuntimeState === 'starting' || member.lastRuntimeState === 'offline').length
   const visibleMembers = visibleSlots.map(slotId => team.members[slotId]).filter((value): value is TeamView['members'][string] => value !== undefined)
+  const expandedMember = expandedSlotId === undefined ? undefined : team.members[expandedSlotId]
 
   return (
     <div className={css.workbench}>
@@ -430,30 +424,24 @@ function TeamWorkbench({
         {memberActionError && memberToRemove === undefined && (
           <div role="alert" className={css.workbenchError}>{memberActionError}</div>
         )}
-        {expandedSlotId !== undefined && (
-          <button
-            type="button"
-            className={css.conversationFocusBackdrop}
-            aria-label="关闭放大对话"
-            onClick={() => { setExpandedSlotId(undefined) }}
-          />
-        )}
         <div className={css.workbenchBody}>
           {view === 'board'
             ? <TeamActivityBoard team={team} />
             : <div className={css.conversationGrid} style={{ '--member-columns': visibleMembers.length } as React.CSSProperties}>
                 {visibleMembers.map(member => (
-                  <ConversationColumn
-                    key={member.id}
-                    team={team}
-                    member={member}
-                    conversation={conversations.get(member.id)}
-                    permissionPresets={permissionPresets}
-                    onSent={load}
-                    onTeamChanged={onChanged}
-                    expanded={expandedSlotId === member.id}
-                    onExpandedChange={expanded => { setExpandedSlotId(expanded ? member.id : undefined) }}
-                  />
+                  member.id === expandedSlotId
+                    ? null
+                    : <ConversationColumn
+                      key={member.id}
+                      team={team}
+                      member={member}
+                      conversation={conversations.get(member.id)}
+                      permissionPresets={permissionPresets}
+                      onSent={load}
+                      onTeamChanged={onChanged}
+                      expanded={false}
+                      onExpandedChange={expanded => { if (expanded) setExpandedSlotId(member.id) }}
+                    />
                 ))}
               </div>}
         </div>
@@ -465,6 +453,30 @@ function TeamWorkbench({
           onCollapse={() => { setWorkspaceVisible(false) }}
         />
       )}
+      {/* One headless host Modal for the enlarged conversation: the mask,
+          focus trap, Escape and the close button come from the native layer,
+          and the column inside keeps its own header, close action and every
+          interaction it had in the grid. */}
+      <AnimatedModal
+        open={expandedMember !== undefined}
+        onClose={() => { setExpandedSlotId(undefined) }}
+        title={expandedMember === undefined ? '放大对话' : `${expandedMember.displayName} 对话`}
+        headless
+        className={`${css.conversationExpandedModal} ${conversationCss.conversationColumnExpanded}`}
+      >
+        {expandedMember !== undefined && (
+          <ConversationColumn
+            team={team}
+            member={expandedMember}
+            conversation={conversations.get(expandedMember.id)}
+            permissionPresets={permissionPresets}
+            onSent={load}
+            onTeamChanged={onChanged}
+            expanded
+            onExpandedChange={next => { if (!next) setExpandedSlotId(undefined) }}
+          />
+        )}
+      </AnimatedModal>
       <AnimatedModal
         open={managementOpen}
         onClose={() => { setManagementOpen(false) }}

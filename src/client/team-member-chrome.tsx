@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   IconChevronDownOutlineRegular,
   IconPlusOutlineRegular,
@@ -90,18 +90,7 @@ export function TeamMemberSwitcher({
   const [addQuery, setAddQuery] = useState('')
   const [addingId, setAddingId] = useState<string>()
   const [addError, setAddError] = useState<string>()
-  const addTriggerRef = useRef<HTMLButtonElement>(null)
   const members = useMemo(() => (membership === undefined ? [] : sortedMembers(membership.team)), [membership])
-  useEffect(() => {
-    if (!addPanelOpen) return
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      setAddPanelOpen(false)
-      addTriggerRef.current?.focus()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('keydown', onKey) }
-  }, [addPanelOpen])
   if (membership === undefined || sessionId === undefined || openSession === undefined) return null
   const team = membership.team
   const teamAssistants = assistants.filter(assistant => assistant.enabled && assistant.teamSelectable)
@@ -202,87 +191,93 @@ export function TeamMemberSwitcher({
         </button>
       )}
     />
-    <div className={css.memberAddWrap}>
-    <button
-      ref={addTriggerRef}
-      type="button"
-      className={css.teamSwitcherAdd}
-      aria-label="添加成员"
-      aria-haspopup="dialog"
-      aria-expanded={addPanelOpen}
-      title="添加成员"
-      onClick={() => {
-        setAddPanelOpen(value => !value)
-        setAddQuery('')
-        setAddError(undefined)
-      }}
+    <Menu
+      open={addPanelOpen}
+      onClose={() => { setAddPanelOpen(false) }}
+      portal
+      align="end"
+      side="bottom"
+      className={css.memberAddWrap}
+      listClassName={css.memberAddMenu}
+      anchor={(
+        <button
+          type="button"
+          className={css.teamSwitcherAdd}
+          aria-label="添加成员"
+          aria-haspopup="menu"
+          aria-expanded={addPanelOpen}
+          title="添加成员"
+          onClick={() => {
+            setAddPanelOpen(value => !value)
+            setAddQuery('')
+            setAddError(undefined)
+          }}
+        >
+          <IconPlusOutlineRegular size={14} />
+        </button>
+      )}
     >
-      <IconPlusOutlineRegular size={14} />
-    </button>
-    {addPanelOpen && (
-      <>
-        <div className={css.memberAddScrim} onPointerDown={() => { setAddPanelOpen(false) }} />
-        <div className={css.memberAddPanel} role="dialog" aria-label="添加成员">
-          <div className={css.memberAddHeader}>
-            <strong>添加成员</strong>
-            <span>同一助手可被反复添加</span>
-          </div>
-          <div className={css.memberAddSearch}>
-            <IconSearchOutlineRegular size={14} />
-            <input
-              autoFocus
-              value={addQuery}
-              onChange={event => { setAddQuery(event.target.value) }}
-              placeholder="搜索"
-              aria-label="搜索助手"
-            />
-          </div>
-          <div className={css.memberAddList}>
-            {visibleTeamAssistants.map(assistant => (
-              <button
-                key={assistant.id}
-                type="button"
-                className={css.memberAddRow}
-                disabled={addingId !== undefined}
-                onClick={() => { void addMemberToTeam(assistant) }}
-              >
-                <span className={css.memberAddAvatar} aria-hidden="true">
-                  {assistant.avatar !== undefined && assistant.avatar !== ''
-                    ? <img src={assistant.avatar} alt="" />
-                    : initial(assistant.name)}
-                </span>
-                <span className={css.memberAddName}>{assistant.name}</span>
-                <IconPlusOutlineRegular size={14} className={css.memberAddPlus} />
-              </button>
-            ))}
-            {visibleTeamAssistants.length === 0 && (
-              <div className={css.memberAddEmpty}>
-                {teamAssistants.length === 0 ? '没有可加入团队的助手' : '没有匹配的助手'}
-              </div>
-            )}
-          </div>
-          {addError !== undefined && <div className={css.memberAddError} role="alert">{addError}</div>}
-          <div className={css.memberAddFooter}>
-            <span>没有合适的？让 Leader 帮你安排。</span>
-            <button
-              type="button"
-              className={css.memberAddFooterLink}
-              onClick={() => {
-                setAddPanelOpen(false)
-                const leader = members.find(member => member.role === 'leader')
-                if (leader !== undefined) {
-                  keepChatView(leader.sessionId)
-                  openSession(leader.sessionId)
-                }
-              }}
-            >
-              告诉 Leader →
-            </button>
-          </div>
+      <div className={css.memberAddBody} role="group" aria-label="添加成员">
+        <div className={css.memberAddHeader}>
+          <strong>添加成员</strong>
+          <span>同一助手可被反复添加</span>
         </div>
-      </>
-    )}
-    </div>
+        <div className={css.memberAddSearch}>
+          <IconSearchOutlineRegular size={14} />
+          <input
+            autoFocus
+            value={addQuery}
+            onChange={event => { setAddQuery(event.target.value) }}
+            placeholder="搜索"
+            aria-label="搜索助手"
+          />
+        </div>
+        <div className={css.memberAddList}>
+          {visibleTeamAssistants.map(assistant => (
+            <button
+              key={assistant.id}
+              type="button"
+              role="menuitem"
+              className={css.memberAddRow}
+              disabled={addingId !== undefined}
+              onClick={() => { void addMemberToTeam(assistant) }}
+            >
+              <span className={css.memberAddAvatar} aria-hidden="true">
+                {assistant.avatar !== undefined && assistant.avatar !== ''
+                  ? <img src={assistant.avatar} alt="" />
+                  : initial(assistant.name)}
+              </span>
+              <span className={css.memberAddName}>{assistant.name}</span>
+              <IconPlusOutlineRegular size={14} className={css.memberAddPlus} />
+            </button>
+          ))}
+          {visibleTeamAssistants.length === 0 && (
+            <div className={css.memberAddEmpty}>
+              {teamAssistants.length === 0 ? '没有可加入团队的助手' : '没有匹配的助手'}
+            </div>
+          )}
+        </div>
+        {addError !== undefined && <div className={css.memberAddError} role="alert">{addError}</div>}
+        <div className={css.memberAddFooter}>
+          <span>没有合适的？让 Leader 帮你安排。</span>
+          <button
+            type="button"
+            role="menuitem"
+            className={css.memberAddFooterLink}
+            onClick={() => {
+              setAddPanelOpen(false)
+              const leader = members.find(member => member.role === 'leader')
+              if (leader !== undefined) {
+                keepChatView(leader.sessionId)
+                openSession(leader.sessionId)
+              }
+            }}
+          >
+            告诉 Leader →
+          </button>
+        </div>
+      </div>
+    </Menu>
     </div>
     </>
   )
