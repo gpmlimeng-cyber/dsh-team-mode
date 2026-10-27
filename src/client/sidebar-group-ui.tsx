@@ -11,11 +11,11 @@ import {
   IconDownloadOutlineRegular,
   IconEditOutlineRegular,
   IconEllipsisOutlineRegular,
+  IconFolderOpenOutlineRegular,
   IconListPenOutlineRegular,
   IconPlusOutlineRegular,
   IconSlidersTwoOutlineRegular,
   IconTrashOutlineRegular,
-  IconUnarchiveOutlineRegular,
   IconWarningOutlineRegular,
   Menu,
   Tooltip,
@@ -54,6 +54,7 @@ import {
   insertGroupOrder,
   parseGroupExportText,
   resolveDropTarget,
+  revokeDownloadUrlLater,
   sidebarGroupBriefError,
   sidebarGroupBriefUsage,
   sidebarGroupNameError,
@@ -406,6 +407,27 @@ export function sidebarPartitionLabel(
   return partitioned ? '未分组' : fallback
 }
 
+/**
+ * Section-level import entry: the same dialog the group ⋯ menu opens, reachable
+ * with no groups at all. It sits beside 新建分组, so importing does not require
+ * an existing group header to hang a menu off.
+ */
+export function SidebarGroupImportRow({ onImport }: { onImport: () => void }): JSX.Element {
+  return (
+    <button
+      type="button"
+      className={css.sidebarGroupCreateRow}
+      data-dsh-sidebar-group-import
+      onClick={onImport}
+    >
+      <span className={css.sidebarGroupCreateSlot} aria-hidden="true">
+        <IconFolderOpenOutlineRegular size={13} />
+      </span>
+      <span>导入分组</span>
+    </button>
+  )
+}
+
 /** Trailing list row that creates the first (or next) group. */
 export function SidebarGroupCreateRow({ onCreate }: { onCreate: () => void }): JSX.Element {
   return (
@@ -544,7 +566,7 @@ export function sidebarGroupMenuItems(
     { id: 'brief', label: '编辑分组简报', icon: <IconListPenOutlineRegular size={14} /> },
     { id: 'batch', label: '批量设置…', icon: <IconSlidersTwoOutlineRegular size={14} /> },
     { id: 'export', label: '导出分组', icon: <IconDownloadOutlineRegular size={14} /> },
-    { id: 'import', label: '导入分组', icon: <IconUnarchiveOutlineRegular size={14} /> },
+    { id: 'import', label: '导入分组', icon: <IconFolderOpenOutlineRegular size={14} /> },
     { id: 'rename', label: '重命名', icon: <IconEditOutlineRegular size={14} /> },
     { id: 'delete', label: '删除分组', icon: <IconTrashOutlineRegular size={14} />, danger: true },
     { type: 'separator', id: 'order-separator' },
@@ -1751,7 +1773,8 @@ function GroupExportDialog({
     anchor.href = url
     anchor.download = groupExportFileName(name)
     anchor.click()
-    URL.revokeObjectURL(url)
+    // Kept alive past the click: revoking in this task can cancel the download.
+    revokeDownloadUrlLater(url)
   }
 
   const ready = loaded && text !== ''
@@ -1961,9 +1984,9 @@ function GroupImportDialog({
 
   const planRow = (line: GroupImportPlanLine): JSX.Element => (
     <div
-      key={`${line.kind}:${line.name}`}
+      key={line.key}
       className={css.groupShareRow}
-      data-dsh-group-import-row={`${line.kind}:${line.name}`}
+      data-dsh-group-import-row={line.key}
     >
       <span className={css.groupShareKind}>{GROUP_SHARE_KIND_LABELS[line.kind]}</span>
       <span className={css.groupShareName}>{line.name}</span>

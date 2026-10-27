@@ -26,6 +26,7 @@ import {
   insertGroupOrder,
   movedGroupOrder,
   parseGroupExportText,
+  revokeDownloadUrlLater,
   resolveDropTarget,
   sidebarGroupBriefError,
   sidebarGroupBriefUsage,
@@ -69,7 +70,11 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
 })
 
 import { NewChatPanel } from '../src/client/new-chat-panel.js'
-import { SidebarGroupDialogs, sidebarGroupMenuItems } from '../src/client/sidebar-group-ui.js'
+import {
+  SidebarGroupDialogs,
+  SidebarGroupImportRow,
+  sidebarGroupMenuItems,
+} from '../src/client/sidebar-group-ui.js'
 
 interface Row {
   id: string
@@ -1041,6 +1046,7 @@ describe('groupImportPlanLines', () => {
     const [first] = groupImportPlanLines(importPreview())
 
     expect(first).toEqual({
+      key: '0:group',
       kind: 'group',
       name: '工作',
       plannedName: '工作 (2)',
@@ -1056,6 +1062,7 @@ describe('groupImportPlanLines', () => {
     })
 
     expect(groupImportPlanLines(preview)[0]).toEqual({
+      key: '0:group',
       kind: 'group',
       name: '工作',
       plannedName: '工作',
@@ -1068,6 +1075,7 @@ describe('groupImportPlanLines', () => {
       .find(line => line.kind === 'assistant' && line.action === 'skip')
 
     expect(skipped).toEqual({
+      key: '2:assistant',
       kind: 'assistant',
       name: '旧模型助手',
       plannedName: '旧模型助手',
@@ -1245,5 +1253,131 @@ describe('group export/import dialog source contract', () => {
     expect(shareCss).toContain('var(--dsw-alias-state-success-primary)')
     expect(shareCss).toContain('var(--dsw-alias-state-error-primary)')
     expect(shareCss).toContain('var(--dsw-alias-state-business-primary)')
+  })
+})
+
+describe('section-level group import entry', () => {
+  const ui = readFileSync(new URL('../src/client/sidebar-group-ui.tsx', import.meta.url), 'utf8')
+  const assistantSidebar = readFileSync(
+    new URL('../src/client/assistant-sidebar.tsx', import.meta.url),
+    'utf8',
+  )
+  const teamSidebar = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
+
+  it('renders 导入分组 as a native button, not an overlay', () => {
+    const markup = renderToStaticMarkup(createElement(SidebarGroupImportRow, {
+      onImport: () => {},
+    }))
+
+    expect(markup).toContain('data-dsh-sidebar-group-import')
+    expect(markup).toContain('导入分组')
+    expect(markup).toContain('<button')
+    // It is an entry, not a second dialog: the shared AnimatedModal opens later.
+    expect(markup).not.toContain('role="dialog"')
+    expect(ui).toContain('export function SidebarGroupImportRow')
+  })
+
+  it('is rendered by both sidebars outside any group ⋯ menu', () => {
+    // With zero groups no group header exists, so the entry cannot live only in
+    // its menu; both sections render it at list level.
+    expect(assistantSidebar).toContain('<SidebarGroupImportRow')
+    expect(teamSidebar).toContain('<SidebarGroupImportRow')
+    // The assistant section shows it in the no-assistant branch and after the
+    // list, so an empty profile still reaches the same dialog.
+    expect((assistantSidebar.match(/<SidebarGroupImportRow/g) ?? []).length)
+      .toBeGreaterThanOrEqual(2)
+    expect(assistantSidebar).toContain("setGroupDialog({ kind: 'import' })")
+    expect(teamSidebar).toContain("openGroupDialog({ kind: 'import' })")
+  })
+
+  it('places the assistant entry before the partitions, so an empty list shows it', () => {
+    const entry = assistantSidebar.indexOf('<SidebarGroupImportRow')
+    const partitions = assistantSidebar.indexOf('partitions.map')
+
+    expect(entry).toBeGreaterThan(-1)
+    expect(partitions).toBeGreaterThan(entry)
+  })
+
+  it('keeps the team entry a sibling of the list branches, not inside one', () => {
+    // It follows the closing `)}` of the teams/empty ternary, so every branch —
+    // including "no groups at all" — renders it.
+    expect(teamSidebar).toMatch(/\)\}\n(?:\s*\{\/\*[\s\S]*?\*\/\}\n)?\s*<SidebarGroupImportRow/)
+    expect(teamSidebar).toMatch(/<SidebarGroupImportRow[^\n]*\n\s*<\/div>/)
+  })
+})
+
+describe('plan row keys for repeated document names', () => {
+  it('gives every row a distinct key even when the document repeats a name', () => {
+    const repeated = '同名'
+    const member = {
+      displayName: '组长',
+      role: 'leader' as const,
+      templateName: repeated,
+      permissionPresetId: 'workspace-write',
+    }
+    const lines = groupImportPlanLines(importPreview({
+      assistants: [
+        { name: repeated, plannedName: repeated, action: 'create', profile: portableProfile(repeated) },
+        { name: repeated, plannedName: `${repeated} (2)`, action: 'create', profile: portableProfile(repeated) },
+        { name: repeated, plannedName: `${repeated} (3)`, action: 'skip', reason: 'unknown model' },
+      ],
+      templates: [
+        { name: repeated, plannedName: repeated, action: 'create', profile: portableProfile(repeated) },
+        { name: repeated, plannedName: `${repeated} (2)`, action: 'reuse', profile: portableProfile(repeated) },
+      ],
+      teams: [
+        { name: repeated, plannedName: repeated, action: 'create', members: [member] },
+        { name: repeated, plannedName: `${repeated} (2)`, action: 'skip', reason: 'no leader', members: [] },
+      ],
+    }))
+    const keys = lines.map(line => line.key)
+
+    expect(lines).toHaveLength(8)
+    expect(new Set(keys).size).toBe(lines.length)
+    // The old key (kind plus name) collided on exactly these rows.
+    expect(keys.filter(key => key.includes('assistant'))).toHaveLength(3)
+    expect(keys.filter(key => key.includes('team'))).toHaveLength(2)
+  })
+
+  it('uses the row key in the dialog instead of a name-derived key', () => {
+    const source = readFileSync(new URL('../src/client/sidebar-group-ui.tsx', import.meta.url), 'utf8')
+    const dialog = source.slice(source.indexOf('function GroupImportDialog'))
+
+    expect(dialog).toContain('key={line.key}')
+    expect(dialog).not.toContain('key={`${line.kind}:${line.name}`}')
+    expect(dialog).toContain('data-dsh-group-import-row={line.key}')
+  })
+})
+
+describe('revokeDownloadUrlLater', () => {
+  it('revokes the download URL after the click, never in the same task', () => {
+    vi.useFakeTimers()
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+    try {
+      revokeDownloadUrlLater('blob:group-export')
+
+      // Synchronous revoke can cancel the download before the browser reads it.
+      expect(revoke).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(999)
+      expect(revoke).not.toHaveBeenCalled()
+      vi.advanceTimersByTime(1)
+      expect(revoke).toHaveBeenCalledTimes(1)
+      expect(revoke).toHaveBeenCalledWith('blob:group-export')
+    } finally {
+      revoke.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps the export dialog off the synchronous revoke', () => {
+    const source = readFileSync(new URL('../src/client/sidebar-group-ui.tsx', import.meta.url), 'utf8')
+    const exportDialog = source.slice(
+      source.indexOf('function GroupExportDialog'),
+      source.indexOf('function GroupImportDialog'),
+    )
+
+    expect(exportDialog).toContain('revokeDownloadUrlLater(url)')
+    expect(exportDialog).not.toContain('URL.revokeObjectURL')
+    expect(exportDialog).toContain('URL.createObjectURL')
   })
 })

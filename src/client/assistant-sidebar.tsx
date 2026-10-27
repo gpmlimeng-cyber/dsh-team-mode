@@ -65,6 +65,7 @@ import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-
 import {
   SidebarGroupCreateRow,
   SidebarGroupDialogs,
+  SidebarGroupImportRow,
   SidebarGroupPartition,
   sidebarDragSwallowsClick,
   sidebarGroupMenuItems,
@@ -1134,6 +1135,7 @@ export function AssistantSidebarSection({
                       {/* The one 新建分组 entry for the whole workspace; the team
                           section above leaves it here so it is not offered twice. */}
                       <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
+                      <SidebarGroupImportRow onImport={() => { setGroupDialog({ kind: 'import' }) }} />
                     </>
                     )
               : (
@@ -1161,6 +1163,7 @@ export function AssistantSidebarSection({
                     )
                   })}
                   <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
+                  <SidebarGroupImportRow onImport={() => { setGroupDialog({ kind: 'import' }) }} />
                 </>
               )}
         </div>

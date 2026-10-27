@@ -81,6 +81,7 @@ import { NewChatPanel } from './new-chat-panel.js'
 import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-groups.js'
 import {
   SidebarGroupDialogs,
+  SidebarGroupImportRow,
   SidebarGroupPartition,
   sidebarDragSwallowsClick,
   sidebarGroupMenuItems,
@@ -1166,6 +1167,8 @@ export function SidebarTeamSection({
                 )
               })
             )}
+        {/* Section-level entry: importing must not require an existing group. */}
+        <SidebarGroupImportRow onImport={() => { openGroupDialog({ kind: 'import' }) }} />
       </div>
       <Menu
         open={menuOpen}

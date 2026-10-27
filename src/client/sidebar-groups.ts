@@ -513,6 +513,12 @@ export function groupExportFileName(group: string): string {
 
 /** One reviewable row of an import plan; presentation-neutral on purpose. */
 export interface GroupImportPlanLine {
+  /**
+   * Stable unique row key. Document names may repeat (two teams can share a
+   * name), so a name-derived React key would collide; the plan order is fixed
+   * for one preview, so kind plus position is both stable and unique.
+   */
+  key: string
   kind: 'group' | 'assistant' | 'template' | 'team'
   /** The name as written in the document. */
   name: string
@@ -532,7 +538,11 @@ export interface GroupImportPlanLine {
  * across instead of finding it missing after the import.
  */
 export function groupImportPlanLines(preview: GroupImportPreview): GroupImportPlanLine[] {
-  const lines: GroupImportPlanLine[] = [{
+  const lines: GroupImportPlanLine[] = []
+  const push = (line: Omit<GroupImportPlanLine, 'key'>): void => {
+    lines.push({ ...line, key: `${lines.length}:${line.kind}` })
+  }
+  push({
     kind: 'group',
     name: preview.group.requested,
     plannedName: preview.group.plannedName,
@@ -541,9 +551,9 @@ export function groupImportPlanLines(preview: GroupImportPreview): GroupImportPl
       ? { note: `同名分组已存在，导入为「${preview.group.plannedName}」` }
       : {}),
     ...(preview.group.briefChars === 0 ? {} : { detail: `简报 ${preview.group.briefChars} 字` }),
-  }]
+  })
   for (const row of preview.assistants) {
-    lines.push({
+    push({
       kind: 'assistant',
       name: row.name,
       plannedName: row.plannedName,
@@ -552,7 +562,7 @@ export function groupImportPlanLines(preview: GroupImportPreview): GroupImportPl
     })
   }
   for (const row of preview.templates) {
-    lines.push({
+    push({
       kind: 'template',
       name: row.name,
       plannedName: row.plannedName,
@@ -561,7 +571,7 @@ export function groupImportPlanLines(preview: GroupImportPreview): GroupImportPl
     })
   }
   for (const team of preview.teams) {
-    lines.push({
+    push({
       kind: 'team',
       name: team.name,
       plannedName: team.plannedName,
@@ -571,6 +581,15 @@ export function groupImportPlanLines(preview: GroupImportPreview): GroupImportPl
     })
   }
   return lines
+}
+
+/**
+ * Revoke one download object URL after the click that used it has returned.
+ * Revoking in the same task can cancel the download before the browser starts
+ * reading the blob, so the URL outlives the click by one short beat.
+ */
+export function revokeDownloadUrlLater(url: string, delayMs = 1000): void {
+  setTimeout(() => { URL.revokeObjectURL(url) }, delayMs)
 }
 
 export interface SidebarGroups {
