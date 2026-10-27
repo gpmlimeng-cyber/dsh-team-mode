@@ -13177,6 +13177,36 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   text-overflow: ellipsis;
 }
 
+/* Two-line trigger, used by the merged model control: the model name over the
+   `provider · level` second line, so one control names both choices. */
+.selectValueStack {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  text-align: left;
+}
+
+.selectValueTitle {
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.selectValueSubtitle {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 15px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .selectChevron {
   flex: none;
   color: var(--dsw-alias-label-tertiary);

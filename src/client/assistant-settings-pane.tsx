@@ -17,7 +17,6 @@ import {
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
-import { assistantModelKey } from './assistant-form.js'
 import { CapabilityList, savableNames, useCapabilityCatalog } from './assistant-capabilities.js'
 import {
   AssistantAvatarEditor,
@@ -48,7 +47,13 @@ import { PERMISSION_LABELS, assistantMemoryView } from './labels.js'
 import { MemberAvatar } from './member-avatar.js'
 import { Mascot } from './mascot-view.js'
 import type { MascotMotion } from './mascot.js'
-import { defaultReasoningLabel, useModelCapabilities } from './model-reasoning.js'
+import { useModelCapabilities } from './model-reasoning.js'
+import {
+  ModelControl,
+  modelControlReasoning,
+  modelControlTrigger,
+  type ModelControlModel,
+} from './model-control.js'
 import { SelectControl } from './select-control.js'
 import type { SelectControlOption } from './select-control.js'
 import { SettingsRow, SettingsRows } from './settings-row.js'
@@ -454,24 +459,29 @@ export function AssistantSettingsPane({
     provider: providerEntry,
     models: catalog?.models[providerEntry.id] ?? [],
   })).filter(group => group.models.length > 0)
-  const modelSelection = assistantModelKey(provider, model)
   const modelSelectionInCatalog = modelGroups.some(group => (
     group.provider.id === provider && group.models.some(modelEntry => modelEntry.id === model)
   ))
-  // A stored value the catalog dropped stays selectable and labelled 「当前」,
-  // so the pill never hides what is saved on the instance.
-  const modelOptions: SelectControlOption[] = [
-    ...(modelSelectionInCatalog
-      ? []
-      : [{ value: modelSelection, label: `${provider} / ${model}（当前）` }]),
+  // The merged model/level control reads one flat row list. A stored model the
+  // catalog dropped stays in it, so the menu never hides what is saved.
+  const modelControlModels: ModelControlModel[] = [
     ...modelGroups.flatMap(group => group.models.map(modelEntry => ({
-      value: assistantModelKey(group.provider.id, modelEntry.id),
-      label: modelEntry.name === modelEntry.id
-        ? modelEntry.id
-        : `${modelEntry.name}（${modelEntry.id}）`,
-      group: group.provider.name,
+      providerId: group.provider.id,
+      providerName: group.provider.name,
+      modelId: modelEntry.id,
+      label: modelEntry.name,
     }))),
+    ...(modelSelectionInCatalog || model === ''
+      ? []
+      : [{ providerId: provider, providerName: provider, modelId: model, label: model }]),
   ]
+  const modelControlHint = modelControlTrigger(
+    provider,
+    model,
+    modelControlModels,
+    modelControlReasoning(modelCapabilities.value),
+    reasoningEffort,
+  )
   const permissionOptions = catalog?.permissionPresets ?? []
   const permissionInCatalog = permissionOptions.some(option => option.value === permissionPresetId)
   const permissionSelectOptions: SelectControlOption[] = [
@@ -486,7 +496,6 @@ export function AssistantSettingsPane({
       label: PERMISSION_LABELS[option.value] ?? option.name,
     })),
   ]
-  const reasoningEfforts = modelCapabilities.value?.reasoning?.efforts ?? []
   // 概览: a checklist, what this assistant is, and where its limits really are.
   // The component only maps these three pure results.
   const overviewLabels = {
@@ -743,46 +752,28 @@ export function AssistantSettingsPane({
           dataKind="model"
         >
           <SettingsRows>
-            {shows('模型') && (
+            {/* One merged row: a search for 模型 or 思考模式 must both show it. */}
+            {shows('模型', '思考模式', '推理强度') && (
               <SettingsRow
                 label="模型"
                 hint={catalogLoading
                   ? '正在读取模型列表…'
-                  : '按 Provider 分组；保存时同时写入 Provider 与模型。'}
+                  : modelControlHint.subtitle ?? provider}
                 control={(
-                  <SelectControl
-                    ariaLabel="模型"
-                    value={modelSelection}
-                    options={modelOptions}
+                  <ModelControl
+                    provider={provider}
+                    model={model}
+                    reasoningEffort={reasoningEffort}
+                    models={modelControlModels}
+                    capabilities={modelCapabilities.value}
                     disabled={busy || catalog === undefined}
-                    onChange={next => {
-                      const [nextProvider, nextModel] = next.split('/') as [string, string]
-                      setProvider(nextProvider)
-                      setModel(nextModel)
+                    onChange={patch => {
+                      if (patch.provider !== undefined) setProvider(patch.provider)
+                      if (patch.model !== undefined) setModel(patch.model)
+                      if (patch.reasoningEffort !== undefined) setReasoningEffort(patch.reasoningEffort)
                       setError(undefined)
                       setSaved(false)
                     }}
-                  />
-                )}
-              />
-            )}
-            {reasoningEfforts.length > 0 && shows('思考模式') && (
-              <SettingsRow
-                label="思考模式"
-                hint="由当前模型决定可用档位；选择「模型默认」会清除已保存的档位。"
-                control={(
-                  <SelectControl
-                    ariaLabel="思考模式"
-                    value={reasoningEffort}
-                    options={[
-                      { value: '', label: defaultReasoningLabel(modelCapabilities.value) },
-                      ...reasoningEfforts.map(effort => ({
-                        value: effort.id,
-                        label: effort.name === effort.id ? effort.name : `${effort.name}（${effort.id}）`,
-                      })),
-                    ]}
-                    disabled={busy}
-                    onChange={next => { setReasoningEffort(next); setSaved(false) }}
                   />
                 )}
               />

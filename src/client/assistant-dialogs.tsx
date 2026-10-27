@@ -12,7 +12,6 @@ import {
   assistantCreatePayload,
   assistantCreateValidationError,
   assistantModelKey,
-  assistantModelOptionLabel,
   emptyAssistantCreateDraft,
   enabledAssistantRoles,
   type AssistantCreateDraft,
@@ -29,11 +28,13 @@ import { MASCOT_EYES, MASCOT_SHAPES, nextMascotSeed, randomMascotDraft, type Mas
 import { MascotPicker } from './mascot-picker.js'
 import { Mascot } from './mascot-view.js'
 import { PERMISSION_LABELS } from './labels.js'
+import { reasoningEffortLabel, useModelCapabilities } from './model-reasoning.js'
 import {
-  defaultReasoningLabel,
-  reasoningEffortLabel,
-  useModelCapabilities,
-} from './model-reasoning.js'
+  ModelControl,
+  modelControlReasoning,
+  modelControlTrigger,
+  type ModelControlModel,
+} from './model-control.js'
 import { SelectControl } from './select-control.js'
 import type { SelectControlOption } from './select-control.js'
 import { SettingsRow, SettingsRows } from './settings-row.js'
@@ -41,7 +42,7 @@ import { AnimatedModal } from './shared.js'
 import { FoldGroup } from './fold-group.js'
 import css from './AgentTeam.module.css'
 import type { AssistantTemplate } from '../domain/types.js'
-import type { CatalogView } from '../transport/contracts.js'
+import type { CatalogView, ModelCapabilitiesView } from '../transport/contracts.js'
 
 const CREATE_FORM_ID = 'assistant-create-form'
 
@@ -52,8 +53,8 @@ function messageOf(cause: unknown): string {
 export interface AssistantCreateModelGroup {
   providerId: string
   providerName: string
-  /** `label` is the full pill text; `name` is the bare row text. */
-  models: Array<{ id: string; name: string; label: string }>
+  /** `name` is the row text; `reasoning` is that model's default level, when known. */
+  models: Array<{ id: string; name: string; reasoning?: string | undefined }>
 }
 
 /**
@@ -74,8 +75,8 @@ export interface AssistantCreateBodyProps {
   groups: readonly string[]
   workspaces: ReadonlyArray<{ id: string; title: string }>
   modelGroups: readonly AssistantCreateModelGroup[]
-  reasoningOptions: ReadonlyArray<{ id: string; label: string }>
-  defaultReasoning: string
+  /** The draft model's advertised levels; the merged model control reads them. */
+  modelCapabilities: ModelCapabilitiesView | undefined
   capabilityError: string | undefined
   /** Skills and MCP Servers of the draft's Agent Preset (its live catalog). */
   skills: readonly CapabilityOption[]
@@ -112,25 +113,6 @@ function roleOptions(
     ...builtin.map(role => ({ value: role.id, label: role.name, group: '内置角色' })),
     ...mine.map(role => ({ value: role.id, label: role.name, group: '我的模板' })),
   ]
-}
-
-/** Model rows share the provider heading, so the pill reads like the old optgroup. */
-function modelOptions(
-  groups: readonly AssistantCreateModelGroup[],
-): SelectControlOption[] {
-  return groups.flatMap(group => group.models.map(model => ({
-    value: assistantModelKey(group.providerId, model.id),
-    // The list row is the model alone; the pill still names the provider.
-    label: model.name,
-    triggerLabel: model.label,
-    group: group.providerName,
-  })))
-}
-
-/** Split the `provider/model` key back into the pair the draft stores. */
-function splitModelKey(key: string): [string, string] {
-  const at = key.indexOf('/')
-  return at < 0 ? [key, ''] : [key.slice(0, at), key.slice(at + 1)]
 }
 
 /**
@@ -322,7 +304,23 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
 
 
 function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.Element {
-  const { draft, workspaces, modelGroups, reasoningOptions, defaultReasoning, capabilityError } = props
+  const { draft, workspaces, modelGroups, modelCapabilities, capabilityError } = props
+  const models: ModelControlModel[] = modelGroups.flatMap(group => group.models.map(model => ({
+    providerId: group.providerId,
+    providerName: group.providerName,
+    modelId: model.id,
+    label: model.name,
+    ...(model.reasoning === undefined || model.reasoning === ''
+      ? {}
+      : { description: `默认 ${model.reasoning}` }),
+  })))
+  const trigger = modelControlTrigger(
+    draft.provider,
+    draft.model,
+    models,
+    modelControlReasoning(modelCapabilities),
+    draft.reasoningEffort,
+  )
   return (
     <>
       <SectionHeading title="模型与权限" hint="会话在哪里运行、用哪个模型、什么权限" />
@@ -357,42 +355,19 @@ function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.E
         />
         <SettingsRow
           label="模型"
-          hint="Provider 与模型一起保存；创建后仍可在助手设置里改。"
+          hint={trigger.subtitle ?? draft.provider}
           control={(
-            <SelectControl
-              ariaLabel="模型"
-              value={assistantModelKey(draft.provider, draft.model)}
-              placeholder="没有可用模型"
-              options={modelOptions(modelGroups)}
+            <ModelControl
+              provider={draft.provider}
+              model={draft.model}
+              reasoningEffort={draft.reasoningEffort}
+              models={models}
+              capabilities={modelCapabilities}
               disabled={disabled}
-              onChange={next => {
-                const [provider, model] = splitModelKey(next)
-                props.onDraftChange({ provider, model })
-              }}
+              onChange={patch => { props.onDraftChange(patch) }}
             />
           )}
         />
-        {reasoningOptions.length > 0 && (
-          <SettingsRow
-            label="思考模式"
-            hint="由当前模型决定可用档位；选择「模型默认」会清除档位。"
-            control={(
-              <SelectControl
-                ariaLabel="思考模式"
-                value={draft.reasoningEffort}
-                options={[
-                  { value: '', label: defaultReasoning },
-                  ...reasoningOptions.map(option => ({
-                    value: option.id,
-                    label: option.label,
-                  })),
-                ]}
-                disabled={disabled}
-                onChange={next => { props.onDraftChange({ reasoningEffort: next }) }}
-              />
-            )}
-          />
-        )}
         <SettingsRow
           label="Agent Preset"
           hint="决定工具与策略包；创建时定死，之后不可修改。"
@@ -757,11 +732,6 @@ export function AssistantCreateDialog({
       ...(preset.description === undefined ? {} : { description: preset.description }),
     }))
   const permissionPresets = catalog?.permissionPresets ?? []
-  const reasoningEfforts = modelCapabilities.value?.reasoning?.efforts ?? []
-  const reasoningOptions = reasoningEfforts.map(effort => ({
-    id: effort.id,
-    label: effort.name === effort.id ? effort.name : `${effort.name}（${effort.id}）`,
-  }))
   const canCreate = assistantCreateCanSubmit(draft)
 
   function reasoningLabelFor(providerId: string, modelId: string): string | undefined {
@@ -778,15 +748,14 @@ export function AssistantCreateDialog({
   }
 
   const modelGroups = (catalog?.providers ?? []).flatMap(providerEntry => {
-    const models = (catalog?.models[providerEntry.id] ?? []).map(modelEntry => ({
-      id: modelEntry.id,
-      name: modelEntry.name,
-      label: assistantModelOptionLabel(
-        providerEntry.name,
-        modelEntry.name,
-        reasoningLabelFor(providerEntry.id, modelEntry.id),
-      ),
-    }))
+    const models = (catalog?.models[providerEntry.id] ?? []).map(modelEntry => {
+      const reasoning = reasoningLabelFor(providerEntry.id, modelEntry.id)
+      return {
+        id: modelEntry.id,
+        name: modelEntry.name,
+        ...(reasoning === undefined || reasoning === '' ? {} : { reasoning }),
+      }
+    })
     return models.length === 0
       ? []
       : [{ providerId: providerEntry.id, providerName: providerEntry.name, models }]
@@ -944,8 +913,7 @@ export function AssistantCreateDialog({
           onAddWorkspace={addWorkspace}
         workspaces={workspaces}
           modelGroups={modelGroups}
-          reasoningOptions={reasoningOptions}
-          defaultReasoning={defaultReasoningLabel(modelCapabilities.value)}
+          modelCapabilities={modelCapabilities.value}
           capabilityError={modelCapabilities.error}
           skills={capabilities.skills}
           mcpServers={capabilities.mcpServers}

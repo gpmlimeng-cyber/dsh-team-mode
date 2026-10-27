@@ -168,6 +168,9 @@ describe('one select implementation', () => {
       'assistant-memory-panel.tsx',
       'assistant-settings-pane.tsx',
       'assistants/AssistantPanel.tsx',
+      // The merged model control composes the one control; it is not a second
+      // dropdown implementation.
+      'model-control.tsx',
       'team-activity.tsx',
       'team-board.tsx',
       'teams/TeamPanel.tsx',

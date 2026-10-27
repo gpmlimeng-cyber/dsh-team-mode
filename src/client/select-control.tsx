@@ -26,6 +26,12 @@ export interface SelectControlOption {
   triggerLabel?: string
 }
 
+/** The closed trigger as two lines: a title and its secondary line. */
+export interface SelectControlTrigger {
+  title: string
+  subtitle?: string | undefined
+}
+
 /**
  * The pill select the official settings dialog uses: the current value and a
  * chevron, opening the shipped `Menu` instead of the browser's own dropdown.
@@ -46,6 +52,8 @@ export function SelectControl({
   align = 'start',
   side = 'bottom',
   footerAction,
+  triggerLines,
+  selectedIds,
 }: {
   value: string
   options: readonly SelectControlOption[]
@@ -57,6 +65,13 @@ export function SelectControl({
   className?: string | undefined
   align?: 'start' | 'end'
   side?: 'bottom' | 'top'
+  /** Render the trigger as two lines (title over subtitle), like the reference model control. */
+  triggerLines?: SelectControlTrigger | undefined
+  /**
+   * Independent selections in one menu (one model row plus one effort row).
+   * Pair it with `value` only when a single row is the value.
+   */
+  selectedIds?: readonly string[] | undefined
   /**
    * A trailing action behind a separator, like the shipped pickers' "添加…"
    * row. It never carries the current value, so it stays out of the value list.
@@ -68,6 +83,11 @@ export function SelectControl({
   // A stored value the catalog no longer offers still shows its raw value
   // instead of a blank pill, so the dialog never hides what is saved.
   const label = current?.triggerLabel ?? current?.label ?? (value === '' ? placeholder : value)
+  const triggerTitle = triggerLines === undefined
+    ? label
+    : [triggerLines.title, triggerLines.subtitle]
+      .filter((line): line is string => line !== undefined && line !== '')
+      .join(' · ')
 
   const entries: MenuEntry[] = []
   let group: string | undefined
@@ -110,7 +130,8 @@ export function SelectControl({
       side={side}
       className={[css.selectControl, className ?? ''].filter(Boolean).join(' ')}
       items={entries}
-      selectedId={value}
+      selectedId={selectedIds === undefined ? value : undefined}
+      {...(selectedIds === undefined ? {} : { selectedIds })}
       onSelect={next => {
         setOpen(false)
         if (next === 'footer-action') {
@@ -127,12 +148,21 @@ export function SelectControl({
           aria-haspopup="listbox"
           aria-expanded={open}
           aria-label={ariaLabel}
-          title={title ?? label}
+          title={title ?? triggerTitle}
           disabled={disabled}
           onClick={() => { setOpen(current => !current) }}
         >
           {current?.icon !== undefined && <span className={css.selectLead}>{current.icon}</span>}
-          <span className={css.selectValue}>{label}</span>
+          {triggerLines === undefined
+            ? <span className={css.selectValue}>{label}</span>
+            : (
+              <span className={css.selectValueStack}>
+                <span className={css.selectValueTitle}>{triggerLines.title}</span>
+                {triggerLines.subtitle !== undefined && triggerLines.subtitle !== '' && (
+                  <span className={css.selectValueSubtitle}>{triggerLines.subtitle}</span>
+                )}
+              </span>
+            )}
           <IconChevronDownOutlineRegular size={12} className={css.selectChevron} />
         </button>
       )}

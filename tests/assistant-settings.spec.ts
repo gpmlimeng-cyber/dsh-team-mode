@@ -177,10 +177,16 @@ function baseCreateBodyProps(): AssistantCreateBodyProps {
     modelGroups: [{
       providerId: 'deepseek',
       providerName: 'DeepSeek',
-      models: [{ id: 'flash', name: 'Flash', label: 'Flash — DeepSeek' }],
+      models: [{ id: 'flash', name: 'Flash', reasoning: 'High' }],
     }],
-    reasoningOptions: [{ id: 'high', label: 'High' }],
-    defaultReasoning: '模型默认（Medium）',
+    modelCapabilities: {
+      provider: 'deepseek',
+      model: 'flash',
+      reasoning: {
+        efforts: [{ id: 'high', name: 'High' }, { id: 'medium', name: 'Medium' }],
+        defaultEffort: 'medium',
+      },
+    },
     capabilityError: undefined,
     skills: [],
     mcpServers: [],
@@ -385,13 +391,16 @@ describe('assistant create dialog sections', () => {
     expect(html).toMatch(/<details[^>]*data-dsh-fold="create-description"(?![^>]*\bopen\b)/)
   })
 
-  it('model and environment writes workspace, model, reasoning and preset', () => {
+  it('model and environment merges model and thinking into one two-line control', () => {
     const html = renderCreateBody({ activeSection: 'model' })
     expect(html).toContain('Workspace')
     expect(html).toContain('主工作区')
-    expect(html).toContain('Flash — DeepSeek')
-    expect(html).toContain('思考模式')
-    expect(html).toContain('模型默认（Medium）')
+    // One control, two lines: the model name over provider · the level it runs at.
+    expect((html.match(/aria-label="模型与思考模式：/g) ?? [])).toHaveLength(1)
+    expect(html).toContain('aria-label="模型与思考模式：Flash，DeepSeek · Medium"')
+    // The old separate 思考模式 row is gone, not hidden.
+    expect(html).not.toContain('aria-label="思考模式"')
+    expect(html).not.toContain('aria-label="模型"')
     expect(html).toContain('Agent Preset')
     expect(html).toContain('>Standard<')
   })
