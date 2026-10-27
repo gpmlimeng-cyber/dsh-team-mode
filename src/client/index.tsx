@@ -14,7 +14,10 @@ import {
   DETAIL_TAB_ID,
   DETAIL_TAB_KIND,
   DETAIL_TAB_TITLE,
+  SCHEDULES_PANEL_ID,
+  installAssistantAutomations,
   openAssistantDetail,
+  type AssistantAutomationEntry,
   type DetailSidebar,
 } from './assistant-detail.js'
 import { TeamMainAgentPanel } from './team-main-agent.js'
@@ -159,6 +162,22 @@ export function apply(ctx: AgentTeamClientContext): void {
   // The detail panel's rows open Sessions through the same navigation helper the
   // 单聊 rows use; the tab body is host-mounted and has no `uiWorkspace` of its own.
   installAssistantSessionOpener(openSession)
+  // The detail panel's 自动化 block reads the Host's own Schedule Remote and
+  // jumps to the Host's own panel; this plugin owns no scheduling and no page.
+  // The Remote namespace and that panel ship in one bundle, so an absent
+  // namespace installs nothing and the block reports no automations service
+  // instead of an empty list that would read as "none scheduled".
+  const scheduleRemote = (ctx as unknown as {
+    get?: (service: string) => unknown
+  }).get?.('remote.schedule') as
+    | { catalog?: () => Promise<readonly AssistantAutomationEntry[]> }
+    | undefined
+  installAssistantAutomations(scheduleRemote === undefined ? undefined : {
+    ...(typeof scheduleRemote.catalog === 'function'
+      ? { catalog: () => scheduleRemote.catalog!() }
+      : {}),
+    open: () => { ctx.layout.selectPanel(SCHEDULES_PANEL_ID as never) },
+  })
   const pickWorkspace = async (): Promise<WorkspaceChoice | null> => {
     const path = await ctx.uiWorkspace.pickDirectory()
     if (path === null) return null

@@ -90,7 +90,7 @@ describe('MascotPicker rendering contract', () => {
     expect(html.match(/<legend /g)).toHaveLength(3)
     const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
     const grid = css.slice(css.indexOf('.mascotPickerGrid {'))
-    expect(grid.slice(0, grid.indexOf('}'))).toContain('repeat(5, max-content)')
+    expect(grid.slice(0, grid.indexOf('}'))).toContain('repeat(5, minmax(0, 1fr))')
   })
 
   it('renders every option as a real image inside a button', () => {

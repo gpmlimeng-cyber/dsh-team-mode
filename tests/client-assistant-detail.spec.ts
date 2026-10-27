@@ -31,6 +31,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
   return {
     Button,
     DisclosureRow,
+    IconClockOutlineRegular: Icon,
     IconDatabaseOutlineRegular: Icon,
     IconEditOutlineRegular: Icon,
     IconFlatListOutlineRegular: Icon,
@@ -54,6 +55,13 @@ vi.mock('../src/client/assistant-settings-dialog.js', () => ({
 const {
   AssistantDetailBody,
   AssistantDetailPanel,
+  AutomationPanel,
+  SCHEDULES_PANEL_ID,
+  assistantAutomationNextRun,
+  assistantAutomationRows,
+  assistantAutomationSessionIds,
+  installAssistantAutomations,
+  openAssistantAutomations,
   DETAIL_EMPTY_TEXT,
   DETAIL_TAB_ID,
   DETAIL_TAB_KIND,
@@ -67,6 +75,7 @@ const {
 } = await import('../src/client/assistant-detail.js')
 type DetailSidebar = import('../src/client/assistant-detail.js').DetailSidebar
 type MemoryPanelView = import('../src/client/labels.js').MemoryPanelView
+type AssistantAutomationEntry = import('../src/client/assistant-detail.js').AssistantAutomationEntry
 
 const ISO = '2026-01-01T00:00:00Z'
 
@@ -177,19 +186,20 @@ describe('assistant detail sections', () => {
 })
 
 describe('assistant detail panel', () => {
-  it('renders the seven blocks of a selected helper', () => {
+  it('renders the eight blocks of a selected helper', () => {
     const html = renderPanel(instance())
     const view = text(html)
 
     expect(html).toContain('data-dsh-assistant-detail')
-    expect(html.match(/data-disclosure-row/g)).toHaveLength(7)
-    for (const title of ['概览', '身份', '模型', '权限', '人设', '记忆', '会话历史']) {
+    expect(html.match(/data-disclosure-row/g)).toHaveLength(8)
+    for (const title of ['概览', '身份', '模型', '权限', '人设', '记忆', '自动化', '会话历史']) {
       expect(view).toContain(title)
     }
-    for (const id of ['persona', 'memory', 'history']) {
+    for (const id of ['persona', 'memory', 'automations', 'history']) {
       expect(html).toContain(`data-dsh-assistant-detail-section="${id}"`)
     }
-    expect(html.match(/data-dsh-assistant-detail-section="(?!persona|memory|history)/g)).toHaveLength(4)
+    expect(html.match(/data-dsh-assistant-detail-section="(?!persona|memory|automations|history)/g))
+      .toHaveLength(4)
     expect(view).toContain('小码')
     expect(view).toContain('空闲')
     expect(view).toContain('前端')
@@ -217,6 +227,126 @@ describe('assistant detail panel', () => {
 
     expect(text(html)).toBe(DETAIL_EMPTY_TEXT)
     expect(html).toContain('data-expanded="false"')
+  })
+})
+
+describe('assistant automations', () => {
+  function entry(
+    overrides: Partial<AssistantAutomationEntry> = {},
+  ): AssistantAutomationEntry {
+    return {
+      id: 'task-1',
+      title: '每日回顾',
+      status: 'active',
+      scheduledAt: '2026-01-02T01:00:00.000Z',
+      sessionId: 'session-main',
+      ...overrides,
+    }
+  }
+
+  it('joins on the Sessions the row already stores', () => {
+    expect(assistantAutomationSessionIds(instance())).toEqual([
+      'session-main',
+      'session-thread-1',
+      'session-thread-2',
+    ])
+    expect(assistantAutomationSessionIds({})).toEqual([])
+  })
+
+  it('keeps only this assistant\'s tasks, active first, by next run', () => {
+    const rows = assistantAutomationRows(instance(), [
+      entry({ id: 'thread-but-later', sessionId: 'session-thread-2', scheduledAt: '2026-03-01T00:00:00.000Z' }),
+      entry({ id: 'other-assistant', sessionId: 'session-someone-else' }),
+      entry({ id: 'ended', status: 'inactive', scheduledAt: '2026-01-01T00:00:00.000Z' }),
+      entry({ id: 'main-sooner', scheduledAt: '2026-02-01T00:00:00.000Z' }),
+    ])
+
+    expect(rows.map(row => row.id)).toEqual(['main-sooner', 'thread-but-later', 'ended'])
+    expect(rows[0]).toEqual({
+      id: 'main-sooner',
+      title: '每日回顾',
+      status: 'active',
+      nextRunAt: '2026-02-01T00:00:00.000Z',
+    })
+  })
+
+  it('reports no task for an assistant without Sessions', () => {
+    expect(assistantAutomationRows({}, [entry()])).toEqual([])
+  })
+
+  it('reads the stored occurrence the way task times are read', () => {
+    const stored = '2026-01-02T01:00:00.000Z'
+    expect(assistantAutomationNextRun(stored)).toBe(new Date(stored).toLocaleString('zh-CN'))
+    expect(assistantAutomationNextRun('not-a-time')).toBe('not-a-time')
+  })
+
+  it('says nothing is scheduled and where to create one', () => {
+    const opened: string[] = []
+    const view = text(renderToStaticMarkup(createElement(AutomationPanel, {
+      state: { loading: false, rows: [] },
+      onOpen: () => { opened.push('open') },
+    })))
+
+    expect(view).toContain('还没有自动化任务')
+    expect(view).toContain('打开自动化任务')
+    expect(view).toContain('自动化任务')
+    expect(opened).toEqual([])
+  })
+
+  it('lists a task by its stored title, status and next run', () => {
+    const html = renderToStaticMarkup(createElement(AutomationPanel, {
+      state: {
+        loading: false,
+        rows: assistantAutomationRows(instance(), [entry({ id: 'task-9', title: '周报' })]),
+      },
+      onOpen: () => {},
+    }))
+    const view = text(html)
+
+    expect(html).toContain('data-dsh-assistant-automation="task-9"')
+    expect(view).toContain('周报')
+    expect(view).toContain('已开启')
+    expect(view).toContain(new Date('2026-01-02T01:00:00.000Z').toLocaleString('zh-CN'))
+    expect(view).not.toContain('还没有自动化任务')
+  })
+
+  it('distinguishes a deployment without the host service from an empty list', () => {
+    const view = text(renderToStaticMarkup(createElement(AutomationPanel, {
+      state: { loading: false, unavailable: true },
+      onOpen: () => {},
+    })))
+
+    expect(view).toContain('当前部署没有自动化任务服务')
+    expect(view).not.toContain('还没有自动化任务')
+    // No dead button: nothing to open when the deployment has no Host panel.
+    expect(view).not.toContain('打开自动化任务')
+  })
+
+  it('jumps through the host entrance it was installed with', () => {
+    installAssistantAutomations(undefined)
+    expect(openAssistantAutomations()).toBe(false)
+    expect(SCHEDULES_PANEL_ID).toBe('schedules')
+
+    const opened: string[] = []
+    installAssistantAutomations({ open: () => { opened.push('panel') } })
+    expect(openAssistantAutomations()).toBe(true)
+    expect(opened).toEqual(['panel'])
+    installAssistantAutomations(undefined)
+  })
+
+  it('reads the host Remote and selects the host panel, never its own page', () => {
+    const client = source('index.tsx')
+
+    expect(client).toContain("get?.('remote.schedule')")
+    expect(client).toContain('installAssistantAutomations(scheduleRemote === undefined ? undefined : {')
+    expect(client).toContain('ctx.layout.selectPanel(SCHEDULES_PANEL_ID as never)')
+    expect(source('assistant-detail.tsx')).not.toContain('createPortal')
+  })
+
+  it('shows the reading state inside the panel before the catalog settles', () => {
+    const view = text(renderPanel(instance()))
+
+    expect(view).toContain('正在读取自动化任务…')
   })
 })
 

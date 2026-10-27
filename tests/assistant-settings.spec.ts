@@ -289,12 +289,12 @@ describe('assistant create mascot section', () => {
     return html.slice(start, html.indexOf('</details>', start))
   }
 
-  it('is collapsed by default and opens onto the shared picker', () => {
+  it('is expanded by default and opens onto the shared picker', () => {
     const html = renderCreateBody()
     const tag = /<details[^>]*data-dsh-assistant-create-mascot[^>]*>/.exec(html)?.[0] ?? ''
     expect(tag).not.toBe('')
-    // No `open` attribute: the section starts folded.
-    expect(tag).not.toContain('open')
+    // `open`: the shipped section starts unfolded, so the look is picked in place.
+    expect(tag).toContain('open')
     const details = mascotDetails(html)
     expect(details).toContain('>形象<')
     // Same three MausBot-style sections as the settings dialog.

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import {
   Button,
   DisclosureRow,
+  IconClockOutlineRegular,
   IconDatabaseOutlineRegular,
   IconEditOutlineRegular,
   IconFlatListOutlineRegular,
@@ -51,6 +52,7 @@ export type AssistantDetailSectionId =
   | 'permission'
   | 'persona'
   | 'memory'
+  | 'automations'
   | 'history'
 
 /** The four read-only blocks, all read from one `assistant.instance.list` row. */
@@ -166,6 +168,7 @@ const SECTION_ICONS: Record<AssistantDetailSectionId, JSX.Element> = {
   permission: <IconShieldOutlineRegular size={14} />,
   persona: <IconEditOutlineRegular size={14} />,
   memory: <IconDatabaseOutlineRegular size={14} />,
+  automations: <IconClockOutlineRegular size={14} />,
   history: <IconFlatListOutlineRegular size={14} />,
 }
 
@@ -546,6 +549,220 @@ function HistorySection({
 }
 
 /**
+ * The slice of one Host `schedule.catalog` row this panel reads. The Host owns
+ * the reminders: its catalog already carries the stored title, status, next
+ * occurrence and the Session the task runs on, so nothing here is derived.
+ */
+export interface AssistantAutomationEntry {
+  id: string
+  title: string
+  status: 'active' | 'inactive'
+  /** Committed next occurrence while active, or the final one once it ended. */
+  scheduledAt: string
+  sessionId: string
+}
+
+export interface AssistantAutomationRow {
+  id: string
+  title: string
+  status: 'active' | 'inactive'
+  nextRunAt: string
+}
+
+/**
+ * The Sessions this assistant's automations run on: the main Session plus every
+ * visible thread. Retired ids are history and are dropped, exactly like
+ * `assistantBoundSessionCount`.
+ */
+export function assistantAutomationSessionIds(
+  instance: Pick<AssistantInstanceView, 'mainSessionId' | 'threadSessionIds'>,
+): string[] {
+  const ids: string[] = []
+  if (instance.mainSessionId !== undefined) ids.push(instance.mainSessionId)
+  for (const sessionId of instance.threadSessionIds ?? []) ids.push(sessionId)
+  return ids
+}
+
+/**
+ * This assistant's automations out of the Host's whole catalog.
+ *
+ * The Host binds a task to the Session that created it and offers no
+ * per-assistant query, so the filter is the join against the Sessions this row
+ * already stores — no index, no copied task. Active tasks sort first, then by
+ * their stored next occurrence; the id breaks ties so two reads agree.
+ */
+export function assistantAutomationRows(
+  instance: Pick<AssistantInstanceView, 'mainSessionId' | 'threadSessionIds'>,
+  entries: readonly AssistantAutomationEntry[],
+): AssistantAutomationRow[] {
+  const sessions = new Set(assistantAutomationSessionIds(instance))
+  return entries
+    .filter(entry => sessions.has(entry.sessionId))
+    .map(entry => ({
+      id: entry.id,
+      title: entry.title,
+      status: entry.status,
+      nextRunAt: entry.scheduledAt,
+    }))
+    .sort((left, right) => Number(right.status === 'active') - Number(left.status === 'active')
+      || left.nextRunAt.localeCompare(right.nextRunAt)
+      || left.id.localeCompare(right.id))
+}
+
+/** The stored occurrence read the same way `labels.ts` reads a task time. */
+export function assistantAutomationNextRun(nextRunAt: string): string {
+  const at = Date.parse(nextRunAt)
+  return Number.isNaN(at) ? nextRunAt : new Date(at).toLocaleString('zh-CN')
+}
+
+/**
+ * The Host surfaces this block needs, installed once from `apply()`. This plugin
+ * owns no scheduling and renders no page of its own, so the reader is the Host's
+ * catalog and the jump selects the Host's own panel.
+ */
+export interface AssistantAutomationSource {
+  /** The Host's whole schedule catalog; absent when no Schedule Remote is composed. */
+  catalog?: () => Promise<readonly AssistantAutomationEntry[]>
+  /** Select the Host's automations panel. */
+  open: () => void
+}
+
+let automationSource: AssistantAutomationSource | undefined
+
+/**
+ * The Host's own automations panel, as `@deepseek-ai/dsh-client-ui-schedule`
+ * registers it in `sidebar.panellist`. This plugin only selects it.
+ */
+export const SCHEDULES_PANEL_ID = 'schedules'
+
+export function installAssistantAutomations(source: AssistantAutomationSource | undefined): void {
+  automationSource = source
+}
+
+/** True once the Host panel was asked to open. */
+export function openAssistantAutomations(): boolean {
+  if (automationSource === undefined) return false
+  automationSource.open()
+  return true
+}
+
+export interface AutomationPanelState {
+  /** True until the Host catalog read settles. */
+  loading: boolean
+  /** The deployment composes no Schedule Remote, so there is nothing to list. */
+  unavailable?: boolean | undefined
+  error?: string | undefined
+  rows?: AssistantAutomationRow[] | undefined
+}
+
+/**
+ * 自动化: the Host's scheduled tasks for this assistant, read-only. Rules,
+ * editing and run history stay in the Host panel the footer opens — this block
+ * only answers "does this assistant have automations, and when do they run".
+ */
+export function AutomationPanel({
+  state,
+  onOpen,
+}: {
+  state: AutomationPanelState
+  onOpen: () => void
+}): JSX.Element {
+  const rows = state.rows ?? []
+  const empty = !state.loading && state.unavailable !== true
+    && state.error === undefined && rows.length === 0
+  return (
+    <div className={css.assistantDetailBody} data-dsh-assistant-detail-section="automations">
+      {state.loading && <p className={css.assistantDetailHint}>正在读取自动化任务…</p>}
+      {state.unavailable === true && (
+        <p className={css.assistantDetailHint}>当前部署没有自动化任务服务</p>
+      )}
+      {state.error !== undefined && <DetailError message={state.error} />}
+      {empty && <p className={css.assistantDetailHint}>还没有自动化任务</p>}
+      {rows.length > 0 && (
+        <ul className={css.assistantDetailHistoryList}>
+          {rows.map(row => (
+            <li
+              key={row.id}
+              className={css.assistantDetailHistoryRow}
+              data-dsh-assistant-automation={row.id}
+            >
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                title="在自动化任务面板里查看"
+                onClick={onOpen}
+              >
+                {row.title}
+              </Button>
+              <span className={css.assistantDetailHistoryBadge}>
+                {row.status === 'active' ? '已开启' : '未运行'}
+              </span>
+              <span className={css.assistantDetailHistoryId} title={row.nextRunAt}>
+                {assistantAutomationNextRun(row.nextRunAt)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {/* Nothing to jump to in a deployment without the Host panel: the block
+          states that instead of offering a button that cannot work. */}
+      {state.unavailable !== true && (
+        <>
+          <div className={css.assistantDetailActions}>
+            <Button type="button" size="sm" variant="outline" onClick={onOpen}>
+              打开自动化任务
+            </Button>
+          </div>
+          <p className={css.assistantDetailHint}>
+            任务在「自动化任务」面板里新建，跑在创建它的会话上；这里只列本助手会话名下的任务。
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** Hook wrapper: one Host catalog read, plus the jump to the Host's own panel. */
+function AutomationSection({ instance }: { instance: AssistantInstanceView }): JSX.Element {
+  const [state, setState] = useState<AutomationPanelState>({ loading: true })
+  const [jumpError, setJumpError] = useState<string>()
+  const sessionKey = assistantAutomationSessionIds(instance).join('\u0000')
+
+  useEffect(() => {
+    const readCatalog = automationSource?.catalog
+    if (readCatalog === undefined) {
+      setState({ loading: false, unavailable: true })
+      return
+    }
+    let live = true
+    setState({ loading: true })
+    void readCatalog().then(
+      entries => {
+        if (live) setState({ loading: false, rows: assistantAutomationRows(instance, entries) })
+      },
+      cause => {
+        if (live) setState({ loading: false, error: detailErrorMessage('读取自动化任务失败', cause) })
+      },
+    )
+    return () => { live = false }
+    // The row's Session list is what selects the tasks; `instance` itself is a
+    // fresh object on every list refresh and would re-read for nothing.
+  }, [instance.id, sessionKey])
+
+  const open = (): void => {
+    setJumpError(openAssistantAutomations() ? undefined : '无法打开自动化任务面板：宿主没有该面板')
+  }
+
+  return (
+    <>
+      <AutomationPanel state={state} onOpen={open} />
+      {jumpError !== undefined && <DetailError message={jumpError} />}
+    </>
+  )
+}
+
+/**
  * The panel body. Sections default open and are collapsible, which is also what
  * makes the whole panel keyboard reachable: `DisclosureRow` renders the row as a
  * focusable, Enter/Space-operable target.
@@ -625,6 +842,14 @@ export function AssistantDetailPanel({
         onToggle={() => { toggle('memory', isOpen('memory')) }}
       >
         <MemorySection instance={instance} />
+      </DetailSection>
+      <DetailSection
+        id="automations"
+        title="自动化"
+        open={isOpen('automations')}
+        onToggle={() => { toggle('automations', isOpen('automations')) }}
+      >
+        <AutomationSection instance={instance} />
       </DetailSection>
       <DetailSection
         id="history"
