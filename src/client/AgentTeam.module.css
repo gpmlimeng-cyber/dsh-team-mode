@@ -4657,7 +4657,7 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
      size and stays centred. */
   width: 100%;
   min-width: 0;
-  height: 44px;
+  height: 56px;
   padding: 0;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: var(--dsw-radius-sm);
@@ -4686,20 +4686,20 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 }
 
 .mascotPickerOption img {
-  width: 32px;
-  height: 32px;
+  width: 44px;
+  height: 44px;
   object-fit: contain;
 }
 
 .mascotPickerSwatch {
   width: 100%;
-  height: 44px;
+  height: 56px;
   border-radius: var(--dsw-radius-sm);
 }
 
 .mascotPickerSwatch img {
-  width: 26px;
-  height: 26px;
+  width: 34px;
+  height: 34px;
   border-radius: 50%;
   margin: 0 auto;
 }
