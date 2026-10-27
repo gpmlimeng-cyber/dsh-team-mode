@@ -87,6 +87,14 @@ export const SIDEBAR_ASSISTANT_CREATE_EVENT = 'dsh-team-mode:assistant-create'
 /** ＋ menu → 「创建分组」: the group dialogs live with the list they reorder. */
 export const SIDEBAR_GROUP_CREATE_EVENT = 'dsh-team-mode:sidebar-group-create'
 
+/**
+ * The one size of a 单聊 row's identity: DeepSeek-Bot draws a sidebar Bot at
+ * 36px (`sidebar.js:88` → `BotAvatar { size: 36 }`), and our slot is the same
+ * 36px. Mascot and uploaded picture must share it — different sizes made the
+ * row jump when a helper swapped one for the other.
+ */
+export const SIDEBAR_ASSISTANT_AVATAR_SIZE = 36
+
 /** Three tiny dots used while an Assistant is thinking, not a static count. */
 function AssistantWorkingDots(): JSX.Element {
   return (
@@ -760,14 +768,14 @@ export function AssistantSidebarSection({
               {assistantShowsMascot(instance)
                 ? <Mascot
                     {...mascotOptionsFor(instance)}
-                    size={32}
+                    size={SIDEBAR_ASSISTANT_AVATAR_SIZE}
                     avatarShape="rounded"
                     motion={mascotMotionForStatus(instance.status)}
                   />
                 : <MemberAvatar
                     name={name}
                     avatar={assistantAvatarSource(instance)}
-                    size={34}
+                    size={SIDEBAR_ASSISTANT_AVATAR_SIZE}
                     className={css.sidebarAssistantAvatarShape ?? ''}
                   />}
               {state !== 'none' && (

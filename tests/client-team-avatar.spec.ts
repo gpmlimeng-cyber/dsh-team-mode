@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { TEAM_IDENTITY_COLORS } from '../src/client/team-identity.js'
 import {
   TEAM_AVATAR_TILE_COUNT,
+  clusterSeats,
   teamAvatarColor,
   teamAvatarIndex,
   teamAvatarStack,
@@ -9,6 +10,14 @@ import {
 } from '../src/client/team-avatar.js'
 
 describe('team avatar identity', () => {
+  /** n members, the first one the Leader unless asked otherwise. */
+  const build = (count: number): ReturnType<typeof teamAvatarStack> => teamAvatarStack(
+    Object.fromEntries(Array.from({ length: count }, (_, index) => [
+      `m${index + 1}`,
+      { id: `m${index + 1}`, displayName: `成员${index + 1}`, role: index === 0 ? 'leader' : 'member' },
+    ])),
+  )
+
   it('uses the first four visible characters for a long team name', () => {
     expect(teamAvatarTiles('软件研发团队')).toEqual(['软', '件', '研', '发'])
     expect(TEAM_AVATAR_TILE_COUNT).toBe(4)
@@ -54,32 +63,80 @@ describe('team avatar identity', () => {
     expect(values.size).toBeGreaterThan(1)
   })
 
-  it('draws every member up to four, with the grid size per count', () => {
-    const build = (count: number): ReturnType<typeof teamAvatarStack> => teamAvatarStack(
-      Object.fromEntries(Array.from({ length: count }, (_, index) => [
-        `m${index + 1}`,
-        { id: `m${index + 1}`, displayName: `成员${index + 1}`, role: index === 0 ? 'leader' : 'member' },
-      ])),
-    )
+  it('seats two on a diagonal, three in an upright triangle, four in a grid', () => {
+    expect(clusterSeats(2)).toEqual([
+      { left: 0, top: 0, size: 24 },
+      { left: 12, top: 12, size: 24 },
+    ])
+    expect(clusterSeats(3)).toEqual([
+      { left: 8, top: 0, size: 20 },
+      { left: 0, top: 16, size: 20 },
+      { left: 16, top: 16, size: 20 },
+    ])
+    expect(clusterSeats(4)).toEqual([
+      { left: 0, top: 0, size: 18 },
+      { left: 18, top: 0, size: 18 },
+      { left: 0, top: 18, size: 18 },
+      { left: 18, top: 18, size: 18 },
+    ])
+  })
+
+  it('draws every member up to four, at the size of the grid it draws', () => {
     expect(build(2).faces).toHaveLength(2)
-    expect(build(2).size).toBe(24)
+    expect(build(2).seats.map(seat => seat.size)).toEqual([24, 24])
     expect(build(3).faces).toHaveLength(3)
-    expect(build(3).size).toBe(20)
+    expect(build(3).seats.map(seat => seat.size)).toEqual([20, 20, 20])
     expect(build(4).faces).toHaveLength(4)
+    expect(build(4).seats.map(seat => seat.size)).toEqual([18, 18, 18, 18])
     expect(build(4).extra).toBe(0)
-    expect(build(4).size).toBe(18)
   })
 
   it('turns the fourth seat into a counter past four members', () => {
-    const stack = teamAvatarStack(Object.fromEntries(
-      Array.from({ length: 5 }, (_, index) => [
-        `m${index + 1}`,
-        { id: `m${index + 1}`, displayName: `成员${index + 1}`, role: 'member' },
-      ]),
-    ))
+    const stack = build(5)
     // 5 people = three faces plus +2 (total − 3), not +1.
-    expect(stack.faces).toHaveLength(3)
+    expect(stack.faces.map(face => face.id)).toEqual(['m1', 'm2', 'm3'])
     expect(stack.extra).toBe(2)
+    expect(stack.seats).toHaveLength(4)
+    expect(stack.seats[3]?.kind).toBe('more')
+    expect(stack.seats[3]?.label).toBe('+2')
+    // The disc is 92% of the last seat, inset by 4%.
+    expect(stack.seats[3]?.size).toBeCloseTo(18 * 0.92, 5)
+    expect(stack.seats[3]?.left).toBeCloseTo(18 + 18 * 0.04, 5)
+    expect(stack.seats[3]?.top).toBeCloseTo(18 + 18 * 0.04, 5)
+  })
+
+  it('keeps team.members order and never promotes the Leader', () => {
+    // The reference draws room.members as stored: the Leader is not moved up.
+    const stack = teamAvatarStack({
+      a: { id: 'a', displayName: '成员一', role: 'member' },
+      b: { id: 'b', displayName: '成员二', role: 'leader' },
+    })
+    expect(stack.seats.map(seat => seat.face?.id)).toEqual(['a', 'b'])
+  })
+
+  it('draws a lone member at the reference face size; nobody draws nothing', () => {
+    // The 22.08px "you" disc is deferred (t1 doc §1.2-4): one face, no disc.
+    const solo = build(1)
+    expect(solo.seats.map(seat => seat.kind)).toEqual(['face'])
+    expect(solo.seats[0]?.size).toBe(24)
+    expect(solo.seats[0]?.holes).toEqual([])
+    expect(teamAvatarStack({})).toEqual({ faces: [], extra: 0, total: 0, seats: [] })
+  })
+
+  it('cuts the neighbour gap into the earlier seat and draws what it counts', () => {
+    const two = build(2)
+    expect(two.seats[0]?.holes).toHaveLength(1)
+    expect(two.seats[0]?.holes[0]).toContain('radial-gradient')
+    expect(two.seats[1]?.holes).toHaveLength(0)
+    const four = build(4)
+    expect(four.seats[0]?.holes).toHaveLength(2)
+    expect(four.seats[3]?.holes).toHaveLength(0)
+    // `data-count` is seats.length: every drawn face plus the +N disc.
+    for (const count of [1, 2, 3, 4, 5, 12]) {
+      const stack = build(count)
+      const drawn = stack.faces.length + (stack.extra > 0 ? 1 : 0)
+      expect(stack.seats).toHaveLength(drawn)
+    }
   })
 
   it('keeps an uploaded picture and ignores a non-data avatar', () => {

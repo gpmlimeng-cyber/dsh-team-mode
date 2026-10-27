@@ -48,11 +48,89 @@ export interface TeamAvatarFace {
   mascotColor: string
 }
 
+/** The 36px slot a team row gives its members, as DeepSeek-Bot's row does. */
+export const TEAM_AVATAR_FRAME = 36
+
+/** One seat of the cluster: its frame-relative box and what it draws. */
+export interface TeamAvatarSeat {
+  key: string
+  kind: 'face' | 'more'
+  left: number
+  top: number
+  size: number
+  /** `mask-image` layers cutting the gap a later seat presses into this one. */
+  holes: string[]
+  face?: TeamAvatarFace
+  /** Only on the `more` seat: `+N`. */
+  label?: string
+}
+
 /**
- * The faces a team row stacks, in the order DeepSeek-Bot draws them: the Leader
- * first, then members. The grid is always 2×2 and filled in reading order, so
- * ≤4 people are all drawn (2 = a diagonal, 3 = an upright triangle), and past
- * that the last cell becomes a `+N` chip with N = total − 3.
+ * Where DeepSeek-Bot seats a group's faces (`mark.js:126-136`), copied as-is:
+ * two people on a diagonal, three in an upright triangle (one above, two
+ * below), four in a 2×2 grid. `frame` is the 36px slot the row hands over.
+ */
+export function clusterSeats(
+  count: number,
+  frame: number = TEAM_AVATAR_FRAME,
+): Array<{ left: number; top: number; size: number }> {
+  if (count <= 1) return [{ left: 0, top: 0, size: frame }]
+  if (count === 2) {
+    const size = frame * 2 / 3
+    return [
+      { left: 0, top: 0, size },
+      { left: frame / 3, top: frame / 3, size },
+    ]
+  }
+  if (count === 3) {
+    const size = frame * 5 / 9
+    const rest = frame - size
+    return [
+      { left: rest / 2, top: 0, size },
+      { left: 0, top: rest, size },
+      { left: rest, top: rest, size },
+    ]
+  }
+  const half = frame / 2
+  return [
+    { left: 0, top: 0, size: half },
+    { left: half, top: 0, size: half },
+    { left: 0, top: half, size: half },
+    { left: half, top: half, size: half },
+  ]
+}
+
+/**
+ * The transparent gaps between neighbours. DeepSeek-Bot cuts a disc of
+ * `size/14` padding out of every earlier seat a later one overlaps
+ * (`mark.js:155-163`), so the row's own background shows through — no ring to
+ * go the wrong colour on hover. One mask layer per overlapping later seat.
+ */
+function clusterHoles(
+  seats: readonly { left: number; top: number; size: number }[],
+): string[][] {
+  const gap = TEAM_AVATAR_FRAME / 14
+  const rings = seats.map(seat => ({
+    cx: seat.left + seat.size / 2,
+    cy: seat.top + seat.size / 2,
+    r: seat.size * 0.48 + gap,
+  }))
+  return seats.map((seat, index) => {
+    const cx = seat.left + seat.size / 2
+    const cy = seat.top + seat.size / 2
+    return rings
+      .slice(index + 1)
+      .filter(ring => Math.hypot(ring.cx - cx, ring.cy - cy) < ring.r + seat.size * 0.46)
+      .map(ring => `radial-gradient(circle at ${ring.cx - seat.left}px ${ring.cy - seat.top}px,transparent ${ring.r}px,#000 ${ring.r + 0.5}px)`)
+  })
+}
+
+/**
+ * The faces a team row seats, in `team.members` insertion order — DeepSeek-Bot
+ * draws `room.members` as stored and never promotes the Leader, so neither do
+ * we. Every member up to four is drawn; past that the fourth seat becomes a
+ * `+N` disc with N = total − 3. A single member sits beside a "you" disc, which
+ * is what a one-Bot room shows; no member at all draws nothing (no empty box).
  */
 export function teamAvatarStack(
   members: Readonly<Record<string, {
@@ -61,14 +139,8 @@ export function teamAvatarStack(
     role: string
     assistantSnapshot?: { name?: string; avatar?: string | undefined }
   }>>,
-): { faces: TeamAvatarFace[]; extra: number; total: number; size: number } {
-  const ordered = Object.values(members)
-    .slice()
-    .sort((left, right) => {
-      if (left.role !== right.role) return left.role === 'leader' ? -1 : 1
-      return left.id.localeCompare(right.id)
-    })
-  const named = ordered.map(member => {
+): { faces: TeamAvatarFace[]; extra: number; total: number; seats: TeamAvatarSeat[] } {
+  const named = Object.values(members).map(member => {
     const avatar = member.assistantSnapshot?.avatar
     const label = member.displayName.trim() === '' ? member.assistantSnapshot?.name ?? '' : member.displayName
     return {
@@ -80,15 +152,31 @@ export function teamAvatarStack(
       ...(avatar !== undefined && avatar.startsWith('data:') ? { avatar } : {}),
     }
   })
-  // Four or fewer: draw them all. Past that the fourth cell is the counter.
-  const overflow = named.length > 4
-  // Face size follows the grid that is actually drawn: two faces get a bigger
-  // tile than a full 2×2 (DeepSeek-Bot: 24 / 20 / 18 px).
-  const size = named.length <= 2 ? 24 : named.length === 3 ? 20 : 18
-  return {
-    faces: overflow ? named.slice(0, 3) : named.slice(0, 4),
-    extra: overflow ? named.length - 3 : 0,
-    total: named.length,
-    size,
-  }
+  const total = named.length
+  if (total === 0) return { faces: [], extra: 0, total: 0, seats: [] }
+  const overflow = total > 4
+  const extra = overflow ? total - 3 : 0
+  const faces = overflow ? named.slice(0, 3) : named.slice(0, 4)
+  // A lone member keeps the reference's 24px face. The reference also seats a
+  // 22.08px "you" disc beside it (t1 doc §1.2-4); that disc is deferred until
+  // the product decides whether it belongs in a team row.
+  // TODO(t2): add the "you" seat here when that decision lands —
+  // docs/superpowers/notes/2026-10-27-dsbot-avatar-alignment.md.
+  const solo = total === 1
+  const base = solo ? clusterSeats(2).slice(0, 1) : clusterSeats(Math.min(total, 4))
+  const holes = clusterHoles(base)
+  // The `+N` disc sits at 92% of its seat with a 4% margin.
+  const disc = (seat: { left: number; top: number; size: number }): { left: number; top: number; size: number } => ({
+    left: seat.left + seat.size * 0.04,
+    top: seat.top + seat.size * 0.04,
+    size: seat.size * 0.92,
+  })
+  const seats = base.map((seat, index): TeamAvatarSeat => {
+    if (overflow && index === 3) {
+      return { key: 'more', kind: 'more', ...disc(seat), holes: holes[index]!, label: `+${extra}` }
+    }
+    const face = faces[index]!
+    return { key: face.id, kind: 'face', left: seat.left, top: seat.top, size: seat.size, holes: holes[index]!, face }
+  })
+  return { faces, extra, total, seats }
 }

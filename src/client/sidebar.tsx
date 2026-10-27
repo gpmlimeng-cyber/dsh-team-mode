@@ -63,7 +63,7 @@ import {
 } from './team-sidebar-data.js'
 import { useTeamText } from './team-i18n.js'
 import { TEAM_TASK_CREATE_HINT } from './labels.js'
-import { teamAvatarStack } from './team-avatar.js'
+import { teamAvatarStack, type TeamAvatarSeat } from './team-avatar.js'
 import { AnimatedModal } from './shared.js'
 import {
   SURFACE_MODE_KEY,
@@ -90,6 +90,26 @@ import {
 } from './sidebar-group-ui.js'
 
 const SURFACE_MODE_EVENT = 'dsh-team-mode:surface-mode-change'
+
+/**
+ * One cluster seat: its absolute box, plus the mask layers that cut the gap
+ * into the neighbours drawn after it (the reference's `mask-composite` pair).
+ */
+function teamAvatarSeatStyle(seat: TeamAvatarSeat): CSSProperties {
+  const style: CSSProperties = {
+    left: seat.left,
+    top: seat.top,
+    width: seat.size,
+    height: seat.size,
+  }
+  if (seat.holes.length > 0) {
+    style.WebkitMaskImage = seat.holes.join(',')
+    style.maskImage = seat.holes.join(',')
+    style.WebkitMaskComposite = 'source-in'
+    style.maskComposite = 'intersect'
+  }
+  return style
+}
 
 /** localStorage read; a restricted WebView simply has no stored mode. */
 function surfaceStorage(): Storage | undefined {
@@ -594,38 +614,39 @@ export function SidebarTeamSection({
             aria-current={teamCurrent ? 'page' : undefined}
             title={`${team.name} · ${statusText}`}
           >
-            <span
-              className={css.sidebarTeamAvatarStack}
-              data-team-avatar={team.id}
-              data-count={avatarStack.faces.length + (avatarStack.extra > 0 ? 1 : 0)}
-              aria-hidden="true"
-            >
-              {avatarStack.faces.map(face => (
-                face.avatar === undefined
-                  ? (
-                    <Mascot
-                      key={face.id}
-                      seed={face.mascotSeed}
-                      options={{ bodyColor: face.mascotColor }}
-                      size={avatarStack.size}
-                      avatarShape="rounded"
-                      animated={false}
-                    />
-                  )
-                  : (
-                    <MemberAvatar
-                      key={face.id}
-                      name={face.name}
-                      avatar={face.avatar}
-                      size={avatarStack.size}
-                      className={css.sidebarTeamAvatarFace ?? ''}
-                    />
-                  )
-              ))}
-              {avatarStack.extra > 0 && (
-                <span className={css.sidebarTeamAvatarChip}>+{avatarStack.extra}</span>
-              )}
-            </span>
+            {avatarStack.total > 0 && (
+              <span
+                className={css.sidebarTeamAvatarStack}
+                data-team-avatar={team.id}
+                data-count={avatarStack.seats.length}
+                aria-hidden="true"
+              >
+                {avatarStack.seats.map(seat => (
+                  <span key={seat.key} className={css.sidebarTeamAvatarSeat} style={teamAvatarSeatStyle(seat)}>
+                    {seat.kind === 'face' && seat.face !== undefined
+                      ? (seat.face.avatar === undefined
+                          ? (
+                            <Mascot
+                              seed={seat.face.mascotSeed}
+                              options={{ bodyColor: seat.face.mascotColor }}
+                              size={seat.size}
+                              avatarShape="rounded"
+                              animated={false}
+                            />
+                          )
+                          : (
+                            <MemberAvatar
+                              name={seat.face.name}
+                              avatar={seat.face.avatar}
+                              size={seat.size}
+                              className={css.sidebarTeamAvatarFace ?? ''}
+                            />
+                          ))
+                      : <span className={css.sidebarTeamAvatarChip} data-kind={seat.kind}>{seat.label ?? ''}</span>}
+                  </span>
+                ))}
+              </span>
+            )}
             <span className={css.sidebarTeamCopy}>
               <span className={css.sidebarAssistantTop}>
                 <span className={css.sidebarTeamName}>{team.name}</span>

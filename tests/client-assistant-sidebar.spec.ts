@@ -179,4 +179,14 @@ describe('assistant sidebar source contract', () => {
     expect(source).toContain("{state !== 'none' && (")
     expect(source).toContain('data-dsh-assistant-status={state}')
   })
+
+  it('draws a mascot and an uploaded picture at one 36px row size', () => {
+    // DeepSeek-Bot's sidebar Bot is 36px; one constant keeps the row from
+    // jumping when a helper swaps a picture for its mascot (was 32 vs 34).
+    expect(source).toContain('export const SIDEBAR_ASSISTANT_AVATAR_SIZE = 36')
+    expect(source.match(/size=\{SIDEBAR_ASSISTANT_AVATAR_SIZE\}/g) ?? []).toHaveLength(2)
+    expect(source).not.toContain('size={32}')
+    expect(source).not.toContain('size={34}')
+    expect(moduleCss).toMatch(/\.sidebarAssistantAvatar\s*\{[^}]*width: 36px;[^}]*height: 36px;/)
+  })
 })
