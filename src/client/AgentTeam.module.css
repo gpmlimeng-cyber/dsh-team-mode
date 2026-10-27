@@ -12316,38 +12316,49 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 }
 
 /* Restored with the yesterday-20:40 sidebar: the rework replaced these. */
-.sidebarTeamRowWrapActive,
-
-.sidebarTeamRowWrapActive:hover {
-  background: var(--dsw-alias-interactive-bg-active);
-
-.sidebarTeamEmpty,
-
-.sidebarTeamRowWrapMenuOpen .sidebarTeamManage {
-  display: inline-flex;
-
-.sidebarTeamRowWrapMenuOpen .sidebarTeamTime {
-  display: none;
 
 .sidebarScrollArea.sidebarScrolling::-webkit-scrollbar-thumb,
+.sidebarScrollArea:focus-within::-webkit-scrollbar-thumb {
+  background: var(--dsh-scrollbar-thumb);
+}
 
-.sidebarScrollArea.sidebarScrolling::-webkit-scrollbar-thumb:hover {
-  background: var(--dsh-scrollbar-thumb-hover);
+/* Kept as a hook for the short-name renderer; no fill, no grid gap. */
+.sidebarTeamAvatarTile.sidebarTeamAvatarTileEmpty {
+  background: transparent;
+}
 
-.sidebarTeamScopeButtonActive,
+.sidebarTeamEmpty,
+.sidebarTeamError {
+  padding: 3px 5px 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
 
-.sidebarTeamScopeButtonActive:hover {
-  border-color: var(--dsw-alias-border-l2);
-  color: var(--dsw-alias-label-primary);
-
+/* Touch has no hover: keep both row actions reachable instead of hiding them. */
 @media (hover: none) {
   .sidebarTeamRowWrapTwoLine .sidebarTeamManage,
   .sidebarTeamRowWrapTwoLine .sidebarTeamMoreButton {
     display: inline-flex;
   }
+}
 
-.sidebarTeamAvatarTile.sidebarTeamAvatarTileEmpty {
-  background: transparent;
+.sidebarTeamRowWrapActive,
+.sidebarTeamRowWrapActive:hover {
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+/* A portaled menu moves focus out of the row, so keep the trigger and hide the
+   time while that menu stays open. */
+.sidebarTeamRowWrapMenuOpen .sidebarTeamManage {
+  display: inline-flex;
+}
+
+.sidebarTeamScopeButtonActive,
+.sidebarTeamScopeButtonActive:hover {
+  border-color: var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary);
+}
 
 /* ---------------------------------------------------------------------------
  * Shared dialog furniture (t5): the native-style select pill and the
