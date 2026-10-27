@@ -530,7 +530,7 @@ export function AssistantSettingsDialog({
                 setMascotColor(next.color)
               }}
             >
-              换一只
+              随机
             </Button>
           </div>
           <div className={css.assistantMascotFields}>

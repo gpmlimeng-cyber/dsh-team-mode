@@ -134,14 +134,14 @@ describe('stored fill', () => {
 })
 
 describe('assistant settings integration', () => {
-  it('replaces the four dropdowns with the shared picker and keeps 换一只', () => {
+  it('replaces the four dropdowns with the shared picker and keeps 随机', () => {
     const source = readFileSync(new URL('../src/client/assistant-settings-dialog.tsx', import.meta.url), 'utf8')
     expect(source).toContain("from './mascot-picker.js'")
     expect(source).toContain('<MascotPicker')
     for (const label of ['轮廓', '眼睛', '眼距', '配色']) {
       expect(source).not.toContain(`label="${label}"`)
     }
-    expect(source).toContain('换一只')
+    expect(source).toContain('随机')
     expect(source).toContain("{ fill: 'radial' as const }")
   })
 })

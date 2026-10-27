@@ -195,7 +195,7 @@ function MascotEditor({
               mascotColor: next.color,
             })
           }}>
-          换一只
+          随机
         </button>
         <button type="button" className={css.mascotAction} disabled={disabled} onClick={reset}>
           重置形象

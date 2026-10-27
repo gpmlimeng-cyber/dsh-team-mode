@@ -69,7 +69,7 @@ const style = new Style(gazeDefinition)
  */
 /**
  * One random mascot in one step: seed plus a fresh expression, body and colour.
- * "换一只" used to reroll only the seed, so a reader who had already picked a
+ * The 随机 button used to reroll only the seed, so a reader who had already picked a
  * face and body saw the same silhouette with different eyes.
  */
 export function randomMascotDraft(): {
