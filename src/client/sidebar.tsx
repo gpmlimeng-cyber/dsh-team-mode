@@ -1796,6 +1796,19 @@ export function SidebarPortal({
           <div className={css.brandTopRow}>
             <SurfaceModeSwitch mode={mode} onChange={switchMode} />
             <div className={css.brandActions}>
+              {/* Wide layout keeps the button (the field row is mobile-only). */}
+              <button
+                type="button"
+                className={`${css.brandAction} ${css.brandActionSearch ?? ''}`}
+                aria-label="搜索"
+                title="搜索"
+                onClick={() => {
+                  if (mode === 'native' && clickNativeAction(/搜索|search/i)) return
+                  setSearchOpen(true)
+                }}
+              >
+                <IconSearchOutlineRegular />
+              </button>
               <button
                 type="button"
                 className={css.brandAction}
@@ -1854,7 +1867,10 @@ export function SidebarPortal({
               both lists, and the row is always there instead of hiding behind a
               toggle. DeepSeek mode keeps the shipped search. */}
           {mode === 'team' && (
-            <div className={css.sidebarTeamSearch} data-dsh-brand-search>
+            <div
+              className={`${css.sidebarTeamSearch} ${css.brandSearchRow ?? ''}`}
+              data-dsh-brand-search
+            >
               <IconSearchOutlineRegular size={14} />
               <input
                 autoFocus={searchOpen}

@@ -3028,6 +3028,21 @@ textarea.input {
   min-width: 0;
 }
 
+/* Two layouts share one markup: desktop keeps the single row with the 搜索
+   button, the narrow drawer stacks the field underneath (touch targets and a
+   real input beat an icon that expands in place). */
+@media (min-width: 761px) {
+  .brandSearchRow {
+    display: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .brandActionSearch {
+    display: none;
+  }
+}
+
 .brandActions {
   display: inline-flex;
   flex: 0 0 auto;
