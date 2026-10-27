@@ -1197,6 +1197,17 @@ export function SidebarPortal({
      * scrolling region. Only the original brand button is hidden, and our host
      * is mounting point for the switch.
      */
+    /** Nearest opaque background behind the sticky row; the header paints it. */
+    const sidebarFillColor = (row: HTMLElement): string => {
+      let node: HTMLElement | null = row.parentElement
+      while (node !== null) {
+        const color = getComputedStyle(node).backgroundColor
+        if (color !== '' && color !== 'transparent' && color !== 'rgba(0, 0, 0, 0)') return color
+        node = node.parentElement
+      }
+      return 'transparent'
+    }
+
     const ensureBrand = (): void => {
       // Pick the visible brand row; desktop and mobile drawers can both be
       // mounted at once.
@@ -1263,7 +1274,10 @@ export function SidebarPortal({
       stickyRow.style.position = 'sticky'
       stickyRow.style.top = '0px'
       stickyRow.style.zIndex = '20'
-      stickyRow.style.background = 'var(--dsw-specific-sidebar-fill)'
+      // The header must read as part of the column, not as its own band: copy the
+      // nearest solid background instead of guessing a token. Sticky needs some
+      // fill (content scrolls underneath), so `transparent` is not an option.
+      stickyRow.style.background = sidebarFillColor(stickyRow)
       stickyRow.style.pointerEvents = 'auto'
       // Two rows now (mode + actions, then the search field), so the row grows.
       stickyRow.style.height = 'auto'
