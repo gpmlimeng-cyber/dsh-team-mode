@@ -405,6 +405,7 @@ export function SidebarTeamSection({
   const [sortMode, setSortMode] = useState<'updated' | 'name'>('updated')
   const assistantMode = useAssistantDisplayMode()
   const [menuTeamId, setMenuTeamId] = useState<string>()
+  const [rosterMenuRow, setRosterMenuRow] = useState<string>()
   const [taskDialogTeamId, setTaskDialogTeamId] = useState<string>()
   const [error, setError] = useState<string>()
   const { groups, refresh: refreshGroups, adopt: adoptGroups } = useSidebarGroups()
@@ -773,14 +774,15 @@ export function SidebarTeamSection({
                   key={row.slotId}
                   type="button"
                   className={css.sidebarRosterRow}
+                  role="treeitem"
+                  aria-selected={activeSessionId === row.sessionId}
                   aria-current={activeSessionId === row.sessionId ? 'page' : undefined}
                   title={`${row.name} · ${rosterSubtitle(row)}`}
                   data-dsh-team-roster-row={row.slotId}
                   onClick={() => { openRosterMember(team, row) }}
                 >
-                  <MemberAvatar name={row.name} avatar={row.avatar} size={18} />
-                  {/* One line, like the shipped session row: title, then the
-                      state as trailing meta. The detail line lives in `title`. */}
+                  {/* Shipped row shape: title, trailing status/time, hover menu.
+                      No avatar — the native list has none either. */}
                   <span className={css.sidebarRosterName}>{row.name}</span>
                   {row.role === 'leader' && (
                     <span className={css.sidebarRosterRole}>Leader</span>
@@ -799,6 +801,36 @@ export function SidebarTeamSection({
                     </span>
                   )}
                   <span className={css.sidebarRosterMeta}>{rosterSubtitle(row)}</span>
+                  <span className={css.sidebarRosterActions}>
+                    <Menu
+                      open={rosterMenuRow === row.sessionId}
+                      portal
+                      align="end"
+                      items={[
+                        { id: 'open', label: '打开会话' },
+                        { id: 'member', label: '成员任务与检查点' },
+                      ]}
+                      onSelect={id => {
+                        setRosterMenuRow(undefined)
+                        if (id === 'open') openRosterMember(team, row)
+                        else openTeamPage(team.id)
+                      }}
+                      onClose={() => { setRosterMenuRow(undefined) }}
+                      anchor={(
+                        <button
+                          type="button"
+                          className={css.sidebarRosterIconButton}
+                          aria-label={`${row.name} 的更多操作`}
+                          onClick={(event) => {
+                            event.stopPropagation()
+                            setRosterMenuRow(current => (current === row.sessionId ? undefined : row.sessionId))
+                          }}
+                        >
+                          <IconEllipsisOutlineRegular size={14} />
+                        </button>
+                      )}
+                    />
+                  </span>
                 </button>
               ))}
           </div>
