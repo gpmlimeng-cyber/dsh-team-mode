@@ -4642,20 +4642,23 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 }
 
 .mascotPickerGrid {
-  display: grid;
-  /* Five equal columns that fill the pane: the tiles were max-content, which
-     left a ragged half-empty grid in a wide dialog. */
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
+  /* Every option of a section stays on one line: the tiles share the width
+     equally and shrink together instead of wrapping into a second row. */
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .mascotPickerOption {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  /* Fill the grid cell so the row reads as one band; the preview keeps its own
-     size and stays centred. */
-  width: 100%;
+  /* One shared row: equal shares, no wrap; the preview stays centred. */
+  flex: 1 1 0;
+  width: auto;
   min-width: 0;
   height: 56px;
   padding: 0;
@@ -4688,6 +4691,7 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 .mascotPickerOption img {
   width: 44px;
   height: 44px;
+  max-width: 100%;
   object-fit: contain;
 }
 
@@ -4695,14 +4699,18 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
    box, no background — only the swatch itself and a ring when selected. */
 .mascotPickerSwatchRow {
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
+  flex-wrap: nowrap;
+  gap: 6px;
   min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
 .mascotPickerSwatch {
-  width: 30px;
-  height: 30px;
+  flex: 1 1 0;
+  width: auto;
+  max-width: 56px;
+  height: 56px;
   padding: 0;
   border: 0;
   background: transparent;
@@ -4710,8 +4718,10 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 }
 
 .mascotPickerSwatch img {
-  width: 100%;
-  height: 100%;
+  width: 34px;
+  height: 34px;
+  max-width: 100%;
+  margin: 0 auto;
   border-radius: 50%;
 }
 

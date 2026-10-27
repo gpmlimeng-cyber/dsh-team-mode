@@ -79,18 +79,23 @@ describe('MascotPicker rendering contract', () => {
     return renderToStaticMarkup(createElement(MascotPicker, { seed: 'assistant-1', value, onChange: () => {} }))
   }
 
-  it('renders the three MausBot sections in order, five tiles per row', () => {
+  it('renders the three MausBot sections in order, each on a single row', () => {
     const html = markup({})
     expect(html).toContain('>表情<')
     expect(html).toContain('>颜色<')
     expect(html).toContain('>身体<')
     expect(html.indexOf('>表情<')).toBeLessThan(html.indexOf('>颜色<'))
     expect(html.indexOf('>颜色<')).toBeLessThan(html.indexOf('>身体<'))
-    // Five per row is the grid contract (asserted on the stylesheet below).
     expect(html.match(/<legend /g)).toHaveLength(3)
+    // One row per section: a no-wrap flex row of equal shares, not a grid that
+    // wraps into a second line.
     const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
     const grid = css.slice(css.indexOf('.mascotPickerGrid {'))
-    expect(grid.slice(0, grid.indexOf('}'))).toContain('repeat(5, minmax(0, 1fr))')
+    const rule = grid.slice(0, grid.indexOf('}'))
+    expect(rule).toContain('flex-wrap: nowrap')
+    expect(rule).not.toContain('repeat(')
+    const swatches = css.slice(css.indexOf('.mascotPickerSwatchRow {'))
+    expect(swatches.slice(0, swatches.indexOf('}'))).toContain('flex-wrap: nowrap')
   })
 
   it('renders every option as a real image inside a button', () => {
