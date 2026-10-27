@@ -778,29 +778,27 @@ export function SidebarTeamSection({
                   data-dsh-team-roster-row={row.slotId}
                   onClick={() => { openRosterMember(team, row) }}
                 >
-                  <MemberAvatar name={row.name} avatar={row.avatar} size={20} />
-                  <span className={css.sidebarRosterCopy}>
-                    <span className={css.sidebarRosterTop}>
-                      <span className={css.sidebarRosterName}>{row.name}</span>
-                      {row.role === 'leader' && (
-                        <span className={css.sidebarRosterRole}>Leader</span>
-                      )}
-                      {row.tone === 'running' && (
-                        <span className={css.sidebarTeamStateDot} aria-hidden="true" />
-                      )}
-                      {row.attention !== undefined && (
-                        <span
-                          className={`${css.sidebarRosterBadge} ${row.attention === 'error' ? css.sidebarRosterBadgeError : ''}`}
-                          role="img"
-                          title={row.attention === 'error' ? row.errorText ?? '异常' : '待审批'}
-                          aria-label={row.attention === 'error' ? '异常' : '待审批'}
-                        >
-                          !
-                        </span>
-                      )}
+                  <MemberAvatar name={row.name} avatar={row.avatar} size={18} />
+                  {/* One line, like the shipped session row: title, then the
+                      state as trailing meta. The detail line lives in `title`. */}
+                  <span className={css.sidebarRosterName}>{row.name}</span>
+                  {row.role === 'leader' && (
+                    <span className={css.sidebarRosterRole}>Leader</span>
+                  )}
+                  {row.tone === 'running' && (
+                    <span className={css.sidebarTeamStateDot} aria-hidden="true" />
+                  )}
+                  {row.attention !== undefined && (
+                    <span
+                      className={`${css.sidebarRosterBadge} ${row.attention === 'error' ? css.sidebarRosterBadgeError : ''}`}
+                      role="img"
+                      title={row.attention === 'error' ? row.errorText ?? '异常' : '待审批'}
+                      aria-label={row.attention === 'error' ? '异常' : '待审批'}
+                    >
+                      !
                     </span>
-                    <span className={css.sidebarRosterSubtitle}>{rosterSubtitle(row)}</span>
-                  </span>
+                  )}
+                  <span className={css.sidebarRosterMeta}>{rosterSubtitle(row)}</span>
                 </button>
               ))}
           </div>
