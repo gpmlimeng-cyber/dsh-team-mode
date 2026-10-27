@@ -1,10 +1,9 @@
 /**
- * DOM mount ids shared by the sidebar shell and the assistant section.
+ * Mount id the sidebar shell renders its team/assistant lists into.
  *
- * The shell creates and positions these nodes on <body>; React renders into them
- * through portals, so a host never sits inside a React-owned row that would
- * remove it on the next render.
+ * The shell creates this node inside the shipped Workspace browser (both
+ * sections live in the sidebar column's own flow, above the native Workspaces
+ * list) and React portals into it, so the host survives the shipped column's
+ * re-renders instead of being removed as a foreign child.
  */
 export const SIDEBAR_HOST_ID = 'dsh-team-mode-sidebar-host'
-export const BRAND_HOST_ID = 'dsh-team-mode-brand-host'
-export const STEWARD_HOST_ID = 'dsh-team-mode-steward-host'

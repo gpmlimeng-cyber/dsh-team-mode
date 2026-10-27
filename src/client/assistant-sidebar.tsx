@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { LeaderMark } from './team-member-chrome.js'
 import {
   IconChecklistOutlineRegular,
@@ -180,9 +181,15 @@ export function assistantMenuEntries(
 export function AssistantSidebarSection({
   openSession,
   pickWorkspace,
+  children,
 }: {
   openSession: (sessionId: string) => void
   pickWorkspace: () => Promise<WorkspaceChoice | null>
+  /**
+   * The 群聊 section. It is rendered between the coordinator row and 单聊 so the
+   * DOM, tab and screen-reader order match the column: 总协调 → 群聊 → 单聊.
+   */
+  children?: ReactNode
 }): JSX.Element {
   const { selectedAssistantId } = useAgentTeamUi()
   const [instances, setInstances] = useState<AssistantInstanceView[]>([])
@@ -961,6 +968,7 @@ export function AssistantSidebarSection({
           {renderAssistantRow(coordinator)}
         </div>
       )}
+      {children}
       <section
         className={`${css.sidebarTeamSection} ${css.sidebarAssistantSection}`}
         aria-label="单聊"

@@ -3192,19 +3192,15 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   }
 }
 
-/* The team column's stack: coordinator row, 群聊, 单聊. The sections mount in a
-   different order than they read (the assistant section owns the coordinator),
-   so `order` restores the visual sequence without a portal. */
+/* The team column: the sections are rendered in reading order (总协调 → 群聊 →
+   单聊), so ordinary block stacking is enough and nothing needs `order`. */
 .sidebarTeamHost {
-  display: flex;
   flex: none;
-  flex-direction: column;
   width: 100%;
   min-width: 0;
 }
 
 .sidebarTeamSection {
-  order: 1;
   flex: none;
   min-width: 0;
   padding: 0;
@@ -3213,7 +3209,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 /* Pinned coordinator (总协调): an ordinary row ahead of the lists. The row
    inside it is the 单聊 assistant row's own markup and styles. */
 .sidebarCoordinatorRow {
-  order: 0;
   flex: none;
   min-width: 0;
 }
@@ -3699,7 +3694,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 
 /* Assistant (“单聊”) section: same header/row geometry as the team section. */
 .sidebarAssistantSection {
-  order: 2;
   padding: 0;
 }
 

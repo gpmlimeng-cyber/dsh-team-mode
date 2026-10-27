@@ -2278,15 +2278,15 @@ export function SidebarPortal({
       {host !== undefined && createPortal(
         <>
           {mode === 'team' && (
-            <>
-              {/* The assistant section leads with the coordinator row; the CSS
-                  order on the host keeps 群聊 above 单聊. */}
-              <AssistantSidebarSection
-                openSession={openSession}
-                pickWorkspace={pickWorkspace}
-              />
+            /* The assistant section owns the coordinator row and draws it above
+               its children, so 群聊 is passed in as a child: DOM, tab and
+               screen-reader order stay 总协调 → 群聊 → 单聊. */
+            <AssistantSidebarSection
+              openSession={openSession}
+              pickWorkspace={pickWorkspace}
+            >
               <SidebarTeamSection openSession={openSession} openTeamPage={openTeamPage} />
-            </>
+            </AssistantSidebarSection>
           )}
         </>,
         host,

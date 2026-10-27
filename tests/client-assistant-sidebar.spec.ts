@@ -199,8 +199,16 @@ describe('assistant sidebar source contract', () => {
     expect(source).not.toContain('useStewardHost')
     expect(source).not.toContain('STEWARD_HOST_ID')
     expect(source).not.toContain('requestAnimationFrame')
-    expect(moduleCss).toMatch(/\.sidebarCoordinatorRow\s*\{[^}]*order: 0/)
-    expect(moduleCss).toMatch(/\.sidebarCoordinatorRow\s*\{[^}]*flex: none/)
+    expect(moduleCss).not.toMatch(/\.sidebarCoordinatorRow\s*\{[^}]*order:/)
+    // Coordinator row, then the 群聊 child, then 单聊: the DOM order is the
+    // visual order instead of a CSS `order` override.
+    expect(source).toContain('children?: ReactNode')
+    const coordinatorAt = source.indexOf('data-dsh-assistant-coordinator-row')
+    const childrenAt = source.indexOf('{children}')
+    const sectionAt = source.indexOf('aria-label="单聊"')
+    expect(coordinatorAt).toBeGreaterThan(-1)
+    expect(childrenAt).toBeGreaterThan(coordinatorAt)
+    expect(sectionAt).toBeGreaterThan(childrenAt)
     // The coordinator is still not repeated in the list.
     expect(source).toMatch(/filter\(instance => instance\.id !== coordinatorId\)/)
   })

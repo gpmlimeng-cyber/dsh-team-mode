@@ -953,14 +953,13 @@ describe('roster CSS and sidebar structure', () => {
     // The row takes the shipped brand row's slot: same column, normal flow.
     expect(sidebar).toContain('root.insertBefore(element, logoRow)')
     expect(css).toContain("[data-dsh-team-root]:not([class*='_collapsed']) [class*='_logoRow']")
-    // The assistant section owns the coordinator and mounts first; `order` on
-    // the host puts 群聊 back between them and keeps 单聊 last.
-    expect(sidebar.indexOf('<AssistantSidebarSection'))
-      .toBeLessThan(sidebar.indexOf('<SidebarTeamSection'))
-    expect(css).toMatch(/\.sidebarTeamHost\s*\{[^}]*display: flex/)
-    expect(css).toMatch(/\.sidebarTeamSection\s*\{[^}]*order: 1/)
-    expect(css).toMatch(/\.sidebarAssistantSection\s*\{[^}]*order: 2/)
-    expect(css).toMatch(/\.sidebarCoordinatorRow\s*\{[^}]*order: 0/)
+    // 群聊 is a child of the assistant section, which draws the coordinator row
+    // above its children: DOM, tab and AT order are 总协调 → 群聊 → 单聊.
+    expect(sidebar).toMatch(/<AssistantSidebarSection[\s\S]{0,240}<SidebarTeamSection/)
+    // Paint order must not be patched with a CSS `order` again.
+    expect(css).not.toMatch(/\.sidebarTeamSection\s*\{[^}]*order:/)
+    expect(css).not.toMatch(/\.sidebarAssistantSection\s*\{[^}]*order:/)
+    expect(css).not.toMatch(/\.sidebarCoordinatorRow\s*\{[^}]*order:/)
   })
 
   it('drops the shipped 新会话 box instead of leaving a hole under the row', () => {
