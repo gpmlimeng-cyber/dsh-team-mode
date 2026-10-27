@@ -50,9 +50,11 @@ import { TeamTurnCoordinator } from './team-turn-coordinator.js'
 import { resolveTeamTarget } from './team-turn-routing.js'
 import { createThreadSession, type CreatedThreadSession } from './thread-session.js'
 import {
+  groupBriefPrompt,
   linkedAssistantMemoryPrompt,
   memberPrompt,
   rosterPrompt,
+  serviceGroupBrief,
 } from './team-prompts.js'
 import {
   allowedInheritedToolNames,
@@ -865,6 +867,17 @@ export class TeamRuntime {
         setup: async (agentCtx, agent) => {
           await this.ctx.agentPresets.mount(agentCtx, leader.assistantSnapshot.agentPresetId)
           installModelSelection(agentCtx, modelSelection)
+          // A team thread carries no member identity section, but it still
+          // belongs to the team's sidebar group, so the group brief applies.
+          // Read live so an edit reaches the next turn.
+          agentCtx.systemPrompt?.section({
+            name: `dsh-team-mode:group-brief:${team.id}`,
+            order: 9,
+            text: () => {
+              const latest = this.service.getTeam(team.id)
+              return groupBriefPrompt(latest.group, serviceGroupBrief(this.service, latest.group))
+            },
+          })
           this.ctx.permissionPresets.set(agent.session, leader.permissionPresetId)
         },
       })
@@ -1848,7 +1861,11 @@ export class TeamRuntime {
               return 'This Agent Team membership is no longer active.'
             }
             return applyToolSurfaceToPrompt(
-              memberPrompt(latest, latestMember),
+              memberPrompt(
+                latest,
+                latestMember,
+                groupBriefPrompt(latest.group, serviceGroupBrief(this.service, latest.group)),
+              ),
               allowedTeamTools,
             )
           },

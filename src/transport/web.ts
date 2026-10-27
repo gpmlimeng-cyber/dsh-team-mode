@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { z } from 'zod'
 import type { Config } from '../config.js'
 import { AgentTeamError, isAgentTeamError } from '../domain/errors.js'
+import { SIDEBAR_GROUP_BRIEF_MAX_CHARS } from '../domain/schemas.js'
 import type { AgentTeamService, AgentTeamChange } from '../service/dsh-team-mode-service.js'
 import {
   AGENT_TEAM_API_PATH,
@@ -30,6 +31,11 @@ const idPayload = z.object({ id: z.string().trim().min(1) }).strict()
  * service so its rejection carries the limit instead of a bare Zod error.
  */
 const sidebarGroupLabel = z.string().trim().min(1)
+/**
+ * The brief is checked here as well so an oversized request never reaches the
+ * service. The service keeps the same cap for direct callers.
+ */
+const sidebarGroupBrief = z.string().max(SIDEBAR_GROUP_BRIEF_MAX_CHARS)
 const interactionResponseSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('question'),
@@ -781,6 +787,16 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
     case 'sidebar.groups.reorder': {
       const payload = z.object({ names: z.array(sidebarGroupLabel) }).strict().parse(request.payload)
       return service.setGroupOrder(payload.names)
+    }
+    case 'sidebar.groups.briefs':
+      // Full records for the editor; no payload, so nothing to parse.
+      return service.listGroupBriefs()
+    case 'sidebar.groups.brief.set': {
+      const payload = z.object({
+        name: sidebarGroupLabel,
+        brief: sidebarGroupBrief,
+      }).strict().parse(request.payload)
+      return service.setGroupBrief(payload.name, payload.brief)
     }
     case 'team.dissolve': {
       const payload = z.object({ teamId: z.string().min(1), confirmation: z.string() }).strict().parse(request.payload)

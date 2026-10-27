@@ -22,6 +22,7 @@ import {
   createTeamDraftInputSchema,
   createTeamGoalInputSchema,
   memberAssistantInstanceLinkSchema,
+  SIDEBAR_GROUP_BRIEF_MAX_CHARS,
   SIDEBAR_GROUP_MAX_CHARS,
   SIDEBAR_GROUP_MAX_COUNT,
   teamCheckpointSchema,
@@ -61,6 +62,7 @@ import {
   type MemoryJournalSnapshot,
   type Operation,
   type Page,
+  type SidebarGroupRecord,
   type SidebarGroups,
   type TeamActivity,
   type TeamAggregate,
@@ -3467,13 +3469,35 @@ export class AgentTeamService extends Service {
 
   /** Ordered group labels; empty for a store that never created one. */
   listGroups(): string[] {
+    return this.groupRecords().map(record => record.name)
+  }
+
+  /**
+   * Full group records for the sidebar editor, including the user-authored
+   * brief. Copies are returned so a caller cannot mutate the store row.
+   */
+  listGroupBriefs(): SidebarGroupRecord[] {
+    return this.groupRecords().map(record => ({ ...record }))
+  }
+
+  /**
+   * The current brief for one group. Read live on every prompt assembly, so an
+   * edit lands on the member's next turn. Unknown or ungrouped reads as empty,
+   * which contributes no prompt section.
+   */
+  groupBriefFor(group: string | undefined): string {
+    if (group === undefined) return ''
+    return this.groupRecords().find(record => record.name === group)?.brief ?? ''
+  }
+
+  private groupRecords(): SidebarGroupRecord[] {
     return this.sidebarGroupStore?.getSidebarGroups()?.groups ?? []
   }
 
   async createGroup(name: string): Promise<string[]> {
     const label = requireGroupLabel(name)
-    const groups = this.listGroups()
-    if (groups.includes(label)) {
+    const groups = this.groupRecords()
+    if (groups.some(record => record.name === label)) {
       throw new AgentTeamError('INVALID_REQUEST', `Group '${label}' already exists`, { group: label })
     }
     if (groups.length >= SIDEBAR_GROUP_MAX_COUNT) {
@@ -3483,55 +3507,90 @@ export class AgentTeamService extends Service {
         { limit: SIDEBAR_GROUP_MAX_COUNT },
       )
     }
-    return this.writeGroups([...groups, label])
+    const now = new Date().toISOString()
+    return this.namesOf(await this.writeGroups([
+      ...groups,
+      { name: label, brief: '', memoryKey: randomUUID(), updatedAt: now },
+    ]))
   }
 
   /**
    * Rename a group and every member that points at it. The member writes run
    * first and the list last: a failed list write leaves members on the old
-   * label, which still exists, instead of on a label nobody can see.
+   * label, which still exists, instead of on a label nobody can see. The brief
+   * and `memoryKey` ride along, so a rename never loses the group's brief.
    */
   async renameGroup(from: string, to: string): Promise<string[]> {
     const previous = requireGroupLabel(from)
     const label = requireGroupLabel(to)
-    const groups = this.listGroups()
-    if (!groups.includes(previous)) {
+    const groups = this.groupRecords()
+    const names = this.namesOf(groups)
+    if (!names.includes(previous)) {
       throw new AgentTeamError('INVALID_REQUEST', `Unknown group '${previous}'`, { group: previous })
     }
-    if (previous === label) return groups
-    if (groups.includes(label)) {
+    if (previous === label) return names
+    if (names.includes(label)) {
       throw new AgentTeamError('INVALID_REQUEST', `Group '${label}' already exists`, { group: label })
     }
     await this.moveGroupMembers(previous, label)
-    return this.writeGroups(groups.map(group => group === previous ? label : group))
+    const now = new Date().toISOString()
+    return this.namesOf(await this.writeGroups(groups.map(record => record.name === previous
+      ? { ...record, name: label, updatedAt: now }
+      : record)))
   }
 
   /** Delete a group; its members fall back to ungrouped. */
   async deleteGroup(name: string): Promise<string[]> {
     const label = requireGroupLabel(name)
-    const groups = this.listGroups()
-    if (!groups.includes(label)) {
+    const groups = this.groupRecords()
+    if (!groups.some(record => record.name === label)) {
       throw new AgentTeamError('INVALID_REQUEST', `Unknown group '${label}'`, { group: label })
     }
     await this.moveGroupMembers(label, undefined)
-    return this.writeGroups(groups.filter(group => group !== label))
+    return this.namesOf(await this.writeGroups(groups.filter(record => record.name !== label)))
   }
 
   /** Reorder the list; `names` must be exactly the existing groups. */
   async setGroupOrder(names: readonly string[]): Promise<string[]> {
-    const groups = this.listGroups()
+    const groups = this.groupRecords()
     const unique = names.map(name => requireGroupLabel(name))
+    const existing = this.namesOf(groups)
     const valid = unique.length === groups.length
       && new Set(unique).size === unique.length
-      && unique.every(name => groups.includes(name))
+      && unique.every(name => existing.includes(name))
     if (!valid) {
       throw new AgentTeamError(
         'INVALID_REQUEST',
         'Group order must list every existing group exactly once',
-        { groups },
+        { groups: existing },
       )
     }
-    return this.writeGroups(unique)
+    const byName = new Map(groups.map(record => [record.name, record]))
+    return this.namesOf(await this.writeGroups(
+      unique.map(name => byName.get(name) as SidebarGroupRecord),
+    ))
+  }
+
+  /**
+   * Set the user-authored brief for one group. This is the only write path:
+   * no agent tool accepts a group brief, so a member cannot seed instructions
+   * for everyone else. An empty string clears the brief; over-long text is
+   * refused instead of truncated.
+   */
+  async setGroupBrief(name: string, brief: string): Promise<SidebarGroupRecord> {
+    const label = requireGroupLabel(name)
+    const text = requireGroupBrief(brief)
+    const groups = this.groupRecords()
+    const index = groups.findIndex(record => record.name === label)
+    if (index === -1) {
+      throw new AgentTeamError('INVALID_REQUEST', `Unknown group '${label}'`, { group: label })
+    }
+    const current = groups[index] as SidebarGroupRecord
+    if (current.brief === text) return { ...current }
+    const now = new Date().toISOString()
+    const next = groups.map((record, at) => at === index ? { ...record, brief: text, updatedAt: now } : record)
+    const written = await this.writeGroups(next)
+    return { ...(written[index] as SidebarGroupRecord) }
   }
 
   /** Reject a group label that was never created; clearing is always legal. */
@@ -3544,19 +3603,23 @@ export class AgentTeamService extends Service {
     )
   }
 
-  private async writeGroups(groups: string[]): Promise<string[]> {
+  private namesOf(groups: readonly SidebarGroupRecord[]): string[] {
+    return groups.map(record => record.name)
+  }
+
+  private async writeGroups(groups: SidebarGroupRecord[]): Promise<SidebarGroupRecord[]> {
     const store = this.sidebarGroupStore
     if (store === undefined) {
       throw new AgentTeamError('INVALID_REQUEST', 'This store cannot persist sidebar groups')
     }
-    const revision = (store.getSidebarGroups()?.revision ?? 0) + 1
-    await store.putSidebarGroups({
-      schemaVersion: 1,
+    const value: SidebarGroups = {
+      schemaVersion: 2,
       groups,
-      revision,
+      revision: (store.getSidebarGroups()?.revision ?? 0) + 1,
       updatedAt: new Date().toISOString(),
-    })
-    this.publish('catalog', 'sidebar-groups', revision, 'sidebar.groups.changed')
+    }
+    await store.putSidebarGroups(value)
+    this.publish('catalog', 'sidebar-groups', value.revision, 'sidebar.groups.changed')
     return groups
   }
 
@@ -4730,6 +4793,21 @@ function requireGroupLabel(group: string): string {
   const label = normalizeSidebarGroup(group)
   if (label === undefined) throw new AgentTeamError('INVALID_REQUEST', 'Group name cannot be empty')
   return label
+}
+
+/**
+ * A group brief is stored verbatim (it is user prose); only the hard cap is
+ * enforced, and over-long text is refused instead of truncated.
+ */
+function requireGroupBrief(brief: string): string {
+  if (brief.length > SIDEBAR_GROUP_BRIEF_MAX_CHARS) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Group brief exceeds ${SIDEBAR_GROUP_BRIEF_MAX_CHARS} characters`,
+      { length: brief.length, limit: SIDEBAR_GROUP_BRIEF_MAX_CHARS },
+    )
+  }
+  return brief
 }
 
 function requireTeamMemoryEntry(team: TeamAggregate, entryId: string): MemoryEntry {

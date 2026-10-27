@@ -19,6 +19,7 @@ import type {
 } from '../src/domain/types.js'
 import { TeamCommandHandler } from '../src/runtime/team-command-handler.js'
 import {
+  groupBriefPrompt,
   linkedAssistantMemoryPrompt,
   memberPrompt,
   teamMemoryPrompt,
@@ -163,6 +164,38 @@ describe('M2 team memory scope and UI', () => {
     expect(memberText).not.toContain('Team memory — decisions')
     expect(memberText).not.toContain('Use eslint.')
     expect(teamMemoryPrompt(team)).toContain('Use eslint.')
+  })
+
+  it('injects a group brief into members of that group and nothing when empty', () => {
+    const team = { ...teamAggregate(), group: '工作' }
+
+    // The runtime resolves the brief for this team's own group and passes the
+    // formatted block; both roles in the group receive it.
+    const brief = groupBriefPrompt(team.group, 'Answer in Chinese and cite files.')
+    expect(brief).toContain('Sidebar group brief')
+    expect(brief).toContain('工作')
+    expect(brief).toContain('Answer in Chinese and cite files.')
+    expect(brief).toContain('no tool can change it')
+    for (const slot of ['leader', 'worker'] as const) {
+      const prompt = memberPrompt(team, team.members[slot]!, brief)
+      expect(prompt).toContain('Answer in Chinese and cite files.')
+    }
+
+    // An empty or whitespace-only brief contributes no block, so an ungrouped
+    // member assembles exactly as before.
+    expect(groupBriefPrompt('工作', '')).toBe('')
+    expect(groupBriefPrompt('工作', '   ')).toBe('')
+    expect(groupBriefPrompt(undefined, 'ignored')).toBe('')
+    expect(memberPrompt(team, team.members.worker!, '')).not.toContain('Sidebar group brief')
+  })
+
+  it('keeps one group brief out of another group prompt', () => {
+    const alpha = groupBriefPrompt('A', 'ALPHA-BRIEF')
+    const beta = groupBriefPrompt('B', 'BETA-BRIEF')
+    expect(alpha).toContain('ALPHA-BRIEF')
+    expect(alpha).not.toContain('BETA-BRIEF')
+    expect(beta).toContain('BETA-BRIEF')
+    expect(beta).not.toContain('ALPHA-BRIEF')
   })
 
   it('lets a member propose but keeps the entry proposed until the Leader accepts', async () => {

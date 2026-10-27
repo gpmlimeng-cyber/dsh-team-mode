@@ -6,24 +6,61 @@ const nonEmpty = z.string().trim().min(1)
 /**
  * Bounds of one sidebar group label and of the group list. They live here
  * because both the record schemas and the service validate against them.
+ * The brief cap is deliberately generous (24 KiB): the editor targets 4 KB,
+ * but a group may carry a longer operating instruction.
  */
 export const SIDEBAR_GROUP_MAX_CHARS = 40
 export const SIDEBAR_GROUP_MAX_COUNT = 100
+export const SIDEBAR_GROUP_BRIEF_MAX_CHARS = 24_576
 
 const sidebarGroupName = nonEmpty.max(SIDEBAR_GROUP_MAX_CHARS)
 
 /**
- * The ordered custom sidebar group labels. Membership stays on each team and
- * assistant instance (`group`); this record only owns existence and order, so
- * an empty group is renderable and no membership table is needed.
+ * One sidebar group record. Membership stays on each team and assistant
+ * instance (`group`); this record owns existence, order, and the user-authored
+ * shared brief. `memoryKey` is stable across a rename. `brief` is written only
+ * by the user transport — no agent tool accepts it.
+ */
+export const sidebarGroupRecordSchema = z.object({
+  name: sidebarGroupName,
+  brief: z.string().max(SIDEBAR_GROUP_BRIEF_MAX_CHARS).default(''),
+  memoryKey: nonEmpty,
+  updatedAt: isoDate,
+}).strict()
+
+/**
+ * The ordered custom sidebar groups (schema v2). Group names stay unique and
+ * in render order; an empty group is renderable and no membership table is
+ * needed.
  */
 export const sidebarGroupsSchema = z.object({
-  schemaVersion: z.literal(1),
-  /** Trimmed, unique labels in render order. */
-  groups: z.array(sidebarGroupName).max(SIDEBAR_GROUP_MAX_COUNT),
+  schemaVersion: z.literal(2),
+  /** Trimmed, unique records in render order. */
+  groups: z.array(sidebarGroupRecordSchema).max(SIDEBAR_GROUP_MAX_COUNT),
   revision: z.int().positive(),
   updatedAt: isoDate,
 }).strict()
+
+/**
+ * The schema v1 row held only `string[]` names. Stored rows are still parsed
+ * through this union so an old install opens without a migration failure; the
+ * store normalizes v1 to {@link sidebarGroupsSchema} on every read, and the next
+ * group write persists the v2 shape.
+ */
+export const storedSidebarGroupsSchema = z.union([
+  sidebarGroupsSchema,
+  z.object({
+    schemaVersion: z.literal(1),
+    groups: z.array(sidebarGroupName).max(SIDEBAR_GROUP_MAX_COUNT),
+    revision: z.int().positive(),
+    updatedAt: isoDate,
+  }).strict(),
+])
+
+/** Deterministic `memoryKey` for a legacy name-only group, stable on re-read. */
+export function legacySidebarGroupMemoryKey(name: string): string {
+  return `sidebar-group:${name}`
+}
 
 export const assistantSnapshotSchema = z.object({
   assistantId: nonEmpty,

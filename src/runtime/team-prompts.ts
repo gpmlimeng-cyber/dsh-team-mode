@@ -1,3 +1,4 @@
+import { SIDEBAR_GROUP_BRIEF_MAX_CHARS, SIDEBAR_GROUP_MAX_CHARS } from '../domain/schemas.js'
 import type {
   LinkedAssistantMemory,
   MemoryEntry,
@@ -48,7 +49,41 @@ const TEAMMATE_RULES = [
   'Do not spawn, rename, clear, interrupt, or shut down other members; those are Leader-only tools.',
 ]
 
-export function memberPrompt(team: TeamAggregate, member: TeamMemberSlot): string {
+/**
+ * The user-authored brief of one sidebar group, or an empty string when the
+ * member is ungrouped, the group is gone, or the brief is blank. The host drops
+ * empty prompt sections, so an ungrouped member assembles exactly as before.
+ * The brief is background for people in this group only; it is never a team
+ * decision and no tool can write it.
+ */
+export function groupBriefPrompt(group: string | undefined, brief: string | undefined): string {
+  if (group === undefined) return ''
+  const text = brief?.trim() ?? ''
+  if (text === '') return ''
+  return [
+    `Sidebar group brief — shared instructions the user wrote for the “${truncate(group, SIDEBAR_GROUP_MAX_CHARS)}” group.`,
+    'Read it as user-authored background for every member of this group; it is not a team decision, and no tool can change it.',
+    boundedText(text, SIDEBAR_GROUP_BRIEF_MAX_CHARS),
+  ].join('\n')
+}
+
+/**
+ * Resolve a group's brief through the service. The optional read keeps a
+ * partial service double (one that predates group briefs) reading as empty,
+ * the same way a store double without a group slice reads as no groups.
+ */
+export function serviceGroupBrief(
+  service: { groupBriefFor?: (group: string | undefined) => string },
+  group: string | undefined,
+): string {
+  return service.groupBriefFor?.(group) ?? ''
+}
+
+export function memberPrompt(
+  team: TeamAggregate,
+  member: TeamMemberSlot,
+  groupBrief = '',
+): string {
   const roleRules = member.role === 'leader' ? LEADER_RULES : TEAMMATE_RULES
   // Team memory is Leader context only; an ordinary member prompt gets the
   // roster and rules but never the agreed-memory block.
@@ -57,6 +92,7 @@ export function memberPrompt(team: TeamAggregate, member: TeamMemberSlot): strin
     `You are ${member.displayName}, an independent Agent in the team “${team.name}”. Your role is ${member.role}.`,
     ...SHARED_RULES,
     ...roleRules,
+    ...(groupBrief.trim() === '' ? [] : [groupBrief]),
     ...(memory === '' ? [] : [memory]),
     member.assistantSnapshot.instructions.trim().length === 0
       ? undefined

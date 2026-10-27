@@ -10,7 +10,7 @@ import {
   migrationBackupSchema,
   migrationRecordSchema,
   operationSchema,
-  sidebarGroupsSchema,
+  storedSidebarGroupsSchema,
   teamActivitySchema,
   teamAggregateSchema,
   teamCheckpointSchema,
@@ -24,7 +24,7 @@ import type {
   ContextCheckpoint,
   Escalation,
   Operation,
-  SidebarGroups,
+  StoredSidebarGroups,
   TeamActivity,
   TeamAggregate,
   TeamCheckpoint,
@@ -90,9 +90,13 @@ export const dshTeamModeDomainSpec = defineDomain({
     operations: domainTable<OperationId, Operation>(
       storedTableSchema<OperationId, Operation>(operationSchema),
     ),
-    /** One row (`SIDEBAR_GROUPS_KEY`) holding the ordered group labels. */
-    sidebar_groups: domainTable<string, SidebarGroups>(
-      storedTableSchema<string, SidebarGroups>(sidebarGroupsSchema),
+    /**
+     * One row (`SIDEBAR_GROUPS_KEY`) holding the ordered group records. The
+     * schema accepts the legacy `string[]` shape so old rows open; the store
+     * normalizes them on read.
+     */
+    sidebar_groups: domainTable<string, StoredSidebarGroups>(
+      storedTableSchema<string, StoredSidebarGroups>(storedSidebarGroupsSchema),
     ),
     migrations: domainTable<string, { schemaVersion: 1, id: string, appliedAt: string, fromVersion: number, toVersion: number }>(
       storedTableSchema<string, { schemaVersion: 1, id: string, appliedAt: string, fromVersion: number, toVersion: number }>(migrationRecordSchema),

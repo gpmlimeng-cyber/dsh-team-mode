@@ -44,7 +44,7 @@ import {
 import { buildCheckpointFacts, checkpointHandoffMessage } from './checkpoint-facts.js'
 import { projectConversation } from './conversation-projector.js'
 import { TeamInteractionBridge } from './team-interaction-bridge.js'
-import { coordinatorPrompt } from './team-prompts.js'
+import { coordinatorPrompt, groupBriefPrompt, serviceGroupBrief } from './team-prompts.js'
 import type { ConversationNode } from '../transport/contracts.js'
 import { readStoredSessionEvents } from './session-log.js'
 import { createThreadSession, type CreatedThreadSession } from './thread-session.js'
@@ -1381,10 +1381,14 @@ export class AssistantRuntime {
       agentCtx.systemPrompt.section({
         name: `dsh-team-mode:assistant-worker:${taskId}`,
         order: 10,
-        text: () => workerPrompt(
-          this.service.getAssistantInstance(assistantId).assistantSnapshot,
-          title,
-        ),
+        text: () => {
+          const current = this.service.getAssistantInstance(assistantId)
+          return workerPrompt(
+            current.assistantSnapshot,
+            title,
+            groupBriefPrompt(current.group, serviceGroupBrief(this.service, current.group)),
+          )
+        },
       })
       this.ctx.permissionPresets.set(agent.session, snapshot.permissionPresetId)
       // Deliberately no registerAssistantTaskTools or registerAssistantMemoryTools:
@@ -1602,7 +1606,13 @@ export class AssistantRuntime {
       agentCtx.systemPrompt.section({
         name: `dsh-team-mode:assistant-identity:${instance.id}`,
         order: 10,
-        text: () => assistantPrompt(this.service.getAssistantInstance(id).assistantSnapshot),
+        text: () => {
+          const current = this.service.getAssistantInstance(id)
+          return assistantPrompt(
+            current.assistantSnapshot,
+            groupBriefPrompt(current.group, serviceGroupBrief(this.service, current.group)),
+          )
+        },
       })
       agentCtx.systemPrompt.section({
         name: `dsh-team-mode:assistant-tasks:${instance.id}`,
@@ -1666,12 +1676,15 @@ export class AssistantRuntime {
 
 /**
  * Phase 0 keeps the prompt to the assistant's stable identity. Task tools and
- * their delegation contract are described by each tool definition.
+ * their delegation contract are described by each tool definition. A group
+ * brief, when present, sits between identity and instructions.
  */
-function assistantPrompt(snapshot: AssistantSnapshot): string {
+function assistantPrompt(snapshot: AssistantSnapshot, groupBrief = ''): string {
   const instructions = snapshot.instructions.trim()
   const identity = `You are ${snapshot.name}, a persistent assistant for one workspace.`
-  return instructions === '' ? identity : `${identity}\n\n${instructions}`
+  return [identity, groupBrief, instructions]
+    .filter(part => part !== '')
+    .join('\n\n')
 }
 
 /**
@@ -1720,10 +1733,12 @@ function entryLine(entry: MemoryEntry): string {
  * A worker is the same assistant but with a deliberately narrower role: one
  * hidden task, no delegation tools, and no direct contact with the user.
  */
-function workerPrompt(snapshot: AssistantSnapshot, title: string): string {
+function workerPrompt(snapshot: AssistantSnapshot, title: string, groupBrief = ''): string {
   const instructions = snapshot.instructions.trim()
   const identity = `You are ${snapshot.name}, working as a hidden background worker Session on the task “${title}”. The user talks to the assistant's main Session and never sees this Session directly; your final answer is summarized back to that main conversation. Work only on this task, do not ask the user questions, and do not delegate to other Sessions.`
-  return instructions === '' ? identity : `${identity}\n\n${instructions}`
+  return [identity, groupBrief, instructions]
+    .filter(part => part !== '')
+    .join('\n\n')
 }
 
 function workerMessage(text: string): UserMessage {

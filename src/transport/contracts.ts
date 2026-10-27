@@ -13,6 +13,7 @@ import type {
   CreateTeamDraftInput,
   Escalation,
   MemoryEntry,
+  SidebarGroupRecord,
   TeamAggregate,
   TeamGoal,
   TeamCheckpoint,
@@ -86,6 +87,9 @@ export const AGENT_TEAM_METHODS = [
   'sidebar.groups.rename',
   'sidebar.groups.delete',
   'sidebar.groups.reorder',
+  /** User-only group brief read/write; no agent tool exposes these. */
+  'sidebar.groups.briefs',
+  'sidebar.groups.brief.set',
   'team.list',
   'team.get',
   'team.createDraft',
@@ -546,6 +550,16 @@ export interface AgentTeamRequestMap {
   'sidebar.groups.rename': { payload: { from: string; to: string }; result: string[] }
   'sidebar.groups.delete': { payload: { name: string }; result: string[] }
   'sidebar.groups.reorder': { payload: { names: string[] }; result: string[] }
+  /**
+   * Full group records (name, brief, stable memoryKey, updatedAt) for the
+   * sidebar editor. Read-only; the brief is written through the set method.
+   */
+  'sidebar.groups.briefs': { payload: undefined; result: SidebarGroupRecord[] }
+  /** Set or clear one group's user-authored brief; over-long text is refused. */
+  'sidebar.groups.brief.set': {
+    payload: { name: string; brief: string }
+    result: SidebarGroupRecord
+  }
   'team.list': { payload: undefined; result: PageView<TeamView> }
   'team.get': { payload: { id: string }; result: TeamView }
   'team.createDraft': { payload: CreateTeamDraftInput; result: TeamView }

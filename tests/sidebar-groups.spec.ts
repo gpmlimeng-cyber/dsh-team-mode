@@ -4,14 +4,17 @@ import { describe, expect, it } from 'vitest'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
 import {
+  SIDEBAR_GROUP_BRIEF_MAX_CHARS,
   SIDEBAR_GROUP_MAX_CHARS,
   assistantInstanceSchema,
   teamAggregateSchema,
 } from '../src/domain/schemas.js'
 import type { AssistantInstance, TeamAggregate } from '../src/domain/types.js'
+import { registerAssistantMemoryTools, registerAssistantTaskTools } from '../src/runtime/assistant-tools.js'
+import { TEAM_TOOL_NAMES } from '../src/runtime/team-tools.js'
 import { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import { dshTeamModeDomainSpec } from '../src/storage/domain.js'
-import { DomainAgentTeamStore } from '../src/storage/store.js'
+import { DomainAgentTeamStore, SIDEBAR_GROUPS_KEY } from '../src/storage/store.js'
 
 const NOW = '2026-10-26T00:00:00.000Z'
 
@@ -148,9 +151,19 @@ describe('Sidebar groups', () => {
     expect(await service.createGroup('科研')).toEqual(['工作', '科研'])
     expect(service.listGroups()).toEqual(['工作', '科研'])
     // The real store parses writes through the domain schema, so a stored list
-    // proves the schema accepts it.
-    expect(store.getSidebarGroups()).toMatchObject({ groups: ['工作', '科研'], revision: 2 })
-    expect(store.getSidebarGroups()?.updatedAt).not.toBe(NOW)
+    // proves the schema accepts it. Each name became a record with an empty
+    // brief and a memory key of its own.
+    const stored = store.getSidebarGroups()
+    expect(stored).toMatchObject({
+      schemaVersion: 2,
+      revision: 2,
+      groups: [
+        { name: '工作', brief: '' },
+        { name: '科研', brief: '' },
+      ],
+    })
+    expect(stored?.groups[0]?.memoryKey).not.toBe(stored?.groups[1]?.memoryKey)
+    expect(stored?.updatedAt).not.toBe(NOW)
 
     await expect(service.createGroup(' 工作 ')).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
     await expect(service.createGroup('   ')).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
@@ -291,5 +304,128 @@ describe('Sidebar groups', () => {
     // No group list was ever written either: absent reads as empty.
     expect(service.listGroups()).toEqual([])
     expect(service.getTeam('team-1').group).toBeUndefined()
+  })
+
+  it('migrates a legacy string[] row to records idempotently, preserving order and names', async () => {
+    const domain = fakeDomain()
+    const legacy = {
+      schemaVersion: 1 as const,
+      groups: ['工作', '科研'],
+      revision: 4,
+      updatedAt: NOW,
+    }
+    await domain.table('sidebar_groups').put(SIDEBAR_GROUPS_KEY, legacy)
+    const store = new DomainAgentTeamStore(domain)
+    const service = new AgentTeamService(new Context(), config, store)
+
+    expect(service.listGroups()).toEqual(['工作', '科研'])
+    const records = service.listGroupBriefs()
+    expect(records).toEqual([
+      { name: '工作', brief: '', memoryKey: 'sidebar-group:工作', updatedAt: NOW },
+      { name: '科研', brief: '', memoryKey: 'sidebar-group:科研', updatedAt: NOW },
+    ])
+    // A second read produces the same keys and order: the migration is pure
+    // and does not depend on a write having happened.
+    expect(service.listGroupBriefs()).toEqual(records)
+    expect(store.getSidebarGroups()).toMatchObject({
+      schemaVersion: 2,
+      revision: 4,
+      groups: records,
+    })
+
+    // The next group write persists the v2 shape without reordering.
+    await service.createGroup('生活')
+    expect(store.getSidebarGroups()).toMatchObject({
+      schemaVersion: 2,
+      groups: [
+        { name: '工作', brief: '', memoryKey: 'sidebar-group:工作' },
+        { name: '科研', brief: '', memoryKey: 'sidebar-group:科研' },
+        { name: '生活' },
+      ],
+    })
+  })
+
+  it('keeps a brief across rename and resolves edits for the next turn', async () => {
+    const { service } = await createHarness()
+    await service.createGroup('工作')
+    await service.setTeamGroup('team-1', '工作')
+
+    const before = await service.setGroupBrief(' 工作 ', 'Cite every source.')
+    expect(before).toMatchObject({ name: '工作', brief: 'Cite every source.' })
+    const memoryKey = before.memoryKey
+    await service.setGroupBrief('工作', 'Version one.')
+    expect(service.groupBriefFor('工作')).toBe('Version one.')
+
+    expect(await service.renameGroup('工作', '上班')).toEqual(['上班'])
+    const renamed = service.listGroupBriefs()[0]
+    expect(renamed).toMatchObject({
+      name: '上班',
+      brief: 'Version one.',
+      memoryKey,
+    })
+    // The old label no longer resolves, and the new label keeps the content.
+    expect(service.groupBriefFor('工作')).toBe('')
+    expect(service.groupBriefFor('上班')).toBe('Version one.')
+
+    // Prompt assembly reads the service live, so the edit lands next turn.
+    await service.setGroupBrief('上班', 'Version two.')
+    expect(service.groupBriefFor('上班')).toBe('Version two.')
+  })
+
+  it('bounds the brief, refuses unknown groups, and clears with an empty string', async () => {
+    const { service, store } = await createHarness()
+    await service.createGroup('工作')
+
+    const atLimit = 'b'.repeat(SIDEBAR_GROUP_BRIEF_MAX_CHARS)
+    expect((await service.setGroupBrief('工作', atLimit)).brief).toHaveLength(
+      SIDEBAR_GROUP_BRIEF_MAX_CHARS,
+    )
+    await expect(service.setGroupBrief('工作', `${atLimit}b`)).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    })
+    // Over-long text is refused, never silently truncated.
+    expect(service.groupBriefFor('工作')).toBe(atLimit)
+
+    await expect(service.setGroupBrief('无此分组', 'x')).rejects.toMatchObject({
+      code: 'INVALID_REQUEST',
+    })
+    expect(service.listGroups()).toEqual(['工作'])
+    expect(store.getSidebarGroups()?.groups[0]?.brief).toBe(atLimit)
+
+    expect((await service.setGroupBrief('工作', '')).brief).toBe('')
+    expect(service.groupBriefFor('工作')).toBe('')
+  })
+
+  it('resolves a brief only for the group a team or assistant belongs to', async () => {
+    const { service } = await createHarness()
+    await service.createGroup('A')
+    await service.createGroup('B')
+    await service.setGroupBrief('A', 'ALPHA-BRIEF')
+    await service.setGroupBrief('B', 'BETA-BRIEF')
+    await service.setTeamGroup('team-1', 'A')
+    await service.updateAssistantInstance('instance-1', { group: 'B' })
+
+    const team = service.getTeam('team-1')
+    const assistant = service.getAssistantInstance('instance-1')
+    expect(service.groupBriefFor(team.group)).toBe('ALPHA-BRIEF')
+    expect(service.groupBriefFor(assistant.group)).toBe('BETA-BRIEF')
+    // A member of A never sees B's text, and ungrouped reads as no brief.
+    expect(service.groupBriefFor(team.group)).not.toContain('BETA-BRIEF')
+    expect(service.groupBriefFor(undefined)).toBe('')
+  })
+
+  it('exposes no agent tool that can write a group brief', () => {
+    const registered: string[] = []
+    const ctx = {
+      tools: {
+        register: (tool: { name: string }) => { registered.push(tool.name) },
+      },
+    } as unknown as Context
+    registerAssistantTaskTools(ctx, {} as never)
+    registerAssistantMemoryTools(ctx, {} as never)
+
+    expect(registered.length).toBeGreaterThan(0)
+    expect([...TEAM_TOOL_NAMES, ...registered].filter(name => /brief|group/i.test(name)))
+      .toEqual([])
   })
 })

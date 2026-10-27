@@ -132,6 +132,15 @@ function harness(overrides: {
     renameGroup: vi.fn(async (_from: string, to: string) => [to]),
     deleteGroup: vi.fn(async () => ['工作']),
     setGroupOrder: vi.fn(async (names: readonly string[]) => [...names]),
+    listGroupBriefs: vi.fn(() => [
+      { name: '工作', brief: 'Working brief.', memoryKey: 'key-work', updatedAt: '2026-01-01T00:00:00.000Z' },
+    ]),
+    setGroupBrief: vi.fn(async (name: string, brief: string) => ({
+      name,
+      brief,
+      memoryKey: 'key-work',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    })),
     createThread: vi.fn(async (teamId: string) => ({ id: teamId, revision: 2 })),
     createTeamThread: vi.fn(async (teamId: string) => ({ id: teamId, revision: 2 })),
     renameThread: vi.fn(async (teamId: string, threadId: string, title: string) => ({
@@ -532,6 +541,42 @@ describe('web transport authentication and upload contract', () => {
     expect(blank.status).toBe(400)
     expect(JSON.parse(blank.body)).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
     expect(service.deleteGroup).toHaveBeenCalledTimes(1)
+  })
+
+  it('reads and writes a group brief only through the user transport', async () => {
+    const { call, service } = harness()
+    const post = (method: string, payload: unknown) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ requestId: method, method, payload }),
+    }))
+
+    const listed = await post('sidebar.groups.briefs', {})
+    expect(listed.status).toBe(200)
+    expect(JSON.parse(listed.body)).toMatchObject({
+      ok: true,
+      value: [{ name: '工作', brief: 'Working brief.', memoryKey: 'key-work' }],
+    })
+    expect(service.listGroupBriefs).toHaveBeenCalled()
+
+    // The transport trims the label; the brief itself is stored verbatim.
+    const written = await post('sidebar.groups.brief.set', { name: ' 工作 ', brief: 'New brief.' })
+    expect(written.status).toBe(200)
+    expect(JSON.parse(written.body)).toMatchObject({
+      ok: true,
+      value: { name: '工作', brief: 'New brief.', memoryKey: 'key-work' },
+    })
+    expect(service.setGroupBrief).toHaveBeenCalledWith('工作', 'New brief.')
+
+    const oversized = await post('sidebar.groups.brief.set', {
+      name: '工作',
+      brief: 'x'.repeat(24_577),
+    })
+    expect(oversized.status).toBe(400)
+    expect(JSON.parse(oversized.body)).toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_REQUEST' },
+    })
+    expect(service.setGroupBrief).toHaveBeenCalledTimes(1)
   })
 
   it('dispatches the three team thread writes with strict payloads', async () => {

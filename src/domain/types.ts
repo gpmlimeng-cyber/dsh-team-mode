@@ -31,7 +31,9 @@ import type {
   memberRuntimeStateSchema,
   operationSchema,
   retiredMemberSessionSchema,
+  sidebarGroupRecordSchema,
   sidebarGroupsSchema,
+  storedSidebarGroupsSchema,
   teamActivitySchema,
   teamAggregateSchema,
   teamCheckpointFactsSchema,
@@ -102,6 +104,8 @@ export type Escalation = z.infer<typeof escalationSchema>
 export type EscalationKind = z.infer<typeof escalationKindSchema>
 export type EscalationStatus = z.infer<typeof escalationStatusSchema>
 export type SidebarGroups = z.infer<typeof sidebarGroupsSchema>
+export type StoredSidebarGroups = z.infer<typeof storedSidebarGroupsSchema>
+export type SidebarGroupRecord = z.infer<typeof sidebarGroupRecordSchema>
 
 /**
  * The single reader for the optional task kind: absent means `work`, the

@@ -8,11 +8,14 @@ import type {
   Escalation,
   Operation,
   SidebarGroups,
+  SidebarGroupRecord,
+  StoredSidebarGroups,
   TeamActivity,
   TeamAggregate,
   TeamCheckpoint,
   TeamMessage,
 } from '../domain/types.js'
+import { legacySidebarGroupMemoryKey } from '../domain/schemas.js'
 import { dshTeamModeDomainSpec } from './domain.js'
 
 /**
@@ -62,14 +65,35 @@ export interface AgentTeamEscalationStore {
 
 export type AgentTeamStoreWithEscalations = AgentTeamStore & AgentTeamEscalationStore
 
-/** The one row that holds the ordered sidebar group labels. */
+/** The one row that holds the ordered sidebar group records. */
 export const SIDEBAR_GROUPS_KEY = 'sidebar'
 
 /**
- * Sidebar group labels, kept separate from `AgentTeamStore` for the same reason
+ * Read a stored row as the current record shape. v1 held only names, so it
+ * maps to records with an empty brief and a deterministic `memoryKey`; a v2
+ * row is returned unchanged, which makes repeated reads idempotent. The next
+ * group write persists the normalized shape.
+ */
+export function migrateSidebarGroups(value: StoredSidebarGroups): SidebarGroups {
+  if (value.schemaVersion === 2) return value
+  return {
+    schemaVersion: 2,
+    groups: value.groups.map((name): SidebarGroupRecord => ({
+      name,
+      brief: '',
+      memoryKey: legacySidebarGroupMemoryKey(name),
+      updatedAt: value.updatedAt,
+    })),
+    revision: value.revision,
+    updatedAt: value.updatedAt,
+  }
+}
+
+/**
+ * Sidebar group records, kept separate from `AgentTeamStore` for the same reason
  * as the other slice interfaces: a store double written before groups existed
  * stays valid. Membership (`group`) lives on the teams and instances in
- * `AgentTeamStore`; this slice only owns existence and order.
+ * `AgentTeamStore`; this slice only owns existence, order, and the brief.
  */
 export interface AgentTeamSidebarGroupStore {
   getSidebarGroups(): SidebarGroups | undefined
@@ -144,7 +168,7 @@ implements
   private readonly contextCheckpoints: KvTable<string, ContextCheckpoint>
   private readonly teamCheckpoints: KvTable<string, TeamCheckpoint>
   private readonly escalations: KvTable<string, Escalation>
-  private readonly sidebarGroups: KvTable<string, SidebarGroups>
+  private readonly sidebarGroups: KvTable<string, StoredSidebarGroups>
   private readonly teams: KvTable<string, TeamAggregate>
   private readonly messages: KvTable<string, TeamMessage>
   private readonly activities: KvTable<string, TeamActivity>
@@ -311,7 +335,8 @@ implements
   }
 
   getSidebarGroups(): SidebarGroups | undefined {
-    return this.sidebarGroups.get(SIDEBAR_GROUPS_KEY)
+    const stored = this.sidebarGroups.get(SIDEBAR_GROUPS_KEY)
+    return stored === undefined ? undefined : migrateSidebarGroups(stored)
   }
 
   putSidebarGroups(value: SidebarGroups): Promise<void> {
