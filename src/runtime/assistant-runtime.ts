@@ -15,6 +15,15 @@ import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
 import type { Config } from '../config.js'
 import { AgentTeamError } from '../domain/errors.js'
 import {
+  MEMORY_ASK_MAX_TEXT_CHARS,
+  MEMORY_ASK_MAX_TOKENS,
+  MEMORY_ASK_SYSTEM_PROMPT,
+  memoryAskPrompt,
+  parseMemoryAskReply,
+  type MemoryAskResult,
+  type MemoryChangeProposal,
+} from '../domain/memory.js'
+import {
   isCoordinatorInstance,
   type AssistantInstance,
   type AssistantMemory,
@@ -443,6 +452,118 @@ export class AssistantRuntime {
       facts,
       note,
     })
+  }
+
+  /**
+   * One explicit ask-or-change request over this assistant's structured memory.
+   *
+   * Exactly one model call runs, and its reply decides the outcome: an answer
+   * writes nothing, while a change is written only as `status: proposed`
+   * through the same {@link AgentTeamService.writeAssistantMemoryEntry} path a
+   * user write uses, fenced by the memory revision the write is based on. The
+   * change is never written as `active`, so the entry state machine stays the
+   * only way a proposal takes effect. Nothing here polls or schedules work: one
+   * call per invoked operation.
+   *
+   * The service file owns the transport passthrough; this method is the whole
+   * backend, callable from the runtime's owner once that passthrough exists.
+   * A failure part-way through a change leaves the earlier proposals stored as
+   * `proposed`; nothing here can ever write an `active` entry.
+   */
+  async askAssistantMemory(assistantId: string, text: string): Promise<MemoryAskResult> {
+    const instance = this.service.getAssistantInstance(assistantId)
+    if (instance.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${instance.id}' is archived`,
+        { instanceId: instance.id },
+      )
+    }
+    const request = requireText(text, 'Memory request')
+    if (request.length > MEMORY_ASK_MAX_TEXT_CHARS) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Memory request must be at most ${MEMORY_ASK_MAX_TEXT_CHARS} characters`,
+        { limit: MEMORY_ASK_MAX_TEXT_CHARS },
+      )
+    }
+    const entries = this.service.getAssistantMemory(instance.id)?.entries ?? []
+    const reply = parseMemoryAskReply(
+      await this.completeMemoryAsk(instance, memoryAskPrompt(entries, request)),
+    )
+    if (reply.kind === 'answer') return reply
+    return {
+      kind: 'change',
+      entries: await this.proposeMemoryEntries(instance.id, reply.proposals),
+    }
+  }
+
+  /**
+   * The single model call behind ask-or-change: the assistant's own provider and
+   * model, one hand-built one-shot request, no tools and no Session turn. A
+   * provider failure is surfaced with its own reason instead of being read as an
+   * unusable reply.
+   */
+  private async completeMemoryAsk(
+    instance: AssistantInstance,
+    prompt: string,
+  ): Promise<string> {
+    const snapshot = instance.assistantSnapshot
+    let text = ''
+    const chunks = this.ctx.llm.stream({
+      provider: snapshot.provider,
+      model: snapshot.model,
+      ...(snapshot.reasoningEffort === undefined
+        ? {}
+        : { reasoningEffort: ReasoningEffortId(snapshot.reasoningEffort) }),
+      system: MEMORY_ASK_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: [{ type: 'text', text: prompt }] }],
+      maxTokens: MEMORY_ASK_MAX_TOKENS,
+    })
+    for await (const chunk of chunks) {
+      if (chunk.type === 'text-delta') {
+        text += chunk.text
+        continue
+      }
+      if (chunk.type === 'finish') {
+        if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            `Memory ask model call failed: ${chunk.reason.failure.message}`,
+            { reason: chunk.reason.failure.code },
+          )
+        }
+        break
+      }
+    }
+    return text
+  }
+
+  /**
+   * Write every proposal as `proposed` through the entry write path, one call
+   * per proposal. The first write is fenced by the revision read after the model
+   * call, and each following write by the revision the previous write returned,
+   * so a concurrent user write rejects the proposal instead of being overwritten.
+   */
+  private async proposeMemoryEntries(
+    assistantId: string,
+    proposals: readonly MemoryChangeProposal[],
+  ): Promise<MemoryEntry[]> {
+    let expectedRevision = this.service.getAssistantMemory(assistantId)?.revision ?? 0
+    const written: MemoryEntry[] = []
+    for (const proposal of proposals) {
+      const { memory, entry } = await this.service.writeAssistantMemoryEntry(assistantId, {
+        ...(proposal.entryId === undefined ? {} : { id: proposal.entryId }),
+        ...(proposal.key === undefined ? {} : { key: proposal.key }),
+        ...(proposal.visibility === undefined ? {} : { visibility: proposal.visibility }),
+        status: 'proposed',
+        title: proposal.title,
+        body: proposal.body,
+      }, { expectedRevision })
+      expectedRevision = memory.revision
+      written.push(entry)
+    }
+    return written
   }
 
   /**

@@ -287,8 +287,8 @@ export function registerAssistantMemoryTools(
       },
       status: {
         type: 'string',
-        enum: ['active', 'archived'],
-        description: 'active (default) injects the entry into this main Session prompt; archived keeps it stored but out of the prompt.',
+        enum: ['active', 'proposed', 'archived'],
+        description: 'active (default) injects the entry into this main Session prompt; proposed stores the entry without injecting it until the user accepts it, and archived keeps it stored but out of the prompt.',
       },
       key: { type: 'string', description: 'Optional stable key for later lookup; omit unless the entry has a durable name.' },
     },
@@ -304,7 +304,7 @@ export function registerAssistantMemoryTools(
         ...(args.visibility === 'team-safe' || args.visibility === 'private'
           ? { visibility: args.visibility }
           : {}),
-        ...(args.status === 'archived' || args.status === 'active'
+        ...(args.status === 'archived' || args.status === 'active' || args.status === 'proposed'
           ? { status: args.status }
           : {}),
         ...(typeof args.key === 'string' && args.key.trim() !== '' ? { key: args.key } : {}),

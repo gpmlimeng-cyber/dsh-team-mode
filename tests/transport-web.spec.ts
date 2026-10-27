@@ -105,6 +105,13 @@ function harness(overrides: {
       sessionId: 'session-thread',
     })),
     archiveAssistantThread: vi.fn(async (id: string, sessionId: string) => ({ id, sessionId })),
+    writeAssistantMemoryEntry: vi.fn(async (
+      assistantId: string,
+      entry: Record<string, unknown>,
+    ) => ({
+      memory: { assistantId, revision: 2 },
+      entry: { id: 'mem-1', ...entry },
+    })),
     openAssistantTask: vi.fn(async (taskId: string) => ({
       task: { id: taskId, status: 'completed' },
       sessionId: 'session-worker',
@@ -299,6 +306,36 @@ describe('web transport authentication and upload contract', () => {
     expect(reply.status).toBe(400)
     expect(JSON.parse(reply.body)).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
     expect(service.archiveAssistantThread).toHaveBeenCalledWith('instance-1', 'session-main')
+  })
+
+  it('dispatches assistant memory entry writes with a proposed status', async () => {
+    const { call, service } = harness()
+    const post = (entry: Record<string, unknown>) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        requestId: 'r1',
+        method: 'assistant.memory.entry.write',
+        payload: { assistantId: 'instance-1', expectedRevision: 3, entry },
+      }),
+    }))
+
+    const proposed = await post({ title: 'Tone', body: 'Keep answers short.', status: 'proposed' })
+    expect(proposed.status).toBe(200)
+    expect(JSON.parse(proposed.body)).toMatchObject({
+      ok: true,
+      value: { memory: { assistantId: 'instance-1', revision: 2 } },
+    })
+    expect(service.writeAssistantMemoryEntry).toHaveBeenLastCalledWith(
+      'instance-1',
+      { title: 'Tone', body: 'Keep answers short.', status: 'proposed' },
+      { expectedRevision: 3, actor: 'user' },
+    )
+
+    // The statuses that already worked stay valid through the same path.
+    for (const status of ['active', 'archived']) {
+      const reply = await post({ title: 'Tone', body: 'Keep answers short.', status })
+      expect(reply.status).toBe(200)
+    }
   })
 
   it('dispatches assistant.task.open', async () => {

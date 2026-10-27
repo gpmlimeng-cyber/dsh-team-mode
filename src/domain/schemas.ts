@@ -284,8 +284,13 @@ export const teamMemorySchema = z.object({
   updatedAt: isoDate,
 }).strict()
 
-/** Statuses an Assistant main Session may set directly; `proposed` is team-only. */
-export const assistantMemoryEntryStatusSchema = z.enum(['active', 'archived'])
+/**
+ * Statuses an Assistant main Session may set directly. `proposed` is how an
+ * ask-or-change call or an opt-in capture writes: the entry is stored but waits
+ * for the user to accept it, and `superseded` is derived by acceptance instead
+ * of being set by a write.
+ */
+export const assistantMemoryEntryStatusSchema = z.enum(['active', 'proposed', 'archived'])
 
 /**
  * One structured-memory write. `id` must name an existing entry (revision bump);
