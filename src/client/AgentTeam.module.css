@@ -3004,6 +3004,20 @@ textarea.input {
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
+  background: var(--dsw-specific-sidebar-fill);
+}
+
+/* The host is narrower than the sidebar; extend an opaque band to the full
+   column so scrolling rows cannot show through beside the mode text. */
+.sidebarBrandHost::before {
+  content: '';
+  position: absolute;
+  top: -8px;
+  bottom: -8px;
+  left: -18px;
+  width: 280px;
+  background: var(--dsw-specific-sidebar-fill);
+  z-index: -1;
 }
 
 /* Right-aligned icon actions on the brand row: 搜索 / 筛选 / 新建. */
