@@ -56,7 +56,15 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     readOnly: true,
   })
   const Icon = (): unknown => createElement('span')
-  return { Button, Checkbox, Menu, Switch, IconChevronDownOutlineRegular: Icon, Modal: Stub }
+  return {
+    Button,
+    Checkbox,
+    Menu,
+    Switch,
+    IconChevronDownOutlineRegular: Icon,
+    IconFolderOpenOutlineRegular: Icon,
+    Modal: Stub,
+  }
 })
 
 const { memoryAfterUndo } = await import('../src/client/assistant-settings-dialog.js')

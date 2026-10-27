@@ -12426,6 +12426,13 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   outline-offset: 1px;
 }
 
+.selectLead {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
 .selectValue {
   overflow: hidden;
   min-width: 0;

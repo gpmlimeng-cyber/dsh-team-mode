@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconFolderOpenOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
 import {
   ASSISTANT_CREATE_SECTIONS,
@@ -340,6 +340,8 @@ function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.E
               options={workspaces.map(workspace => ({
                 value: workspace.id,
                 label: workspace.title,
+                // Same folder glyph the shipped workspace picker draws.
+                icon: <IconFolderOpenOutlineRegular size={14} />,
               }))}
               disabled={disabled}
               onChange={next => { props.onDraftChange({ workspaceId: next }) }}

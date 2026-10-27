@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { ReactNode } from 'react'
 import {
   IconChevronDownOutlineRegular,
   Menu,
@@ -13,6 +14,8 @@ export interface SelectControlOption {
   /** Rows sharing a heading are grouped under it (provider groups, presets). */
   group?: string
   disabled?: boolean
+  /** Leading glyph, e.g. the folder the shipped workspace picker shows. */
+  icon?: ReactNode
 }
 
 /**
@@ -63,6 +66,7 @@ export function SelectControl({
       id: option.value,
       label: option.label,
       ...(option.disabled === true ? { disabled: true } : {}),
+      ...(option.icon === undefined ? {} : { icon: option.icon }),
     })
   }
 
@@ -93,6 +97,7 @@ export function SelectControl({
           disabled={disabled}
           onClick={() => { setOpen(current => !current) }}
         >
+          {current?.icon !== undefined && <span className={css.selectLead}>{current.icon}</span>}
           <span className={css.selectValue}>{label}</span>
           <IconChevronDownOutlineRegular size={12} className={css.selectChevron} />
         </button>
