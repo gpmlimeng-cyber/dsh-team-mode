@@ -67,7 +67,12 @@ export function NewChatPanel({
   const rowCount = actions.length + rows.length
 
   useEffect(() => {
-    inputRef.current?.focus()
+    // The host Menu mounts its list hidden for one measuring pass
+    // (MEASURE_STYLE) and only then places it, so focusing on mount silently
+    // fails. Wait for the placement frame; it also lands after the create
+    // menu's own post-selection focus return.
+    const frame = requestAnimationFrame(() => { inputRef.current?.focus() })
+    return () => { cancelAnimationFrame(frame) }
   }, [])
 
   // The native Menu cannot name an external trigger, so the shipped ＋ button

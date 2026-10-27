@@ -402,7 +402,7 @@ describe('native overlays for member add and the enlarged conversation', () => {
     expect(chrome).not.toContain('memberAddPanel')
     expect(chrome).not.toContain('aria-haspopup="dialog"')
     expect(chrome).not.toContain("document.addEventListener('keydown'")
-    expect(chrome).not.toContain('useRef')
+    expect(chrome).not.toContain('autoFocus')
   })
 
   it('keeps the member-add content and every action', () => {
@@ -455,5 +455,55 @@ describe('native overlays for member add and the enlarged conversation', () => {
     expect(components).not.toContain('AgentTeamOverlay')
     expect(components).not.toContain('floatingLauncher')
     expect(css).not.toContain('floatingTeamLauncher')
+  })
+})
+
+describe('initial focus in the unified pickers', () => {
+  const panel = readFileSync(new URL('../src/client/new-chat-panel.tsx', import.meta.url), 'utf8')
+  const chrome = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
+
+  it('focuses the new-chat search on the Menu placement frame, not on mount', () => {
+    // The host Menu renders its list visibility:hidden for one measuring pass,
+    // so a mount-time focus() silently fails. The focus must wait a frame.
+    expect(panel).toContain(
+      'const frame = requestAnimationFrame(() => { inputRef.current?.focus() })',
+    )
+    expect(panel).toContain('cancelAnimationFrame(frame)')
+    expect(panel).toContain('ref={inputRef}')
+    // No competing immediate focus and no bespoke listener to emulate it.
+    expect(panel).not.toContain('inputRef.current?.focus()\n  }, [])')
+    expect(panel).not.toContain('autoFocus')
+  })
+
+  it('focuses the member-add search on the Menu placement frame, not via autoFocus', () => {
+    expect(chrome).toContain('const addSearchRef = useRef<HTMLInputElement>(null)')
+    expect(chrome).toContain(
+      'const frame = requestAnimationFrame(() => { addSearchRef.current?.focus() })',
+    )
+    expect(chrome).toContain('cancelAnimationFrame(frame)')
+    expect(chrome).toContain('}, [addPanelOpen])')
+    expect(chrome).toContain('ref={addSearchRef}')
+    expect(chrome).not.toContain('autoFocus')
+  })
+
+  it('leaves arrows, Tab and Escape to the native menu surface', () => {
+    for (const source of [panel, chrome]) {
+      // The host Menu owns dismissal/focus return; no page-level key or
+      // pointer listeners may be reintroduced to fake it.
+      expect(source).not.toContain('document.addEventListener')
+      expect(source).not.toContain("addEventListener('keydown'")
+      expect(source).not.toContain("addEventListener('pointerdown'")
+    }
+    // New chat: arrows keep focus in the search while moving its own cursor;
+    // Escape closes via the Menu and unmount returns focus to the shipped ＋.
+    expect(panel).toContain("event.key === 'ArrowDown'")
+    expect(panel).toContain("event.key === 'ArrowUp'")
+    expect(panel).not.toContain("event.key === 'Escape'")
+    expect(panel).not.toContain("event.key === 'Tab'")
+    expect(panel).toContain('trigger?.focus()')
+    // Member add: native menu rows, so the Menu walks them and Tab settles them.
+    expect(chrome).toContain('role="menuitem"')
+    expect(chrome).not.toContain("event.key === 'Escape'")
+    expect(chrome).not.toContain("event.key === 'Tab'")
   })
 })

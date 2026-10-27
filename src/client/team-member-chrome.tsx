@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   IconChevronDownOutlineRegular,
   IconPlusOutlineRegular,
@@ -90,7 +90,16 @@ export function TeamMemberSwitcher({
   const [addQuery, setAddQuery] = useState('')
   const [addingId, setAddingId] = useState<string>()
   const [addError, setAddError] = useState<string>()
+  const addSearchRef = useRef<HTMLInputElement>(null)
   const members = useMemo(() => (membership === undefined ? [] : sortedMembers(membership.team)), [membership])
+  useEffect(() => {
+    if (!addPanelOpen) return
+    // The host Menu mounts its list hidden for one measuring pass and only then
+    // places it: focusing during mount silently fails, so wait for the
+    // placement frame (and for any trigger focus return to settle).
+    const frame = requestAnimationFrame(() => { addSearchRef.current?.focus() })
+    return () => { cancelAnimationFrame(frame) }
+  }, [addPanelOpen])
   if (membership === undefined || sessionId === undefined || openSession === undefined) return null
   const team = membership.team
   const teamAssistants = assistants.filter(assistant => assistant.enabled && assistant.teamSelectable)
@@ -225,7 +234,7 @@ export function TeamMemberSwitcher({
         <div className={css.memberAddSearch}>
           <IconSearchOutlineRegular size={14} />
           <input
-            autoFocus
+            ref={addSearchRef}
             value={addQuery}
             onChange={event => { setAddQuery(event.target.value) }}
             placeholder="搜索"
