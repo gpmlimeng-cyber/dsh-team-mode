@@ -4416,6 +4416,29 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   text-overflow: ellipsis;
 }
 
+/* 描述 stays folded until asked for: identity is the common case, the system
+   prompt is not. */
+.assistantCreateFold {
+  border-top: 1px solid var(--dsw-alias-border-l1);
+  padding-top: 6px;
+}
+
+.assistantCreateFoldSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.assistantCreateFoldSummary::-webkit-details-marker {
+  display: none;
+}
+
 /* 描述 is a note, not an essay: two rows, and the textarea keeps the name
    input's width because both live in the same row grid. */
 .assistantCreateDescription {

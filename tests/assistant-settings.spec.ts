@@ -378,8 +378,10 @@ describe('assistant create dialog sections', () => {
     expect(html).toContain('aria-label="描述"')
     expect(html).toContain('先读代码，再给最小实现。')
     expect(html).toContain('留空则使用 Agent Preset 默认')
-    // Order inside the pane: name first, then the description.
+    // Order inside the pane: name first, then the folded description.
     expect(html.indexOf('助手名称')).toBeLessThan(html.indexOf('aria-label="描述"'))
+    // Folded by default: the textarea is in the DOM but the block is closed.
+    expect(html).toMatch(/<details[^>]*data-dsh-assistant-create-description(?![^>]*\bopen\b)/)
   })
 
   it('model and environment writes workspace, model, reasoning and preset', () => {

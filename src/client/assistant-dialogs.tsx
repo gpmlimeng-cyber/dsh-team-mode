@@ -271,21 +271,29 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
             />
           )}
         />
-        <SettingsRow
-          label="描述"
-          hint="写入助手的系统提示；留空则使用 Agent Preset 默认。只影响之后创建或恢复的会话。"
-          control={(
-            <textarea
-              className={`${css.input} ${css.assistantCreateDescription}`}
-              aria-label="描述"
-              rows={2}
-              value={draft.instructions}
-              disabled={disabled}
-              placeholder="例如：你负责整理需求并给出可执行的实现建议；先读代码再回答。"
-              onChange={event => { props.onDraftChange({ instructions: event.target.value }) }}
-            />
-          )}
-        />
+        <details className={css.assistantCreateFold} data-dsh-assistant-create-description>
+          <summary className={css.assistantCreateFoldSummary}>
+            <span>描述</span>
+            <span className={css.assistantCreateCardHint}>
+              {draft.instructions.trim() === '' ? '可选，默认折叠' : '已填写'}
+            </span>
+          </summary>
+          <SettingsRow
+            label="描述"
+            hint="写入助手的系统提示；留空则使用 Agent Preset 默认。只影响之后创建或恢复的会话。"
+            control={(
+              <textarea
+                className={`${css.input} ${css.assistantCreateDescription}`}
+                aria-label="描述"
+                rows={2}
+                value={draft.instructions}
+                disabled={disabled}
+                placeholder="例如：你负责整理需求并给出可执行的实现建议；先读代码再回答。"
+                onChange={event => { props.onDraftChange({ instructions: event.target.value }) }}
+              />
+            )}
+          />
+        </details>
         {groupOptions.visible && (
           <SettingsRow
             label="分组"
