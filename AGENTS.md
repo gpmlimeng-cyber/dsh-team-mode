@@ -48,6 +48,17 @@ Vitest is the test framework. Name tests `*.spec.ts` and place them in `tests/`.
 - ✅ 提交前 `git status` 确认暂存区里只有自己的文件；
 - ✅ 报告里写清「我改了哪些文件」，让别人能核对提交内容。
 
+## Token 成本纪律
+
+成本主要来自**重复阅读**与**冗长回报**，不是来自干活本身。默认这样做：
+
+- **先 `npm run build`，再 `npm run check`**，输出重定向到文件后只 `grep` 结论行（`Tests  |FAIL|error TS`），不要整屏打印；
+- **一次只跑一次全仓 check**（每个任务一次，收工时一次），不要边改边跑；
+- 读文件用 `sed -n 'a,bp'` / `grep -n` 取片段，不要整文件读；文档先看目录与结论段；
+- 成员回报**只要结论 + 证据行号 + commit hash**，不要复述过程；
+- 一个任务把需求写全再派，**避免来回澄清的多轮**（每一轮都是一次全上下文）；
+- 低风险任务不另开评审（把验收并进实现契约）；有数据迁移/权限/计费风险的任务必须评审。
+
 ## Commit & Pull Request Guidelines
 
 Follow the repository’s Conventional Commit style: `feat:`, `fix:`, `refactor:`, `style:`, `test:`, or `docs:` followed by an imperative summary. Keep commits scoped and avoid generated or unrelated changes. Pull requests should explain user-visible behavior, architecture impact, and verification performed; link relevant issues and include before/after screenshots for UI changes. Call out schema migrations, Harness API assumptions, and known limitations explicitly.
