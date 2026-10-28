@@ -22,14 +22,12 @@ import type { MascotShape } from './mascot.js'
 /**
  * Global optical shrink applied on top of the per-shape fit.
  *
- * DiceBear tilts every drawing by a random -11..11° (and scales 0.93..1.06)
- * inside its own 100×100 canvas; the rotated corner is clipped by that viewBox,
- * which reads as a chipped mascot. A full cure would need a 0.84 target (a
- * visibly smaller avatar); this keeps ~92% of the size and removes any tilt
- * corner on the common shapes — the remaining sliver appears only at the
- * extreme of the random range.
+ * The table above targets a 0.98 fill of the tile. DiceBear tilts every drawing
+ * by a random -11..11° inside its own viewBox and clips the corner there, which
+ * reads as a chipped mascot; the worst case needs `cos11° + sin11° ≈ 1.172` of
+ * headroom, i.e. a 0.84 target fill. 0.84 / 0.98 ≈ 0.857.
  */
-export const MASCOT_FIT_SHRINK = 0.92
+export const MASCOT_FIT_SHRINK = 0.857
 
 export const MASCOT_SHAPE_FIT: Readonly<Record<MascotShape, number>> = {
   circle: 1.441,
