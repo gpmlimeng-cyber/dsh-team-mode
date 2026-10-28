@@ -57,6 +57,7 @@ const {
   applyTodayTab,
   openArchivedTeam,
   openRunningRow,
+  openUnreadAssistantRow,
   openWaitingRow,
   requestToday,
   todayRowKey,
@@ -579,5 +580,57 @@ describe('today surface cost and style rules', () => {
     expect(styles).toContain('min-width: 0')
     expect(styles).toContain('text-overflow: ellipsis')
     expect(styles).toContain('overflow-x: hidden')
+  })
+})
+
+describe('today unread row opens the canonical chat, not a stored id', () => {
+  const source = readFileSync(new URL('../src/client/today-surface.tsx', import.meta.url), 'utf8')
+
+  const unread = (sessionId: string): TodayWaiting => ({
+    teamName: 'Data Bot',
+    kind: 'assistant_unread',
+    subject: '报表已经生成',
+    since: NOW - 120_000,
+    waitMs: 120_000,
+    assistant: { assistantId: 'data', name: 'Data Bot', sessionId },
+  })
+
+  it('marks read and hands the assistant id to the ensure door, never the stored session id', () => {
+    const navigation = { markRead: vi.fn(), openCanonical: vi.fn() }
+    expect(openUnreadAssistantRow(unread('session-data'), navigation)).toBe(true)
+    expect(navigation.markRead).toHaveBeenCalledWith('data')
+    expect(navigation.openCanonical).toHaveBeenCalledWith('data', true)
+    expect(JSON.stringify(navigation.openCanonical.mock.calls)).not.toContain('session-data')
+  })
+
+  it('passes the pre-ensure bound fact, so a first bind can still be marked', () => {
+    const navigation = { markRead: vi.fn(), openCanonical: vi.fn() }
+    openUnreadAssistantRow(unread(''), navigation)
+    expect(navigation.openCanonical).toHaveBeenCalledWith('data', false)
+  })
+
+  it('leaves decision rows on their task Session instead of the canonical door', () => {
+    const navigation = { markRead: vi.fn(), openCanonical: vi.fn() }
+    const decision: TodayWaiting = {
+      teamName: 'Paper Bot',
+      kind: 'assistant_decision',
+      subject: '整理资料',
+      since: NOW - 60_000,
+      waitMs: 60_000,
+      assistant: {
+        assistantId: 'paper',
+        name: 'Paper Bot',
+        sessionId: 'session-task',
+        taskId: 'task-paper',
+      },
+    }
+    expect(openUnreadAssistantRow(decision, navigation)).toBe(false)
+    expect(navigation.markRead).not.toHaveBeenCalled()
+    expect(navigation.openCanonical).not.toHaveBeenCalled()
+  })
+
+  it('wires the page action through openAssistantMainSession before navigation', () => {
+    expect(source).toContain('openAssistantMainSession(assistantId, sessionId => {')
+    expect(source).toContain('openUnreadAssistantRow(row, {')
   })
 })

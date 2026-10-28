@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
-import { assistantInstanceForSession, assistantNameForSession } from './assistant-instances.js'
+import {
+  assistantInstanceForSession,
+  assistantInstanceLabel,
+} from './assistant-instances.js'
 import css from './AgentTeam.module.css'
 import type { AssistantInstance } from '../domain/types.js'
 
@@ -28,15 +31,36 @@ function useAssistantInstances(): AssistantInstance[] {
 }
 
 /**
- * Assistant main Sessions are ordinary DSH Sessions with no durable title, so
- * the native breadcrumb shows the Workspace directory name. This lineage slot
- * appends the Assistant's identity label — `name`, plus its optional 职能 line
- * when present, so a breadcrumb names which same-named Assistant is open. The
- * Session itself is never renamed.
+ * The lineage chip text, or `undefined` when the owner's own title already says
+ * it. The slot owner renders `displayTitle` first and then this chip, so after
+ * the canonical chat is renamed to the assistant label the chip must disappear —
+ * otherwise the header shows the same label twice.
+ *
+ * Before the rename existed this chip was the only place the label appeared
+ * (the native title was the Workspace directory). It stays as the fallback for
+ * a deployment where the host title could not be written.
  */
-export function AssistantSessionTitle({ sessionId }: { sessionId?: string }): JSX.Element | null {
+export function assistantLineageTitle(
+  instance: Pick<AssistantInstance, 'assistantSnapshot'> | undefined,
+  displayTitle: string | undefined,
+): string | undefined {
+  if (instance === undefined) return undefined
+  const label = assistantInstanceLabel(instance)
+  return displayTitle === label ? undefined : label
+}
+
+export function AssistantSessionTitle({
+  lineageSessionId,
+  displayTitle,
+}: {
+  lineageSessionId?: string
+  displayTitle?: string
+}): JSX.Element | null {
   const instances = useAssistantInstances()
-  const label = assistantNameForSession(instances, sessionId)
+  const label = assistantLineageTitle(
+    assistantInstanceForSession(instances, lineageSessionId),
+    displayTitle,
+  )
   if (label === undefined) return null
   return <span className={css.assistantSessionTitle} title={label}>{label}</span>
 }

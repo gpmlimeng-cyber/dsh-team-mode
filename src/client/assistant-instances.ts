@@ -319,16 +319,31 @@ export function assistantNow(
   instance: AssistantInstanceView,
   tasks: readonly AssistantSession[],
 ): AssistantNow {
-  const activity = assistantRowActivity(tasks, instance)
   const archived = instance.status === 'archived'
-  const active = assistantThreadTasks(tasks, instance)
+  // One filtered list feeds status, counts and current. Archived rows and the
+  // main Session's own task records never count as worker activity, so the
+  // status word can never say 待你处理 while `current` has nothing to act on.
+  const threadTasks = assistantThreadTasks(tasks, instance)
+    .filter(task => task.archivedAt === undefined)
+  const active = threadTasks
     .filter((task): task is AssistantSession & {
       status: 'needs_input' | 'running' | 'queued'
-    } => task.archivedAt === undefined
-      && (task.status === 'needs_input' || task.status === 'running' || task.status === 'queued'))
+    } => task.status === 'needs_input' || task.status === 'running' || task.status === 'queued')
     .sort((left, right) => ACTIVE_TASK_RANK[left.status] - ACTIVE_TASK_RANK[right.status])
   const first = active[0]
-  const counts = assistantTaskCounts(active)
+  const counts = assistantTaskCounts(threadTasks)
+  const status: AssistantRowStatus = counts.needs_input > 0
+    ? 'needs_input'
+    : counts.running > 0
+      ? 'running'
+      : counts.queued > 0
+        ? 'queued'
+        : 'none'
+  const activity: AssistantRowActivity = {
+    status,
+    count: status === 'none' ? 0 : counts[status],
+    instanceStatus: instance.status,
+  }
   const preview = instance.preview?.text.trim()
   return {
     state: assistantRowState(activity),

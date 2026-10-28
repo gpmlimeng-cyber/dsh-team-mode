@@ -804,3 +804,50 @@ describe('permanent coworker chat: one canonical door', () => {
     expect(store).not.toContain("openSession(result.sessionId)")
   })
 })
+
+describe('permanent chat repair round: one label, one door, one activity list', () => {
+  const title = readFileSync(
+    new URL('../src/client/assistant-session-title.tsx', import.meta.url),
+    'utf8',
+  )
+  const detail = readFileSync(
+    new URL('../src/client/assistant-detail.tsx', import.meta.url),
+    'utf8',
+  )
+
+  it('drops the lineage chip when the owner displayTitle already is the assistant label', async () => {
+    const { assistantLineageTitle } = await import('../src/client/assistant-session-title.js')
+    const paper = titled('paper', 'Paper Bot', '研究员')
+    const label = 'Paper Bot · 研究员'
+    expect(assistantLineageTitle(paper, label)).toBeUndefined()
+    expect(assistantLineageTitle(paper, 'workspace-1')).toBe(label)
+    expect(assistantLineageTitle(undefined, label)).toBeUndefined()
+    // Owner title + lineage chip collapse to exactly one label after the rename.
+    expect([label, assistantLineageTitle(paper, label)].filter(part => part !== undefined))
+      .toEqual([label])
+    // The comparison is against the owner-provided title, not the session id.
+    expect(title).toContain('displayTitle')
+    expect(title).toContain('assistantLineageTitle(')
+  })
+
+  it('routes the History main row through ensure but leaves thread/archived raw', () => {
+    expect(detail).toContain('openAssistantMainSession(instance.id')
+    expect(detail).toContain("sessionId === instance.mainSessionId && instance.status !== 'archived'")
+    // The fallback branch still opens the raw id for threads and archived main.
+    expect(detail).toContain('openAssistantSession(sessionId)')
+  })
+
+  it('keeps 现在 status on the same filtered list as current/counts', () => {
+    const paper = instance('paper', 'Paper Bot', { mainSessionId: 'session-main' })
+    const now = assistantNow(paper, [
+      // A stale main-Session task record and an archived task must not make the
+      // status claim 待你处理 while `current` has nothing to act on.
+      task('paper', 'needs_input', 'stale-main', { sessionId: 'session-main' }),
+      task('paper', 'needs_input', 'retired', { archivedAt: ISO }),
+    ])
+    expect(now.state).toBe('none')
+    expect(now.statusText).toBe('空闲')
+    expect(now.current).toBeUndefined()
+    expect(now.counts).toEqual({ needs_input: 0, running: 0, queued: 0 })
+  })
+})

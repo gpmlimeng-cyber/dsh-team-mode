@@ -16,7 +16,7 @@ import {
   assistantInstanceStatusLabel,
   PERMISSION_LABELS,
 } from './labels.js'
-import { openAssistantSession } from './store.js'
+import { openAssistantMainSession, openAssistantSession } from './store.js'
 import css from './AgentTeam.module.css'
 import type { AssistantInstanceView } from '../transport/contracts.js'
 
@@ -351,6 +351,21 @@ export function HistorySection({
 
   const open = (sessionId: string): void => {
     setError(undefined)
+    // The main row is the relationship itself: re-ensure it so the assistant
+    // tools/model are attached, exactly like the sidebar row. Thread rows (and
+    // an archived assistant's retained main Session, where ensure must fail)
+    // still open the raw Session id.
+    if (sessionId === instance.mainSessionId && instance.status !== 'archived') {
+      void openAssistantMainSession(instance.id, target => {
+        if (!openAssistantSession(target)) {
+          setError('无法打开该会话：宿主还没有可用的会话视图')
+        }
+      }, { bound: true }).then(
+        outcome => { if (outcome.notice !== undefined) setError(outcome.notice) },
+        cause => { setError(detailErrorMessage('打开会话失败', cause)) },
+      )
+      return
+    }
     if (openAssistantSession(sessionId)) return
     setError('无法打开该会话：宿主还没有可用的会话视图')
   }

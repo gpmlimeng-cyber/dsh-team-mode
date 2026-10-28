@@ -16,7 +16,7 @@ import {
 } from './assistant-detail.js'
 import { assistantReadState, markAssistantRead } from './assistant-read-state.js'
 import { OPEN_ASSISTANT_SETTINGS_EVENT } from './assistant-settings-pane.js'
-import { openAssistantSession, openManageTeamDialog } from './store.js'
+import { openAssistantMainSession, openAssistantSession, openManageTeamDialog } from './store.js'
 import { readSurfaceMode, type SurfaceMode } from './surface-mode.js'
 import {
   todayActionableCount,
@@ -119,6 +119,31 @@ export function openWaitingRow(row: TodayWaiting, navigation: WaitingRowNavigati
 export interface RunningRowNavigation {
   openAssistant: (sessionId: string, assistantId?: string) => void
   openTeam: (teamId: string) => void
+}
+
+export interface UnreadAssistantNavigation {
+  markRead: (assistantId: string) => void
+  /**
+   * Ensure→open the canonical main Session. It receives the pre-ensure bound
+   * fact from the row, never the row's stored session id: a raw mainSessionId
+   * can resume the Agent outside the assistant lifecycle.
+   */
+  openCanonical: (assistantId: string, wasBound: boolean) => void
+}
+
+/**
+ * The unread row is a door to the coworker relationship, so it ensures the main
+ * Session instead of opening the stored id. Decision rows keep opening their
+ * task Session raw — that is the worker conversation, not the main chat.
+ */
+export function openUnreadAssistantRow(
+  row: TodayWaiting,
+  navigation: UnreadAssistantNavigation,
+): boolean {
+  if (row.kind !== 'assistant_unread' || row.assistant === undefined) return false
+  navigation.markRead(row.assistant.assistantId)
+  navigation.openCanonical(row.assistant.assistantId, row.assistant.sessionId !== '')
+  return true
 }
 
 /**
@@ -328,8 +353,25 @@ export function TodaySurfaceBody(_props: PropsRuntime<'sidebar.right.pane.tab'>)
     setNotice('暂时打不开这个会话：会话界面还没就绪')
   }
 
+  /** One canonical coworker-chat open: ensure first, then navigate. */
+  const openAssistantCanonical = (assistantId: string, wasBound: boolean): void => {
+    setNotice(undefined)
+    void openAssistantMainSession(assistantId, sessionId => {
+      openSessionOrAssistant(sessionId, assistantId)
+    }, { bound: wasBound }).then(
+      outcome => { if (outcome.notice !== undefined) setNotice(outcome.notice) },
+      cause => {
+        setNotice(`打开助手失败：${cause instanceof Error ? cause.message : String(cause)}`)
+      },
+    )
+  }
+
   const openWaitingRowAction = (row: TodayWaiting): void => {
     setNotice(undefined)
+    if (openUnreadAssistantRow(row, {
+      markRead: assistantId => { markAssistantRead(assistantId) },
+      openCanonical: openAssistantCanonical,
+    })) return
     openWaitingRow(row, {
       markRead: assistantId => { markAssistantRead(assistantId) },
       openAssistant: (sessionId, assistantId) => { openSessionOrAssistant(sessionId, assistantId) },
