@@ -254,3 +254,21 @@ describe('the header trigger and panel', () => {
     expect(panel).toContain("callAgentTeam('team.addMember'")
   })
 })
+
+describe('session row actions', () => {
+  const chromeSource = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
+  const cssSource = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+
+  it('offers rename and archive on each thread row', () => {
+    expect(chromeSource).toContain("team.thread.rename")
+    expect(chromeSource).toContain("team.thread.archive")
+    expect(chromeSource).toContain("label: '重命名'")
+    expect(chromeSource).toContain("label: '归档'")
+  })
+
+  it('keeps the row a single line and reveals actions only on hover', () => {
+    expect(cssSource).toContain('.teamSessionRowWrap:hover .teamSessionRowActions')
+    expect(cssSource).toContain(".teamSessionRowWrap:has([aria-expanded='true']) .teamSessionRowActions")
+    expect(cssSource).toContain('.teamSessionRename')
+  })
+})

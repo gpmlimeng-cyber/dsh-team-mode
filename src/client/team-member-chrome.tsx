@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  IconArchiveOutlineRegular,
   IconCheckOutlineRegular,
   IconChevronDownOutlineRegular,
+  IconEditOutlineRegular,
+  IconEllipsisOutlineRegular,
   IconPlusOutlineRegular,
   IconSearchOutlineRegular,
   Menu,
@@ -182,6 +185,8 @@ export function TeamSessionSwitcher({
   const team = useTeamForSession(sessionId)
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
+  const [renaming, setRenaming] = useState<{ id: string; title: string }>()
+  const [threadMenu, setThreadMenu] = useState<string>()
   const searchRef = useRef<HTMLInputElement>(null)
   /** Set while closing, so the host Menu's focus return cannot reopen us. */
   const skipFocusOpen = useRef(false)
@@ -248,6 +253,26 @@ export function TeamSessionSwitcher({
     if (target === sessionId) return
     keepChatView(target)
     openSession(target)
+  }
+
+  const renameThread = async (threadId: string, title: string): Promise<void> => {
+    const next = title.trim()
+    setRenaming(undefined)
+    if (next === '' ) return
+    try {
+      await callAgentTeam('team.thread.rename', { id: team.id, threadId, title: next })
+    } catch {
+      // A refused rename keeps the stored title; the row reappears unchanged.
+    }
+  }
+
+  const archiveThread = async (threadId: string): Promise<void> => {
+    setThreadMenu(undefined)
+    try {
+      await callAgentTeam('team.thread.archive', { id: team.id, threadId })
+    } catch {
+      // A refused archive leaves the thread in place.
+    }
   }
 
   const createThread = async (teamView: TeamView): Promise<void> => {
@@ -354,21 +379,79 @@ export function TeamSessionSwitcher({
             {model.threads.length > 0 && (
               <div className={css.teamSessionGroup} role="group" aria-label="团队会话">
                 <div className={css.teamSessionGroupLabel}>团队会话</div>
-                {model.threads.map(thread => (
-                  <button
-                    key={thread.id}
-                    type="button"
-                    role="menuitem"
-                    className={css.teamSessionRow}
-                    onClick={() => { goTo(thread.sessionId) }}
-                  >
-                    <span className={css.teamSessionRowName}>{thread.title}</span>
-                    <span className={css.teamSessionTime}>{relativeTime(thread.updatedAt)}</span>
-                    {thread.current && (
-                      <IconCheckOutlineRegular size={14} className={css.teamSessionCheck} aria-label="当前会话" />
-                    )}
-                  </button>
-                ))}
+                {model.threads.map(thread => renaming?.id === thread.id
+                  ? (
+                    <input
+                      key={`${thread.id}-rename`}
+                      className={css.teamSessionRename}
+                      value={renaming.title}
+                      autoFocus
+                      aria-label="会话名称"
+                      onChange={event => { setRenaming({ id: thread.id, title: event.target.value }) }}
+                      onBlur={() => { void renameThread(thread.id, renaming.title) }}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault()
+                          void renameThread(thread.id, renaming.title)
+                        } else if (event.key === 'Escape') {
+                          event.preventDefault()
+                          setRenaming(undefined)
+                        }
+                      }}
+                    />
+                  )
+                  : (
+                    <div key={thread.id} className={css.teamSessionRowWrap}>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className={css.teamSessionRow}
+                        onClick={() => { goTo(thread.sessionId) }}
+                      >
+                        <span className={css.teamSessionRowName}>{thread.title}</span>
+                        <span className={css.teamSessionTime}>{relativeTime(thread.updatedAt)}</span>
+                        {thread.current && (
+                          <IconCheckOutlineRegular size={14} className={css.teamSessionCheck} aria-label="当前会话" />
+                        )}
+                      </button>
+                      <span className={css.teamSessionRowActions}>
+                        <Menu
+                          open={threadMenu === thread.id}
+                          portal
+                          align="end"
+                          dense
+                          items={[
+                            { id: 'rename', label: '重命名', icon: <IconEditOutlineRegular size={14} /> },
+                            { id: 'archive', label: '归档', icon: <IconArchiveOutlineRegular size={14} /> },
+                          ]}
+                          onSelect={id => {
+                            if (id === 'rename') {
+                              setThreadMenu(undefined)
+                              setRenaming({ id: thread.id, title: thread.title })
+                            } else if (id === 'archive') {
+                              void archiveThread(thread.id)
+                            }
+                          }}
+                          onClose={() => { setThreadMenu(undefined) }}
+                          anchor={(
+                            <button
+                              type="button"
+                              className={css.teamSessionRowAction}
+                              aria-label={`${thread.title} 的更多操作`}
+                              aria-haspopup="menu"
+                              aria-expanded={threadMenu === thread.id}
+                              onClick={event => {
+                                event.stopPropagation()
+                                setThreadMenu(current => (current === thread.id ? undefined : thread.id))
+                              }}
+                            >
+                              <IconEllipsisOutlineRegular size={14} />
+                            </button>
+                          )}
+                        />
+                      </span>
+                    </div>
+                  ))}
               </div>
             )}
             {model.members.length === 0 && model.threads.length === 0 && (

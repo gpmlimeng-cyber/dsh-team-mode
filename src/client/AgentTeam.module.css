@@ -6302,6 +6302,65 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+/* One session row plus its hover actions; the row itself stays a single 32px
+   line, and the ⋯ only takes space on hover so titles never reflow. */
+.teamSessionRowWrap {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.teamSessionRowWrap .teamSessionRow {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.teamSessionRowActions {
+  display: none;
+  flex: none;
+}
+
+.teamSessionRowWrap:hover .teamSessionRowActions,
+.teamSessionRowWrap:focus-within .teamSessionRowActions,
+.teamSessionRowWrap:has([aria-expanded='true']) .teamSessionRowActions {
+  display: inline-flex;
+}
+
+.teamSessionRowAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.teamSessionRowAction:hover,
+.teamSessionRowAction:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.teamSessionRename {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l3);
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
 .teamSessionRow:focus-visible,
 .teamSessionCreate:focus-visible {
   outline: none;
