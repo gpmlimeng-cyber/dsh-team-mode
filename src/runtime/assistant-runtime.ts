@@ -498,21 +498,57 @@ export class AssistantRuntime {
   async openTask(rawTaskId: string): Promise<{ task: AssistantSession; sessionId: string }> {
     const taskId = requireText(rawTaskId, 'Task id')
     let task = this.service.getAssistantSession(taskId)
+    if (task.status === 'paused') {
+      // A paused row owns no live worker by design. Opening it must not resume a
+      // worker behind the pause; the caller resumes the task explicitly first.
+      throw new AgentTeamError(
+        'ASSISTANT_TASK_NOT_ACTIVE',
+        `Task '${task.title}' is paused; resume the task before opening it`,
+        { taskId: task.id, status: 'paused' },
+      )
+    }
     if (task.status === 'queued') {
-      // A queued row has no worker Session yet. Opening it runs the same drain
-      // every other caller uses; capacity is respected rather than bypassed.
-      await this.drainQueue(task.assistantId)
+      // A click targets this row, never the oldest queued row. Admission either
+      // starts this task itself or leaves the queue untouched.
+      await this.admitQueuedTask(task.id)
       task = this.service.getAssistantSession(taskId)
       if (task.status === 'queued') {
+        const instance = this.service.getAssistantInstance(task.assistantId)
+        if (instance.pausedAt !== undefined) {
+          throw new AgentTeamError(
+            'ASSISTANT_TASK_NOT_ACTIVE',
+            `Task '${task.title}' is queued while assistant '${instance.id}' is paused`,
+            { taskId: task.id, status: 'queued', paused: true },
+          )
+        }
+        const live = this.liveWorkerCount(task.assistantId)
         throw new AgentTeamError(
           'ASSISTANT_TASK_NOT_ACTIVE',
-          `Task '${task.title}' is queued behind this assistant's live workers`,
-          { taskId: task.id },
+          `Task '${task.title}' is queued behind ${live} live worker(s); retry after one finishes`,
+          { taskId: task.id, status: 'queued', liveWorkers: live },
         )
       }
     }
     const worker = await this.ensureWorker(task)
     return { task, sessionId: worker.sessionId }
+  }
+
+  /**
+   * Start exactly the clicked queued row when capacity allows. This is the only
+   * path that bypasses FIFO order, and only because the user named that row; a
+   * full worker set or a paused/archived assistant leaves every row untouched.
+   */
+  private async admitQueuedTask(taskId: string): Promise<void> {
+    const initial = this.service.getAssistantSession(taskId)
+    if (initial.status !== 'queued') return
+    await this.withAssistantLock(initial.assistantId, async () => {
+      const task = this.service.getAssistantSession(taskId)
+      if (task.status !== 'queued') return
+      const instance = this.service.getAssistantInstance(task.assistantId)
+      if (instance.status === 'archived' || instance.pausedAt !== undefined) return
+      if (this.liveWorkerCount(task.assistantId) >= this.workerConcurrencyLimit()) return
+      await this.startQueuedTask(instance, task)
+    })
   }
 
   /** Deliver another instruction to a live worker and mark its task running. */
@@ -1297,8 +1333,11 @@ export class AssistantRuntime {
     if (worker === undefined) {
       // Cancelling a row that never had a live worker still frees the queue
       // from a stale head; archive suppresses the pass because every row is
-      // being cancelled anyway.
-      if (reason !== 'archived') this.scheduleQueueDrain(this.service.getAssistantSession(taskId).assistantId)
+      // being cancelled anyway, and a restart release is followed by its own
+      // start so it must not race a drain for the same slot.
+      if (reason !== 'archived' && reason !== 'restart') {
+        this.scheduleQueueDrain(this.service.getAssistantSession(taskId).assistantId)
+      }
       return
     }
     this.workers.delete(taskId)
@@ -1318,7 +1357,11 @@ export class AssistantRuntime {
       `failed to dispose worker Session for task '${taskId}' (${reason})`,
     )
     // Every settle frees one capacity slot; the next queued row starts here.
-    if (reason !== 'archived') this.scheduleQueueDrain(worker.assistantId)
+    // A restart release is immediately followed by its own start, so it owns
+    // the slot instead of racing a drain.
+    if (reason !== 'archived' && reason !== 'restart') {
+      this.scheduleQueueDrain(worker.assistantId)
+    }
   }
 
   private async markTaskRunning(taskId: string): Promise<void> {
@@ -1507,6 +1550,11 @@ export class AssistantRuntime {
     instance: AssistantInstance,
     task: AssistantSession,
   ): Promise<void> {
+    // A worker this runtime already owns for the row is ours to release, not a
+    // foreign lifecycle conflict. Release it first so this start begins clean.
+    if (this.workers.has(task.id)) {
+      await this.releaseWorker(task.id, 'restart')
+    }
     const foreign = this.ctx.agents.get(SessionId(task.sessionId))
     if (foreign !== undefined) {
       await this.failTask(task.id, new AgentTeamError(
@@ -1541,7 +1589,18 @@ export class AssistantRuntime {
         )
       }
       this.mapWorker(task.id, { assistantId: instance.id, sessionId: task.sessionId, handle })
-      await this.service.markAssistantTaskStarted(task.id)
+      // The conditional start write re-checks inside the store: a pause, cancel
+      // or terminal transition that won after the read above is never turned
+      // back into running.
+      const started = await this.service.markAssistantTaskStarted(task.id)
+      if (started.status !== 'running'
+        || this.service.getAssistantInstance(instance.id).pausedAt !== undefined) {
+        throw new AgentTeamError(
+          'ASSISTANT_TASK_NOT_ACTIVE',
+          `Task '${task.title}' became ${started.status} while it was starting`,
+          { taskId: task.id, status: started.status },
+        )
+      }
       handle.agent.followup(workerMessage(
         task.startedAt === undefined ? task.brief : resumeAfterPauseMessage(task),
       ))
@@ -1550,11 +1609,20 @@ export class AssistantRuntime {
       if (handle !== undefined) {
         await this.disposeQuietly(handle, `queued worker Session '${task.sessionId}' failed to start`)
       }
-      // A pause that landed mid-start leaves the row queued/paused; failing it
-      // would lose the pause the user just asked for.
+      // A pause/cancel/terminal transition that landed mid-start owns the row;
+      // failing it would overwrite the state the user or another path chose.
       const current = this.service.getAssistantSession(task.id)
       if (current.status === 'paused') return
-      if (this.service.getAssistantInstance(instance.id).pausedAt !== undefined) return
+      const pausedInstance = this.service.getAssistantInstance(instance.id).pausedAt !== undefined
+      if (pausedInstance) {
+        // The assistant pause snapshot may have missed a just-marked row: fold
+        // it into the same pausedBy the assistant resume re-admits.
+        if (current.status === 'running') {
+          await this.service.setAssistantTaskPaused(task.id, 'assistant')
+        }
+        return
+      }
+      if (current.status === 'cancelled' || isTerminalTaskStatus(current.status)) return
       await this.failTask(task.id, error)
     }
   }

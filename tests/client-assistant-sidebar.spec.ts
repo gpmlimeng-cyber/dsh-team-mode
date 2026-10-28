@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  archivedAssistantInstances,
   assistantInstanceLabel,
   assistantInstanceTitle,
   assistantMainSessionTitle,
@@ -191,6 +192,36 @@ describe('isolated assistant workspace rows', () => {
     expect(hider).toContain("applyPrefix(WORKSPACE_ROW_PREFIX, hiddenWorkspaceIds)")
     // One owner of display: the same map restores both row kinds.
     expect(hider).toContain('ownedRows')
+  })
+})
+
+describe('archived assistant management', () => {
+  it('lists archived rows for restore, searchable and newest-first', () => {
+    const gone = instance('gone', 'Gone Bot', { status: 'archived', updatedAt: '2026-01-02T00:00:00Z' })
+    const goneOld = instance('gone-old', 'Old Bot', { status: 'archived', updatedAt: '2026-01-01T00:00:00Z' })
+    const active = instance('active', 'Active Bot')
+
+    expect(archivedAssistantInstances([goneOld, active, gone], '').map(item => item.id))
+      .toEqual(['gone', 'gone-old'])
+    expect(archivedAssistantInstances([goneOld, active, gone], 'gone'))
+      .toEqual([gone])
+    expect(archivedAssistantInstances([active], '')).toEqual([])
+    // The ordinary list still hides archived rows.
+    expect(visibleAssistantInstances([goneOld, active, gone], '').map(item => item.id))
+      .toEqual(['active'])
+  })
+
+  it('renders an archived fold whose row restores through the user transport', () => {
+    const sidebar = readFileSync(
+      new URL('../src/client/assistant-sidebar.tsx', import.meta.url),
+      'utf8',
+    )
+    expect(sidebar).toContain('archivedAssistantInstances(instances, query)')
+    expect(sidebar).toContain('data-dsh-assistant-archived')
+    expect(sidebar).toContain('data-dsh-assistant-archived-row')
+    expect(sidebar).toContain("callAgentTeam('assistant.instance.restore'")
+    // The list read is unfiltered, so a reload still returns archived rows.
+    expect(sidebar).toContain("callAgentTeam('assistant.instance.list')")
   })
 })
 

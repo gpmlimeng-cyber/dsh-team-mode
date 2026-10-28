@@ -513,3 +513,23 @@ export function visibleAssistantInstances<T extends AssistantInstance>(
       || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
       || left.id.localeCompare(right.id))
 }
+
+/**
+ * Archived instances the management surface lists for restore. The same list
+ * read already returns them (the historical unfiltered page); this only makes
+ * the archived subset explicit and searchable, with the same newest-first order
+ * so a reload shows the row again without opening anything.
+ */
+export function archivedAssistantInstances<T extends AssistantInstance>(
+  instances: readonly T[],
+  query = '',
+): T[] {
+  const normalized = query.trim().toLocaleLowerCase()
+  return instances
+    .filter(instance => instance.status === 'archived' || instance.archivedAt !== undefined)
+    .filter(instance => normalized === ''
+      || assistantInstanceLabel(instance).toLocaleLowerCase().includes(normalized))
+    .slice()
+    .sort((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
+      || left.id.localeCompare(right.id))
+}

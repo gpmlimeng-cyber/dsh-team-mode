@@ -1,6 +1,6 @@
 import { Context } from '@deepseek-ai/cordis'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -1476,6 +1476,36 @@ describe('Assistant pause and restore lifecycle', () => {
     expect(restored.sessionId).toBe(task.sessionId)
     expect(await service.restoreAssistantTask(task.id)).toEqual(restored)
   })
+
+  it('never turns a non-queued row into running when the start write lands late', async () => {
+    const { service } = createHarness()
+    const instance = await createInstance(service, 'Race owner')
+    const task = await service.createAssistantSession({
+      assistantId: instance.id,
+      sessionId: 'session-worker',
+      title: 'Racing task',
+      brief: 'Brief',
+      parentSessionId: 'session-main',
+    })
+
+    await service.setAssistantTaskPaused(task.id, 'user')
+    const stillPaused = await service.markAssistantTaskStarted(task.id)
+    expect(stillPaused.status).toBe('paused')
+    expect(stillPaused.startedAt).toBeUndefined()
+
+    await service.updateAssistantSession(task.id, { status: 'cancelled' })
+    expect((await service.markAssistantTaskStarted(task.id)).status).toBe('cancelled')
+
+    await service.updateAssistantSession(task.id, { status: 'completed' })
+    expect((await service.markAssistantTaskStarted(task.id)).status).toBe('completed')
+
+    // Only a queued row may start, and the started stamp is written once.
+    await service.updateAssistantSession(task.id, { status: 'queued' })
+    const started = await service.markAssistantTaskStarted(task.id)
+    expect(started.status).toBe('running')
+    expect(started.startedAt).toBeDefined()
+    expect((await service.markAssistantTaskStarted(task.id)).startedAt).toBe(started.startedAt)
+  })
 })
 
 /** A directly configured instance: no template row, so the test owns every field. */
@@ -1647,6 +1677,10 @@ describe('Assistant isolated workspaces', () => {
   it('reuses the same directory and registration on a retry', async () => {
     const base = mkdtempSync(join(tmpdir(), 'dsh-assistant-isolated-'))
     try {
+      // A user-maintained marker file is never replaced.
+      mkdirSync(join(base, '.dsh-team-mode'), { recursive: true })
+      const ignorePath = join(base, '.dsh-team-mode', '.gitignore')
+      writeFileSync(ignorePath, 'custom-rule\n')
       const calls: string[] = []
       const registered = new Map<string, { id: string, path: string }>()
       const registry = {
@@ -1671,6 +1705,7 @@ describe('Assistant isolated workspaces', () => {
         .toBe(join(base, '.dsh-team-mode', 'assistants', 'paper-bot-12345678'))
       expect(calls).toEqual([first.workspacePath, first.workspacePath])
       expect(existsSync(first.workspacePath)).toBe(true)
+      expect(readFileSync(ignorePath, 'utf8')).toBe('custom-rule\n')
       // Two different Assistants never share one private directory.
       expect(assistantWorkspacePath(base, 'Paper Bot', '87654321-abcd-0000'))
         .not.toBe(first.workspacePath)

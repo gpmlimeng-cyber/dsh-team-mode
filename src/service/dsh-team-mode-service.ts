@@ -256,8 +256,13 @@ export async function ensureIsolatedAssistantWorkspace(
   const directory = assistantWorkspacePath(basePath, name, assistantId)
   await mkdir(directory, { recursive: true })
   // Keep the base checkout's own `git status` clean: the marker root is an
-  // implementation detail, never a project directory to commit.
-  await writeFile(join(basePath, '.dsh-team-mode', '.gitignore'), '*\n')
+  // implementation detail, never a project directory to commit. Never replace a
+  // `.gitignore` the user already keeps there; only create the missing one.
+  try {
+    await writeFile(join(basePath, '.dsh-team-mode', '.gitignore'), '*\n', { flag: 'wx' })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+  }
   const workspace = await registry.create(directory, `${name.trim()} · 独立工作区`)
   return { workspaceId: String(workspace.id), workspacePath: workspace.path }
 }
@@ -1459,11 +1464,18 @@ export class AgentTeamService extends Service {
     const task = requireAssistantSession(this.store, rawTaskId.trim())
     if (task.status === 'running' && task.startedAt !== undefined) return task
     const now = new Date().toISOString()
-    return this.writeAssistantTask(task.id, value => ({
-      ...value,
-      status: 'running',
-      ...(value.startedAt === undefined ? { startedAt: now } : {}),
-    }))
+    // Conditional inside the store write: a pause, cancel or terminal transition
+    // that committed after the read above must never be turned back into
+    // running. Only a row still queued may start.
+    return this.writeAssistantTask(task.id, value => (
+      value.status !== 'queued'
+        ? value
+        : {
+            ...value,
+            status: 'running',
+            ...(value.startedAt === undefined ? { startedAt: now } : {}),
+          }
+    ))
   }
 
   /** Runtime-only hook: mark a live task paused by the assistant-level pause. */

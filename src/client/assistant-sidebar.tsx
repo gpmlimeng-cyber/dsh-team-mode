@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { LeaderMark } from './team-member-chrome.js'
 import {
+  IconArchiveOutlineRegular,
   IconChecklistOutlineRegular,
   IconChevronRightOutlineRegular,
   IconCloseFillRegular,
@@ -49,6 +50,7 @@ import {
   assistantRowStatusTitle,
   assistantTaskStatusLabel,
   assistantThreadTasks,
+  archivedAssistantInstances,
   coordinatorAssistant,
   coordinatorAssistantId,
   coordinatorEscalationBadge,
@@ -235,6 +237,7 @@ export function AssistantSidebarSection({
     }
   }, [])
   const [threadOpenById, setThreadOpenById] = useState<Record<string, boolean>>({})
+  const [archivedOpen, setArchivedOpen] = useState(false)
   const [openingId, setOpeningId] = useState<string>()
   const [openingTaskId, setOpeningTaskId] = useState<string>()
   const [creatingThreadId, setCreatingThreadId] = useState<string>()
@@ -418,6 +421,16 @@ export function AssistantSidebarSection({
     }
   }
 
+  async function restoreAssistant(instance: AssistantInstance): Promise<void> {
+    setError(undefined)
+    try {
+      await callAgentTeam('assistant.instance.restore', { id: instance.id })
+      await load()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+
   async function togglePin(instance: AssistantInstance): Promise<void> {
     setError(undefined)
     try {
@@ -589,6 +602,13 @@ export function AssistantSidebarSection({
   const partitions = useMemo(
     () => sidebarPartitions(groups, visible, instance => instance.group),
     [groups, visible],
+  )
+  // Archived rows stay reachable after a reload: the list read is unfiltered,
+  // so the management fold can offer restore without reopening anything.
+  const archived = useMemo(
+    () => archivedAssistantInstances(instances, query)
+      .filter(instance => instance.id !== coordinatorAssistantId(instances)),
+    [instances, query],
   )
   const partitioned = groups.length > 0
 
@@ -1174,6 +1194,39 @@ export function AssistantSidebarSection({
                   })}
                 </>
               )}
+          {archived.length > 0 && (
+            <div data-dsh-assistant-archived>
+              <button
+                type="button"
+                className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
+                aria-expanded={archivedOpen}
+                aria-label={`已归档的助手 ${archived.length}`}
+                onClick={() => { setArchivedOpen(open => !open) }}
+              >
+                <span className={css.sidebarTeamSlot} aria-hidden="true">
+                  <IconArchiveOutlineRegular size={16} />
+                </span>
+                <span className={css.sidebarTeamEmptyTitle}>已归档 ({archived.length})</span>
+              </button>
+              {archivedOpen && archived.map(instance => (
+                <button
+                  key={instance.id}
+                  type="button"
+                  className={`${css.sidebarTeamRowWrap} ${css.sidebarTeamEmptyRow}`}
+                  data-dsh-assistant-archived-row={instance.id}
+                  aria-label={`恢复 ${assistantInstanceName(instance)}`}
+                  onClick={() => { void restoreAssistant(instance) }}
+                >
+                  <span className={css.sidebarTeamSlot} aria-hidden="true">
+                    {assistantInstanceName(instance).slice(0, 1).toLocaleUpperCase()}
+                  </span>
+                  <span className={css.sidebarTeamEmptyTitle}>
+                    {assistantInstanceLabel(instance)} · 恢复
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <AssistantCreateDialog
           open={createOpen}

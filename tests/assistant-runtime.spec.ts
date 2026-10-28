@@ -355,6 +355,8 @@ function createHarness(
   })
   const markAssistantTaskStarted = vi.fn(async (id: string) => {
     const task = getAssistantSession(id)
+    // Conditional like the service: only a queued row may become running.
+    if (task.status !== 'queued') return task
     const next: AssistantSession = {
       ...task,
       status: 'running',
@@ -2323,6 +2325,111 @@ describe('AssistantRuntime', () => {
     expect(String(started.sessionId)).toBe(queued.sessionId)
     // First delivery was never made, so resume carries the brief.
     expect(textOf(h.handles[2]?.followup.mock.calls[0]?.[0])).toBe('Second brief.')
+  })
+
+  it('refuses to open a paused task, then resume starts it once on the same Session', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Paused task', brief: 'Work.' })
+    const worker = h.handles[1]
+    await h.service.setAssistantTaskPaused(task.id, 'user')
+    await h.runtime.stopTaskForPause(task.id)
+
+    await expect(h.runtime.openTask(task.id)).rejects.toMatchObject({
+      code: 'ASSISTANT_TASK_NOT_ACTIVE',
+      details: { taskId: task.id, status: 'paused' },
+    })
+    // Opening a paused row never resumes a live worker behind the pause.
+    expect(h.resumeMock).not.toHaveBeenCalled()
+    expect(worker?.dispose).toHaveBeenCalledTimes(1)
+
+    await h.service.updateAssistantSession(task.id, { status: 'queued' })
+    await h.runtime.drainAssistantQueue('instance-1')
+
+    expect(h.getAssistantSession(task.id).status).toBe('running')
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+    const options = h.resumeMock.mock.calls[0]![0] as ResumeAgentOptions
+    expect(String(options.resumeSessionId)).toBe(task.sessionId)
+    // A second open reuses the mapped worker; it never resumes a duplicate.
+    const opened = await h.runtime.openTask(task.id)
+    expect(opened.sessionId).toBe(task.sessionId)
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+    expect(h.createMock).toHaveBeenCalledTimes(2)
+  })
+
+  it('targets the clicked queued row instead of the oldest row', async () => {
+    // Two durable queued rows, no live worker: the click admits its own row.
+    const free = createHarness({}, { assistantWorkerConcurrency: 2 })
+    const queuedRow = (id: string, sessionId: string, title: string): AssistantSession => ({
+      schemaVersion: 1,
+      id,
+      assistantId: 'instance-1',
+      sessionId,
+      role: 'task',
+      title,
+      brief: `${title} brief.`,
+      parentSessionId: 'session-main',
+      status: 'queued',
+      createdAt: NOW,
+      updatedAt: NOW,
+    })
+    free.tasks.set('task-old', queuedRow('task-old', 'session-old', 'Old row'))
+    free.tasks.set('task-clicked', queuedRow('task-clicked', 'session-clicked', 'Clicked row'))
+
+    const opened = await free.runtime.openTask('task-clicked')
+    expect(opened.sessionId).toBe('session-clicked')
+    expect(free.getAssistantSession('task-clicked').status).toBe('running')
+    expect(free.getAssistantSession('task-old').status).toBe('queued')
+    expect(free.createMock).toHaveBeenCalledTimes(1)
+
+    // A full worker set starts nothing and reports the queue instead.
+    const busy = createHarness({}, { assistantWorkerConcurrency: 1 })
+    await busy.runtime.createTask('instance-1', { title: 'Running', brief: 'A' })
+    const waiting = await busy.runtime.createTask('instance-1', { title: 'Waiting', brief: 'B' })
+    expect(waiting.status).toBe('queued')
+    const calls = busy.createMock.mock.calls.length
+    await expect(busy.runtime.openTask(waiting.id)).rejects.toMatchObject({
+      code: 'ASSISTANT_TASK_NOT_ACTIVE',
+      details: { taskId: waiting.id, status: 'queued', liveWorkers: 1 },
+    })
+    expect(busy.createMock).toHaveBeenCalledTimes(calls)
+    expect(busy.getAssistantSession(waiting.id).status).toBe('queued')
+  })
+
+  it('releases a just-started worker when the start write finds the row paused', async () => {
+    const h = createHarness()
+    h.markAssistantTaskStarted.mockImplementationOnce(async (id: string) => {
+      const task = h.getAssistantSession(id)
+      const paused: AssistantSession = {
+        ...task,
+        status: 'paused',
+        pausedBy: 'user',
+        updatedAt: NOW,
+      }
+      h.tasks.set(id, paused)
+      return paused
+    })
+
+    const task = await h.runtime.createTask('instance-1', { title: 'Race', brief: 'Work.' })
+
+    expect(task.status).toBe('paused')
+    expect(h.handles[1]?.followup).not.toHaveBeenCalled()
+    expect(h.handles[1]?.dispose).toHaveBeenCalledTimes(1)
+    expect(h.getAssistantSession(task.id).error).toBeUndefined()
+  })
+
+  it('releases its own mapped worker before restarting a requeued row', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Redo', brief: 'Work.' })
+    const firstWorker = h.handles[1]
+    // Force the row back to queued while its worker is still mapped.
+    await h.service.updateAssistantSession(task.id, { status: 'queued' })
+
+    await h.runtime.drainAssistantQueue('instance-1')
+
+    expect(firstWorker?.dispose).toHaveBeenCalledTimes(1)
+    expect(h.getAssistantSession(task.id).status).toBe('running')
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+    expect(h.handles[2]?.followup).toHaveBeenCalledTimes(1)
   })
 
   it('puts bounded recent tasks and routing instructions into the main prompt', async () => {
