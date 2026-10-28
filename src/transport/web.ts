@@ -4,7 +4,11 @@ import { z } from 'zod'
 import type { Config } from '../config.js'
 import { AgentTeamError, isAgentTeamError } from '../domain/errors.js'
 import { GROUP_SHARE_MAX_REQUEST_BYTES } from '../domain/group-share.js'
-import { SIDEBAR_GROUP_BRIEF_MAX_CHARS, TEAM_ANNOUNCEMENT_MAX_CHARS } from '../domain/schemas.js'
+import {
+  SIDEBAR_GROUP_BRIEF_MAX_CHARS,
+  TEAM_ANNOUNCEMENT_MAX_CHARS,
+  assistantCreateDraftInputSchema,
+} from '../domain/schemas.js'
 import type { AgentTeamService, AgentTeamChange } from '../service/dsh-team-mode-service.js'
 import {
   AGENT_TEAM_API_PATH,
@@ -269,6 +273,8 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
     case 'assistant.list': return service.listAssistants()
     case 'assistant.get': return service.getAssistant(idPayload.parse(request.payload).id)
     case 'assistant.create': return service.createAssistant(request.payload as never)
+    case 'assistant.create.draft':
+      return service.draftAssistantFromSentence(assistantCreateDraftInputSchema.parse(request.payload))
     case 'assistant.update': {
       const payload = z.object({ id: z.string().min(1), value: z.unknown() }).strict().parse(request.payload)
       return service.updateAssistant(payload.id, payload.value as never, options)

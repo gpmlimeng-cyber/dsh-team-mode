@@ -999,6 +999,42 @@ export const updateAssistantInstanceInputSchema = z.object({
   mascot: assistantMascotSchema.optional(),
 }).strict()
 
+/**
+ * One-sentence create draft: a bounded sentence plus the provider/model the
+ * create dialog already picked. It carries no id and no workspace because the
+ * call persists nothing; the reply only seeds the editable form.
+ */
+export const ASSISTANT_CREATE_DRAFT_MAX_SENTENCE_CHARS = 2_000
+/** One short identity block per call; a draft is not a conversation turn. */
+export const ASSISTANT_CREATE_DRAFT_MAX_TOKENS = 1_024
+/** Caps applied to an answered field before it reaches the editable form. */
+export const ASSISTANT_CREATE_DRAFT_MAX_NAME_CHARS = 60
+export const ASSISTANT_CREATE_DRAFT_MAX_INSTRUCTIONS_CHARS = 4_000
+
+export const assistantCreateDraftInputSchema = z.object({
+  sentence: z.string().trim().min(2).max(ASSISTANT_CREATE_DRAFT_MAX_SENTENCE_CHARS),
+  provider: nonEmpty.max(200),
+  model: nonEmpty.max(500),
+}).strict()
+
+/**
+ * One raw draft reply. The caps here are looser than the form's own limits on
+ * purpose: an over-long field is clipped (and reported in `warnings`) instead
+ * of discarding a usable persona. Every field is optional, so a draft may name
+ * none of them and still open the form.
+ */
+export const assistantCreateDraftSchema = z.object({
+  name: z.string().trim().max(200).optional(),
+  title: z.string().trim().max(400).optional(),
+  blurb: z.string().trim().max(600).optional(),
+  instructions: z.string().trim().max(20_000).optional(),
+  /** Optional starting-role hint; an unknown id is ignored by the form. */
+  presetId: z.string().trim().max(64).optional(),
+}).strict()
+
+export type AssistantCreateDraftInput = z.infer<typeof assistantCreateDraftInputSchema>
+export type AssistantCreateDraftReply = z.infer<typeof assistantCreateDraftSchema>
+
 /** Runtime-owned record of one hidden worker Session; the service assigns ids and timestamps. */
 export const createAssistantSessionInputSchema = z.object({
   assistantId: nonEmpty,

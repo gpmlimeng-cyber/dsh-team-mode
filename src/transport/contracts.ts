@@ -5,6 +5,10 @@ import type {
 } from '../domain/group-share.js'
 import type { MemoryAskResult } from '../domain/memory.js'
 import type {
+  AssistantCreateDraftInput,
+  AssistantCreateDraftReply,
+} from '../domain/schemas.js'
+import type {
   AddTeamMemberInput,
   AssistantInstance,
   AssistantMemory,
@@ -31,6 +35,13 @@ import type {
 
 export type AssistantInstanceView = AssistantInstance & { preview?: AssistantPreview }
 
+/**
+ * One editable draft behind the create dialog's 一句话 field. It is never
+ * persisted: the reply seeds the form, and the form's own submit is the only
+ * creation path. `warnings` names every field the service had to shorten.
+ */
+export type AssistantCreateDraftView = AssistantCreateDraftReply & { warnings: string[] }
+
 export const AGENT_TEAM_API_PATH = '/dsh-team-mode/api'
 export const AGENT_TEAM_EVENTS_PATH = '/dsh-team-mode/events'
 export const AGENT_TEAM_UPLOAD_PATH = '/dsh-team-mode/upload'
@@ -47,6 +58,8 @@ export const AGENT_TEAM_METHODS = [
   'assistant.list',
   'assistant.get',
   'assistant.create',
+  /** One-sentence draft: read-only model call, no Session and no persisted row. */
+  'assistant.create.draft',
   'assistant.update',
   'assistant.clone',
   'assistant.delete',
@@ -437,6 +450,11 @@ export interface AgentTeamRequestMap {
   'assistant.list': { payload: undefined; result: PageView<AssistantView> }
   'assistant.get': { payload: { id: string }; result: AssistantView }
   'assistant.create': { payload: CreateAssistantInput; result: AssistantView }
+  /** Read-only: one model call seeds the create form and persists nothing. */
+  'assistant.create.draft': {
+    payload: AssistantCreateDraftInput
+    result: AssistantCreateDraftView
+  }
   'assistant.update': { payload: { id: string; value: UpdateAssistantInput }; result: AssistantView }
   'assistant.clone': { payload: { id: string; name?: string }; result: AssistantView }
   'assistant.delete': { payload: { id: string }; result: null }

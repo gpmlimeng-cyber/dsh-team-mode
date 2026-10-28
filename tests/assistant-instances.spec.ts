@@ -11,6 +11,8 @@ import {
   assistantMemorySchema,
   assistantSessionSchema,
   ASSISTANT_BLURB_MAX_CHARS,
+  ASSISTANT_CREATE_DRAFT_MAX_INSTRUCTIONS_CHARS,
+  ASSISTANT_CREATE_DRAFT_MAX_NAME_CHARS,
   ASSISTANT_TITLE_MAX_CHARS,
 } from '../src/domain/schemas.js'
 import type {
@@ -1003,6 +1005,101 @@ describe('Assistant instances', () => {
   })
 })
 
+describe('Assistant create draft', () => {
+  it('turns one sentence into an editable draft and writes nothing', async () => {
+    const { service, store, draftCalls } = createHarness({
+      draftReply: JSON.stringify({
+        name: 'Code reviewer',
+        title: 'Reviewer',
+        blurb: 'Reviews changes.',
+        instructions: 'Review diffs carefully.',
+        presetId: 'reviewer',
+      }),
+    })
+
+    const draft = await service.draftAssistantFromSentence({
+      sentence: '做一个代码审查员',
+      provider: 'openai',
+      model: 'gpt-5',
+    })
+
+    expect(draft).toEqual({
+      name: 'Code reviewer',
+      title: 'Reviewer',
+      blurb: 'Reviews changes.',
+      instructions: 'Review diffs carefully.',
+      presetId: 'reviewer',
+      warnings: [],
+    })
+    // The one call used the pair the dialog picked, and nothing else.
+    expect(draftCalls).toHaveLength(1)
+    expect(draftCalls[0]).toMatchObject({
+      provider: 'openai',
+      model: 'gpt-5',
+      text: '做一个代码审查员',
+    })
+    expect(draftCalls[0]?.system).toContain('coworker')
+    // Read-only: no template, instance or Session row exists afterwards.
+    expect(store.listAssistants()).toEqual([])
+    expect(store.listAssistantInstances()).toEqual([])
+    expect(store.listAssistantSessions()).toEqual([])
+  })
+
+  it('clips an over-long answered field and reports every clip', async () => {
+    const { service } = createHarness({
+      draftReply: JSON.stringify({
+        name: 'n'.repeat(ASSISTANT_CREATE_DRAFT_MAX_NAME_CHARS + 10),
+        title: 't'.repeat(ASSISTANT_TITLE_MAX_CHARS + 10),
+        blurb: 'b'.repeat(ASSISTANT_BLURB_MAX_CHARS + 10),
+        instructions: 'i'.repeat(ASSISTANT_CREATE_DRAFT_MAX_INSTRUCTIONS_CHARS + 10),
+      }),
+    })
+
+    const draft = await service.draftAssistantFromSentence({
+      sentence: '做点事',
+      provider: 'openai',
+      model: 'gpt-5',
+    })
+
+    expect([...(draft.name ?? '')].length).toBe(ASSISTANT_CREATE_DRAFT_MAX_NAME_CHARS)
+    expect([...(draft.title ?? '')].length).toBe(ASSISTANT_TITLE_MAX_CHARS)
+    expect([...(draft.blurb ?? '')].length).toBe(ASSISTANT_BLURB_MAX_CHARS)
+    expect([...(draft.instructions ?? '')].length).toBe(ASSISTANT_CREATE_DRAFT_MAX_INSTRUCTIONS_CHARS)
+    expect(draft.warnings).toEqual([
+      `name was longer than ${ASSISTANT_CREATE_DRAFT_MAX_NAME_CHARS} characters and was shortened`,
+      `title was longer than ${ASSISTANT_TITLE_MAX_CHARS} characters and was shortened`,
+      `blurb was longer than ${ASSISTANT_BLURB_MAX_CHARS} characters and was shortened`,
+      `instructions was longer than ${ASSISTANT_CREATE_DRAFT_MAX_INSTRUCTIONS_CHARS} characters and was shortened`,
+    ])
+    // The reply named no preset, so the draft names none either.
+    expect(draft.presetId).toBeUndefined()
+  })
+
+  it('rejects an unknown model, a blank sentence and an unusable reply without writing', async () => {
+    const { service, store } = createHarness({ draftReply: 'sorry, no JSON here' })
+
+    await expect(service.draftAssistantFromSentence({
+      sentence: '做一个助手',
+      provider: 'openai',
+      model: 'missing',
+    })).rejects.toMatchObject({ code: 'MODEL_REFERENCE_INVALID' })
+    await expect(service.draftAssistantFromSentence({
+      sentence: '  ',
+      provider: 'openai',
+      model: 'gpt-5',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(service.draftAssistantFromSentence({
+      sentence: '做一个助手',
+      provider: 'openai',
+      model: 'gpt-5',
+    })).rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+
+    expect(store.listAssistants()).toEqual([])
+    expect(store.listAssistantInstances()).toEqual([])
+    expect(store.listAssistantSessions()).toEqual([])
+  })
+})
+
 describe('Assistant memory', () => {
   async function instanceFor(service: AgentTeamService, store: MemoryStore): Promise<AssistantInstance> {
     await store.putAssistant(template())
@@ -1805,12 +1902,22 @@ interface HarnessWorkspace {
   status: () => Promise<'ok' | 'missing-dir'>
 }
 
-function createHarness(options: { workspacePath?: string } = {}): {
+interface DraftCall {
+  provider: string
+  model: string
+  system: string | undefined
+  text: string
+  maxTokens: number | undefined
+}
+
+function createHarness(options: { workspacePath?: string, draftReply?: string } = {}): {
   service: AgentTeamService
   store: MemoryStore
   workspaces: Map<string, HarnessWorkspace>
+  draftCalls: DraftCall[]
 } {
   const ctx = new Context()
+  const draftCalls: DraftCall[] = []
   const workspaces = new Map<string, HarnessWorkspace>([
     ['workspace-1', {
       id: 'workspace-1',
@@ -1885,6 +1992,29 @@ function createHarness(options: { workspacePath?: string } = {}): {
             }),
       }
     },
+    // The draft path's one-shot call: it yields the configured reply and a
+    // normal stop, and records how the dialog's provider/model reached it.
+    stream: (input: {
+      provider: string
+      model: string
+      system?: string
+      messages: Array<{ content: Array<{ type: string, text: string }> }>
+      maxTokens?: number
+    }) => {
+      draftCalls.push({
+        provider: input.provider,
+        model: input.model,
+        system: input.system,
+        text: input.messages[0]?.content[0]?.text ?? '',
+        maxTokens: input.maxTokens,
+      })
+      return (async function* () {
+        if (options.draftReply !== undefined) {
+          yield { type: 'text-delta', text: options.draftReply }
+        }
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      })()
+    },
   } as never)
   ctx.provide('permissionPresets', {
     names: ['standard', 'workspace-write', 'read-only'],
@@ -1908,7 +2038,7 @@ function createHarness(options: { workspacePath?: string } = {}): {
     schemas: () => [{ name: 'mcp__github__list_issues', description: 'List issues.' }],
   } as never)
   const store = new MemoryStore()
-  return { service: new AgentTeamService(ctx, config, store), store, workspaces }
+  return { service: new AgentTeamService(ctx, config, store), store, workspaces, draftCalls }
 }
 
 class MemoryStore implements AgentTeamStore {

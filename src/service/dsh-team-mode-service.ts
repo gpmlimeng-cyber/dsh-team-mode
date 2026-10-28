@@ -40,6 +40,13 @@ import {
   type PortableTeamMember,
 } from '../domain/group-share.js'
 import {
+  assistantCreateDraftSchema,
+  ASSISTANT_BLURB_MAX_CHARS,
+  ASSISTANT_CREATE_DRAFT_MAX_INSTRUCTIONS_CHARS,
+  ASSISTANT_CREATE_DRAFT_MAX_NAME_CHARS,
+  ASSISTANT_CREATE_DRAFT_MAX_SENTENCE_CHARS,
+  ASSISTANT_CREATE_DRAFT_MAX_TOKENS,
+  ASSISTANT_TITLE_MAX_CHARS,
   createAssistantInputSchema,
   addTeamMemberInputSchema,
   assistantMemoryModeSchema,
@@ -60,6 +67,8 @@ import {
   updateAssistantSessionInputSchema,
   updateTeamGoalInputSchema,
   writeAssistantMemoryEntryInputSchema,
+  type AssistantCreateDraftInput,
+  type AssistantCreateDraftReply,
 } from '../domain/schemas.js'
 import {
   epochOf,
@@ -125,6 +134,7 @@ import type {
   AssistantBuilderConversationView,
   AssistantBuilderConversationListView,
   AssistantBuilderDraftView,
+  AssistantCreateDraftView,
   InteractionResponseInput,
   MemberConversationView,
   PendingInteractionView,
@@ -583,6 +593,92 @@ export class AgentTeamService extends Service {
             },
           }),
     }
+  }
+
+  /**
+   * One read-only model call behind the create dialog's 一句话 field. It returns
+   * text only: nothing is persisted, no Session, template or instance row is
+   * created, and no agent tool reaches this path. The dialog's own submit stays
+   * the only creation authority.
+   */
+  async draftAssistantFromSentence(
+    input: AssistantCreateDraftInput,
+  ): Promise<AssistantCreateDraftView> {
+    const sentence = input.sentence.trim()
+    if ([...sentence].length < 2 || [...sentence].length > ASSISTANT_CREATE_DRAFT_MAX_SENTENCE_CHARS) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `A create draft needs 2-${ASSISTANT_CREATE_DRAFT_MAX_SENTENCE_CHARS} characters`,
+        { limit: ASSISTANT_CREATE_DRAFT_MAX_SENTENCE_CHARS },
+      )
+    }
+    const provider = input.provider.trim()
+    const model = input.model.trim()
+    // The same resolution `catalog.model.get` uses: an unknown pair is refused
+    // before any model call, and nothing is written either way.
+    await this.modelCapabilities(provider, model)
+    const reply = parseCreateDraftReply(
+      await this.completeCreateDraft(provider, model, sentence),
+    )
+    const warnings: string[] = []
+    const clip = (label: string, value: string | undefined, limit: number): string | undefined => {
+      if (value === undefined || value === '') return undefined
+      const characters = [...value]
+      if (characters.length <= limit) return value
+      warnings.push(`${label} was longer than ${limit} characters and was shortened`)
+      return `${characters.slice(0, limit - 1).join('')}…`
+    }
+    const name = clip('name', reply.name, ASSISTANT_CREATE_DRAFT_MAX_NAME_CHARS)
+    const title = clip('title', reply.title, ASSISTANT_TITLE_MAX_CHARS)
+    const blurb = clip('blurb', reply.blurb, ASSISTANT_BLURB_MAX_CHARS)
+    const instructions = clip(
+      'instructions',
+      reply.instructions,
+      ASSISTANT_CREATE_DRAFT_MAX_INSTRUCTIONS_CHARS,
+    )
+    return {
+      ...(name === undefined ? {} : { name }),
+      ...(title === undefined ? {} : { title }),
+      ...(blurb === undefined ? {} : { blurb }),
+      ...(instructions === undefined ? {} : { instructions }),
+      ...(reply.presetId === undefined ? {} : { presetId: reply.presetId }),
+      warnings,
+    }
+  }
+
+  /**
+   * The single model call behind the draft: one hand-built one-shot request on
+   * the pair the dialog picked, no tools and no Session turn.
+   */
+  private async completeCreateDraft(
+    provider: string,
+    model: string,
+    sentence: string,
+  ): Promise<string> {
+    let text = ''
+    for await (const chunk of this.ctx.llm.stream({
+      provider,
+      model,
+      system: CREATE_DRAFT_SYSTEM_PROMPT,
+      messages: [{ role: 'user', content: [{ type: 'text', text: sentence }] }],
+      maxTokens: ASSISTANT_CREATE_DRAFT_MAX_TOKENS,
+    })) {
+      if (chunk.type === 'text-delta') {
+        text += chunk.text
+        continue
+      }
+      if (chunk.type === 'finish') {
+        if (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted') {
+          throw new AgentTeamError(
+            'INVALID_REQUEST',
+            `Create draft model call failed: ${chunk.reason.failure.message}`,
+            { reason: chunk.reason.failure.code },
+          )
+        }
+        break
+      }
+    }
+    return text
   }
 
   async skillCatalog(agentPresetId: string): Promise<SkillCatalogSnapshot> {
@@ -6384,6 +6480,59 @@ function availabilityList(availability: Map<string, boolean>): Array<{ name: str
   return [...availability.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([name, available]) => ({ name, available }))
+}
+
+/**
+ * The one system prompt of the draft call. It asks for the same identity block
+ * the create form edits, in one JSON object, so the reply is validated field by
+ * field instead of parsed out of prose. `presetId` names the fixed starting
+ * roles the form offers; an unknown id is ignored there, not a draft failure.
+ */
+const CREATE_DRAFT_SYSTEM_PROMPT = [
+  'You name and describe one DeepSeek Harness coworker from the user\'s one-sentence request.',
+  'Reply with one JSON object and no other text.',
+  'Allowed keys: "name" (display name), "title" (persona line), "blurb" (one-line summary),',
+  '"instructions" (the operating persona), and "presetId" (one of researcher, reviewer,',
+  'implementer, tester, coordinator when one fits; otherwise omit it).',
+  'Omit any key you cannot answer. Write the identity fields in the language of the request.',
+].join('\n')
+
+function parseCreateDraftReply(reply: string): AssistantCreateDraftReply {
+  const parsed = assistantCreateDraftSchema.safeParse(draftReplyJson(reply))
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0]
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      `Create draft reply was not usable: ${issue === undefined
+        ? 'it does not match the draft contract'
+        : `${issue.path.join('.') || 'reply'}: ${issue.message}`}`,
+      { reason: 'reply' },
+    )
+  }
+  return parsed.data
+}
+
+/** Accept a bare JSON object, a fenced block, or prose around one JSON object. */
+function draftReplyJson(reply: string): unknown {
+  const text = reply.trim().replace(/^```(?:json)?/i, '').replace(/```$/, '').trim()
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start === -1 || end <= start) {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      'Create draft reply was not usable: the reply contains no JSON object',
+      { reason: 'reply' },
+    )
+  }
+  try {
+    return JSON.parse(text.slice(start, end + 1))
+  } catch {
+    throw new AgentTeamError(
+      'INVALID_REQUEST',
+      'Create draft reply was not usable: the reply is not valid JSON',
+      { reason: 'reply' },
+    )
+  }
 }
 
 function uniqueSorted(values: readonly string[]): string[] {

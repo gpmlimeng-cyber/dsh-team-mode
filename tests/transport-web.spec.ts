@@ -4,7 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
-import { TEAM_ANNOUNCEMENT_MAX_CHARS } from '../src/domain/schemas.js'
+import { TEAM_ANNOUNCEMENT_MAX_CHARS, ASSISTANT_CREATE_DRAFT_MAX_SENTENCE_CHARS } from '../src/domain/schemas.js'
 import type { Escalation } from '../src/domain/types.js'
 import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import {
@@ -136,6 +136,18 @@ function harness(overrides: {
       memoryText === 'remember'
         ? { kind: 'change', entries: [{ id: 'mem-1', status: 'proposed' }] }
         : { kind: 'answer', answer: memoryText }),
+    draftAssistantFromSentence: vi.fn(async (input: {
+      sentence: string
+      provider: string
+      model: string
+    }) => ({
+      name: 'Code reviewer',
+      title: 'Reviewer',
+      blurb: `Drafts for ${input.provider}/${input.model}`,
+      instructions: 'Review changes carefully.',
+      presetId: 'reviewer',
+      warnings: [],
+    })),
     setAssistantMemoryAutoCapture: vi.fn(async (assistantId: string, enabled: boolean) => ({
       id: assistantId,
       memoryAutoCapture: enabled,
@@ -547,6 +559,57 @@ describe('web transport authentication and upload contract', () => {
     expect(missing.status).toBe(400)
     const blankId = await post({ assistantId: '  ', text: 'x' })
     expect(blankId.status).toBe(400)
+  })
+
+  it('dispatches the read-only create draft without reaching a creation path', async () => {
+    const { call, service } = harness()
+    const post = (payload: unknown) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ requestId: 'r1', method: 'assistant.create.draft', payload }),
+    }))
+
+    const drafted = await post({ sentence: '做一个代码审查员', provider: 'openai', model: 'gpt-5' })
+    expect(drafted.status).toBe(200)
+    expect(JSON.parse(drafted.body)).toMatchObject({
+      ok: true,
+      value: {
+        name: 'Code reviewer',
+        title: 'Reviewer',
+        blurb: 'Drafts for openai/gpt-5',
+        instructions: 'Review changes carefully.',
+        presetId: 'reviewer',
+        warnings: [],
+      },
+    })
+    expect(service.draftAssistantFromSentence).toHaveBeenCalledWith({
+      sentence: '做一个代码审查员',
+      provider: 'openai',
+      model: 'gpt-5',
+    })
+    // A draft seeds the form; the transport never creates anything itself.
+    expect(service.createAssistantInstance).not.toHaveBeenCalled()
+
+    // Strict and bounded: blank, oversized, incomplete and unknown-key
+    // payloads are refused before the service is reached.
+    for (const payload of [
+      { sentence: '  ', provider: 'openai', model: 'gpt-5' },
+      {
+        sentence: 'x'.repeat(ASSISTANT_CREATE_DRAFT_MAX_SENTENCE_CHARS + 1),
+        provider: 'openai',
+        model: 'gpt-5',
+      },
+      { sentence: 'ok', provider: ' ', model: 'gpt-5' },
+      { sentence: 'ok', provider: 'openai' },
+      { sentence: 'ok', provider: 'openai', model: 'gpt-5', expectedRevision: 2 },
+    ]) {
+      const rejected = await post(payload)
+      expect(rejected.status).toBe(400)
+      expect(JSON.parse(rejected.body)).toMatchObject({
+        ok: false,
+        error: { code: 'INVALID_REQUEST' },
+      })
+    }
+    expect(service.draftAssistantFromSentence).toHaveBeenCalledTimes(1)
   })
 
   it('returns the auto-capture switch beside the memory document', async () => {
