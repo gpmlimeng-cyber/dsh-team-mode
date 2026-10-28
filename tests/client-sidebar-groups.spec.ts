@@ -449,22 +449,19 @@ describe('native overlays for the session header and the enlarged conversation',
     expect(teamPanel).toContain('同一个助手可以多次加入')
   })
 
-  it('enlarges a conversation in a headless host Modal instead of a fixed layer', () => {
-    expect(teamPanel).toContain('headless')
-    expect(teamPanel).toContain('css.conversationExpandedModal')
-    expect(teamPanel).toContain('conversationCss.conversationColumnExpanded')
-    // The column is no longer enlarged in place, and no bespoke backdrop or
-    // page Escape listener is left.
+  it('removed the dead workbench page and its enlarged-conversation modal', () => {
+    // The old TeamPanel/TeamWorkbench page owned the only headless
+    // expanded-conversation modal; its wiring and AgentTeam CSS left with it.
+    expect(teamPanel).not.toContain('TeamWorkbench')
+    expect(teamPanel).not.toContain('css.conversationExpandedModal')
+    expect(teamPanel).not.toContain('conversationCss.conversationColumnExpanded')
     expect(teamPanel).not.toContain('conversationFocusBackdrop')
     expect(teamPanel).not.toContain("window.addEventListener('keydown'")
-    expect(teamPanel).not.toContain('expanded={expandedSlotId === member.id}')
     expect(css).not.toContain('.conversationFocusBackdrop')
-    // The one remaining expanded instance keeps the same wiring.
-    expect(teamPanel).toContain('onSent={load}')
-    expect(teamPanel).toContain('onTeamChanged={onChanged}')
-    expect(teamPanel).toContain('onExpandedChange={next => { if (!next) setExpandedSlotId(undefined) }}')
-    // The modal frame owns the size; the column styles stay presentation-only.
-    expect(css).toContain('.conversationExpandedModal')
+    expect(css).not.toContain('.conversationExpandedModal')
+    // ConversationColumn itself stays: the assistant panel still renders the
+    // same conversation through ConversationNodeView, and its expanded column
+    // styles stay presentation-only.
     expect(expandedColumnCss.length).toBeGreaterThan(0)
     expect(expandedColumnCss).not.toContain('position: fixed')
     expect(expandedColumnCss).not.toContain('z-index')

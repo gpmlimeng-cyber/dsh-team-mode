@@ -357,19 +357,23 @@ describe('GlobalOverview navigation', () => {
     expect(bundle).not.toContain('dsh-team-mode-workbench')
   })
 
-  it('mounts only on the default workbench page and forwards the session opener', () => {
+  it('deletes the dead workbench page and keeps GlobalOverview on the live team manage view', () => {
     const panel = source('teams/TeamPanel.tsx')
 
-    expect(panel).toContain("import { GlobalOverview, openAssistantSession } from '../global-overview.js'")
-    expect(panel).toContain('openSession?: (sessionId: string) => void')
-    expect(panel).toContain('{selectedTeam === undefined && (')
-    expect(panel).toContain('<GlobalOverview')
-    expect(panel).toContain('onOpenTeam={teamId => { openTeam(teamId) }}')
-    expect(panel).toContain('openAssistantSession(sessionId, closeAgentTeam, openSession)')
-    expect(panel).toContain('teamCountUnknown ? \'…\' : teams.length')
-    expect(panel).toContain('teamsError !== undefined && teams.length === 0')
-    expect(panel).toContain('正在读取团队列表…')
-    expect(panel).toContain('团队列表加载失败：{teamsError}')
+    // The old all-teams page and its workbench are gone; the Session panel is
+    // the only team page, so no dead copy may keep the old overview wiring.
+    expect(panel).not.toContain('export function TeamPanel(')
+    expect(panel).not.toContain('function TeamWorkbench(')
+    expect(panel).not.toContain('GlobalOverview')
+    expect(panel).not.toContain('openAssistantSession')
+    expect(panel).not.toContain('css.workbenchAnnouncement')
+
+    // GlobalOverview still renders exactly once, from the team manage view.
+    const manage = source('team-manage.tsx')
+    expect(manage).toContain('<GlobalOverview')
+    expect(manage).toContain('onOpenTeam={openTeam}')
+    expect(manage).toContain('onOpenAssistant={openSession}')
+    expect(source('index.tsx')).toContain('<TeamMainAgentPanel')
   })
 })
 

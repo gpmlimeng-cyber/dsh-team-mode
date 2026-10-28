@@ -1791,10 +1791,12 @@ describe('团队公告 · team detail', () => {
 
   it('wires the user entry point into the team card header and no agent tool', () => {
     expect(teamPanel).toContain('<TeamAnnouncementSection announcement={team.announcement} />')
-    // Both native team surfaces keep the user entry: the detail card and the page toolbar.
-    expect(teamPanel.match(/setAnnouncementOpen\(true\)/g)).toHaveLength(2)
+    // The team card is the only announcement entry left; the removed
+    // TeamPanel/TeamWorkbench toolbar took its copy (and its CSS) with it.
+    expect(teamPanel.match(/setAnnouncementOpen\(true\)/g)).toHaveLength(1)
     expect(teamPanel).toMatch(/announcement === '' \? '添加公告' : '编辑公告'/)
-    expect(teamPanel).toContain('css.workbenchAnnouncement')
+    expect(teamPanel).not.toContain('css.workbenchAnnouncement')
+    expect(styles).not.toContain('.workbenchAnnouncement')
     expect(teamPanel).toContain('每位成员的下一轮对话都会读到')
     // The prompt/tool surface stays untouched: no member-facing announcement tool.
     const tools = readFileSync(new URL('../src/runtime/team-tools.ts', import.meta.url), 'utf8')
