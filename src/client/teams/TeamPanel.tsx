@@ -1383,7 +1383,13 @@ export function TeamCard({
             <span>只读 · 来自宿主会话投影</span>
           </span>
         </div>
-        <UsageSection scope={teamUsageScope(team)} emptyHint="团队还没有会话用量" />
+        <UsageSection
+          scope={teamUsageScope(team)}
+          emptyHint="团队还没有会话用量"
+          // The manager dialog must close before the Session opens; that
+          // ordering belongs to the host that owns the modal.
+          {...(onOpenSession === undefined ? {} : { onOpenSession })}
+        />
       </section>
       <TeamMemorySection team={team} onChanged={onChanged} />
       <div className={`${css.contextResetPanel} ${css.cloneTeamPanel ?? ''}`}>

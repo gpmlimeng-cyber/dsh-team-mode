@@ -95,7 +95,12 @@ const {
   AssistantOverviewMemoryRow,
   visibleSettingGroups,
 } = await import('../src/client/assistant-settings-pane.js')
-const { UsageSection, installUsageSessions, usageReport } = await import('../src/client/usage.js')
+const {
+  UsageSection,
+  assistantUsageScope,
+  installUsageSessions,
+  usageReport,
+} = await import('../src/client/usage.js')
 const { assistantMemoryCountLine } = await import('../src/client/assistant-overview.js')
 
 const NOW = '2026-10-23T00:00:00.000Z'
@@ -807,12 +812,15 @@ describe('assistant 用量 section', () => {
     projectionsBySession: {},
   }
 
-  function render(scope: Array<{ sessionId: string; label?: string; retired?: boolean }>): string {
+  function render(
+    scope: Array<{ sessionId: string; label?: string; retired?: boolean; hidden?: boolean }>,
+    props: Record<string, unknown> = {},
+  ): string {
     installUsageSessions({
       list: { getSnapshot: () => snapshot, subscribe: () => () => {} },
     })
     try {
-      return renderToStaticMarkup(createElement(UsageSection, { scope }))
+      return renderToStaticMarkup(createElement(UsageSection, { scope, ...props }))
     } finally {
       installUsageSessions(undefined)
     }
@@ -842,6 +850,77 @@ describe('assistant 用量 section', () => {
     expect(plainText(html)).not.toContain('0 tok')
   })
 
+
+  it('includes the hidden task-worker rows by task title and marks them', () => {
+    installUsageSessions({
+      list: {
+        getSnapshot: () => ({
+          phase: 'ready',
+          byId: {
+            main: snapshot.byId.main,
+            worker: {
+              projectionValues: {
+                tokenUsage: {
+                  uncachedInputTokens: 100,
+                  cacheReadTokens: 900,
+                  cacheWriteTokens: 0,
+                  outputTokens: 50,
+                },
+                sessionStats: { turns: 1 },
+              },
+            },
+            'old-worker': {
+              projectionValues: {
+                tokenUsage: {
+                  uncachedInputTokens: 0,
+                  cacheReadTokens: 100,
+                  cacheWriteTokens: 0,
+                  outputTokens: 10,
+                },
+              },
+            },
+          },
+        }),
+        subscribe: () => () => {},
+      },
+    })
+    try {
+      const scope = assistantUsageScope({ id: 'a1', mainSessionId: 'main' }, [
+        { assistantId: 'a1', sessionId: 'worker', title: '修复登录' },
+        { assistantId: 'a1', sessionId: 'old-worker', title: '旧任务', archivedAt: '2026-01-02T00:00:00Z' },
+      ])
+      const html = renderToStaticMarkup(createElement(UsageSection, { scope }))
+
+      expect(plainText(html)).toContain('修复登录')
+      expect(plainText(html)).toContain('旧任务')
+      expect(plainText(html)).toContain('后台任务')
+      expect(plainText(html)).toContain('已退役')
+      // The hidden mark is on the worker rows, never on the main Session row.
+      expect(html.match(/data-dsh-usage-hidden/g)).toHaveLength(2)
+      // Worker tokens join the assistant total: 4500 + 1050 + 110.
+      expect(html).toContain('data-dsh-usage-total="5660"')
+      expect(plainText(html)).not.toContain('部分会话')
+    } finally {
+      installUsageSessions(undefined)
+    }
+  })
+
+  it('labels an unreadable task list instead of silently shrinking the total', () => {
+    const html = render(
+      [{ sessionId: 'main', label: '主会话' }],
+      { excludeNote: '任务会话暂无法读取，合计不含任务会话' },
+    )
+
+    expect(html).toContain('data-dsh-usage-exclude-note')
+    expect(plainText(html)).toContain('任务会话暂无法读取，合计不含任务会话')
+  })
+
+  it('never prints a raw Session id as the row label', () => {
+    const html = render([{ sessionId: 'raw-session-id' }])
+
+    expect(plainText(html)).toContain('会话')
+    expect(html).not.toContain('raw-session-id')
+  })
   it('shows a wholly unread scope as “—” and keeps no cost, history or split', () => {
     installUsageSessions({ list: { getSnapshot: () => ({ phase: 'ready' }), subscribe: () => () => {} } })
     const html = renderToStaticMarkup(createElement(UsageSection, { scope: [{ sessionId: 'cold' }] }))
@@ -871,15 +950,26 @@ describe('assistant 用量 wiring', () => {
     expect(group?.title).toBe('用量')
     expect(visibleSettingGroups('缓存')).toEqual(['usage'])
     expect(pane).toContain('dataKind="usage"')
-    expect(pane).toContain('<UsageSection scope={assistantUsageScope(assistant)} />')
+    expect(pane).toContain('scope={assistantUsageScope(assistant, taskUsage.tasks)}')
     // Names the source instead of implying this plugin keeps a ledger.
     expect(pane).toContain('只读 · 来自宿主会话投影')
   })
 
+
+  it('reads the assistant task list and passes worker Sessions to the rollup', () => {
+    expect(pane).toContain("callAgentTeam('assistant.task.list', { assistantId: assistant.id })")
+    expect(pane).toContain('scope={assistantUsageScope(assistant, taskUsage.tasks)}')
+    expect(pane).toContain('setTaskUsage({ tasks: value.items, failed: false })')
+    // A failed task read is labelled, not silently dropped.
+    expect(pane).toContain('setTaskUsage({ tasks: [], failed: true })')
+    expect(pane).toContain('任务会话暂无法读取，合计不含任务会话')
+  })
+
   it('opens the native Session from a row and writes nothing', () => {
     expect(usage).toContain('onClick: () => { open(row.sessionId) }')
-    expect(usage).toContain('if (openAssistantSession(sessionId))')
-    expect(pane).toContain('<UsageSection scope={assistantUsageScope(assistant)} />')
+    expect(usage).toContain('if (!openAssistantSession(sessionId))')
+    expect(usage).toContain('onOpenSession(sessionId)')
+    expect(pane).toContain('scope={assistantUsageScope(assistant, taskUsage.tasks)}')
     // No storage, no request, no ledger: the read channel is the Host store.
     expect(usage).not.toMatch(/localStorage|sessionStorage|indexedDB|fetch\(|XMLHttpRequest/)
     // A comment may say "no cost"; no field, sign or currency may exist.

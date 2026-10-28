@@ -17,6 +17,7 @@ import {
   requestMissingProjections,
   usageReport,
   usageRowFacts,
+  usageRowTitle,
   type UsageListSnapshot,
 } from '../src/client/usage.js'
 
@@ -453,18 +454,18 @@ async function settle(): Promise<void> {
   for (let index = 0; index < 4; index += 1) await Promise.resolve()
 }
 
-describe('usage projection reads', () => {
-  function fakeSessions(): { refresh: string[]; sessions: Parameters<typeof installUsageSessions>[0] } {
-    const refresh: string[] = []
-    return {
-      refresh,
-      sessions: {
-        list: { getSnapshot: () => ({}), subscribe: () => () => {} },
-        refreshProjections: async (sessionId: string) => { refresh.push(sessionId) },
-      },
-    }
+function fakeSessions(): { refresh: string[]; sessions: Parameters<typeof installUsageSessions>[0] } {
+  const refresh: string[] = []
+  return {
+    refresh,
+    sessions: {
+      list: { getSnapshot: () => ({}), subscribe: () => () => {} },
+      refreshProjections: async (sessionId: string) => { refresh.push(sessionId) },
+    },
   }
+}
 
+describe('usage projection reads', () => {
   it('asks once per unknown Session and never for one that already answered', async () => {
     const fake = fakeSessions()
     installUsageSessions(fake.sessions)
@@ -487,5 +488,140 @@ describe('usage projection reads', () => {
     await settle()
     expect(fake.refresh).toEqual(['cold', 'cold'])
     installUsageSessions(undefined)
+  })
+})
+
+describe('usage repair-round edges', () => {
+  it('includes hidden task-worker Sessions by task title and marks them', () => {
+    const scope = assistantUsageScope({ id: 'a1', mainSessionId: 'main' }, [
+      { assistantId: 'a1', sessionId: 'worker', title: '修复登录' },
+      { assistantId: 'a1', sessionId: 'old-worker', title: '旧任务', archivedAt: '2026-01-02T00:00:00Z' },
+      { assistantId: 'a1', sessionId: 'untitled', title: '   ' },
+      // Another assistant's worker never joins this rollup.
+      { assistantId: 'a2', sessionId: 'other', title: '别人的任务' },
+    ])
+
+    expect(scope.map(entry => entry.sessionId)).toEqual([
+      'main', 'worker', 'old-worker', 'untitled',
+    ])
+    const worker = scope.find(entry => entry.sessionId === 'worker')
+    expect(worker?.label).toBe('修复登录')
+    expect(worker?.hidden).toBe(true)
+    expect(worker?.retired).toBeUndefined()
+    // An archived task is history: counted, marked retired as well as hidden.
+    const retired = scope.find(entry => entry.sessionId === 'old-worker')
+    expect(retired?.hidden).toBe(true)
+    expect(retired?.retired).toBe(true)
+    // A blank task title is not a Session id.
+    expect(scope.find(entry => entry.sessionId === 'untitled')?.label).toBe('任务会话')
+  })
+
+  it('falls back to 会话 instead of the raw Session id', () => {
+    const [row] = usageReport([{ sessionId: 'raw-session-id' }], undefined).rows
+    expect(row?.label).toBeUndefined()
+    expect(usageRowTitle(row!)).toMatch(/^会话 · /)
+    expect(usageRowTitle(row!)).not.toContain('raw-session-id')
+  })
+
+  it('calls the total partial whenever any scope Session reported no tokenUsage', () => {
+    const report = usageReport([{ sessionId: 'used' }, { sessionId: 'stats-only' }], {
+      phase: 'ready',
+      byId: {
+        used: { projectionValues: fullUsage() as never },
+        // Values exist, but there is no tokenUsage to sum.
+        'stats-only': { projectionValues: { sessionStats: { turns: 0 } } as never },
+      },
+    })
+
+    expect(report.rollup.sessions).toBe(2)
+    expect(report.rollup.reporting).toBe(1)
+    expect(report.rollup.missing).toBe(0)
+    expect(report.rollup.partial).toBe(true)
+  })
+
+  it('treats empty values and a failed read as unread and retries the failure', async () => {
+    const fake = fakeSessions()
+    installUsageSessions(fake.sessions)
+    const snapshot: UsageListSnapshot = {
+      phase: 'ready',
+      byId: {},
+      projectionsBySession: {
+        failed: { values: {}, state: 'error' },
+        empty: { values: {} },
+        ready: { values: fullUsage() as never, state: 'ready' },
+      },
+    }
+    const scope = [
+      { sessionId: 'failed' },
+      { sessionId: 'empty' },
+      { sessionId: 'ready' },
+      { sessionId: 'missing' },
+    ]
+
+    requestMissingProjections(scope, snapshot)
+    await settle()
+    // A failed or empty read is retried; a loaded Session is not.
+    expect(fake.refresh).toEqual(['failed', 'empty', 'missing'])
+    expect(usageReport(scope, snapshot).rows[1]?.missing).toBe(true)
+    expect(usageReport(scope, snapshot).rows[2]?.missing).toBe(false)
+    installUsageSessions(undefined)
+  })
+
+  it('returns no cache-hit share when nothing was billed', () => {
+    const report = usageReport([{ sessionId: 'main' }], usageSnapshot({
+      main: {
+        tokenUsage: {
+          uncachedInputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens: 0,
+        },
+      },
+    }))
+
+    expect(report.rollup.reporting).toBe(1)
+    expect(report.rollup.cacheHitPercent).toBeNull()
+    expect(report.rows[0]?.cacheHitPercent).toBeNull()
+    expect(formatUsagePercent(report.rollup.cacheHitPercent)).toBe(USAGE_MISSING)
+  })
+
+  it('never rounds a partial cache hit up to 100%', () => {
+    const report = usageReport([{ sessionId: 'main' }], usageSnapshot({
+      main: {
+        tokenUsage: {
+          uncachedInputTokens: 1,
+          cacheReadTokens: 999,
+          cacheWriteTokens: 0,
+          outputTokens: 5,
+        },
+      },
+    }))
+
+    expect(report.rollup.cacheHitPercent).toBe(99)
+    expect(report.rows[0]?.cacheHitPercent).toBe(99)
+  })
+
+  it('keeps a full cache hit at exactly 100%', () => {
+    const report = usageReport([{ sessionId: 'main' }], usageSnapshot({
+      main: {
+        tokenUsage: {
+          uncachedInputTokens: 0,
+          cacheReadTokens: 1000,
+          cacheWriteTokens: 0,
+          outputTokens: 5,
+        },
+      },
+    }))
+
+    expect(report.rollup.cacheHitPercent).toBe(100)
+    expect(formatUsagePercent(report.rollup.cacheHitPercent)).toBe('100%')
+  })
+
+  it('carries a rounded 1000k over to the M branch', () => {
+    expect(formatUsageTokens(999_949)).toBe('999.9k')
+    expect(formatUsageTokens(999_950)).toBe('1M')
+    expect(formatUsageTokens(999_999)).toBe('1M')
+    expect(formatUsageTokens(1_000_000)).toBe('1M')
+    expect(formatUsageTokens(1_234_567)).toBe('1.23M')
   })
 })

@@ -59,7 +59,7 @@ import { SelectControl } from './select-control.js'
 import type { SelectControlOption } from './select-control.js'
 import { SettingsRow, SettingsRows } from './settings-row.js'
 import { FoldGroup } from './fold-group.js'
-import { UsageSection, assistantUsageScope } from './usage.js'
+import { UsageSection, assistantUsageScope, type UsageTaskSession } from './usage.js'
 import css from './AgentTeam.module.css'
 import { isCoordinatorInstance } from '../domain/types.js'
 import type {
@@ -275,6 +275,13 @@ export function AssistantSettingsPane({
   // Bumped by the 记忆 block after each of its writes; it re-runs the one read
   // above so the count row never lags behind an edit made in this same pane.
   const [memoryReadNonce, setMemoryReadNonce] = useState(0)
+  // The hidden task-worker Sessions are part of this assistant's usage. One
+  // scoped read; a failure is labelled on the panel instead of silently
+  // shrinking the total.
+  const [taskUsage, setTaskUsage] = useState<{ tasks: UsageTaskSession[]; failed: boolean }>({
+    tasks: [],
+    failed: false,
+  })
   const paneRef = useRef<HTMLDivElement>(null)
   // The Session list selects this assistant's automations; it is also the key
   // that makes the 概览 count re-read when a thread is added or removed.
@@ -285,6 +292,24 @@ export function AssistantSettingsPane({
   // The Agent Preset is fixed at creation, so this catalog never changes for
   // one instance: whatever it lists is exactly what a save may carry.
   const capabilities = useCapabilityCatalog(assistant.assistantSnapshot.agentPresetId)
+
+  // The task list is read once per assistant the pane is pointed at. Its rows
+  // carry the task title (the Session label) and `archivedAt` (the retired mark).
+  useEffect(() => {
+    let live = true
+    setTaskUsage({ tasks: [], failed: false })
+    void callAgentTeam('assistant.task.list', { assistantId: assistant.id }).then(
+      value => {
+        if (live) setTaskUsage({ tasks: value.items, failed: false })
+      },
+      () => {
+        if (live) setTaskUsage({ tasks: [], failed: true })
+      },
+    )
+    return () => {
+      live = false
+    }
+  }, [assistant.id])
 
   // Refresh the editable draft whenever the pane is pointed at another helper.
   // Keyed by id: a list refresh for the same helper must not overwrite typing.
@@ -894,7 +919,12 @@ export function AssistantSettingsPane({
           onToggle={open => { toggle('usage', open) }}
           dataKind="usage"
         >
-          <UsageSection scope={assistantUsageScope(assistant)} />
+          <UsageSection
+            scope={assistantUsageScope(assistant, taskUsage.tasks)}
+            {...(taskUsage.failed
+              ? { excludeNote: '任务会话暂无法读取，合计不含任务会话' }
+              : {})}
+          />
         </FoldGroup>
       )}
 

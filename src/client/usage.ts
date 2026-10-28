@@ -1,5 +1,5 @@
 import { createElement as h, useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import type { AssistantInstance, TeamAggregate } from '../domain/types.js'
+import type { TeamAggregate } from '../domain/types.js'
 import { openAssistantSession } from './store.js'
 import css from './AgentTeam.module.css'
 
@@ -64,6 +64,20 @@ export interface UsageScopeSession {
   label?: string
   /** Retired Sessions are counted (the tokens were really spent) and marked. */
   retired?: boolean
+  /** Rows the native Session list hides (an assistant's task workers). */
+  hidden?: boolean
+}
+
+/**
+ * The slice of one `assistant.task.list` row this panel reads. A task worker
+ * Session is a hidden Session owned by the assistant, so its tokens belong to
+ * the assistant total even though the native sidebar never lists it.
+ */
+export interface UsageTaskSession {
+  assistantId: string
+  sessionId: string
+  title: string
+  archivedAt?: string | undefined
 }
 
 /** One Session's usage, or explicit absences — never a made-up zero. */
@@ -77,6 +91,8 @@ export interface UsageSessionRow {
   context: UsageContext | null
   /** Last route used by this Session; informational, never a token split. */
   model?: string
+  /** The native list hides this Session (an assistant task worker). */
+  hidden: boolean
   /** The list snapshot carries no projection values for this Session yet. */
   missing: boolean
   /** Only cached projections exist; the Host deferred this Session's migration. */
@@ -109,9 +125,14 @@ export interface UsageRollup {
   turns: number | null
   /** The most occupied Session: context windows never add up across Sessions. */
   context: (UsageContext & { sessionId: string; label?: string }) | null
-  /** Some Session's projections could not be read (or are cached-only). */
+  /**
+   * The total is incomplete: fewer Sessions reported `tokenUsage` than the
+   * scope holds. Covers unread, empty, errored and migration-deferred rows.
+   */
   partial: boolean
   migrating: number
+  /** Sessions whose projection read failed. */
+  errored: number
   missing: number
   /** The list has not answered yet and no values exist to show. */
   loading: boolean
@@ -174,21 +195,27 @@ function requestProjections(sessionId: string): void {
   requests.set(sessionId, pending)
 }
 
+/** True only for a projection store that actually carries values. */
+function hasProjectionValues(values: Partial<UsageProjectionValues> | undefined): boolean {
+  return values !== undefined && Object.keys(values).length > 0
+}
+
 /**
- * Ask the Host for the projections of every scope Session the list has neither
- * a value nor a state for. One request per Session in flight; a Session that
- * already answered (even with `migration-required` cached values) is not asked
- * again. Exported so the read path is testable without a browser.
+ * Ask the Host for the projections of every scope Session the list has not
+ * answered for. One request per Session in flight. A failed read is retried
+ * (that is what makes an error row recover instead of staying “—” forever);
+ * a `migration-required` answer is not, because it is the Host's final word for
+ * now. Exported so the read path is testable without a browser.
  */
 export function requestMissingProjections(
   scope: readonly UsageScopeSession[],
   snapshot: UsageListSnapshot | undefined,
 ): void {
   for (const entry of scope) {
-    if (usageSessionValues(snapshot, entry.sessionId) === undefined
-      && projectionState(snapshot, entry.sessionId) === undefined) {
-      requestProjections(entry.sessionId)
-    }
+    const unread = !hasProjectionValues(usageSessionValues(snapshot, entry.sessionId))
+    if (!unread) continue
+    const state = projectionState(snapshot, entry.sessionId)
+    if (state === undefined || state === 'error') requestProjections(entry.sessionId)
   }
 }
 
@@ -218,6 +245,17 @@ function count(value: unknown): number | null {
 function percentOf(part: number | null, whole: number | null): number | null {
   if (part === null || whole === null || whole <= 0) return null
   return Math.round((part / whole) * 100)
+}
+
+/**
+ * Cache hit share over billed input. Nothing billed is “unknown”, not 0%;
+ * a full cache hit is exactly 100%, and every partial hit stays below it so
+ * rounding can never claim a hit that did not happen.
+ */
+function cacheHitPercentOf(cacheRead: number | null, billed: number | null): number | null {
+  if (cacheRead === null || billed === null || billed <= 0) return null
+  if (cacheRead === billed) return 100
+  return Math.min(99, Math.round((cacheRead / billed) * 100))
 }
 
 function tokensOf(token: Partial<UsageTokenBucket> | undefined): UsageTokens {
@@ -265,11 +303,12 @@ function sessionRow(
     ...(label === undefined ? {} : { label }),
     retired: entry.retired === true,
     tokens,
-    cacheHitPercent: percentOf(tokens.cacheRead, billed),
+    cacheHitPercent: cacheHitPercentOf(tokens.cacheRead, billed),
     turns,
     context: contextOf(values?.contextPressure),
     ...(model === undefined ? {} : { model }),
-    missing: values === undefined,
+    hidden: entry.hidden === true,
+    missing: !hasProjectionValues(values),
     migrating: state === 'migration-required',
   }
 }
@@ -287,6 +326,7 @@ export function usageReport(
   const rows = scope.map(entry => sessionRow(entry, snapshot))
   let reporting = 0
   let migrating = 0
+  let errored = 0
   let missing = 0
   let uncachedInput = 0
   let cacheRead = 0
@@ -297,6 +337,7 @@ export function usageReport(
   for (const row of rows) {
     if (row.missing) missing += 1
     if (row.migrating) migrating += 1
+    if (projectionState(snapshot, row.sessionId) === 'error') errored += 1
     if (row.turns !== null) turns = (turns ?? 0) + row.turns
     const bucket = row.tokens
     if (bucket.total !== null) {
@@ -337,11 +378,14 @@ export function usageReport(
             total: uncachedInput + cacheRead + cacheWrite + output,
           }
         : { uncachedInput: null, cacheRead: null, cacheWrite: null, output: null, total: null },
-      cacheHitPercent: complete ? (billed > 0 ? Math.round((cacheRead / billed) * 100) : 0) : null,
+      cacheHitPercent: complete ? cacheHitPercentOf(cacheRead, billed) : null,
       turns,
       context,
-      partial: missing > 0 || migrating > 0,
+      // “Complete” means every Session in scope reported; a Session with no
+      // tokenUsage (unread, failed or migration-deferred) leaves the total short.
+      partial: reporting < rows.length,
       migrating,
+      errored,
       missing,
       loading: rows.length > 0 && snapshot?.phase === 'pending' && !complete && missing === rows.length,
     },
@@ -357,7 +401,7 @@ export function usageReport(
 export function useUsageReport(scope: readonly UsageScopeSession[]): UsageReport {
   const snapshot = useUsageList()
   const key = scope
-    .map(entry => `${entry.sessionId}\u0001${entry.label ?? ''}\u0001${entry.retired === true ? '1' : '0'}`)
+    .map(entry => `${entry.sessionId}\u0001${entry.label ?? ''}\u0001${entry.retired === true ? '1' : '0'}\u0001${entry.hidden === true ? '1' : '0'}`)
     .join('\u0000')
   useEffect(() => {
     // The scope is keyed by its ids: an async list answer must not re-issue the
@@ -381,17 +425,25 @@ function uniqueScope(entries: readonly UsageScopeSession[]): UsageScopeSession[]
   return [...byId.values()]
 }
 
-type AssistantUsageSource = Pick<
-  AssistantInstance,
-  'mainSessionId' | 'retiredMainSessionIds' | 'threadSessionIds' | 'retiredThreadSessionIds'
->
+/** The assistant fields the scope reads; `id` scopes task rows to one owner. */
+export interface AssistantUsageSource {
+  id?: string | undefined
+  mainSessionId?: string | undefined
+  retiredMainSessionIds?: readonly string[] | undefined
+  threadSessionIds?: readonly string[] | undefined
+  retiredThreadSessionIds?: readonly string[] | undefined
+}
 
 /**
- * Every Session an assistant owns: main, added threads, and both retired lists.
- * Retired Sessions are included on purpose — the tokens were spent — and the
- * rows mark them; the sidebar's hiding rules are untouched.
+ * Every Session an assistant owns: main, added threads, both retired lists, and
+ * the hidden task-worker Sessions its background tasks ran on. Retired Sessions
+ * are counted (the tokens were spent) and marked; worker rows carry their task
+ * title and the hidden mark. The sidebar's hiding rules are untouched.
  */
-export function assistantUsageScope(instance: AssistantUsageSource): UsageScopeSession[] {
+export function assistantUsageScope(
+  instance: AssistantUsageSource,
+  tasks: readonly UsageTaskSession[] = [],
+): UsageScopeSession[] {
   return uniqueScope([
     ...(instance.mainSessionId === undefined
       ? []
@@ -399,6 +451,14 @@ export function assistantUsageScope(instance: AssistantUsageSource): UsageScopeS
     ...(instance.threadSessionIds ?? []).map(sessionId => ({ sessionId, label: '附加会话' })),
     ...(instance.retiredMainSessionIds ?? []).map(sessionId => ({ sessionId, label: '退役主会话', retired: true })),
     ...(instance.retiredThreadSessionIds ?? []).map(sessionId => ({ sessionId, label: '退役附加会话', retired: true })),
+    ...tasks
+      .filter(task => instance.id === undefined || task.assistantId === instance.id)
+      .map(task => ({
+        sessionId: task.sessionId,
+        label: task.title.trim() === '' ? '任务会话' : task.title,
+        hidden: true,
+        ...(task.archivedAt === undefined ? {} : { retired: true }),
+      })),
   ])
 }
 
@@ -443,7 +503,11 @@ export function teamUsageScope(team: TeamUsageSource): UsageScopeSession[] {
 export function formatUsageTokens(value: number | null): string {
   if (value === null) return USAGE_MISSING
   if (value < 1000) return String(value)
-  if (value < 1_000_000) return `${trim(value / 1000, 1)}k`
+  if (value < 1_000_000) {
+    const kilo = Number((value / 1000).toFixed(1))
+    // 999,950+ rounds to 1000.0k; promote instead of printing “1000k”.
+    return kilo < 1000 ? `${trim(kilo, 1)}k` : `${trim(value / 1_000_000, 2)}M`
+  }
   return `${trim(value / 1_000_000, 2)}M`
 }
 
@@ -496,6 +560,17 @@ export interface UsageSectionProps {
   scope: readonly UsageScopeSession[]
   /** What an assistant/team with no Session at all reads. */
   emptyHint?: string | undefined
+  /**
+   * The surface's own navigation. The team card must close its management modal
+   * before opening a Session, so it passes its `onOpenSession`; the settings
+   * pane omits it and falls back to the plugin-wide opener bridge.
+   */
+  onOpenSession?: ((sessionId: string) => void) | undefined
+  /**
+   * Shown when part of the scope could not be read at all (the assistant's task
+   * list failed), so the total is explicitly labelled as excluding it.
+   */
+  excludeNote?: string | undefined
 }
 
 /**
@@ -506,15 +581,23 @@ export interface UsageSectionProps {
  * of its own. Written with `createElement` because the two host surfaces import
  * this one module and must not drag a whole UI chunk (or its icon mocks) along.
  */
-export function UsageSection({ scope, emptyHint = '还没有会话用量' }: UsageSectionProps): JSX.Element {
+export function UsageSection({
+  scope,
+  emptyHint = '还没有会话用量',
+  onOpenSession,
+  excludeNote,
+}: UsageSectionProps): JSX.Element {
   const { rollup, rows } = useUsageReport(scope)
   const [error, setError] = useState<string>()
   const open = (sessionId: string): void => {
-    if (openAssistantSession(sessionId)) {
-      setError(undefined)
+    setError(undefined)
+    if (onOpenSession !== undefined) {
+      onOpenSession(sessionId)
       return
     }
-    setError('无法打开该会话：宿主还没有可用的会话视图')
+    if (!openAssistantSession(sessionId)) {
+      setError('无法打开该会话：宿主还没有可用的会话视图')
+    }
   }
   const contextTitle = rollup.context === null
     ? undefined
@@ -568,8 +651,15 @@ export function UsageSection({ scope, emptyHint = '还没有会话用量' }: Usa
       : rollup.partial && h(
           'p',
           { className: css.usageNote, role: 'status' },
-          `${rollup.migrating > 0 ? '部分会话仍在迁移' : '部分会话暂无法读取'}，合计只含已读取的 ${rollup.reporting} 个会话`,
+          `${rollup.migrating > 0 && rollup.errored === 0
+            ? '部分会话仍在迁移'
+            : '部分会话暂无法读取'}，合计只含已读取的 ${rollup.reporting} 个会话`,
         ),
+    excludeNote !== undefined && h(
+      'p',
+      { className: css.usageNote, 'data-dsh-usage-exclude-note': '' },
+      excludeNote,
+    ),
     rows.length === 0
       ? h('p', { className: css.usageEmpty }, emptyHint)
       : h(
@@ -586,13 +676,18 @@ export function UsageSection({ scope, emptyHint = '还没有会话用量' }: Usa
                 type: 'button',
                 className: css.usageRow,
                 'data-dsh-usage-row': index,
+                // Compact mark for the tests and for any future styling hook.
+                ...(row.hidden ? { 'data-dsh-usage-hidden': '' } : {}),
                 title: usageRowTitle(row),
                 onClick: () => { open(row.sessionId) },
               },
               h(
                 'span',
                 { className: css.usageRowName },
-                h('span', { className: css.usageRowNameText }, row.label ?? row.sessionId),
+                // Never the raw Session id: the Host title is a label, and a
+                // Session without one is just “会话”.
+                h('span', { className: css.usageRowNameText }, row.label ?? '会话'),
+                row.hidden && h('span', { className: css.usageRowTag }, '后台任务'),
                 row.retired && h('span', { className: css.usageRowTag }, '已退役'),
                 row.migrating && h('span', { className: css.usageRowTag }, '迁移中'),
               ),

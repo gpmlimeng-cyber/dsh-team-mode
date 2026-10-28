@@ -1442,7 +1442,8 @@ describe('team card usage surface', () => {
     expect(membersAt).toBeGreaterThan(-1)
     expect(usageAt).toBeGreaterThan(membersAt)
     expect(memoryAt).toBeGreaterThan(usageAt)
-    expect(teamPanel).toContain('<UsageSection scope={teamUsageScope(team)} emptyHint="团队还没有会话用量" />')
+    expect(teamPanel).toContain('scope={teamUsageScope(team)}')
+    expect(teamPanel).toContain('emptyHint="团队还没有会话用量"')
     expect(teamPanel).toContain('只读 · 来自宿主会话投影')
   })
 
@@ -1497,5 +1498,59 @@ describe('team card usage surface', () => {
     expect(block).toContain('var(--dsw-radius-md)')
     expect(block).not.toMatch(/position:\s*fixed|z-index|!important|#[0-9a-f]{3,6}\b|rgba?\(/i)
     expect(block).not.toMatch(/(^|\n)\s*body\b/)
+  })
+})
+
+describe('team usage repair-round edges', () => {
+  it('closes the management modal before opening a Session from a usage row', () => {
+    const teamPanel = readFileSync(
+      new URL('../src/client/teams/TeamPanel.tsx', import.meta.url),
+      'utf8',
+    )
+    const dialogs = readFileSync(
+      new URL('../src/client/team-dialogs.tsx', import.meta.url),
+      'utf8',
+    )
+
+    // The team card threads its host's navigation into the shared panel…
+    expect(teamPanel).toContain('{...(onOpenSession === undefined ? {} : { onOpenSession })}')
+    // …and the modal host is the one that knows the dialog must close first.
+    expect(dialogs).toContain(
+      'onOpenSession={sessionId => { closeTeamDialog(); openSession(sessionId) }}',
+    )
+    expect(dialogs.indexOf('closeTeamDialog()')).toBeLessThan(dialogs.indexOf('openSession(sessionId)'))
+    // The team surface never bypasses that ordering through the global opener.
+    expect(teamPanel).not.toContain('openAssistantSession(sessionId)')
+    // The shared panel prefers the host's navigation and falls back to the bridge.
+    const usageSource = readFileSync(new URL('../src/client/usage.ts', import.meta.url), 'utf8')
+    expect(usageSource).toContain('if (onOpenSession !== undefined)')
+    expect(usageSource.indexOf('onOpenSession(sessionId)'))
+      .toBeLessThan(usageSource.indexOf('openAssistantSession(sessionId)'))
+  })
+
+  it('renders the unread note and “—” for a failed projection read', () => {
+    installUsageSessions({
+      list: {
+        getSnapshot: () => ({
+          phase: 'ready',
+          byId: {},
+          projectionsBySession: { a: { values: {}, state: 'error' } },
+        }),
+        subscribe: () => () => {},
+      },
+    })
+    try {
+      const html = renderToStaticMarkup(createElement(UsageSection, {
+        scope: [{ sessionId: 'a', label: 'Leader' }],
+      }))
+      const text = html.replace(/<[^>]*>/g, '')
+
+      expect(text).toContain('部分会话暂无法读取，合计只含已读取的 0 个会话')
+      expect(text).toContain('缓存命中 —')
+      expect(text).toContain('Leader')
+      expect(text).toContain('— tok · 轮数 — · 缓存 — · 上下文 —')
+    } finally {
+      installUsageSessions(undefined)
+    }
   })
 })
