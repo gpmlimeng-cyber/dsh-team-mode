@@ -32,3 +32,45 @@ export const MASCOT_SHAPE_FIT: Readonly<Record<MascotShape, number>> = {
   egg: 1.342,
   arch: 1.324,
 }
+
+/**
+ * DiceBear's `gaze` style jitters every body per seed, and the tile zooms while
+ * hovered. These three numbers are the whole peak envelope; the style's own
+ * `shape.rotate` / `shape.scale` ranges are the source of the first two.
+ */
+export const MASCOT_DICEBEAR_ROTATE_DEG = 11
+export const MASCOT_DICEBEAR_SCALE_MAX = 1.06
+export const MASCOT_HOVER_ZOOM = 1.04
+
+/**
+ * A box of side 1 rotated by θ covers `cos θ + sin θ` of its side (the rotated
+ * square's axis-aligned bounding box); at the style's 11° maximum that is
+ * `0.9816 + 0.1908 = 1.172`.
+ */
+export function mascotRotationEnvelope(degrees: number = MASCOT_DICEBEAR_ROTATE_DEG): number {
+  const radians = degrees * Math.PI / 180
+  return Math.cos(radians) + Math.sin(radians)
+}
+
+/**
+ * Worst-case ink envelope of one mascot, as a multiple of its own tile:
+ *
+ *   rotate 11°  -> cos 11° + sin 11° = 1.172
+ *   jitter scale -> MASCOT_DICEBEAR_SCALE_MAX 1.06  => 1.242
+ *   hover zoom   -> MASCOT_HOVER_ZOOM 1.04          => 1.292
+ *
+ * `MASCOT_SHAPE_FIT` is deliberately NOT divided by this: the user-facing rule
+ * is "overflow is allowed, being clipped is not", so the body keeps its 98%
+ * fill (0.98 / 1.292 would be ≈ 0.76 and would shrink every mascot for a spill
+ * that, as it happens, stays inside the `<img>` box — an SVG viewport clips its
+ * own content, so only the hover zoom can visibly leave the tile). The number
+ * is kept here as the documented ceiling: `.mascotTile` in
+ * `AgentTeam.module.css` carries no `overflow` and the row is raised while a
+ * mascot moves, so nothing we own trims the spill. What still bounds the
+ * drawing to the image box is the SVG viewport (DiceBear's own clip), not a
+ * container rule — see the `.mascotTile` comment.
+ * `tests/client-mascot-overflow.spec.ts` pins the arithmetic and the CSS.
+ */
+export function mascotPeakEnvelope(): number {
+  return mascotRotationEnvelope() * MASCOT_DICEBEAR_SCALE_MAX * MASCOT_HOVER_ZOOM
+}

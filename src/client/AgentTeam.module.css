@@ -3848,18 +3848,42 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 }
 
 /* The mascot is the same tile as an avatar, at a fixed size, so replacing an
-   avatar with it never changes a row's height. All motion is transform-only. */
+   avatar with it never changes a row's height. All motion is transform-only.
+ 
+   NO `overflow` here, deliberately: a clip would trim the mascot silently, and
+   the user-facing rule is "overflow is allowed, being clipped is not". Peak
+   envelope = rotate 11° (cos 11° + sin 11° = 1.172) x DiceBear's per-seed
+   scale 1.06 (1.242) x this tile's 1.04 hover zoom (1.292); see
+   `mascotPeakEnvelope()` in mascot-shape-fit.ts for the arithmetic and why the
+   98% fill is not divided by it. What actually leaves this box is the hover
+   zoom (2% per edge): the `<img>` itself cannot paint outside its box, because
+   an SVG viewport clips its own content. The rows that own a moving mascot are
+   raised below, so no neighbour can paint over the spill either. */
 .mascotTile {
   position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: none;
-  overflow: hidden;
   corner-shape: superellipse(1);
   /* No plate behind the mascot: it reads as the assistant itself, not as an
      icon on a tile. */
   background: transparent;
+}
+
+/* One sidebar row per mascot: while a mascot MOVES (bob / bounce / shake) the
+   whole group is raised, so a later row cannot paint over the part that leaves
+   the tile — being covered reads exactly like being cut. Measured: the bounce
+   travels 6px while the row leaves only 4px of padding above the tile, so this
+   is the spill that actually matters.
+   `idle` / `none` are excluded: they animate inside the image and never leave
+   the box. Hover is excluded on purpose — the 1.04 zoom spills 0.72px per edge
+   at 36px, which still sits inside the row's own padding, and raising every
+   hovered row would also lift it over the drag drop marker (`z-index: 1` on a
+   partition) for no visible gain. */
+.sidebarTeamGroup:has(.mascotTile:not([data-dsh-mascot-motion='idle']):not([data-dsh-mascot-motion='none'])) {
+  position: relative;
+  z-index: 2;
 }
 
 .mascotCircle {
