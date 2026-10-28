@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Button, IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconSparkleRegular, IconProjectAddOutlineRegular, IconSearchOutlineRegular, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
@@ -21,6 +21,12 @@ import {
   type AssistantCreateSection,
 } from './assistant-form.js'
 import { avatarPickerUploadError, avatarPickerValueError } from './avatar-picker.js'
+import {
+  COWORKER_PRESETS,
+  COWORKER_SENTENCE_MAX_CHARS,
+  applyCoworkerPreset,
+  applyCoworkerSuggestion,
+} from './coworker-presets.js'
 import {
   CapabilityPicker,
   savableNames,
@@ -61,6 +67,24 @@ export interface AssistantCreateModelGroup {
 }
 
 /**
+ * The 一句话 block's own state, kept as one prop so the pure body stays a view.
+ * Optional: a body rendered without it (older tests, settings previews) simply
+ * shows the plain form.
+ */
+export interface AssistantCreateSuggestionProps {
+  sentence: string
+  /** A draft is being generated; the whole form reads it as busy. */
+  generating: boolean
+  /** The last generate failure. The draft itself is left untouched by it. */
+  error: string | undefined
+  /** A one-line note about a successfully applied draft. */
+  note: string | undefined
+  onSentenceChange: (value: string) => void
+  onGenerate: () => void
+  onPresetSelect: (presetId: string) => void
+}
+
+/**
  * The body is a pure view of the dialog's state so it can be rendered by
  * `react-dom/server` in tests: no catalog reads, no mutations, no DOM hooks.
  */
@@ -95,6 +119,8 @@ export interface AssistantCreateBodyProps {
   onAvatarFile: (file: File) => void
   /** Adds a workspace through the host picker and returns it, or null if cancelled. */
   onAddWorkspace: () => Promise<{ id: string; title: string } | null>
+  /** 一句话 create draft; absent when the dialog renders the bare form. */
+  suggestion?: AssistantCreateSuggestionProps | undefined
 }
 
 function SectionHeading({ title, hint }: { title: string; hint: string }): JSX.Element {
@@ -213,12 +239,79 @@ function MascotEditor({
   )
 }
 
+/**
+ * 一句话 + five frozen preset chips. Every control here only writes the draft
+ * the user is reviewing: the generate button is a `type="button"` request for a
+ * draft, and a chip fills the same fields by hand. Neither creates anything —
+ * the footer 创建 submit stays the one creation action.
+ */
+function OneSentenceSection(
+  props: AssistantCreateSuggestionProps,
+  disabled: boolean,
+): JSX.Element {
+  const busy = props.generating || disabled
+  return (
+    <div
+      className={css.assistantCreateSuggestion}
+      data-dsh-assistant-suggestion
+      aria-busy={props.generating ? true : undefined}
+    >
+      <div className={css.assistantCreateSectionHeading}>
+        <strong>一句话创建</strong>
+        <span>描述想要的协作伙伴，生成后仍可逐项修改；不会直接创建，也可以直接选一个预设。</span>
+      </div>
+      <div className={css.assistantCreateSuggestionLine}>
+        <input
+          className={css.input}
+          value={props.sentence}
+          disabled={busy}
+          maxLength={COWORKER_SENTENCE_MAX_CHARS}
+          placeholder="例如：帮我盯竞品更新，每周整理一份摘要"
+          aria-label="用一句话描述要创建的助手"
+          data-dsh-assistant-sentence
+          onChange={event => { props.onSentenceChange(event.target.value) }}
+        />
+        <Button
+          variant="outline"
+          type="button"
+          disabled={busy}
+          onClick={props.onGenerate}
+        >
+          {props.generating ? '生成中…' : '生成草稿'}
+        </Button>
+      </div>
+      <div className={css.assistantCreatePresets} role="group" aria-label="预设角色">
+        {COWORKER_PRESETS.map(preset => (
+          <button
+            key={preset.id}
+            type="button"
+            className={css.assistantCreatePreset}
+            title={preset.blurb}
+            disabled={busy}
+            data-dsh-assistant-preset={preset.id}
+            onClick={() => { props.onPresetSelect(preset.id) }}
+          >
+            {preset.name}
+          </button>
+        ))}
+      </div>
+      {props.error !== undefined && (
+        <div className={css.inlineError} role="alert">{props.error}</div>
+      )}
+      {props.note !== undefined && (
+        <span className={css.hint} role="status">{props.note}</span>
+      )}
+    </div>
+  )
+}
+
 function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JSX.Element {
-  const { draft, roles, roleError, groups, onDraftChange, onRoleSelect, onAvatarFile } = props
+  const { draft, roles, roleError, groups, onDraftChange, onRoleSelect, onAvatarFile, suggestion } = props
   const groupOptions = assistantCreateGroupOptions(groups)
   return (
     <>
       <SectionHeading title="设定与形象" hint="名称、职能、介绍、形象与分组" />
+      {suggestion !== undefined && OneSentenceSection(suggestion, disabled)}
       <SettingsRows>
         {roleError === undefined
           ? (
@@ -545,14 +638,15 @@ function sectionContent(
 }
 
 export function AssistantCreateBody(props: AssistantCreateBodyProps): JSX.Element {
-  const navDisabled = props.loading || props.saving || props.locked
+  const generating = props.suggestion?.generating === true
+  const navDisabled = props.loading || props.saving || props.locked || generating
   const fieldsDisabled = navDisabled
   const activeLabel = ASSISTANT_CREATE_SECTIONS
     .find(section => section.key === props.activeSection)?.label ?? '身份'
   return (
     <div
       className={css.assistantCreateLayout}
-      aria-busy={props.saving || props.locked ? true : undefined}
+      aria-busy={props.saving || props.locked || generating ? true : undefined}
       data-dsh-assistant-create-body
     >
       {props.error !== undefined && (
@@ -672,6 +766,15 @@ export function AssistantCreateDialog({
   const [warning, setWarning] = useState<string>()
   const [groupApplied, setGroupApplied] = useState(false)
   const [reasoningLabels, setReasoningLabels] = useState<Record<string, string>>({})
+  const [sentence, setSentence] = useState('')
+  const [generating, setGenerating] = useState(false)
+  const [generateError, setGenerateError] = useState<string>()
+  const [generateNote, setGenerateNote] = useState<string>()
+  /**
+   * Bumped when the dialog opens: a draft that resolves after a cancel/reopen
+   * belongs to the previous form and must not write into the new one.
+   */
+  const draftGeneration = useRef(0)
 
   const modelCapabilities = useModelCapabilities(draft.provider, draft.model)
   const capabilities = useCapabilityCatalog(draft.agentPresetId)
@@ -696,6 +799,11 @@ export function AssistantCreateDialog({
     setWarning(undefined)
     setGroupApplied(false)
     setReasoningLabels({})
+    draftGeneration.current += 1
+    setSentence('')
+    setGenerating(false)
+    setGenerateError(undefined)
+    setGenerateNote(undefined)
     callAgentTeam('catalog.get')
       .then(value => {
         if (!live) return
@@ -825,6 +933,9 @@ export function AssistantCreateDialog({
   function patchDraft(patch: Partial<AssistantCreateDraft>): void {
     setDraft(current => ({ ...current, ...patch }))
     setError(undefined)
+    // An edit is the user's own answer to a failed generate; the old reason is
+    // stale as soon as the draft changes.
+    setGenerateError(undefined)
   }
 
   function selectRole(templateId: string): void {
@@ -835,6 +946,55 @@ export function AssistantCreateDialog({
     // picked.
     setDraft(current => applyStartingRole(current, template, catalog))
     setError(undefined)
+  }
+
+  /**
+   * Fill one frozen preset into the same draft the user reviews. This is a
+   * local constant, not a request: nothing is read, persisted or created.
+   */
+  function selectPreset(presetId: string): void {
+    setDraft(current => applyCoworkerPreset(current, presetId, catalog))
+    setGenerateError(undefined)
+    setGenerateNote(undefined)
+  }
+
+  /**
+   * Ask the read-only draft method for one identity block and apply it to the
+   * form. The selected provider/model travel with the request; a failed call
+   * leaves the current draft untouched and reports the reason inline.
+   */
+  async function generateDraft(): Promise<void> {
+    if (generating || saving || locked) return
+    const text = sentence.trim()
+    if (text === '') {
+      setGenerateError('先用一句话描述这位协作伙伴。')
+      return
+    }
+    if (draft.provider === '' || draft.model === '') {
+      setGenerateError('请先在「模型与权限」里选择 Provider 和模型。')
+      return
+    }
+    const asked = draftGeneration.current
+    setGenerating(true)
+    setGenerateError(undefined)
+    setGenerateNote(undefined)
+    try {
+      const view = await callAgentTeam('assistant.create.draft', {
+        sentence: text,
+        provider: draft.provider,
+        model: draft.model,
+      })
+      if (draftGeneration.current !== asked) return
+      setDraft(current => applyCoworkerSuggestion(current, view, catalog))
+      if (view.warnings.length > 0) {
+        setGenerateNote('已生成草稿；部分字段超出表单上限已自动缩短，可继续手动调整。')
+      }
+    } catch (cause) {
+      if (draftGeneration.current !== asked) return
+      setGenerateError(`生成草稿失败：${messageOf(cause)}`)
+    } finally {
+      if (draftGeneration.current === asked) setGenerating(false)
+    }
   }
 
   function uploadAvatar(file: File): void {
@@ -987,6 +1147,15 @@ export function AssistantCreateDialog({
           onRoleSelect={selectRole}
           onRetryCatalog={() => { setCatalogAttempt(attempt => attempt + 1) }}
           onAvatarFile={uploadAvatar}
+          suggestion={{
+            sentence,
+            generating,
+            error: generateError,
+            note: generateNote,
+            onSentenceChange: setSentence,
+            onGenerate: () => { void generateDraft() },
+            onPresetSelect: selectPreset,
+          }}
         />
       </form>
     </AnimatedModal>

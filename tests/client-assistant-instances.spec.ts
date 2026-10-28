@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs'
-import { describe, expect, it } from 'vitest'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { describe, expect, it, vi } from 'vitest'
 import type { AssistantInstance, AssistantSession, AssistantTemplate } from '../src/domain/types.js'
 import type { AssistantInstanceView, CatalogView } from '../src/transport/contracts.js'
+import type {
+  AssistantCreateBodyProps,
+  AssistantCreateSuggestionProps,
+} from '../src/client/assistant-dialogs.js'
 import { assistantInstanceStatusLabel } from '../src/client/labels.js'
 import {
   ASSISTANT_CREATE_SECTIONS,
@@ -41,6 +47,51 @@ import {
   relativeAssistantTime,
   visibleAssistantInstances,
 } from '../src/client/assistant-instances.js'
+
+// Rendering the dialog body needs the shipped primitives package, whose browser
+// peers this node test does not install. Only the shapes the body reads are
+// stubbed: a real button, the native switch, the closed menu's anchor.
+vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
+  const Icon = (): unknown => createElement('span')
+  const Button = (props: {
+    children?: unknown
+    disabled?: boolean
+    type?: 'button' | 'submit'
+    form?: string
+    onClick?: () => void
+  }): unknown => createElement(
+    'button',
+    { type: props.type ?? 'button', disabled: props.disabled, form: props.form, onClick: props.onClick },
+    props.children as never,
+  )
+  const Switch = (props: {
+    checked: boolean
+    label: string
+    disabled?: boolean
+  }): unknown => createElement('input', {
+    type: 'checkbox',
+    role: 'switch',
+    'aria-label': props.label,
+    checked: props.checked,
+    disabled: props.disabled,
+    readOnly: true,
+  })
+  return {
+    Button,
+    Switch,
+    Modal: Icon,
+    Menu: (props: { anchor?: unknown }): unknown => createElement('span', undefined, props.anchor as never),
+    IconChevronDownOutlineRegular: Icon,
+    IconChevronRightOutlineRegular: Icon,
+    IconFolderOpenOutlineRegular: Icon,
+    IconPlusOutlineRegular: Icon,
+    IconProjectAddOutlineRegular: Icon,
+    IconSearchOutlineRegular: Icon,
+    IconSparkleRegular: Icon,
+  }
+})
+
+const { AssistantCreateBody } = await import('../src/client/assistant-dialogs.js')
 
 function instance(
   id: string,
@@ -918,3 +969,185 @@ describe('assistant create layout source contract', () => {
     expect(source).not.toContain("'assistant.create'")
   })
 })
+
+const CREATE_DRAFT: AssistantCreateDraft = {
+  ...emptyAssistantCreateDraft(),
+  name: '助手甲',
+  provider: 'deepseek',
+  model: 'flash',
+  workspaceId: 'ws-1',
+  permissionPresetId: 'workspace-write',
+  agentPresetId: 'standard',
+  mascotSeed: 'seed-1',
+}
+
+function suggestionProps(
+  overrides: Partial<AssistantCreateSuggestionProps> = {},
+): AssistantCreateSuggestionProps {
+  return {
+    sentence: '帮我盯竞品更新',
+    generating: false,
+    error: undefined,
+    note: undefined,
+    onSentenceChange: () => undefined,
+    onGenerate: () => undefined,
+    onPresetSelect: () => undefined,
+    ...overrides,
+  }
+}
+
+function createBodyProps(): AssistantCreateBodyProps {
+  return {
+    loading: false,
+    saving: false,
+    locked: false,
+    catalogError: undefined,
+    error: undefined,
+    warning: undefined,
+    activeSection: 'identity',
+    draft: CREATE_DRAFT,
+    roles: [],
+    roleError: undefined,
+    groups: [],
+    workspaces: [{ id: 'ws-1', title: '主工作区' }],
+    modelGroups: [{
+      providerId: 'deepseek',
+      providerName: 'DeepSeek',
+      models: [{ id: 'flash', name: 'Flash' }],
+    }],
+    modelCapabilities: undefined,
+    capabilityError: undefined,
+    skills: [],
+    mcpServers: [],
+    capabilitiesLoading: false,
+    capabilitiesError: undefined,
+    agentPresets: [{ id: 'standard', name: 'Standard' }],
+    permissionPresets: [{ value: 'workspace-write', name: 'Workspace write' }],
+    onSectionChange: () => undefined,
+    onDraftChange: () => undefined,
+    onRoleSelect: () => undefined,
+    onRetryCatalog: () => undefined,
+    onAvatarFile: () => undefined,
+    onAddWorkspace: async () => null,
+    suggestion: suggestionProps(),
+  }
+}
+
+function renderCreateBody(overrides: Partial<AssistantCreateBodyProps> = {}): string {
+  return renderToStaticMarkup(createElement(AssistantCreateBody, {
+    ...createBodyProps(),
+    ...overrides,
+  }))
+}
+
+describe('一句话 create draft in the existing dialog', () => {
+  it('offers a sentence and five preset chips at the top of the identity pane', () => {
+    const html = renderCreateBody()
+    const blockAt = html.indexOf('data-dsh-assistant-suggestion')
+    expect(blockAt).toBeGreaterThan(-1)
+    expect(html).toContain('aria-label="用一句话描述要创建的助手"')
+    expect(html).toContain('maxLength="2000"')
+    // The block is the first thing in 设定与形象, ahead of the template row.
+    expect(blockAt).toBeLessThan(html.indexOf('选择模板'))
+    expect((html.match(/data-dsh-assistant-preset="/g) ?? [])).toHaveLength(5)
+    for (const label of ['研究员', '审查员', '实现者', '测试员', '协调者']) {
+      expect(html).toContain(`>${label}</button>`)
+    }
+    expect(html).toContain('生成草稿')
+  })
+
+  it('never renders a create control inside the body: the footer submit is the only one', () => {
+    const html = renderCreateBody()
+    // Both the generate request and the preset chips are native buttons that
+    // must not submit the form.
+    expect(html).not.toContain('type="submit"')
+    expect((html.match(/type="button"/g) ?? []).length).toBeGreaterThanOrEqual(6)
+  })
+
+  it('reads loading as an explicit state instead of silently swallowing the click', () => {
+    const html = renderCreateBody({ suggestion: suggestionProps({ generating: true }) })
+    expect(html).toContain('生成中…')
+    expect(html).not.toContain('>生成草稿<')
+    expect(html).toContain('aria-busy="true"')
+    // The form is disabled while the draft is in flight, so an edit cannot race it.
+    expect(html).toMatch(/<fieldset[^>]*disabled=""/)
+    expect(html).toMatch(/<button[^>]*type="button"[^>]*disabled=""[^>]*>生成中…<\/button>/)
+  })
+
+  it('shows a generate failure inline and keeps the draft the user already had', () => {
+    const html = renderCreateBody({
+      suggestion: suggestionProps({ error: '生成草稿失败：模型不可用' }),
+    })
+    expect(html).toContain('role="alert"')
+    expect(html).toContain('生成草稿失败：模型不可用')
+    // The current values are still rendered: a failure writes nothing.
+    expect(html).toContain('value="助手甲"')
+  })
+
+  it('reports a clipped draft as a note without blocking the form', () => {
+    const html = renderCreateBody({
+      suggestion: suggestionProps({ note: '已生成草稿；部分字段超出表单上限已自动缩短，可继续手动调整。' }),
+    })
+    expect(html).toContain('role="status"')
+    expect(html).toContain('部分字段超出表单上限已自动缩短')
+    expect(html).not.toContain('role="alert"')
+  })
+})
+
+describe('一句话 create draft wiring', () => {
+  const source = readFileSync(
+    new URL('../src/client/assistant-dialogs.tsx', import.meta.url),
+    'utf8',
+  )
+  const moduleCss = readFileSync(
+    new URL('../src/client/AgentTeam.module.css', import.meta.url),
+    'utf8',
+  )
+
+  it('asks only the read-only draft method with the dialog already-picked model pair', () => {
+    const generate = source.slice(
+      source.indexOf('async function generateDraft'),
+      source.indexOf('function uploadAvatar'),
+    )
+    expect(generate).toContain("callAgentTeam('assistant.create.draft'")
+    expect(generate).toContain('provider: draft.provider')
+    expect(generate).toContain('model: draft.model')
+    expect(generate).toContain('setGenerateError(')
+    // The failure branch leaves the draft alone and creates nothing.
+    expect(generate).not.toContain('setDraft(emptyAssistantCreateDraft')
+    expect(generate).not.toContain('assistant.instance.create')
+    expect(generate).not.toContain('templateId')
+  })
+
+  it('applies chips and generated drafts through the client-only mapper', () => {
+    expect(source).toContain('applyCoworkerPreset(current, presetId, catalog)')
+    expect(source).toContain('applyCoworkerSuggestion(current, view, catalog)')
+    expect(source).toContain('COWORKER_PRESETS.map')
+    expect(source).toContain("from './coworker-presets.js'")
+  })
+
+  it('keeps 创建 the only create action and makes 取消 write nothing', () => {
+    const close = source.slice(
+      source.indexOf('const close = ()'),
+      source.indexOf('async function ensureAndOpen'),
+    )
+    expect(close).toContain('onClose()')
+    expect(close).not.toContain('callAgentTeam')
+    expect((source.match(/'assistant\.instance\.create'/g) ?? [])).toHaveLength(1)
+    // Regeneration is stamped per open, so a draft that resolves after a
+    // cancel cannot write into the next form.
+    expect(source).toContain('draftGeneration.current !== asked')
+  })
+
+  it('styles the block with native controls and semantic tokens only', () => {
+    const start = moduleCss.indexOf('.assistantCreateSuggestion {')
+    expect(start).toBeGreaterThan(-1)
+    const block = moduleCss.slice(start, moduleCss.indexOf('.assistantCreateSectionHeading {', start))
+    expect(block).toContain('.assistantCreatePreset {')
+    expect(block).toContain('border-radius: 999px')
+    const tokens = [...block.matchAll(/var\((--[a-z0-9-]+)/g)].map(match => match[1] ?? '')
+    expect(tokens.length).toBeGreaterThan(0)
+    expect(tokens.every(token => token.startsWith('--dsw-'))).toBe(true)
+  })
+})
+

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
   assistantCreateDefaults,
@@ -7,6 +8,13 @@ import {
   emptyAssistantCreateDraft,
   workspaceSelectable,
 } from '../src/client/assistant-form.js'
+import {
+  COWORKER_PRESETS,
+  COWORKER_SENTENCE_MAX_CHARS,
+  applyCoworkerPreset,
+  applyCoworkerSuggestion,
+  coworkerPresetById,
+} from '../src/client/coworker-presets.js'
 import type { CatalogView } from '../src/transport/contracts.js'
 
 describe('assistantModelKey', () => {
@@ -86,5 +94,129 @@ describe('isolated assistant workspaces in the create form', () => {
     expect(off.workspaceIsolated).toBeUndefined()
     // Shared creation keeps the exact payload older dialogs sent.
     expect(off).toMatchObject({ workspaceId: 'workspace-1', name: 'Paper Bot' })
+  })
+})
+
+function presetCatalog(): CatalogView {
+  return {
+    providers: [{ id: 'openai', name: 'OpenAI' }],
+    models: { openai: [{ id: 'gpt-5', name: 'GPT-5' }] },
+    agentPresets: [{ id: 'default', name: 'Default' }],
+    permissionPresets: [
+      { value: 'read-only', name: 'Read only' },
+      { value: 'workspace-write', name: 'Workspace write' },
+    ],
+    workspaces: [{ id: 'shared', path: '/work', title: 'Work', status: 'ok' }],
+  }
+}
+
+describe('coworker presets', () => {
+  it('freezes exactly the five starting roles as client constants', () => {
+    expect(COWORKER_PRESETS.map(preset => preset.name))
+      .toEqual(['研究员', '审查员', '实现者', '测试员', '协调者'])
+    expect(new Set(COWORKER_PRESETS.map(preset => preset.id)).size).toBe(5)
+    expect(COWORKER_SENTENCE_MAX_CHARS).toBe(2_000)
+    expect(coworkerPresetById('reviewer')?.title).toBe('改动评审')
+    expect(coworkerPresetById('missing')).toBeUndefined()
+  })
+
+  it('fills an editable draft without touching workspace or capabilities', () => {
+    const catalog = presetCatalog()
+    const draft = {
+      ...assistantCreateDefaults(catalog),
+      name: '我的助手',
+      skillAllowlist: ['skill-a'],
+      mcpServers: ['server-a'],
+      group: '工作',
+    }
+    const applied = applyCoworkerPreset(draft, 'implementer', catalog)
+    const preset = coworkerPresetById('implementer')
+    expect(applied.name).toBe('实现者')
+    expect(applied.title).toBe(preset?.title)
+    expect(applied.blurb).toBe(preset?.blurb)
+    expect(applied.instructions).toBe(preset?.instructions)
+    expect(applied.permissionPresetId).toBe('workspace-write')
+    // The base workspace and the user's own Skill/MCP choice survive the fill.
+    expect(applied.workspaceId).toBe('shared')
+    expect(applied.skillAllowlist).toEqual(['skill-a'])
+    expect(applied.mcpServers).toEqual(['server-a'])
+    expect(applied.group).toBe('工作')
+    // Pure: the draft it was given is unchanged.
+    expect(draft.name).toBe('我的助手')
+    expect(draft.title).toBe('')
+    // No template id, and nothing create-shaped is added.
+    expect(applied).not.toHaveProperty('templateId')
+  })
+
+  it('applies a permission preset only while the catalog still offers it', () => {
+    const catalog = presetCatalog()
+    const base = { ...assistantCreateDefaults(catalog), permissionPresetId: 'workspace-write' }
+    const withoutReadOnly: CatalogView = {
+      ...catalog,
+      permissionPresets: [{ value: 'workspace-write', name: 'Workspace write' }],
+    }
+    expect(applyCoworkerPreset(base, 'reviewer', withoutReadOnly).permissionPresetId)
+      .toBe('workspace-write')
+    // An unloaded catalog cannot vouch for an engine value, so it is skipped.
+    expect(applyCoworkerPreset(base, 'reviewer', undefined).permissionPresetId)
+      .toBe('workspace-write')
+    const unknown = { ...base, permissionPresetId: '' }
+    expect(applyCoworkerPreset(unknown, 'missing', catalog)).toBe(unknown)
+  })
+})
+
+describe('applyCoworkerSuggestion', () => {
+  it('lets the model text override a named preset, field by field', () => {
+    const catalog = presetCatalog()
+    const draft = { ...assistantCreateDefaults(catalog), instructions: '旧提示' }
+    const applied = applyCoworkerSuggestion(draft, {
+      presetId: 'tester',
+      name: '  测试伙伴  ',
+      title: '跑回归',
+      instructions: '  只跑受影响的用例  ',
+      // no blurb: the preset's blurb stays
+    }, catalog)
+    expect(applied.name).toBe('测试伙伴')
+    expect(applied.title).toBe('跑回归')
+    expect(applied.instructions).toBe('只跑受影响的用例')
+    expect(applied.blurb).toBe(coworkerPresetById('tester')?.blurb)
+    expect(applied.permissionPresetId).toBe('workspace-write')
+    expect(applied.workspaceId).toBe('shared')
+  })
+
+  it('ignores an unknown preset and keeps every current value for blank fields', () => {
+    const catalog = presetCatalog()
+    const draft = {
+      ...assistantCreateDefaults(catalog),
+      name: '保持',
+      title: '原职能',
+      blurb: '原介绍',
+      instructions: '原提示',
+    }
+    const applied = applyCoworkerSuggestion(draft, {
+      presetId: 'retired-preset',
+      name: '',
+      title: '   ',
+    }, catalog)
+    expect(applied).toEqual(draft)
+  })
+
+  it('treats an all-empty suggestion as no change', () => {
+    const catalog = presetCatalog()
+    const draft = assistantCreateDefaults(catalog)
+    expect(applyCoworkerSuggestion(draft, {}, catalog)).toEqual(draft)
+  })
+})
+
+describe('coworker preset module is client-only', () => {
+  it('never reaches a transport or a create path', () => {
+    const source = readFileSync(
+      new URL('../src/client/coworker-presets.ts', import.meta.url),
+      'utf8',
+    )
+    expect(source).not.toContain('callAgentTeam')
+    expect(source).not.toContain('assistant.instance')
+    // Only the schema module's type shape is mirrored; no zod import ships.
+    expect(source).not.toContain("from '../domain/schemas.js'")
   })
 })
