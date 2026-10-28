@@ -1,5 +1,10 @@
 import { isCoordinatorInstance } from '../domain/types.js'
-import type { AssistantInstance, AssistantSession, Escalation } from '../domain/types.js'
+import type {
+  AssistantInstance,
+  AssistantPreview,
+  AssistantSession,
+  Escalation,
+} from '../domain/types.js'
 import type { AssistantInstanceView } from '../transport/contracts.js'
 import { isAssistantUnread } from './assistant-read-state.js'
 import { assistantInstanceStatusLabel } from './labels.js'
@@ -243,6 +248,94 @@ export function assistantRowStatusTitle(activity: AssistantRowActivity): string 
   if (state === 'running') return `${activity.count} 个任务正在思考`
   if (state === 'queued') return `${activity.count} 个任务排队中`
   return assistantInstanceStatusLabel('idle')
+}
+
+/** One task a coworker is working on, as the detail pane's 现在 block names it. */
+export interface AssistantNowTask {
+  taskId: string
+  title: string
+  status: AssistantSession['status']
+  statusLabel: string
+  sessionId: string
+}
+
+/**
+ * What the detail pane answers first: what this coworker is doing and what it
+ * last said. Pure on the projections the pane already reads, so the summary and
+ * the sidebar rows can never disagree about the same instance.
+ *
+ * The status is task activity (`assistantRowState`), except for an archived
+ * instance: that lifecycle word is a true fact, while the old "active" one was
+ * written once at bind time and never cleared.
+ */
+export interface AssistantNow {
+  state: AssistantRowState
+  statusText: string
+  statusTitle: string
+  counts: { needs_input: number; running: number; queued: number }
+  /** The task to act on first: needs_input, then running, then queued. */
+  current?: AssistantNowTask
+  /** True once the canonical chat exists; the block can name it without a task. */
+  hasSession: boolean
+  recent?: AssistantPreview
+}
+
+const ACTIVE_TASK_RANK: Readonly<Record<'needs_input' | 'running' | 'queued', number>> = {
+  needs_input: 0,
+  running: 1,
+  queued: 2,
+}
+
+export function assistantNow(
+  instance: AssistantInstanceView,
+  tasks: readonly AssistantSession[],
+): AssistantNow {
+  const activity = assistantRowActivity(tasks, instance)
+  const archived = instance.status === 'archived'
+  const active = assistantThreadTasks(tasks, instance)
+    .filter((task): task is AssistantSession & {
+      status: 'needs_input' | 'running' | 'queued'
+    } => task.archivedAt === undefined
+      && (task.status === 'needs_input' || task.status === 'running' || task.status === 'queued'))
+    .sort((left, right) => ACTIVE_TASK_RANK[left.status] - ACTIVE_TASK_RANK[right.status])
+  const first = active[0]
+  const counts = assistantTaskCounts(active)
+  const preview = instance.preview?.text.trim()
+  return {
+    state: assistantRowState(activity),
+    statusText: archived ? assistantInstanceStatusLabel('archived') : assistantRowStatusText(activity),
+    statusTitle: archived ? assistantInstanceStatusLabel('archived') : assistantRowStatusTitle(activity),
+    counts,
+    ...(first === undefined
+      ? {}
+      : {
+          current: {
+            taskId: first.id,
+            title: first.title.trim() || '未命名任务',
+            status: first.status,
+            statusLabel: assistantTaskStatusLabel(first.status),
+            sessionId: first.sessionId,
+          },
+        }),
+    hasSession: instance.mainSessionId !== undefined && instance.mainSessionId !== '',
+    ...(instance.preview === undefined || preview === undefined || preview === ''
+      ? {}
+      : { recent: instance.preview }),
+  }
+}
+
+function assistantTaskCounts(
+  tasks: readonly Pick<AssistantSession, 'status'>[],
+): AssistantNow['counts'] {
+  let needsInput = 0
+  let running = 0
+  let queued = 0
+  for (const task of tasks) {
+    if (task.status === 'needs_input') needsInput += 1
+    else if (task.status === 'running') running += 1
+    else if (task.status === 'queued') queued += 1
+  }
+  return { needs_input: needsInput, running, queued }
 }
 
 /** One pending decision: the Assistant and the task waiting on the user. */

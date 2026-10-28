@@ -56,10 +56,12 @@ const {
   TodaySurfacePanel,
   applyTodayTab,
   openArchivedTeam,
+  openRunningRow,
   openWaitingRow,
   requestToday,
   todayRowKey,
 } = await import('../src/client/today-surface.js')
+const { todayWaitingGroups } = await import('../src/client/today-model.js')
 const { brandCreateItems } = await import('../src/client/sidebar.js')
 
 const source = readFileSync(new URL('../src/client/today-surface.tsx', import.meta.url), 'utf8')
@@ -77,7 +79,7 @@ const NOW = new Date(2026, 0, 1, 12, 0, 0).getTime()
 const TOMORROW_9 = new Date(2026, 0, 2, 9, 0, 0).getTime()
 
 function model(overrides: Partial<TodayModel> = {}): TodayModel {
-  return {
+  const base: TodayModel = {
     greeting: '2 件事等你，其余在按计划跑',
     waiting: [
       {
@@ -97,6 +99,7 @@ function model(overrides: Partial<TodayModel> = {}): TodayModel {
         waitMs: 90_000,
       },
     ],
+    waitingGroups: [],
     running: [
       {
         teamId: 'team-c',
@@ -110,8 +113,10 @@ function model(overrides: Partial<TodayModel> = {}): TodayModel {
     archived: { teams: [], assistants: [], threads: [], total: 0 },
     attentionCount: 2,
     runningEmpty: false,
-    ...overrides,
   }
+  const merged: TodayModel = { ...base, ...overrides }
+  merged.waitingGroups = overrides.waitingGroups ?? todayWaitingGroups(merged.waiting)
+  return merged
 }
 
 function render(overrides: Partial<Parameters<typeof TodaySurfacePanel>[0]> = {}): string {
@@ -325,6 +330,77 @@ describe('today surface rendering', () => {
   })
 })
 
+describe('today waiting groups and coworker running rows', () => {
+  it('draws one group per coworker, longest wait first, with an actionable count', () => {
+    const waiting: TodayWaiting[] = [
+      {
+        teamName: 'Paper Bot',
+        kind: 'assistant_decision',
+        subject: '整理本周资料',
+        since: NOW - 3 * 3_600_000,
+        waitMs: 3 * 3_600_000,
+        assistant: { assistantId: 'paper', name: 'Paper Bot', sessionId: 'session-paper', taskId: 'task-paper' },
+      },
+      {
+        teamName: 'Data Bot',
+        kind: 'assistant_decision',
+        subject: '报表已经生成',
+        since: NOW - 60_000,
+        waitMs: 60_000,
+        assistant: { assistantId: 'data', name: 'Data Bot', sessionId: 'session-data', taskId: 'task-data' },
+      },
+    ]
+    const html = render({ model: model({ waiting }), now: NOW })
+    const groupTitles = html.match(/data-dsh-today-group="[^"]+"/g) ?? []
+    expect(groupTitles).toHaveLength(2)
+    // The longest-waiting coworker is drawn first.
+    expect(html.indexOf('Paper Bot')).toBeLessThan(html.indexOf('Data Bot'))
+    expect(html).toContain('data-dsh-today-row="waiting"')
+    // Every count on the block is actionable: two decisions, no passive rows.
+    expect(text(html)).toContain('等你确认2')
+  })
+
+  it('never counts a passive unread row as actionable and says so beside the group', () => {
+    const waiting: TodayWaiting[] = [
+      {
+        teamName: 'Paper Bot',
+        kind: 'assistant_unread',
+        subject: '简报写好了',
+        since: NOW - 120_000,
+        waitMs: 120_000,
+        assistant: { assistantId: 'paper', name: 'Paper Bot', sessionId: 'session-paper' },
+      },
+    ]
+    const html = render({ model: model({ waiting, attentionCount: 0 }), now: NOW })
+    const plain = text(html)
+    expect(plain).toContain('Paper Bot')
+    expect(plain).toContain('未读 1')
+    // Passive rows never put a number beside 等你确认.
+    expect(plain).not.toContain('等你确认0')
+    expect(plain).not.toContain('等你确认1')
+    expect(plain).not.toContain('助手待你处理')
+  })
+
+  it('draws a coworker running row and routes it to the task Session, not a team page', () => {
+    const running = [{
+      teamName: 'Paper Bot',
+      subject: '整理本周资料',
+      since: NOW - 10 * 60_000,
+      runMs: 10 * 60_000,
+      assistant: {
+        assistantId: 'paper',
+        name: 'Paper Bot',
+        sessionId: 'session-paper',
+        taskId: 'task-paper',
+      },
+    }]
+    const html = render({ model: model({ running }), now: NOW })
+    expect(html).toContain('data-dsh-today-running="assistant"')
+    expect(text(html)).toContain('Paper Bot')
+    expect(text(html)).toContain('整理本周资料')
+  })
+})
+
 describe('today row navigation', () => {
   it('answers an archived-team click in native mode with a visible notice, not a dead manage call', () => {
     const openManageTeam = vi.fn()
@@ -389,8 +465,34 @@ describe('today row navigation', () => {
     expect(navigation.openTeam).toHaveBeenCalledWith('team-a')
   })
 
-  it('keys same-titled assistant tasks by taskId so pending rows cannot collide', () => {
-    const row = (taskId: string): TodayWaiting => ({
+  it('routes a coworker running row to its task Session, never to a team page', () => {
+    const navigation = { openAssistant: vi.fn(), openTeam: vi.fn() }
+    openRunningRow({
+      teamName: 'Paper Bot',
+      subject: '整理资料',
+      since: NOW - 60_000,
+      runMs: 60_000,
+      assistant: {
+        assistantId: 'paper',
+        name: 'Paper Bot',
+        sessionId: 'session-paper',
+        taskId: 'task-paper',
+      },
+    }, navigation)
+    expect(navigation.openAssistant).toHaveBeenCalledWith('session-paper', 'paper')
+    expect(navigation.openTeam).not.toHaveBeenCalled()
+
+    openRunningRow({
+      teamId: 'team-a',
+      teamName: '甲队',
+      subject: '合并 PR',
+      since: NOW - 60_000,
+      runMs: 60_000,
+    }, navigation)
+    expect(navigation.openTeam).toHaveBeenCalledWith('team-a')
+  })
+
+  it('keys same-titled assistant tasks by taskId so pending rows cannot collide', () => {    const row = (taskId: string): TodayWaiting => ({
       teamName: 'Paper Bot',
       kind: 'assistant_decision',
       subject: '同名任务',

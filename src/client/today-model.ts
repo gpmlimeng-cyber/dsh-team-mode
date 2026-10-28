@@ -42,13 +42,42 @@ export interface TodayWaiting {
   assistant?: TodayWaitingAssistant
 }
 
+export interface TodayRunningAssistant {
+  assistantId: string
+  /** Name read from the current instance projection, not a stored copy. */
+  name: string
+  sessionId: string
+  /** The running task's id; a queued-only row has none. */
+  taskId?: string
+}
+
 export interface TodayRunning {
-  teamId: string
+  /** Team rows carry the team; a coworker row carries `assistant` instead. */
+  teamId?: string
   teamName: string
   /** 一句当前在做什么（进行中的任务标题，或成员名）。 */
   subject: string
   since: number
   runMs: number
+  assistant?: TodayRunningAssistant
+}
+
+/**
+ * 等你确认的行按「同一个团队 / 同一个同事」归组：团队事项按 teamId，助手
+ * 事项按 assistantId。组按最长等待倒序，最久没被处理的同事永远在最上面。
+ */
+export interface TodayWaitingGroup {
+  /** teamId for a team group, assistantId for a coworker group. */
+  key: string
+  kind: 'team' | 'assistant'
+  /** Live name from the current team/instance projection. */
+  name: string
+  rows: TodayWaiting[]
+  /** The longest wait in the group; the group order key. */
+  waitMs: number
+  /** Rows that want an action; passive unread rows never count. */
+  actionable: number
+  unread: number
 }
 
 export interface TodayUpcoming {
@@ -88,6 +117,8 @@ export interface TodayArchive {
 export interface TodayModel {
   greeting: string
   waiting: TodayWaiting[]
+  /** `waiting` folded per team/同事; the block renders these, not the flat list. */
+  waitingGroups: TodayWaitingGroup[]
   running: TodayRunning[]
   upcoming: TodayUpcoming[]
   archived: TodayArchive
@@ -279,10 +310,53 @@ export function todayWaiting(
 }
 
 /**
- * 在进行：有 `running` 任务或 `running` 成员的团队，一队一行。
+ * 等你确认按同事/团队归组。名字取当前投影里的名字（助手可能刚改过名），组按
+ * 最长等待倒序，所以最久没人处理的同事排最前。未读只是被动提示：它留在组里，
+ * 但不计入 `actionable`（入口徽标与组计数都只数真正要动手的行）。
+ */
+export function todayWaitingGroups(
+  waiting: readonly TodayWaiting[],
+  instances: readonly AssistantInstanceView[] = [],
+): TodayWaitingGroup[] {
+  const liveNames = new Map(instances.map(instance => [instance.id, assistantInstanceName(instance)]))
+  const groups = new Map<string, TodayWaitingGroup>()
+  for (const row of waiting) {
+    const assistantId = row.assistant?.assistantId
+    const key = assistantId ?? row.teamId ?? row.subject
+    const kind: TodayWaitingGroup['kind'] = assistantId === undefined ? 'team' : 'assistant'
+    let group = groups.get(key)
+    if (group === undefined) {
+      group = {
+        key,
+        kind,
+        name: assistantId === undefined ? row.teamName : liveNames.get(assistantId) ?? row.teamName,
+        rows: [],
+        waitMs: 0,
+        actionable: 0,
+        unread: 0,
+      }
+      groups.set(key, group)
+    }
+    group.rows.push(row)
+    group.waitMs = Math.max(group.waitMs, row.waitMs)
+    if (row.kind === 'assistant_unread') group.unread += 1
+    else group.actionable += 1
+  }
+  return [...groups.values()].sort((left, right) => right.waitMs - left.waitMs
+    || right.actionable - left.actionable
+    || left.key.localeCompare(right.key))
+}
+
+/**
+ * 在进行：有 `running` 任务或 `running` 成员的团队，一队一行；有 running /
+ * queued 任务的同事，一人一行（任务标题或排队数）。
  * `waiting_approval` 不算在跑——那是「等你确认」那一块的事。
  */
-export function todayRunning(teams: readonly TeamView[], now: number): TodayRunning[] {
+export function todayRunning(
+  teams: readonly TeamView[],
+  now: number,
+  assistants: TodayAssistantInput = { instances: [], tasks: [], readState: {} },
+): TodayRunning[] {
   const rows: TodayRunning[] = []
   for (const team of liveTeams(teams)) {
     const task = Object.values(team.tasks)
@@ -304,8 +378,37 @@ export function todayRunning(teams: readonly TeamView[], now: number): TodayRunn
       runMs: elapsed(now, since),
     })
   }
+
+  for (const instance of assistants.instances) {
+    if (isArchivedAssistant(instance)) continue
+    const active = assistants.tasks
+      .filter(task => task.assistantId === instance.id
+        && task.archivedAt === undefined
+        && (task.status === 'running' || task.status === 'queued'))
+      .sort((left, right) => (at(left.createdAt) ?? 0) - (at(right.createdAt) ?? 0)
+        || left.id.localeCompare(right.id))
+    const running = active.filter(task => task.status === 'running')
+    const first = running[0] ?? active[0]
+    if (first === undefined) continue
+    const since = at(first.createdAt) ?? at(first.updatedAt) ?? now
+    const name = assistantInstanceName(instance)
+    rows.push({
+      teamName: name,
+      subject: running.length > 0 ? first.title : `${active.length} 个任务排队中`,
+      since,
+      runMs: elapsed(now, since),
+      assistant: {
+        assistantId: instance.id,
+        name,
+        sessionId: first.sessionId,
+        ...(first.status === 'running' ? { taskId: first.id } : {}),
+      },
+    })
+  }
+
   return rows.sort((left, right) => right.runMs - left.runMs
-    || left.teamId.localeCompare(right.teamId)
+    || (left.teamId ?? left.assistant?.assistantId ?? '')
+      .localeCompare(right.teamId ?? right.assistant?.assistantId ?? '')
     || left.subject.localeCompare(right.subject))
 }
 
@@ -381,11 +484,16 @@ export function todayModel(input: TodayInput): TodayModel {
       readState: input.assistantReadState ?? {},
     },
   )
-  const running = todayRunning(input.teams, input.now)
+  const running = todayRunning(input.teams, input.now, {
+    instances: input.assistantInstances ?? [],
+    tasks: input.assistantTasks ?? [],
+    readState: input.assistantReadState ?? {},
+  })
   const upcoming = todayUpcoming(input.automations ?? [])
   return {
     greeting: todayGreeting(todayActionableCount(waiting), running.length),
     waiting,
+    waitingGroups: todayWaitingGroups(waiting, input.assistantInstances ?? []),
     running,
     upcoming,
     archived: todayArchive(input.teams, input.assistantInstances ?? []),

@@ -12663,6 +12663,130 @@ textarea.sidebarGroupBriefInput {
   white-space: nowrap;
 }
 
+/* ── 现在: the pane's first answer ─────────────────────────────────────────
+   Under the hero, above 概览. A quiet card, not a second settings form: three
+   read-only lines and the three actions that leave it. */
+.assistantNow {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+  margin: 0 0 6px;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-lg);
+  background: var(--dsw-alias-bg-layer-1);
+  min-width: 0;
+}
+
+.assistantNowHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.assistantNowTitle {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.assistantNowStatus {
+  flex: none;
+  margin-left: auto;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.assistantNowStatus[data-dsh-assistant-now-status='needs_input'] {
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.assistantNowStatus[data-dsh-assistant-now-status='running'] {
+  color: var(--dsw-alias-state-success-primary);
+}
+
+.assistantNowStatus[data-dsh-assistant-now-status='starting'] {
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.assistantNowStatus[data-dsh-assistant-now-status='error'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.assistantNowLine {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.assistantNowLabel {
+  flex: none;
+  width: 32px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.assistantNowValue {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistantNowMeta {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assistantNowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.assistantNowAction {
+  padding: 3px 8px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-md);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.assistantNowAction:hover:not(:disabled) {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.assistantNowAction:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.assistantNowAction:focus-visible {
+  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-brand-primary));
+  outline-offset: 1px;
+}
+
 .avatarEditor {
   position: absolute;
   top: calc(100% + 10px);

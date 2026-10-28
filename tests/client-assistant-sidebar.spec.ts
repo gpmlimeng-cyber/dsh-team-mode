@@ -4,6 +4,7 @@ import {
   assistantInstanceLabel,
   assistantInstanceTitle,
   assistantNameForSession,
+  assistantNow,
   assistantPendingDecisions,
   assistantSidebarSummary,
   visibleAssistantInstances,
@@ -698,5 +699,52 @@ describe('assistant identity label in rows, pickers and breadcrumb', () => {
       expect(source).not.toContain('assistantSnapshot.title')
       expect(source).not.toContain('assistantSnapshot.blurb')
     }
+  })
+})
+
+describe('assistantNow — the detail pane first answer', () => {
+  it('puts needs_input before running and queued, so 处理 names the blocking task', () => {
+    const now = assistantNow(instance('paper', 'Paper Bot'), [
+      task('paper', 'queued', 'task-queue'),
+      task('paper', 'running', 'task-run'),
+      task('paper', 'needs_input', 'task-pending', { title: '确认发布范围' }),
+    ])
+    expect(now.current).toMatchObject({
+      taskId: 'task-pending',
+      title: '确认发布范围',
+      statusLabel: '待你处理',
+    })
+    expect(now.statusText).toBe('待你处理')
+    expect(now.counts).toEqual({ needs_input: 1, running: 1, queued: 1 })
+  })
+
+  it('ignores archived tasks and the main Session when naming current work', () => {
+    const now = assistantNow(instance('paper', 'Paper Bot', { mainSessionId: 'session-main' }), [
+      task('paper', 'needs_input', 'task-retired', { archivedAt: ISO }),
+      task('paper', 'running', 'task-main', { sessionId: 'session-main' }),
+    ])
+    expect(now.current).toBeUndefined()
+    expect(now.counts).toEqual({ needs_input: 0, running: 0, queued: 0 })
+  })
+
+  it('never keeps the stale 活跃 word: archived reads 已归档', () => {
+    expect(assistantNow(instance('paper', 'Paper Bot'), []).statusText).toBe('空闲')
+    const archived = assistantNow(instance('old', '旧助手', { status: 'archived' }), [])
+    expect(archived.statusText).toBe('已归档')
+    expect(archived.statusText).not.toBe('活跃')
+  })
+
+  it('carries the recent preview and whether a canonical chat exists', () => {
+    const withChat: AssistantInstanceView = {
+      ...instance('paper', 'Paper Bot', { mainSessionId: 'session-main' }),
+      preview: { role: 'user', text: '先做一版', time: Date.parse(ISO) },
+    }
+    const now = assistantNow(withChat, [])
+    expect(now.hasSession).toBe(true)
+    expect(now.recent).toEqual({ role: 'user', text: '先做一版', time: Date.parse(ISO) })
+
+    const noChat = assistantNow(instance('new', '新助手'), [])
+    expect(noChat.hasSession).toBe(false)
+    expect(noChat.recent).toBeUndefined()
   })
 })

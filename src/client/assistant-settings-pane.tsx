@@ -28,6 +28,9 @@ import {
 import {
   assistantAvatarDataUrlError,
   assistantInstanceName,
+  assistantNow,
+  relativeAssistantTime,
+  type AssistantNow,
 } from './assistant-instances.js'
 import {
   ASSISTANT_BLURB_MAX_CHARS,
@@ -65,12 +68,13 @@ import { SelectControl } from './select-control.js'
 import type { SelectControlOption } from './select-control.js'
 import { SettingsRow, SettingsRows } from './settings-row.js'
 import { FoldGroup } from './fold-group.js'
-import { UsageSection, assistantUsageScope, type UsageTaskSession } from './usage.js'
+import { openAssistantSession } from './store.js'
+import { UsageSection, assistantUsageScope } from './usage.js'
 import css from './AgentTeam.module.css'
 import { isCoordinatorInstance } from '../domain/types.js'
 import type {
-  AssistantInstance,
   AssistantMemory,
+  AssistantSession,
   MemoryEntry,
   UpdateAssistantInstanceInput,
 } from '../domain/types.js'
@@ -194,14 +198,6 @@ const GROUP_ICONS: Record<AssistantSettingGroupId, JSX.Element> = {
   history: <IconFlatListOutlineRegular size={14} />,
 }
 
-const STATUS_LABELS: Record<AssistantInstance['status'], string> = {
-  idle: '空闲',
-  starting: '启动中',
-  active: '活跃',
-  error: '出错',
-  archived: '已归档',
-}
-
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }
@@ -228,6 +224,97 @@ export function AssistantOverviewMemoryRow({
     >
       <span className={css.assistantOverviewTodoText}>{assistantMemoryCountLine(count)}</span>
     </button>
+  )
+}
+
+/**
+ * The pane's first answer: what this coworker is doing now. It sits under the
+ * hero and above 概览, so opening a helper is a status read, not a settings form.
+ * Every word comes from `assistantNow` (task activity), not from the lifecycle
+ * field the old "活跃" badge read once and never cleared.
+ */
+export function AssistantNowBlock({
+  now,
+  at,
+  busy,
+  onOpenChat,
+  onOpenTask,
+  onAllSettings,
+}: {
+  now: AssistantNow
+  /** Milliseconds clock for the relative "最近" stamp; tests pin it. */
+  at?: number | undefined
+  busy?: boolean | undefined
+  onOpenChat: () => void
+  onOpenTask: () => void
+  onAllSettings: () => void
+}): JSX.Element {
+  const currentTitle = now.current === undefined
+    ? now.hasSession ? '主会话' : '还没有主会话'
+    : now.current.title
+  const currentMeta = now.current === undefined
+    ? now.hasSession ? '没有进行中的任务' : '打开会话开始'
+    : now.current.statusLabel
+  const recentText = now.recent === undefined
+    ? '还没有最近的消息'
+    : `${now.recent.role === 'user' ? '你' : '助手'}：${now.recent.text}`
+  const recentAt = now.recent === undefined
+    ? undefined
+    : relativeAssistantTime(new Date(now.recent.time).toISOString(), at)
+  const taskAction = now.current?.status === 'needs_input' ? '处理' : '查看'
+  return (
+    <section className={css.assistantNow} data-dsh-assistant-now aria-label="现在">
+      <div className={css.assistantNowHead}>
+        <span className={css.assistantNowTitle}>现在</span>
+        <span
+          className={css.assistantNowStatus}
+          data-dsh-assistant-now-status={now.state}
+          title={now.statusTitle}
+        >
+          {now.statusText}
+        </span>
+      </div>
+      <div className={css.assistantNowLine} data-dsh-assistant-now-current>
+        <span className={css.assistantNowLabel}>当前</span>
+        <span className={css.assistantNowValue} title={currentTitle}>{currentTitle}</span>
+        <span className={css.assistantNowMeta}>{currentMeta}</span>
+      </div>
+      <div className={css.assistantNowLine} data-dsh-assistant-now-recent>
+        <span className={css.assistantNowLabel}>最近</span>
+        <span className={css.assistantNowValue} title={recentText}>{recentText}</span>
+        {recentAt !== undefined && recentAt !== '' && (
+          <span className={css.assistantNowMeta}>{recentAt}</span>
+        )}
+      </div>
+      <div className={css.assistantNowActions}>
+        <button
+          type="button"
+          className={css.assistantNowAction}
+          data-dsh-assistant-now-action="chat"
+          disabled={busy === true}
+          onClick={onOpenChat}
+        >
+          打开会话
+        </button>
+        <button
+          type="button"
+          className={css.assistantNowAction}
+          data-dsh-assistant-now-action="task"
+          disabled={busy === true || now.current === undefined}
+          onClick={onOpenTask}
+        >
+          {taskAction}
+        </button>
+        <button
+          type="button"
+          className={css.assistantNowAction}
+          data-dsh-assistant-now-action="settings"
+          onClick={onAllSettings}
+        >
+          全部设置
+        </button>
+      </div>
+    </section>
   )
 }
 
@@ -273,6 +360,8 @@ export function AssistantSettingsPane({
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [archiving, setArchiving] = useState(false)
+  const [openingChat, setOpeningChat] = useState(false)
+  const [openingTask, setOpeningTask] = useState(false)
   const [error, setError] = useState<string>()
   const [mascotMotion, setMascotMotion] = useState<MascotMotion>('idle')
   const [mascotMotionKey, setMascotMotionKey] = useState(0)
@@ -288,7 +377,7 @@ export function AssistantSettingsPane({
   // The hidden task-worker Sessions are part of this assistant's usage. One
   // scoped read; a failure is labelled on the panel instead of silently
   // shrinking the total.
-  const [taskUsage, setTaskUsage] = useState<{ tasks: UsageTaskSession[]; failed: boolean }>({
+  const [taskUsage, setTaskUsage] = useState<{ tasks: AssistantSession[]; failed: boolean }>({
     tasks: [],
     failed: false,
   })
@@ -299,25 +388,33 @@ export function AssistantSettingsPane({
 
   const busy = saving || archiving
   const modelCapabilities = useModelCapabilities(provider, model)
+  // The pane's first answer, derived from the same live task read as 用量.
+  const now = assistantNow(assistant, taskUsage.tasks)
   // The Agent Preset is fixed at creation, so this catalog never changes for
   // one instance: whatever it lists is exactly what a save may carry.
   const capabilities = useCapabilityCatalog(assistant.assistantSnapshot.agentPresetId)
 
-  // The task list is read once per assistant the pane is pointed at. Its rows
-  // carry the task title (the Session label) and `archivedAt` (the retired mark).
+  // The task list drives both 用量 and the 现在 summary. It is read once per
+  // assistant the pane is pointed at and re-read on every Host event, because a
+  // task changing status must move 现在 with it instead of leaving it stale.
   useEffect(() => {
     let live = true
     setTaskUsage({ tasks: [], failed: false })
-    void callAgentTeam('assistant.task.list', { assistantId: assistant.id }).then(
-      value => {
-        if (live) setTaskUsage({ tasks: value.items, failed: false })
-      },
-      () => {
-        if (live) setTaskUsage({ tasks: [], failed: true })
-      },
-    )
+    const read = (): void => {
+      void callAgentTeam('assistant.task.list', { assistantId: assistant.id }).then(
+        value => {
+          if (live) setTaskUsage({ tasks: value.items, failed: false })
+        },
+        () => {
+          if (live) setTaskUsage({ tasks: [], failed: true })
+        },
+      )
+    }
+    read()
+    const unsubscribe = subscribeAgentTeam(read, () => {}, read)
     return () => {
       live = false
+      unsubscribe()
     }
   }, [assistant.id])
 
@@ -543,6 +640,54 @@ export function AssistantSettingsPane({
     }
   }
 
+  /** 打开会话: ensure the canonical chat, then hand navigation to the host. */
+  async function openChat(): Promise<void> {
+    if (openingChat) return
+    setOpeningChat(true)
+    setError(undefined)
+    try {
+      const result = await callAgentTeam('assistant.instance.ensure', { id: assistant.id })
+      // ensure binds mainSessionId, so refresh the row before navigating.
+      await onSaved()
+      if (!openAssistantSession(result.sessionId)) {
+        setError('暂时打不开会话：会话界面还没就绪')
+      }
+    } catch (cause) {
+      setError(`打开会话失败：${messageOf(cause)}`)
+    } finally {
+      setOpeningChat(false)
+    }
+  }
+
+  /** 处理/查看: open the task the 现在 block named. */
+  async function openCurrentTask(): Promise<void> {
+    const task = now.current
+    if (task === undefined || openingTask) return
+    setOpeningTask(true)
+    setError(undefined)
+    try {
+      const result = await callAgentTeam('assistant.task.open', { taskId: task.taskId })
+      if (!openAssistantSession(result.sessionId)) {
+        setError('暂时打不开任务会话：会话界面还没就绪')
+      }
+    } catch (cause) {
+      setError(`打开任务失败：${messageOf(cause)}`)
+    } finally {
+      setOpeningTask(false)
+    }
+  }
+
+  /** 全部设置: clear the search, open every group, and start at 概览. */
+  function showAllSettings(): void {
+    setQuery('')
+    const allOpen: Partial<Record<AssistantSettingGroupId, boolean>> = {}
+    for (const group of ASSISTANT_SETTING_GROUPS) allOpen[group.id] = true
+    setOpenGroups(allOpen)
+    requestAnimationFrame(() => {
+      paneRef.current?.querySelector('[data-dsh-fold="overview"]')?.scrollIntoView({ block: 'start' })
+    })
+  }
+
   const displayName = name.trim() === '' ? '助手' : name.trim()
   const templateLabel = assistant.templateId === undefined
     ? '无（直接创建）'
@@ -617,11 +762,13 @@ export function AssistantSettingsPane({
       paneRef.current?.querySelector(`[data-dsh-fold="${target}"]`)?.scrollIntoView({ block: 'start' })
     })
   }
-  // The subtitle names what the assistant is: its group, role and status.
+  // The subtitle names what the assistant is: its group, role and task-derived
+  // status. The lifecycle "活跃" is not read here any more: it was written once
+  // at bind time and stayed forever, so it answered nothing.
   const avatarSubtitle = [
     assistant.group,
     isCoordinatorInstance(assistant) ? '总协调' : undefined,
-    STATUS_LABELS[assistant.status],
+    now.statusText,
   ].filter((part): part is string => part !== undefined && part !== '').join(' · ')
 
   const searching = query.trim() !== ''
@@ -688,6 +835,14 @@ export function AssistantSettingsPane({
           />
         )}
       </div>
+      <AssistantNowBlock
+        now={now}
+        at={Date.now()}
+        busy={busy || openingChat || openingTask}
+        onOpenChat={() => { void openChat() }}
+        onOpenTask={() => { void openCurrentTask() }}
+        onAllSettings={showAllSettings}
+      />
       <label className={css.settingsSearch}>
         <IconSearchOutlineRegular size={14} />
         <input

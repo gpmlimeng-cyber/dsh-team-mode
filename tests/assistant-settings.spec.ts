@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import type { AssistantMemory, MemoryEntry } from '../src/domain/types.js'
+import type { AssistantMemory, AssistantSession, MemoryEntry } from '../src/domain/types.js'
 import type { AssistantCreateDraft } from '../src/client/assistant-form.js'
 import type { AssistantCreateBodyProps, AssistantCreateFooterProps } from '../src/client/assistant-dialogs.js'
 import type { AssistantInstanceView } from '../src/transport/contracts.js'
@@ -93,9 +93,11 @@ const {
 const { AssistantCreateBody, AssistantCreateFooter } = await import('../src/client/assistant-dialogs.js')
 const {
   ASSISTANT_SETTING_GROUPS,
+  AssistantNowBlock,
   AssistantOverviewMemoryRow,
   visibleSettingGroups,
 } = await import('../src/client/assistant-settings-pane.js')
+const { assistantNow } = await import('../src/client/assistant-instances.js')
 const {
   UsageSection,
   assistantUsageScope,
@@ -1141,5 +1143,150 @@ describe('assistant identity lines', () => {
     const facts = assistantDetailSections(plain).find(section => section.id === 'identity')?.facts ?? []
     expect(facts.map(fact => fact.label)).toEqual(['名称', '头像'])
     expect(facts.some(fact => fact.label === '职能' || fact.label === '一句话介绍')).toBe(false)
+  })
+})
+
+const NOW_AT = Date.parse('2026-01-01T01:00:00.000Z')
+
+function nowInstance(overrides: Partial<AssistantInstanceView> = {}): AssistantInstanceView {
+  return {
+    schemaVersion: 1,
+    id: 'paper',
+    templateId: 'template-paper',
+    assistantSnapshot: {
+      assistantId: 'template-paper',
+      revision: 1,
+      name: 'Paper Bot',
+      instructions: '',
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      agentPresetId: 'default',
+      permissionPresetId: 'workspace-write',
+      skillAllowlist: [],
+      mcpServers: [],
+      prompts: [],
+    },
+    workspaceId: 'workspace-1',
+    workspacePath: '/tmp/workspace-1',
+    status: 'idle',
+    pinned: false,
+    revision: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+function nowTask(
+  status: AssistantSession['status'],
+  id = `task-${status}`,
+  overrides: Partial<AssistantSession> = {},
+): AssistantSession {
+  return {
+    schemaVersion: 1,
+    id,
+    assistantId: 'paper',
+    sessionId: `session-${id}`,
+    role: 'task',
+    title: `task ${id}`,
+    brief: '',
+    parentSessionId: 'session-main',
+    status,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    ...overrides,
+  }
+}
+
+describe('assistant detail 现在 block', () => {
+  const pane = readFileSync(
+    new URL('../src/client/assistant-settings-pane.tsx', import.meta.url),
+    'utf8',
+  )
+
+  function block(
+    instance: AssistantInstanceView,
+    tasks: AssistantSession[] = [],
+  ): string {
+    return renderToStaticMarkup(createElement(AssistantNowBlock, {
+      now: assistantNow(instance, tasks),
+      at: NOW_AT,
+      onOpenChat: () => {},
+      onOpenTask: () => {},
+      onAllSettings: () => {},
+    }))
+  }
+
+  it('answers status, current task, recent preview and three actions before the settings', () => {
+    const instance = nowInstance({
+      mainSessionId: 'session-main',
+      preview: {
+        role: 'assistant',
+        text: '先读接口，再改一轮。',
+        time: NOW_AT - 30 * 60_000,
+      },
+    })
+    const html = block(instance, [nowTask('running', 'task-run', { title: '整理本周资料' })])
+    const plain = plainText(html)
+
+    expect(plain).toContain('现在')
+    expect(plain).toContain('思考中')
+    expect(plain).toContain('整理本周资料')
+    expect(plain).toContain('助手：先读接口，再改一轮。')
+    expect(plain).toContain('30分钟')
+    expect(plain).toContain('打开会话')
+    expect(plain).toContain('查看')
+    expect(plain).toContain('全部设置')
+    expect(html).toContain('data-dsh-assistant-now-status="running"')
+    // Situated above 概览, below the hero: the block is the first body element
+    // after the avatar hero markup.
+    expect(pane.indexOf('<AssistantNowBlock')).toBeLessThan(pane.indexOf("isVisible('overview')"))
+  })
+
+  it('names a needs_input task 处理 and never prints the stale 活跃 lifecycle', () => {
+    const instance = nowInstance({ mainSessionId: 'session-main' })
+    const html = block(instance, [
+      nowTask('queued', 'task-queue'),
+      nowTask('needs_input', 'task-pending', { title: '确认发布范围' }),
+    ])
+    const plain = plainText(html)
+
+    expect(plain).toContain('待你处理')
+    expect(plain).toContain('确认发布范围')
+    expect(plain).toContain('处理')
+    // The old hero word came from the never-cleared lifecycle status.
+    expect(plain).not.toContain('活跃')
+    expect(pane).not.toContain("active: '活跃'")
+    expect(pane).toContain('assistantNow(assistant, taskUsage.tasks)')
+    expect(pane).toContain('now.statusText')
+  })
+
+  it('falls back to the main session when no task is active, and disables 查看', () => {
+    const html = block(nowInstance({ mainSessionId: 'session-main' }))
+    const plain = plainText(html)
+
+    expect(plain).toContain('主会话')
+    expect(plain).toContain('没有进行中的任务')
+    expect(plain).toContain('还没有最近的消息')
+    expect(html).toMatch(/data-dsh-assistant-now-action="task"[^>]*disabled/)
+  })
+
+  it('wires 打开会话 through ensure, 处理/查看 through task.open, and 全部设置 locally', () => {
+    expect(pane).toContain("callAgentTeam('assistant.instance.ensure', { id: assistant.id })")
+    expect(pane).toContain('openAssistantSession(result.sessionId)')
+    expect(pane).toContain("callAgentTeam('assistant.task.open', { taskId: task.taskId })")
+    expect(pane).toContain('onOpenChat={() => { void openChat() }}')
+    expect(pane).toContain('onOpenTask={() => { void openCurrentTask() }}')
+    expect(pane).toContain('onAllSettings={showAllSettings}')
+    expect(pane).toContain('function showAllSettings')
+    expect(pane).toContain('setOpenGroups(allOpen)')
+  })
+
+  it('keeps the task read live on Host events so status and current never go stale', () => {
+    expect(pane).toContain("callAgentTeam('assistant.task.list', { assistantId: assistant.id })")
+    expect(pane).toContain('const unsubscribe = subscribeAgentTeam(read, () => {}, read)')
+    // The same live list feeds 用量 and the 现在 summary.
+    expect(pane).toContain('scope={assistantUsageScope(assistant, taskUsage.tasks)}')
+    expect(pane).toContain('assistantNow(assistant, taskUsage.tasks)')
   })
 })

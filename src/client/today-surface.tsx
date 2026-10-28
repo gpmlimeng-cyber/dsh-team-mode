@@ -24,6 +24,7 @@ import {
   todayWaiting,
   type TodayArchivedAssistant,
   type TodayModel,
+  type TodayRunning,
   type TodayWaiting,
 } from './today-model.js'
 import css from './Today.module.css'
@@ -109,6 +110,23 @@ export interface WaitingRowNavigation {
 export function openWaitingRow(row: TodayWaiting, navigation: WaitingRowNavigation): void {
   if (row.assistant !== undefined) {
     if (row.kind === 'assistant_unread') navigation.markRead(row.assistant.assistantId)
+    navigation.openAssistant(row.assistant.sessionId, row.assistant.assistantId)
+    return
+  }
+  if (row.teamId !== undefined) navigation.openTeam(row.teamId)
+}
+
+export interface RunningRowNavigation {
+  openAssistant: (sessionId: string, assistantId?: string) => void
+  openTeam: (teamId: string) => void
+}
+
+/**
+ * One 在进行 row: a team row opens its Leader Session, a coworker row opens the
+ * task Session it is running (or the first queued one). Nothing writes.
+ */
+export function openRunningRow(row: TodayRunning, navigation: RunningRowNavigation): void {
+  if (row.assistant !== undefined) {
     navigation.openAssistant(row.assistant.sessionId, row.assistant.assistantId)
     return
   }
@@ -319,6 +337,14 @@ export function TodaySurfaceBody(_props: PropsRuntime<'sidebar.right.pane.tab'>)
     })
   }
 
+  const openRunningRowAction = (row: TodayRunning): void => {
+    setNotice(undefined)
+    openRunningRow(row, {
+      openAssistant: (sessionId, assistantId) => { openSessionOrAssistant(sessionId, assistantId) },
+      openTeam: openTeamRow,
+    })
+  }
+
   const openArchivedTeamRow = (teamId: string): void => {
     setNotice(undefined)
     openArchivedTeam(teamId, {
@@ -347,6 +373,7 @@ export function TodaySurfaceBody(_props: PropsRuntime<'sidebar.right.pane.tab'>)
       onRefresh={() => { setNonce(value => value + 1) }}
       onOpenTeam={openTeamRow}
       onOpenWaiting={openWaitingRowAction}
+      onOpenRunning={openRunningRowAction}
       onOpenAutomation={openUpcomingRow}
       onOpenArchivedTeam={openArchivedTeamRow}
       onOpenArchivedAssistant={openArchivedAssistant}
@@ -379,6 +406,7 @@ export function TodaySurfacePanel({
   onRefresh,
   onOpenTeam,
   onOpenWaiting,
+  onOpenRunning,
   onOpenAutomation,
   onOpenArchivedTeam,
   onOpenArchivedAssistant,
@@ -394,6 +422,8 @@ export function TodaySurfacePanel({
   onRefresh: () => void
   onOpenTeam: (teamId: string) => void
   onOpenWaiting: (row: TodayWaiting) => void
+  /** Optional so a caller without the navigation still renders every row. */
+  onOpenRunning?: ((row: TodayRunning) => void) | undefined
   onOpenAutomation: () => void
   onOpenArchivedTeam: (teamId: string) => void
   onOpenArchivedAssistant: (assistant: TodayArchivedAssistant) => void
@@ -432,31 +462,54 @@ export function TodaySurfacePanel({
             <section className={css.block} data-dsh-today-block="waiting">
               <h3 className={css.blockTitle}>
                 等你确认
-                <span className={css.count}>{model.waiting.length}</span>
+                {/* Actionable only: unread rows are passive and never inflate it. */}
+                {model.attentionCount > 0 && (
+                  <span className={css.count}>{model.attentionCount}</span>
+                )}
               </h3>
-              <ul className={css.rows}>
-                {model.waiting.map(row => (
-                  <li key={todayRowKey(row)}>
-                    <button
-                      type="button"
-                      className={css.row}
-                      data-dsh-today-row="waiting"
-                      title={`${row.teamName} · ${row.subject}`}
-                      onClick={() => { onOpenWaiting(row) }}
-                    >
-                      <span className={css.rowMain}>
-                        <span className={css.rowTeam}>{row.teamName}</span>
-                        <span className={css.rowSubject}>{row.subject}</span>
-                      </span>
-                      <span className={css.rowMeta}>
-                        {row.kind === 'assistant_unread'
-                          ? `未读 · ${elapsedLabel(row.since, now)}前`
-                          : `${WAITING_KIND_LABELS[row.kind]} · 已等 ${elapsedLabel(row.since, now)}`}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
+              {/* Grouped per coworker/team. The group header reuses the page's
+                  existing nested-list primitives (the same ones 已归档 uses), so
+                  this stays inside Today.module.css's one type scale. */}
+              {model.waitingGroups.map(group => (
+                <div
+                  key={`${group.kind}:${group.key}`}
+                  className={css.archiveGroup}
+                  data-dsh-today-group={group.kind}
+                >
+                  <h4 className={css.archiveGroupTitle}>
+                    <span title={group.name}>{group.name}</span>
+                    {/* The pill counts only what wants an action; unread is passive. */}
+                    {group.actionable > 0 && (
+                      <span className={css.count}>{group.actionable}</span>
+                    )}
+                    {group.unread > 0 && (
+                      <span className={css.archiveHint}>未读 {group.unread}</span>
+                    )}
+                  </h4>
+                  <ul className={css.rows}>
+                    {group.rows.map(row => (
+                      <li key={todayRowKey(row)}>
+                        <button
+                          type="button"
+                          className={css.row}
+                          data-dsh-today-row="waiting"
+                          title={`${row.teamName} · ${row.subject}`}
+                          onClick={() => { onOpenWaiting(row) }}
+                        >
+                          <span className={css.rowMain}>
+                            <span className={css.rowSubject}>{row.subject}</span>
+                          </span>
+                          <span className={css.rowMeta}>
+                            {row.kind === 'assistant_unread'
+                              ? `未读 · ${elapsedLabel(row.since, now)}前`
+                              : `${WAITING_KIND_LABELS[row.kind]} · 已等 ${elapsedLabel(row.since, now)}`}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
             </section>
           )}
 
@@ -469,23 +522,31 @@ export function TodaySurfacePanel({
               <p className={css.quiet}>现在没有在跑的任务</p>
             ) : (
               <ul className={css.rows}>
-                {model.running.map(row => (
-                  <li key={`${row.teamId}:${row.subject}`}>
-                    <button
-                      type="button"
-                      className={css.row}
-                      data-dsh-today-row="running"
-                      title={`${row.teamName} · ${row.subject}`}
-                      onClick={() => { onOpenTeam(row.teamId) }}
-                    >
-                      <span className={css.rowMain}>
-                        <span className={css.rowTeam}>{row.teamName}</span>
-                        <span className={css.rowSubject}>{row.subject}</span>
-                      </span>
-                      <span className={css.rowMeta}>已跑 {elapsedLabel(row.since, now)}</span>
-                    </button>
-                  </li>
-                ))}
+                {model.running.map(row => {
+                  const source = row.teamId ?? row.assistant?.assistantId ?? ''
+                  return (
+                    <li key={`${source}:${row.subject}`}>
+                      <button
+                        type="button"
+                        className={css.row}
+                        data-dsh-today-row="running"
+                        data-dsh-today-running={row.assistant === undefined ? 'team' : 'assistant'}
+                        title={`${row.teamName} · ${row.subject}`}
+                        onClick={() => {
+                          if (row.assistant === undefined) onOpenTeam(row.teamId ?? '')
+                          else if (onOpenRunning !== undefined) onOpenRunning(row)
+                          else onOpenTeam(row.teamId ?? '')
+                        }}
+                      >
+                        <span className={css.rowMain}>
+                          <span className={css.rowTeam}>{row.teamName}</span>
+                          <span className={css.rowSubject}>{row.subject}</span>
+                        </span>
+                        <span className={css.rowMeta}>已跑 {elapsedLabel(row.since, now)}</span>
+                      </button>
+                    </li>
+                  )
+                })}
               </ul>
             )}
           </section>

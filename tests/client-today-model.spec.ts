@@ -8,6 +8,7 @@ import {
   todayRunning,
   todayUpcoming,
   todayWaiting,
+  todayWaitingGroups,
 } from '../src/client/today-model.js'
 import type { AssistantSession, Escalation, TeamMemberSlot, TeamTask } from '../src/domain/types.js'
 import type { AssistantInstanceView, TeamView } from '../src/transport/contracts.js'
@@ -447,6 +448,116 @@ describe('todayWaiting · assistant decisions and unread', () => {
       [],
       NOW,
     )).toEqual([])
+  })
+})
+
+describe('todayWaitingGroups', () => {
+  it('groups by team and coworker, longest wait first', () => {
+    const paper = assistantInstance('paper', 'Paper Bot', { mainSessionId: 'session-main' })
+    const rows = todayWaiting([team({ id: 'team-a', name: '甲队' })], [
+      escalation({
+        id: 'gate',
+        teamId: 'team-a',
+        teamName: '甲队',
+        createdAt: '2026-01-01T00:30:00.000Z',
+      }),
+    ], NOW, {
+      instances: [paper],
+      tasks: [assistantTask('paper', 'needs_input', 'task-paper', {
+        updatedAt: '2025-12-31T22:00:00.000Z',
+      })],
+      readState: {},
+    })
+
+    const groups = todayWaitingGroups(rows)
+    expect(groups.map(group => [group.kind, group.key])).toEqual([
+      ['assistant', 'paper'],
+      ['team', 'team-a'],
+    ])
+    expect(groups[0]?.waitMs).toBe(3 * HOUR)
+    expect(groups[1]?.waitMs).toBe(30 * 60_000)
+    expect(groups.map(group => group.actionable)).toEqual([1, 1])
+    expect(groups.reduce((count, group) => count + group.actionable, 0))
+      .toBe(todayActionableCount(rows))
+  })
+
+  it('names a coworker group from the live instance projection', () => {
+    const rows = todayWaiting([], [], NOW, {
+      instances: [assistantInstance('paper', 'Paper Bot', { mainSessionId: 'session-main' })],
+      tasks: [assistantTask('paper', 'needs_input')],
+      readState: {},
+    })
+    const groups = todayWaitingGroups(rows, [assistantInstance('paper', 'Paper Bot 2')])
+    expect(groups[0]?.name).toBe('Paper Bot 2')
+  })
+
+  it('keeps unread passive: it stays in the group, outside the actionable count', () => {
+    const rows = todayWaiting([], [], NOW, {
+      instances: [assistantInstance('data', 'Data Bot', {
+        preview: { role: 'assistant', text: '报表已经生成', time: NOW - 120_000 },
+      })],
+      tasks: [],
+      readState: { data: NOW - HOUR },
+    })
+    const groups = todayWaitingGroups(rows)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]).toMatchObject({ kind: 'assistant', actionable: 0, unread: 1 })
+    expect(todayActionableCount(rows)).toBe(0)
+  })
+
+  it('folds into the model with actionable counts that agree with the exit badge', () => {
+    const model = todayModel({
+      teams: [],
+      escalations: [escalation({ id: 'gate' })],
+      now: NOW,
+      assistantInstances: [
+        assistantInstance('paper', 'Paper Bot'),
+        assistantInstance('data', 'Data Bot', {
+          preview: { role: 'assistant', text: '报表已经生成', time: NOW - 120_000 },
+        }),
+      ],
+      assistantTasks: [assistantTask('paper', 'needs_input')],
+      assistantReadState: { data: NOW - HOUR },
+    })
+
+    expect(model.waitingGroups).toHaveLength(3)
+    const actionable = model.waitingGroups.reduce((count, group) => count + group.actionable, 0)
+    expect(actionable).toBe(model.attentionCount)
+    expect(actionable).toBe(2)
+    expect(model.waitingGroups.reduce((count, group) => count + group.unread, 0)).toBe(1)
+  })
+})
+
+describe('todayRunning · coworker tasks', () => {
+  it('adds one row per coworker with a running or queued task', () => {
+    const rows = todayRunning([], NOW, {
+      instances: [
+        assistantInstance('paper', 'Paper Bot'),
+        assistantInstance('data', 'Data Bot'),
+        assistantInstance('old', '旧助手', { status: 'archived' }),
+      ],
+      tasks: [
+        assistantTask('paper', 'running', 'task-run', {
+          title: '整理本周资料',
+          createdAt: '2025-12-31T22:00:00.000Z',
+        }),
+        assistantTask('paper', 'queued', 'task-queue'),
+        assistantTask('data', 'queued', 'task-data-queue'),
+        assistantTask('old', 'running'),
+        assistantTask('data', 'completed'),
+      ],
+      readState: {},
+    })
+
+    expect(rows.map(row => row.assistant?.assistantId)).toEqual(['paper', 'data'])
+    expect(rows[0]).toMatchObject({
+      teamName: 'Paper Bot',
+      subject: '整理本周资料',
+      assistant: { sessionId: 'session-task-run', taskId: 'task-run' },
+    })
+    expect(rows[0]?.runMs).toBe(3 * HOUR)
+    expect(rows[1]?.subject).toBe('1 个任务排队中')
+    expect(rows[1]?.assistant?.taskId).toBeUndefined()
   })
 })
 
