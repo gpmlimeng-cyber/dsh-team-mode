@@ -478,6 +478,15 @@ export function openAssistantAutomations(): boolean {
 }
 
 /**
+ * The Host's whole schedule catalog, for a surface that lists the next
+ * occurrences. `undefined` when the deployment composes no Schedule Remote, so
+ * a caller can tell "nothing scheduled" from "nothing to ask".
+ */
+export function readAssistantAutomations(): Promise<readonly AssistantAutomationEntry[]> | undefined {
+  return automationSource?.catalog?.()
+}
+
+/**
  * How many automations this assistant has, for 概览. `undefined` when the
  * deployment composes no Schedule Remote or the catalog read failed: the
  * overview must not report "没有自动化" without evidence.

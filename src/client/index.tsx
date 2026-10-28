@@ -2,7 +2,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { useEffect, useState } from 'react'
-import { Button } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconSparkleRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { AgentTeamClientContext } from './client-context.js'
 import {
   AgentTeamSettingsSection,
@@ -23,6 +23,14 @@ import {
   installAssistantAutomations,
   type AssistantAutomationEntry,
 } from './assistant-detail.js'
+import {
+  OPEN_TODAY_EVENT,
+  TODAY_TAB_ID,
+  TODAY_TAB_KIND,
+  TODAY_TAB_TITLE,
+  TodaySurfaceBody,
+  applyTodayTab,
+} from './today-surface.js'
 import { TeamMainAgentPanel } from './team-main-agent.js'
 import {
   closeTeamPanel,
@@ -118,6 +126,35 @@ export function apply(ctx: AgentTeamClientContext): void {
   // target assistant id rides the module-level state injected into the body, so
   // an idle pane never follows the list's selection.
   ctx.inject(['sidebarRight', 'sidebarRightTabs'], native => {
+    // 今天 lives on the same host right Sidebar as 助手设置: a page type plus its
+    // body, opened from the brand ＋ menu. No parameter travels with the open,
+    // so the pane needs no target state and reads its data once on mount.
+    native.effect(() => native.sidebarRightTabs.register({
+      id: TODAY_TAB_ID,
+      kind: TODAY_TAB_KIND,
+      title: () => TODAY_TAB_TITLE,
+      guide: [{
+        id: TODAY_TAB_ID,
+        order: 8,
+        title: () => TODAY_TAB_TITLE,
+        description: () => '今天要你动手的事',
+        icon: IconSparkleRegular,
+      }],
+    }), 'today tab type')
+    native.effect(() => {
+      const open = (): void => {
+        if (!applyTodayTab(native.sidebarRight)) {
+          reportNavigationError('今天只能在会话中打开：请先打开一个会话')
+        }
+      }
+      window.addEventListener(OPEN_TODAY_EVENT, open)
+      return () => { window.removeEventListener(OPEN_TODAY_EVENT, open) }
+    }, 'today open listener')
+    native.slots.inject('sidebar.right.pane.tab', () => native.slots.register({
+      name: 'sidebar.right.pane.tab',
+      // The seat dispatches by the type's `id`, not by `kind`.
+      key: TODAY_TAB_ID,
+    }, TodaySurfaceBody))
     native.effect(() => native.sidebarRightTabs.register({
       id: DETAIL_TAB_ID,
       kind: DETAIL_TAB_KIND,

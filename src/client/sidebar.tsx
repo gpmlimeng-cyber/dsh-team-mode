@@ -23,6 +23,7 @@ import {
   IconPlusOutlineRegular,
   IconSearchOutlineRegular,
   IconSettingsOutlineRegular,
+  IconSparkleRegular,
   IconSlidersTwoOutlineRegular,
   IconWarningOutlineRegular,
   Menu,
@@ -43,6 +44,7 @@ import {
 } from './assistant-display-mode.js'
 import { assistantAvatarSource, assistantInstanceName, coordinatorAssistant } from './assistant-instances.js'
 import { MemberAvatar } from './member-avatar.js'
+import { requestToday } from './today-surface.js'
 import { Mascot } from './mascot-view.js'
 import { assistantShowsMascot, mascotMotionForStatus, mascotOptionsFor } from './mascot.js'
 import {
@@ -264,6 +266,8 @@ export function brandCreateItems(hasSteward: boolean, chats: readonly BrandChatE
     ...(chat.icon === undefined ? {} : { icon: chat.icon }),
   }))
   return [
+    { id: 'today', label: '今天', icon: <IconSparkleRegular size={14} /> },
+    { type: 'separator', id: 'today-separator' },
     { id: 'new-chat', label: '新对话', icon: <IconPlusOutlineRegular size={14} /> },
     { type: 'separator', id: 'new-chat-separator' },
     { id: 'new-assistant', label: '新建助手', icon: <IconUserOutlineRegular size={14} /> },
@@ -1979,7 +1983,8 @@ export function SidebarPortal({
                 items={brandCreateItems(stewardAvailable, chats)}
                 onSelect={id => {
                   setCreateMenuOpen(false)
-                  if (id === 'new-team') openCreateTeamDialog()
+                  if (id === 'today') requestToday()
+                  else if (id === 'new-team') openCreateTeamDialog()
                   else if (id === 'new-assistant') {
                     // The assistant section owns its own dialog; it answers this.
                     window.dispatchEvent(new CustomEvent(SIDEBAR_ASSISTANT_CREATE_EVENT))

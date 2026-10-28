@@ -106,12 +106,14 @@ describe('the brand row carries the three actions', () => {
     expect(sidebar).toContain("setAssistantDisplayMode('advanced')")
   })
 
-  it('leads with 新对话 and keeps 打开管家会话 as the last row', () => {
+  it('leads with 今天, then 新对话, and keeps 打开管家会话 as the last row', () => {
     const items = brandCreateItems(true, [
       { id: 'chief', name: 'Chief', portrait: null },
       { id: 'other', name: 'Other', portrait: null },
     ])
     expect(items.map(item => ('id' in item ? item.id : ''))).toEqual([
+      'today',
+      'today-separator',
       'new-chat',
       'new-chat-separator',
       'new-assistant',
@@ -122,7 +124,8 @@ describe('the brand row carries the three actions', () => {
       'open-steward',
     ])
     // MausBot's shape: one row opens the picker; every row carries an icon.
-    const newChat = items[0] as MenuItem
+    expect((items[0] as MenuItem).label).toBe('今天')
+    const newChat = items[2] as MenuItem
     expect(newChat.label).toBe('新对话')
     expect(newChat.icon).toBeDefined()
     for (const item of items) {
