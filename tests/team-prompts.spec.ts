@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { coordinatorPrompt, memberPrompt } from '../src/runtime/team-prompts.js'
+import { coordinatorPrompt, memberPrompt, rosterPrompt } from '../src/runtime/team-prompts.js'
 import type { TeamAggregate, TeamMemberSlot, TeamTask } from '../src/domain/types.js'
 
 const joinedAt = '2026-01-01T00:00:00.000Z'
@@ -110,6 +110,35 @@ describe('Leader approvals', () => {
   it('leaves approvals on the native DSH interaction', () => {
     expect(prompt).toContain('DSH native')
     expect(prompt).toContain('Never approve your own approval request')
+  })
+})
+
+describe('Leader fast path on a built team', () => {
+  it('starts the requested work instead of proposing a roster and waiting', () => {
+    expect(prompt).toContain('starts the requested work at once')
+    expect(prompt).toContain('state the mode in one line, then act')
+    expect(prompt).not.toContain('First turn: call team_members to inspect the current roster')
+    expect(prompt).not.toContain('propose a roster and a short plan')
+    expect(prompt).not.toContain('Wait for the user to approve before spawning or assigning work')
+  })
+
+  it('re-reads the roster only when it may be stale', () => {
+    expect(prompt).toContain('call team_members only when it may be stale')
+  })
+
+  it('keeps the approvals the user actually owns', () => {
+    expect(prompt).toContain('creating a new team')
+    expect(prompt).toContain('adding members')
+    expect(prompt).toContain('a scope/risk trade-off')
+    expect(prompt).toContain('Wait for the user to approve one of those')
+    expect(rosterPrompt(team(leader()))).toContain('Adding members needs the user’s approval')
+  })
+
+  it('keeps direct mode direct and orchestration on goals, tasks, and review', () => {
+    expect(prompt).toContain('Ordinary chat must never create a Goal or a task')
+    expect(prompt).toContain('Do not call team_mode_goal_create or team_mode_task_create for direct mode.')
+    expect(prompt).toContain('Use team_mode_goal_create for an objective that needs a deliverable')
+    expect(prompt).toContain('A review or verification task completes only with verdict=pass')
   })
 })
 

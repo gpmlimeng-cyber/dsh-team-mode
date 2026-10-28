@@ -277,7 +277,7 @@ export function registerTeamTools(
   }
   register(defineTool({
     name: 'team_members',
-    description: 'List the current team roster: name, role, slot id, assistant, model, and runtime status. Call this before planning or delegating.',
+    description: 'List the current team roster: name, role, slot id, assistant, model, and runtime status. The roster is already in the Leader prompt every turn, so call this only when it may be stale.',
     parameters: {},
     output: membersOutput,
     execute: async (_args, exec) => {
