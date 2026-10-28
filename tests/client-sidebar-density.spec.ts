@@ -57,7 +57,6 @@ describe('sidebar vertical density', () => {
   it('never shrinks a clickable row below the shipped 32px floor', () => {
     expect(px(rule('.sidebarRosterRow'), 'height')).toBeGreaterThanOrEqual(32)
     expect(px(rule('.sidebarTeamRowWrap'), 'height')).toBeGreaterThanOrEqual(32)
-    expect(px(rule('.sidebarGroupCreateRow'), 'height')).toBeGreaterThanOrEqual(32)
     expect(px(rule('.sidebarTeamRowWrapTwoLine'), 'min-height')).toBeGreaterThanOrEqual(32)
     expect(px(rule('.sidebarAssistantRowWrap'), 'min-height')).toBeGreaterThanOrEqual(32)
   })

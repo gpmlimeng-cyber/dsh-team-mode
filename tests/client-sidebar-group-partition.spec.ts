@@ -33,7 +33,7 @@ function drag(overrides: Partial<SidebarPartitionDrag> = {}): SidebarPartitionDr
   }
 }
 
-function render(partitionDrag: SidebarPartitionDrag, extra: { onAddEntries?: () => void } = {}): string {
+function render(partitionDrag: SidebarPartitionDrag): string {
   return renderToStaticMarkup(createElement(SidebarGroupPartition, {
     label: '工作',
     count: 1,
@@ -41,7 +41,6 @@ function render(partitionDrag: SidebarPartitionDrag, extra: { onAddEntries?: () 
     onToggle: () => {},
     drag: partitionDrag,
     children: createElement('span', null, 'row'),
-    ...extra,
   }))
 }
 

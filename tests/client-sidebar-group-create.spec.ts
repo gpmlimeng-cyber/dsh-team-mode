@@ -95,12 +95,21 @@ describe('groupCreateSelection', () => {
 })
 
 describe('one create-group entry', () => {
-  it('renders the trailing create row only in the 单聊 section', () => {
+  it('offers 新建分组 only through the section header ⋯ menu', () => {
     const assistant = readClientSource('assistant-sidebar.tsx')
     const team = readClientSource('sidebar.tsx')
+    const ui = readClientSource('sidebar-group-ui.tsx')
 
-    expect(assistant).toContain('<SidebarGroupCreateRow')
+    // No trailing create/import rows in either sidebar.
+    expect(assistant).not.toContain('<SidebarGroupCreateRow')
+    expect(assistant).not.toContain('<SidebarGroupImportRow')
     expect(team).not.toContain('<SidebarGroupCreateRow')
+    expect(team).not.toContain('<SidebarGroupImportRow')
+    // Both sections compose the header menu from the one shared helper.
+    expect(assistant).toContain('sidebarGroupActionItems(groups, group)')
+    expect(team).toContain('sidebarGroupActionItems(groups, group)')
+    expect(ui).toContain("id: 'create', label: '新建分组'")
+    expect(ui).toContain("id: 'import', label: '导入分组'")
   })
 })
 

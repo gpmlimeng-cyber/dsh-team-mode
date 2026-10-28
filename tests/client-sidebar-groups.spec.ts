@@ -77,7 +77,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
 import { NewChatPanel } from '../src/client/new-chat-panel.js'
 import {
   SidebarGroupDialogs,
-  SidebarGroupImportRow,
+  sidebarGroupActionItems,
   sidebarGroupMenuItems,
 } from '../src/client/sidebar-group-ui.js'
 
@@ -1369,7 +1369,7 @@ describe('group export/import dialog source contract', () => {
   })
 })
 
-describe('section-level group import entry', () => {
+describe('group actions live in every section header menu', () => {
   const ui = readFileSync(new URL('../src/client/sidebar-group-ui.tsx', import.meta.url), 'utf8')
   const assistantSidebar = readFileSync(
     new URL('../src/client/assistant-sidebar.tsx', import.meta.url),
@@ -1377,45 +1377,50 @@ describe('section-level group import entry', () => {
   )
   const teamSidebar = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
 
-  it('renders 导入分组 as a native button, not an overlay', () => {
-    const markup = renderToStaticMarkup(createElement(SidebarGroupImportRow, {
-      onImport: () => {},
-    }))
+  it('gives the ungrouped header create + import, its only two operations', () => {
+    const ids = sidebarGroupActionItems(['甲组'], undefined).map(entry => entry.id)
 
-    expect(markup).toContain('data-dsh-sidebar-group-import')
-    expect(markup).toContain('导入分组')
-    expect(markup).toContain('<button')
-    // It is an entry, not a second dialog: the shared AnimatedModal opens later.
-    expect(markup).not.toContain('role="dialog"')
-    expect(ui).toContain('export function SidebarGroupImportRow')
+    expect(ids).toEqual(['create', 'import'])
   })
 
-  it('is rendered by both sidebars outside any group ⋯ menu', () => {
-    // With zero groups no group header exists, so the entry cannot live only in
-    // its menu; both sections render it at list level.
-    expect(assistantSidebar).toContain('<SidebarGroupImportRow')
-    expect(teamSidebar).toContain('<SidebarGroupImportRow')
-    // The assistant section shows it in the no-assistant branch and after the
-    // list, so an empty profile still reaches the same dialog.
-    expect((assistantSidebar.match(/<SidebarGroupImportRow/g) ?? []).length)
-      .toBeGreaterThanOrEqual(2)
+  it('gives a named header create + members before the shared group items', () => {
+    const ids = sidebarGroupActionItems(['甲组', '乙组'], '甲组').map(entry => entry.id)
+
+    expect(ids.slice(0, 2)).toEqual(['create', 'members'])
+    // The shared list still owns import/rename/delete, unchanged.
+    expect(ids).toContain('import')
+    expect(ids).toContain('rename')
+    expect(ids).toContain('delete')
+    expect(sidebarGroupMenuItems(['甲组', '乙组'], '甲组').map(entry => entry.id))
+      .toEqual(expect.arrayContaining(['import', 'rename', 'delete']))
+  })
+
+  it('routes both sidebars through the shared menu composer', () => {
+    expect(assistantSidebar).toContain('sidebarGroupActionItems(groups, group)')
+    expect(teamSidebar).toContain('sidebarGroupActionItems(groups, group)')
+    // Dispatchers handle the two new ids plus the shared ones.
+    expect(assistantSidebar).toContain("if (id === 'create')")
+    expect(assistantSidebar).toContain("if (id === 'members')")
+    expect(teamSidebar).toContain("if (id === 'create')")
+    expect(teamSidebar).toContain("if (id === 'members')")
+  })
+
+  it('renders no list-level create/import row anywhere', () => {
+    expect(ui).not.toContain('export function SidebarGroupImportRow')
+    expect(ui).not.toContain('export function SidebarGroupCreateRow')
+    expect(assistantSidebar).not.toContain('<SidebarGroupImportRow')
+    expect(assistantSidebar).not.toContain('<SidebarGroupCreateRow')
+    expect(teamSidebar).not.toContain('<SidebarGroupImportRow')
+    expect(teamSidebar).not.toContain('<SidebarGroupCreateRow')
+    // The dialogs they used to open are still reachable from the menu dispatch.
     expect(assistantSidebar).toContain("setGroupDialog({ kind: 'import' })")
     expect(teamSidebar).toContain("openGroupDialog({ kind: 'import' })")
   })
 
-  it('places the assistant entry before the partitions, so an empty list shows it', () => {
-    const entry = assistantSidebar.indexOf('<SidebarGroupImportRow')
-    const partitions = assistantSidebar.indexOf('partitions.map')
-
-    expect(entry).toBeGreaterThan(-1)
-    expect(partitions).toBeGreaterThan(entry)
-  })
-
-  it('keeps the team entry a sibling of the list branches, not inside one', () => {
-    // It follows the closing `)}` of the teams/empty ternary, so every branch —
-    // including "no groups at all" — renders it.
-    expect(teamSidebar).toMatch(/\)\}\n(?:\s*\{\/\*[\s\S]*?\*\/\}\n)?\s*<SidebarGroupImportRow/)
-    expect(teamSidebar).toMatch(/<SidebarGroupImportRow[^\n]*\n\s*<\/div>/)
+  it('keeps the header menu trigger visible while its menu is open', () => {
+    // The anchor carries aria-expanded; the CSS pins the actions visible on it.
+    expect(ui).toContain('aria-expanded={menuOpen}')
+    expect(ui).toContain('data-dsh-sidebar-group-menu')
   })
 })
 

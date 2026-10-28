@@ -151,9 +151,15 @@ describe('the brand row carries the three actions', () => {
     expect(sidebar).toContain('items={brandCreateItems(stewardAvailable, chats)}')
   })
 
-  it('keeps one 新建分组 entry, at the bottom of the sidebar list', () => {
-    expect(assistant).toContain('<SidebarGroupCreateRow')
+  it('routes 新建分组 through the header ⋯ menu, with no bottom rows', () => {
+    // The list-level create/import rows are gone; every section header owns
+    // one ⋯ menu instead (sidebarGroupActionItems in both sidebars).
+    expect(assistant).not.toContain('<SidebarGroupCreateRow')
+    expect(assistant).not.toContain('<SidebarGroupImportRow')
     expect(sidebar).not.toContain('<SidebarGroupCreateRow')
+    expect(sidebar).not.toContain('<SidebarGroupImportRow')
+    expect(assistant).toContain('sidebarGroupActionItems(groups, group)')
+    expect(sidebar).toContain('sidebarGroupActionItems(groups, group)')
   })
 })
 

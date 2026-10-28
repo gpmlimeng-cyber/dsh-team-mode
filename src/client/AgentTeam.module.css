@@ -11985,20 +11985,46 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   font-variant-numeric: tabular-nums;
 }
 
+/* The header's one ⋯ menu: hover/focus-revealed on the wide sidebar — and
+   pinned visible while its menu is open (the anchor carries aria-expanded), so
+   moving the pointer onto the menu cannot hide its trigger. The touch drawer
+   has no hover, so the button is always on there, at a 28px target. */
 .sidebarPartitionActions {
   display: inline-flex;
   align-items: center;
   gap: 2px;
   flex: none;
-  opacity: 0;
-  pointer-events: none;
   transition: opacity 120ms var(--ds-ease-in-out);
 }
 
-.sidebarPartitionHeader:hover .sidebarPartitionActions,
-.sidebarPartitionHeader:focus-within .sidebarPartitionActions {
-  opacity: 1;
-  pointer-events: auto;
+@media (min-width: 761px) {
+  .sidebarPartitionActions {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .sidebarPartitionHeader:hover .sidebarPartitionActions,
+  .sidebarPartitionHeader:focus-within .sidebarPartitionActions,
+  .sidebarPartitionActions:has([aria-expanded='true']) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+@media (max-width: 760px) {
+  .sidebarPartitionActions {
+    opacity: 1;
+  }
+
+  .sidebarPartitionHeader,
+  .sidebarPartitionToggle {
+    height: 28px;
+  }
+
+  .sidebarPartitionAction {
+    width: 28px;
+    height: 28px;
+  }
 }
 
 .sidebarPartitionAction {
@@ -12041,46 +12067,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   font-size: 11px;
   font-weight: 400;
   line-height: 16px;
-}
-
-/* List-end entries (新建分组 / 导入分组): the shipped 32px session-row height,
-   so the click target never sits under the 32px row floor (was 30px). */
-.sidebarGroupCreateRow {
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  height: 32px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--dsw-radius-sm);
-  background: transparent;
-  color: var(--dsw-alias-label-tertiary);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 18px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.sidebarGroupCreateRow:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
-}
-
-.sidebarGroupCreateRow:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: -2px;
-}
-
-.sidebarGroupCreateSlot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  flex: none;
 }
 
 /* ── Group dialogs ──────────────────────────────────────────────────────── */

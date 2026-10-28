@@ -82,10 +82,9 @@ import { NewChatPanel } from './new-chat-panel.js'
 import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-groups.js'
 import {
   SidebarGroupDialogs,
-  SidebarGroupImportRow,
   SidebarGroupPartition,
   sidebarDragSwallowsClick,
-  sidebarGroupMenuItems,
+  sidebarGroupActionItems,
   sidebarPartitionLabel,
   useSidebarDrag,
   type SidebarGroupDialog,
@@ -701,8 +700,21 @@ export function SidebarTeamSection({
 
   const openGroupDialog = (dialog: SidebarGroupDialog): void => { setGroupDialog(dialog) }
 
-  /** One group header's `⋯`: brief, batch settings, rename, delete, or move. */
-  const selectGroupMenu = async (group: string, id: string): Promise<void> => {
+  /** One group header's `⋯`: create/import everywhere; the named group's own ops after. */
+  const selectGroupMenu = async (group: string | undefined, id: string): Promise<void> => {
+    if (id === 'create') {
+      openGroupDialog({ kind: 'create' })
+      return
+    }
+    if (id === 'import') {
+      openGroupDialog({ kind: 'import' })
+      return
+    }
+    if (group === undefined) return
+    if (id === 'members') {
+      openGroupDialog({ kind: 'members', group })
+      return
+    }
     if (id === 'brief') {
       openGroupDialog({ kind: 'brief', name: group })
       return
@@ -713,10 +725,6 @@ export function SidebarTeamSection({
     }
     if (id === 'export') {
       openGroupDialog({ kind: 'export', name: group })
-      return
-    }
-    if (id === 'import') {
-      openGroupDialog({ kind: 'import' })
       return
     }
     if (id === 'rename') {
@@ -1159,21 +1167,14 @@ export function SidebarTeamSection({
                     collapsed={collapsedPartitions[partition.id] === true}
                     onToggle={() => { togglePartition(partition.id) }}
                     drag={drag.partition({ ...(group === undefined ? {} : { group }) })}
-                    {...(group === undefined
-                      ? {}
-                      : {
-                          onAddEntries: () => { openGroupDialog({ kind: 'members', group }) },
-                          menuItems: sidebarGroupMenuItems(groups, group),
-                          onSelect: (id: string) => { void selectGroupMenu(group, id) },
-                        })}
+                    menuItems={sidebarGroupActionItems(groups, group)}
+                    onSelect={(id: string) => { void selectGroupMenu(group, id) }}
                   >
                     {partition.items.map(renderTeamRow)}
                   </SidebarGroupPartition>
                 )
               })
             )}
-        {/* Section-level entry: importing must not require an existing group. */}
-        <SidebarGroupImportRow onImport={() => { openGroupDialog({ kind: 'import' }) }} />
       </div>
       <Menu
         open={menuOpen}

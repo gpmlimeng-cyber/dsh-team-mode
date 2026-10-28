@@ -63,12 +63,10 @@ import { Mascot } from './mascot-view.js'
 import { assistantShowsMascot, mascotMotionForStatus, mascotOptionsFor } from './mascot.js'
 import { movedGroupOrder, sidebarPartitions, useSidebarGroups } from './sidebar-groups.js'
 import {
-  SidebarGroupCreateRow,
   SidebarGroupDialogs,
-  SidebarGroupImportRow,
   SidebarGroupPartition,
   sidebarDragSwallowsClick,
-  sidebarGroupMenuItems,
+  sidebarGroupActionItems,
   sidebarPartitionLabel,
   useSidebarDrag,
   type SidebarGroupDialog,
@@ -606,8 +604,21 @@ export function AssistantSidebarSection({
     setCollapsedPartitions(current => ({ ...current, [id]: current[id] !== true }))
   }
 
-  /** One group header's `⋯`: brief, batch settings, rename, delete, or move. */
-  const selectGroupMenu = async (group: string, id: string): Promise<void> => {
+  /** One group header's `⋯`: create/import everywhere; the named group's own ops after. */
+  const selectGroupMenu = async (group: string | undefined, id: string): Promise<void> => {
+    if (id === 'create') {
+      setGroupDialog({ kind: 'create' })
+      return
+    }
+    if (id === 'import') {
+      setGroupDialog({ kind: 'import' })
+      return
+    }
+    if (group === undefined) return
+    if (id === 'members') {
+      setGroupDialog({ kind: 'members', group })
+      return
+    }
     if (id === 'brief') {
       setGroupDialog({ kind: 'brief', name: group })
       return
@@ -618,10 +629,6 @@ export function AssistantSidebarSection({
     }
     if (id === 'export') {
       setGroupDialog({ kind: 'export', name: group })
-      return
-    }
-    if (id === 'import') {
-      setGroupDialog({ kind: 'import' })
       return
     }
     if (id === 'rename') {
@@ -1132,10 +1139,6 @@ export function AssistantSidebarSection({
                           <span className={css.sidebarTeamEmptyTitle}>新建助手</span>
                         </button>
                       </div>
-                      {/* The one 新建分组 entry for the whole workspace; the team
-                          section above leaves it here so it is not offered twice. */}
-                      <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
-                      <SidebarGroupImportRow onImport={() => { setGroupDialog({ kind: 'import' }) }} />
                     </>
                     )
               : (
@@ -1150,20 +1153,13 @@ export function AssistantSidebarSection({
                         collapsed={collapsedPartitions[partition.id] === true}
                         onToggle={() => { togglePartition(partition.id) }}
                         drag={drag.partition({ ...(group === undefined ? {} : { group }) })}
-                        {...(group === undefined
-                          ? {}
-                          : {
-                              onAddEntries: () => { setGroupDialog({ kind: 'members', group }) },
-                              menuItems: sidebarGroupMenuItems(groups, group),
-                              onSelect: (id: string) => { void selectGroupMenu(group, id) },
-                            })}
+                        menuItems={sidebarGroupActionItems(groups, group)}
+                        onSelect={(id: string) => { void selectGroupMenu(group, id) }}
                       >
                         {partition.items.map(renderAssistantRow)}
                       </SidebarGroupPartition>
                     )
                   })}
-                  <SidebarGroupCreateRow onCreate={() => { setGroupDialog({ kind: 'create' }) }} />
-                  <SidebarGroupImportRow onImport={() => { setGroupDialog({ kind: 'import' }) }} />
                 </>
               )}
         </div>

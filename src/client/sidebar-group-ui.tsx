@@ -16,9 +16,9 @@ import {
   IconPlusOutlineRegular,
   IconSlidersTwoOutlineRegular,
   IconTrashOutlineRegular,
+  IconUsersOutlineRegular,
   IconWarningOutlineRegular,
   Menu,
-  Tooltip,
   writeClipboard,
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -250,19 +250,18 @@ function headerHalf(event: DragEvent<HTMLElement>): SidebarDropHalf {
 }
 
 /**
- * One group section of the sidebar: a header that collapses, plus the group's
- * own controls. The `+` and `⋯` buttons live in the header's trailing slot and
- * stay invisible (but focusable) until the header is hovered or holds focus, so
- * a sidebar with many groups is not a wall of icon buttons. `opacity` — not
- * `display` — keeps them in the tab order; the ungrouped header has neither
- * button at all, because that section cannot be renamed, deleted or filled.
+ * One group section of the sidebar: a collapsible header whose trailing `⋯`
+ * menu holds every group operation (create/import everywhere; membership,
+ * rename, delete and ordering on a named group). The button stays invisible
+ * (but focusable) until the header is hovered or holds focus on the wide
+ * sidebar, and is always on in the touch drawer. `opacity` — not `display` —
+ * keeps it in the tab order.
  */
 export function SidebarGroupPartition({
   label,
   count,
   collapsed,
   onToggle,
-  onAddEntries,
   menuItems,
   onSelect,
   drag,
@@ -272,8 +271,6 @@ export function SidebarGroupPartition({
   count: number
   collapsed: boolean
   onToggle: () => void
-  /** Opens the membership checklist; absent on the ungrouped section. */
-  onAddEntries?: () => void
   menuItems?: MenuEntry[]
   onSelect?: (id: string) => void
   /** Drag source (named groups only) and drop target for this header. */
@@ -338,49 +335,34 @@ export function SidebarGroupPartition({
           />
           <span className={css.sidebarPartitionCount}>{count}</span>
         </button>
-        {(onAddEntries !== undefined || hasMenu) && (
+        {hasMenu && (
           <span className={css.sidebarPartitionActions}>
-            {onAddEntries !== undefined && (
-              <Tooltip label="添加或移除条目" delayMs={400}>
+            <Menu
+              open={menuOpen}
+              onClose={() => { setMenuOpen(false) }}
+              align="end"
+              side="bottom"
+              dense
+              portal
+              items={menuItems}
+              onSelect={id => {
+                setMenuOpen(false)
+                onSelect(id)
+              }}
+              anchor={(
                 <button
                   type="button"
                   className={css.sidebarPartitionAction}
-                  aria-label={`添加或移除「${label}」的条目`}
-                  data-dsh-sidebar-group-add
-                  onClick={onAddEntries}
+                  aria-label={`「${label}」分组操作`}
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  data-dsh-sidebar-group-menu
+                  onClick={() => { setMenuOpen(value => !value) }}
                 >
-                  <IconPlusOutlineRegular size={13} />
+                  <IconEllipsisOutlineRegular size={13} />
                 </button>
-              </Tooltip>
-            )}
-            {hasMenu && (
-              <Menu
-                open={menuOpen}
-                onClose={() => { setMenuOpen(false) }}
-                align="end"
-                side="bottom"
-                dense
-                portal
-                items={menuItems}
-                onSelect={id => {
-                  setMenuOpen(false)
-                  onSelect(id)
-                }}
-                anchor={(
-                  <button
-                    type="button"
-                    className={css.sidebarPartitionAction}
-                    aria-label={`「${label}」分组操作`}
-                    aria-haspopup="menu"
-                    aria-expanded={menuOpen}
-                    data-dsh-sidebar-group-menu
-                    onClick={() => { setMenuOpen(value => !value) }}
-                  >
-                    <IconEllipsisOutlineRegular size={13} />
-                  </button>
-                )}
-              />
-            )}
+              )}
+            />
           </span>
         )}
       </div>
@@ -412,41 +394,26 @@ export function sidebarPartitionLabel(
 }
 
 /**
- * Section-level import entry: the same dialog the group ⋯ menu opens, reachable
- * with no groups at all. It sits beside 新建分组, so importing does not require
- * an existing group header to hang a menu off.
+ * The group header's one `⋯` menu. 新建分组 / 导入分组 live here for every
+ * section — including 未分组, which has no rename/delete of its own — so no
+ * separate list-level rows are needed anywhere. A named group reuses the shared
+ * item list verbatim (brief, batch, export/import, rename, delete, ordering).
  */
-export function SidebarGroupImportRow({ onImport }: { onImport: () => void }): JSX.Element {
-  return (
-    <button
-      type="button"
-      className={css.sidebarGroupCreateRow}
-      data-dsh-sidebar-group-import
-      onClick={onImport}
-    >
-      <span className={css.sidebarGroupCreateSlot} aria-hidden="true">
-        <IconFolderOpenOutlineRegular size={13} />
-      </span>
-      <span>导入分组</span>
-    </button>
-  )
-}
-
-/** Trailing list row that creates the first (or next) group. */
-export function SidebarGroupCreateRow({ onCreate }: { onCreate: () => void }): JSX.Element {
-  return (
-    <button
-      type="button"
-      className={css.sidebarGroupCreateRow}
-      data-dsh-sidebar-group-create
-      onClick={onCreate}
-    >
-      <span className={css.sidebarGroupCreateSlot} aria-hidden="true">
-        <IconPlusOutlineRegular size={13} />
-      </span>
-      <span>新建分组</span>
-    </button>
-  )
+export function sidebarGroupActionItems(
+  groups: readonly string[],
+  group: string | undefined,
+): MenuEntry[] {
+  if (group === undefined) {
+    return [
+      { id: 'create', label: '新建分组', icon: <IconPlusOutlineRegular size={14} /> },
+      { id: 'import', label: '导入分组', icon: <IconFolderOpenOutlineRegular size={14} /> },
+    ]
+  }
+  return [
+    { id: 'create', label: '新建分组', icon: <IconPlusOutlineRegular size={14} /> },
+    { id: 'members', label: '添加成员', icon: <IconUsersOutlineRegular size={14} /> },
+    ...sidebarGroupMenuItems(groups, group),
+  ]
 }
 
 /**
