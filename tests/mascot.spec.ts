@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { TEAM_IDENTITY_COLORS } from '../src/client/team-identity.js'
-import { MASCOT_SHAPE_FIT } from '../src/client/mascot-shape-fit.js'
+import { MASCOT_SHAPE_FIT, MASCOT_FIT_SHRINK } from '../src/client/mascot-shape-fit.js'
 import {
   MASCOT_ANIMATIONS,
   MASCOT_EYES,
@@ -110,22 +110,24 @@ describe('mascot fit', () => {
 
   it('zooms every body by its measured shape factor', () => {
     for (const shape of MASCOT_SHAPES) {
-      expect(fitOf(mascotSvg('alpha', { shapeVariant: shape }))).toBe(MASCOT_SHAPE_FIT[shape])
+      expect(fitOf(mascotSvg('alpha', { shapeVariant: shape }))).toBeCloseTo(MASCOT_SHAPE_FIT[shape] * MASCOT_FIT_SHRINK, 4)
     }
   })
 
   it('fits the shape DiceBear resolved for a bare seed', () => {
     // No shape option: DiceBear picks one from the seed (alpha → circle, beta →
     // arch), so the factor has to come from the resolved options, not a guess.
-    expect(fitOf(mascotSvg('alpha'))).toBe(MASCOT_SHAPE_FIT.circle)
-    expect(fitOf(mascotSvg('beta'))).toBe(MASCOT_SHAPE_FIT.arch)
+    expect(fitOf(mascotSvg('alpha'))).toBeCloseTo(MASCOT_SHAPE_FIT.circle * MASCOT_FIT_SHRINK, 4)
+    expect(fitOf(mascotSvg('beta'))).toBeCloseTo(MASCOT_SHAPE_FIT.arch * MASCOT_FIT_SHRINK, 4)
   })
 
-  it('falls back to no zoom for an unknown or missing shape', () => {
-    expect(mascotShapeFit(undefined)).toBe(1)
-    expect(mascotShapeFit('')).toBe(1)
-    expect(mascotShapeFit('hexagram')).toBe(1)
-    expect(mascotShapeFit('circle')).toBe(MASCOT_SHAPE_FIT.circle)
+  it('falls back to the global shrink for an unknown or missing shape', () => {
+    // Unknown shapes get no per-shape zoom, but still take the shared shrink so
+    // the random dicebear tilt cannot chip a corner.
+    expect(mascotShapeFit(undefined)).toBeCloseTo(MASCOT_FIT_SHRINK, 4)
+    expect(mascotShapeFit('')).toBeCloseTo(MASCOT_FIT_SHRINK, 4)
+    expect(mascotShapeFit('hexagram')).toBeCloseTo(MASCOT_FIT_SHRINK, 4)
+    expect(mascotShapeFit('circle')).toBeCloseTo(MASCOT_SHAPE_FIT.circle * MASCOT_FIT_SHRINK, 4)
   })
 
   it('grows a small-ink shape more than a wide one', () => {

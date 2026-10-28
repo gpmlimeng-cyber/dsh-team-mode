@@ -2,7 +2,7 @@ import { Avatar, Style } from '@dicebear/core'
 import gazeDefinition from '@dicebear/styles/gaze.json' with { type: 'json' }
 import { TEAM_IDENTITY_COLORS } from './team-identity.js'
 import { isAssistantAvatarDataUrl } from './assistant-instances.js'
-import { MASCOT_SHAPE_FIT } from './mascot-shape-fit.js'
+import { MASCOT_FIT_SHRINK, MASCOT_SHAPE_FIT } from './mascot-shape-fit.js'
 import type { AssistantInstance } from '../domain/types.js'
 
 /** DiceBear `gaze` (CC0 1.0) — the only style we ship. */
@@ -165,8 +165,8 @@ export function mascotSvg(seed: string, options: MascotOptions = {}): string {
  * unknown or empty name is a no-op rather than a NaN-producing lookup.
  */
 export function mascotShapeFit(shape: string | undefined): number {
-  if (shape === undefined || !Object.hasOwn(MASCOT_SHAPE_FIT, shape)) return 1
-  return MASCOT_SHAPE_FIT[shape as MascotShape]
+  if (shape === undefined || !Object.hasOwn(MASCOT_SHAPE_FIT, shape)) return MASCOT_FIT_SHRINK
+  return MASCOT_SHAPE_FIT[shape as MascotShape] * MASCOT_FIT_SHRINK
 }
 
 /**
