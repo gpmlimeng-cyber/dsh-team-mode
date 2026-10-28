@@ -270,7 +270,9 @@ describe('surface switch styling', () => {
 
   it('styles the mode row as the shipped row slot instead of a fixed band', () => {
     const row = /\.sidebarModeRowHost\s*\{([^}]*)\}/.exec(styles)?.[1] ?? ''
-    expect(row).toContain('height: 60px')
+    // 44px box + 4px margin = the 48px brand band from the density audit; the
+    // shipped 60px box held 16px of dead space around a 28px control line.
+    expect(row).toContain('height: 44px')
     expect(row).toContain('padding: 8px 0 8px 4px')
     expect(row).toContain('flex: none')
     expect(row).not.toContain('position')

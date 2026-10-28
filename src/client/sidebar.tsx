@@ -1532,6 +1532,26 @@ function syncBotSidebar(mode: SurfaceMode): void {
     native.setAttribute(BOT_HIDDEN_ATTR, '')
   }
 
+  // An emptied panel list is the same hole one level up: the shipped nav
+  // (`_panelList`) carries its own `margin-bottom: 8px`, so once every row has
+  // moved to the footer the margin alone leaves a blank band under the brand
+  // row. Hide the nav itself when no row is left; restoreBotSidebar clears the
+  // mark with the rest.
+  const panelList = document.querySelector<HTMLElement>('[class*="_panelList"]')
+  if (panelList !== null) {
+    const visiblePanel = Array.from(panelList.children).some((child) => {
+      const element = child as HTMLElement
+      return element.style.display !== 'none' && (element.textContent ?? '').trim() !== ''
+    })
+    if (visiblePanel) {
+      panelList.style.display = ''
+      panelList.removeAttribute(BOT_HIDDEN_ATTR)
+    } else {
+      panelList.style.display = 'none'
+      panelList.setAttribute(BOT_HIDDEN_ATTR, '')
+    }
+  }
+
   if (market !== null) {
     market.style.display = 'none'
     market.setAttribute(BOT_HIDDEN_ATTR, '')

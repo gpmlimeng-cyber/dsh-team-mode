@@ -3069,20 +3069,30 @@ textarea.input {
 }
 
 /* The mode row: the shipped brand row's own slot in the sidebar column, in the
-   column's flow above the scroll viewport. It borrows the native row's metrics
-   (60px, 8px/4px padding, 4px gap below) so swapping the two changes nothing —
-   and it cannot overdraw the list, because it is not positioned at all. */
+   column's flow above the scroll viewport. The row's own content is one 28px
+   control line (mode trigger + actions), so the shipped 60px box held 16px of
+   dead space above and below it. 44px + 4px margin = 48px brand band on the
+   4px grid (sidebar-density audit, 2026-10-28). It still cannot overdraw the
+   list, because it is not positioned at all. */
 .sidebarModeRowHost {
   box-sizing: border-box;
   display: flex;
   flex: none;
   align-items: center;
   gap: 8px;
-  height: 60px;
+  height: 44px;
   margin-bottom: 4px;
   padding: 8px 0 8px 4px;
   min-width: 0;
   background: transparent;
+}
+
+/* The shipped row tucks 12px up under the darwin drag strip
+   (`.topStrip + .logoRow { margin-top: -12px }`). Mounting the mode row before
+   `_logoRow` broke that adjacency, so the strip's lower edge read as a blank
+   band above the brand. The row takes the same slot, so it takes the tuck. */
+[data-dsh-team-root] > [class*='_topStrip'] + .sidebarModeRowHost {
+  margin-top: -12px;
 }
 
 /* The shipped row yields its slot while the column is wide; the rail keeps it,
@@ -3801,7 +3811,7 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 
 .sidebarTeamEmpty,
 .sidebarTeamError {
-  padding: 3px 5px 6px;
+  padding: 4px 8px;
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
   line-height: 18px;
@@ -9352,16 +9362,18 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 }
 
 /* Two-line team row: name + time, then the members/running/waiting summary.
-   Same grammar as the assistant row, so both lists read as one system. */
+   Same grammar as the assistant row, so both lists read as one system.
+   4px padding on the grid; the inner floor matches the 36px avatar seat, so
+   the row is 36 + 8 = 44px with no forced dead space (audit 2026-10-28). */
 .sidebarTeamRowWrapTwoLine {
   height: auto;
   min-height: 44px;
-  padding: 3px 8px;
+  padding: 4px 8px;
 }
 
 .sidebarTeamRowTwoLine {
   height: auto;
-  min-height: 38px;
+  min-height: 36px;
   align-items: center;
 }
 
@@ -9409,7 +9421,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px 4px;
+  padding: 0 8px 4px;
 }
 
 .sidebarTeamScopeButton {
@@ -9604,18 +9616,19 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 }
 
 /* Bot roster: one navigation row per member under its team row. Names ellipsize
-   inside the 320px drawer, so no child may claim a fixed width. */
+   inside the 320px drawer, so no child may claim a fixed width. No bottom pad:
+   the group's own 1px gap already separates the last thread row from the next
+   team row (2px pad + 1px gap was a 3px off-grid band, audit 2026-10-28). */
 .sidebarRosterList {
   display: flex;
   flex-direction: column;
   gap: 1px;
   min-width: 0;
   padding-left: 24px;
-  padding-bottom: 2px;
 }
 
 .sidebarRosterEmpty {
-  padding: 2px 8px 2px;
+  padding: 4px 8px;
   color: var(--dsw-alias-label-quaternary);
   font-size: 11px;
   line-height: 16px;
@@ -12023,22 +12036,22 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 /* An empty named group must still read as a section, not as a broken header. */
 .sidebarPartitionEmpty {
-  padding: 2px 8px 4px;
+  padding: 4px 8px;
   color: var(--dsw-alias-label-quaternary);
   font-size: 11px;
   font-weight: 400;
   line-height: 16px;
 }
 
-/* List-end entry that creates the first group; same 34px row height as a team
-   row so the list keeps one rhythm. */
+/* List-end entries (新建分组 / 导入分组): the shipped 32px session-row height,
+   so the click target never sits under the 32px row floor (was 30px). */
 .sidebarGroupCreateRow {
   box-sizing: border-box;
   display: flex;
   align-items: center;
   gap: 6px;
   width: 100%;
-  height: 30px;
+  height: 32px;
   padding: 0 8px;
   border: 0;
   border-radius: var(--dsw-radius-sm);
@@ -13520,7 +13533,7 @@ textarea.sidebarGroupBriefInput {
 
 .sidebarTeamEmpty,
 .sidebarTeamError {
-  padding: 3px 5px 6px;
+  padding: 4px 8px;
   color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
   line-height: 18px;
@@ -13874,7 +13887,9 @@ textarea.sidebarGroupBriefInput {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin: 2px 0 4px;
+  /* No margins: the roster list's own 1px gap separates this card from the
+     team row above and the first thread row below (audit 2026-10-28). */
+  margin: 0;
   padding: 8px;
   border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-layer-2);
