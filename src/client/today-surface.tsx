@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react'
-import { IconRefreshOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import {
+  IconRefreshOutlineRegular,
+  relativeTime,
+  type RelativeTimeUnit,
+} from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type { Escalation } from '../domain/types.js'
@@ -56,16 +60,24 @@ export function requestToday(): void {
   window.dispatchEvent(new CustomEvent(OPEN_TODAY_EVENT))
 }
 
-const MINUTE = 60_000
-const HOUR = 3_600_000
-const DAY = 86_400_000
+/**
+ * The host's relative-time buckets, in this page's words. Bucketing stays in
+ * the primitives (`relativeTime`), so a host change to "how old is old" moves
+ * this page with every other surface; only the wording is ours.
+ */
+const ELAPSED_WORDS: Readonly<Record<RelativeTimeUnit, string>> = {
+  now: '刚刚',
+  minutes: '分钟',
+  hours: '小时',
+  days: '天',
+  months: '个月',
+  years: '年',
+}
 
-/** A duration in the words a row has room for; no seconds to keep it stable. */
-function duration(ms: number): string {
-  if (ms < MINUTE) return '不到 1 分钟'
-  if (ms < HOUR) return `${Math.floor(ms / MINUTE)} 分钟`
-  if (ms < DAY) return `${Math.floor(ms / HOUR)} 小时`
-  return `${Math.floor(ms / DAY)} 天`
+/** A row's trailing duration; 等待 and 进行 rows share this one formatter. */
+function elapsedLabel(at: number, now: number): string {
+  const { unit, n } = relativeTime(at, now)
+  return unit === 'now' ? ELAPSED_WORDS.now : `${n} ${ELAPSED_WORDS[unit]}`
 }
 
 /** 下次触发：相对日子 + 绝对时刻，和 spec 的例子一致（`明天 09:00`）。 */
@@ -74,7 +86,9 @@ function nextRunLabel(nextAt: number, now: number): string {
   const hours = at.getHours().toString().padStart(2, '0')
   const minutes = at.getMinutes().toString().padStart(2, '0')
   const clock = `${hours}:${minutes}`
-  const days = Math.round((startOfDay(nextAt) - startOfDay(now)) / DAY)
+  // Calendar-day distance, not a duration bucket: one day is exactly 86400000 ms
+  // once both sides are trimmed to local midnight.
+  const days = Math.round((startOfDay(nextAt) - startOfDay(now)) / 86_400_000)
   if (days === 0) return `今天 ${clock}`
   if (days === 1) return `明天 ${clock}`
   return `${at.getMonth() + 1}月${at.getDate()}日 ${clock}`
@@ -130,8 +144,7 @@ async function readToday(): Promise<TodayData> {
  * The pane body: one read on open (and again on 刷新), then the pure model.
  * Effects are keyed by `nonce` only, so switching tabs never re-fetches.
  */
-export function TodaySurfaceBody(props: PropsRuntime<'sidebar.right.pane.tab'>): JSX.Element {
-  const { sidebar } = props.useTabInfo()
+export function TodaySurfaceBody(_props: PropsRuntime<'sidebar.right.pane.tab'>): JSX.Element {
   const [nonce, setNonce] = useState(0)
   const [loaded, setLoaded] = useState<LoadedToday>()
   const [error, setError] = useState<string>()
@@ -182,10 +195,10 @@ export function TodaySurfaceBody(props: PropsRuntime<'sidebar.right.pane.tab'>):
 
   return (
     <TodaySurfacePanel
-      {...(loaded === undefined ? {} : { model: loaded.model, hello: loaded.hello, now: loaded.now })}
+      {...(loaded === undefined ? {} : { model: loaded.model, hello: loaded.hello })}
       {...(error === undefined ? {} : { error })}
       {...(notice === undefined ? {} : { notice })}
-      expanded={sidebar.expanded}
+      now={loaded?.now ?? Date.now()}
       loading={loaded === undefined && error === undefined}
       onRefresh={() => { setNonce(value => value + 1) }}
       onOpenTeam={openTeamRow}
@@ -214,30 +227,32 @@ export function TodaySurfacePanel({
   loading,
   error,
   notice,
-  expanded,
   onRefresh,
   onOpenTeam,
   onOpenAutomation,
 }: {
   model?: TodayModel | undefined
   hello?: string | undefined
-  now?: number | undefined
+  /** Milliseconds clock the rows' durations are measured against. */
+  now: number
   loading?: boolean | undefined
   error?: string | undefined
   notice?: string | undefined
-  expanded?: boolean | undefined
   onRefresh: () => void
   onOpenTeam: (teamId: string) => void
   onOpenAutomation: () => void
 }): JSX.Element {
+  // A failed first read leaves the headline empty on purpose: the alert below
+  // already says why, and "今天没有等你的事" would be a confident lie.
+  const headline = model === undefined && error !== undefined
+    ? undefined
+    : model?.greeting ?? (loading === true ? '正在读取今天…' : '今天没有等你的事')
   return (
-    <div className={css.surface} data-dsh-today data-expanded={expanded}>
+    <div className={css.surface} data-dsh-today>
       <header className={css.header}>
         <div className={css.headerCopy}>
           {hello !== undefined && <p className={css.hello}>{hello}</p>}
-          <p className={css.greeting} role="status">
-            {model?.greeting ?? (loading === true ? '正在读取今天…' : '今天没有等你的事')}
-          </p>
+          {headline !== undefined && <p className={css.greeting} role="status">{headline}</p>}
         </div>
         <button
           type="button"
@@ -277,7 +292,7 @@ export function TodaySurfacePanel({
                         <span className={css.rowSubject}>{row.subject}</span>
                       </span>
                       <span className={css.rowMeta}>
-                        {WAITING_KIND_LABELS[row.kind]} · 已等 {duration(row.waitMs)}
+                        {WAITING_KIND_LABELS[row.kind]} · 已等 {elapsedLabel(row.since, now)}
                       </span>
                     </button>
                   </li>
@@ -308,7 +323,7 @@ export function TodaySurfacePanel({
                         <span className={css.rowTeam}>{row.teamName}</span>
                         <span className={css.rowSubject}>{row.subject}</span>
                       </span>
-                      <span className={css.rowMeta}>已跑 {duration(row.runMs)}</span>
+                      <span className={css.rowMeta}>已跑 {elapsedLabel(row.since, now)}</span>
                     </button>
                   </li>
                 ))}
@@ -316,7 +331,7 @@ export function TodaySurfacePanel({
             )}
           </section>
 
-          {model.upcoming.length > 0 && now !== undefined && (
+          {model.upcoming.length > 0 && (
             <section className={css.block} data-dsh-today-block="upcoming">
               <h3 className={css.blockTitle}>
                 接下来

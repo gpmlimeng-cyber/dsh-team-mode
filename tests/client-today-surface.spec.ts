@@ -28,7 +28,23 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     'IconInfoOutlineRegular', 'IconPersonalizationOutlineRegular', 'IconShieldOutlineRegular',
     'IconDatabaseOutlineRegular', 'Switch',
   ]
-  return Object.fromEntries(names.map(name => [name, Stub]))
+  /**
+   * The host's documented buckets, restated: the page only owns the wording, so
+   * the test's job is that wording, not the thresholds.
+   */
+  const relativeTime = (at: number, now: number): { unit: string; n: number } => {
+    const diff = Math.max(0, now - at)
+    const MIN = 60_000
+    const HOUR = 3_600_000
+    const DAY = 86_400_000
+    if (diff < MIN) return { unit: 'now', n: 0 }
+    if (diff < HOUR) return { unit: 'minutes', n: Math.floor(diff / MIN) }
+    if (diff < DAY) return { unit: 'hours', n: Math.floor(diff / HOUR) }
+    if (diff < 30 * DAY) return { unit: 'days', n: Math.floor(diff / DAY) }
+    if (diff < 365 * DAY) return { unit: 'months', n: Math.floor(diff / (30 * DAY)) }
+    return { unit: 'years', n: Math.floor(diff / (365 * DAY)) }
+  }
+  return { ...Object.fromEntries(names.map(name => [name, Stub])), relativeTime }
 })
 
 const {
@@ -93,6 +109,7 @@ function model(overrides: Partial<TodayModel> = {}): TodayModel {
 }
 
 function render(overrides: Parameters<typeof TodaySurfacePanel>[0] = {
+  now: NOW,
   onRefresh: () => {},
   onOpenTeam: () => {},
   onOpenAutomation: () => {},
@@ -207,19 +224,30 @@ describe('today surface rendering', () => {
 
   it('offers a manual refresh and says what it is doing before data lands', () => {
     expect(render()).toContain('aria-label="刷新"')
-    expect(text(render({ loading: true, onRefresh: () => {}, onOpenTeam: () => {}, onOpenAutomation: () => {} })))
+    expect(text(render({
+      loading: true,
+      now: NOW,
+      onRefresh: () => {},
+      onOpenTeam: () => {},
+      onOpenAutomation: () => {},
+    })))
       .toContain('正在读取今天…')
   })
 
-  it('shows a failed read instead of a stale page', () => {
+  it('shows a failed read instead of a stale page, and drops the headline', () => {
     const html = render({
       error: '今天数据加载失败：team.list 超时',
+      now: NOW,
       onRefresh: () => {},
       onOpenTeam: () => {},
       onOpenAutomation: () => {},
     })
     expect(html).toContain('role="alert"')
     expect(text(html)).toContain('今天数据加载失败：team.list 超时')
+    // The most important line must not claim the day is quiet while the alert
+    // above it says the read failed.
+    expect(text(html)).not.toContain('今天没有等你的事')
+    expect(html).not.toContain('role="status"')
   })
 })
 
@@ -236,6 +264,20 @@ describe('today surface cost and style rules', () => {
     const reads = [...source.matchAll(/callAgentTeam\('([^']+)'/g)].map(match => match[1] ?? '')
     expect(reads.sort()).toEqual(['escalation.list', 'team.list'])
     expect(source).toContain('readAssistantAutomations')
+  })
+
+  it('dates rows with the host relative-time buckets, not its own thresholds', () => {
+    expect(source).not.toMatch(/const (MINUTE|HOUR|DAY)\b/)
+    expect(source).not.toContain('function duration')
+    expect(source).toContain('relativeTime(at, now)')
+    expect(source).toContain('const ELAPSED_WORDS')
+    for (const unit of ['now', 'minutes', 'hours', 'days', 'months', 'years']) {
+      expect(source).toContain(`${unit}:`)
+    }
+    // 等待 row and 进行 row share one formatter.
+    expect(source.match(/elapsedLabel\(row\.since, now\)/g)?.length).toBe(2)
+    // The pane-wide `expanded` flag had no consumer; the tab width is the host's.
+    expect(source).not.toContain('data-expanded')
   })
 
   it('styles only through --dsw-* tokens and wraps instead of overflowing', () => {
