@@ -504,7 +504,12 @@ describe('initial focus in the unified pickers', () => {
     expect(chrome).toContain('cancelAnimationFrame(frame)')
     expect(chrome).toContain('}, [open])')
     expect(chrome).toContain('ref={searchRef}')
-    expect(chrome).not.toContain('autoFocus')
+    // The search waits for the frame; only an inline rename field may autofocus.
+    const searchInput = chrome.slice(
+      chrome.lastIndexOf('<input', chrome.indexOf('aria-label="搜索成员或会话"')),
+      chrome.indexOf('aria-label="搜索成员或会话"'),
+    )
+    expect(searchInput).not.toContain('autoFocus')
   })
 
   it('leaves arrows, Tab and Escape to the native menu surface', () => {
@@ -524,8 +529,9 @@ describe('initial focus in the unified pickers', () => {
     expect(panel).toContain('trigger?.focus()')
     // Session switcher: native menu rows, so the Menu walks them and Tab settles them.
     expect(chrome).toContain('role="menuitem"')
-    expect(chrome).not.toContain("event.key === 'Escape'")
     expect(chrome).not.toContain("event.key === 'Tab'")
+    // The one local Escape cancels the inline rename; it is not menu dismissal.
+    expect(chrome).toMatch(/onKeyDown=\{event => \{[\s\S]{0,400}event\.key === 'Escape'[\s\S]{0,200}setRenaming\(undefined\)/)
   })
 })
 
