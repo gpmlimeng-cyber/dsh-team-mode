@@ -13832,3 +13832,52 @@ textarea.sidebarGroupBriefInput {
   font-size: 11px;
   line-height: 17px;
 }
+
+/* First-use entry: one compact card at the top of a team row's expanded area.
+   It is a starting action, not a tutorial — a headline, one sentence, the
+   sample task's own title, and two buttons. Nothing here is a step of a flow. */
+.nextStepCard {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 4px;
+  padding: 8px;
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.nextStepTitle {
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.nextStepBody {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* The task the primary button creates, quoted so the click holds no surprise. */
+.nextStepDetail {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.nextStepActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.nextStepError {
+  margin: 0;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 11px;
+  line-height: 16px;
+}

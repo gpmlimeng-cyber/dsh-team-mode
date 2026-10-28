@@ -62,6 +62,7 @@ import {
   teamSidebarSummary,
 } from './team-sidebar-data.js'
 import { useTeamText } from './team-i18n.js'
+import { TeamNextStepCard } from './team-next-step.js'
 import { TEAM_TASK_CREATE_HINT } from './labels.js'
 import { teamAvatarStack, type TeamAvatarSeat } from './team-avatar.js'
 import { AnimatedModal } from './shared.js'
@@ -959,6 +960,10 @@ export function SidebarTeamSection({
             aria-label={`${team.name} 线程`}
             data-dsh-team-threads
           >
+            {/* First use: a team with no task yet gets one starting action at
+                the top of its own row, before any thread exists to click. It
+                disappears the moment the team has a task. */}
+            <TeamNextStepCard team={team} onOpenLeader={() => { openTeam(team) }} />
             {threads.length === 0
               ? <div className={css.sidebarRosterEmpty}>还没有可打开的会话</div>
               : threads.map(row => {
