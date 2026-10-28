@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import type { TodayModel } from '../src/client/today-model.js'
+import type { TodayModel, TodayWaiting } from '../src/client/today-model.js'
 
 // The page and the sidebar import the whole primitive set (dialogs, menus,
 // markdown) and expect browser peers this node test does not install, so every
@@ -48,13 +48,17 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
 })
 
 const {
+  ARCHIVED_TEAM_MODE_NOTICE,
   OPEN_TODAY_EVENT,
   TODAY_TAB_ID,
   TODAY_TAB_KIND,
   TODAY_TAB_TITLE,
   TodaySurfacePanel,
   applyTodayTab,
+  openArchivedTeam,
+  openWaitingRow,
   requestToday,
+  todayRowKey,
 } = await import('../src/client/today-surface.js')
 const { brandCreateItems } = await import('../src/client/sidebar.js')
 
@@ -318,6 +322,91 @@ describe('today surface rendering', () => {
 
   it('draws no 已归档 block when nothing is archived', () => {
     expect(text(render({ model: model(), now: NOW }))).not.toContain('已归档')
+  })
+})
+
+describe('today row navigation', () => {
+  it('answers an archived-team click in native mode with a visible notice, not a dead manage call', () => {
+    const openManageTeam = vi.fn()
+    const notice = vi.fn()
+
+    expect(openArchivedTeam('team-old', { mode: 'native', openManageTeam, notice })).toBe(false)
+    expect(openManageTeam).not.toHaveBeenCalled()
+    expect(notice).toHaveBeenCalledWith(ARCHIVED_TEAM_MODE_NOTICE)
+
+    expect(openArchivedTeam('team-old', { mode: 'team', openManageTeam, notice })).toBe(true)
+    expect(openManageTeam).toHaveBeenCalledWith('team-old')
+  })
+
+  it('surfaces that notice as a visible status line on the page', () => {
+    const html = render({ notice: ARCHIVED_TEAM_MODE_NOTICE, now: NOW })
+    expect(html).toContain('role="status"')
+    expect(text(html)).toContain(ARCHIVED_TEAM_MODE_NOTICE)
+  })
+
+  it('marks an unread assistant read before opening it from 今天', () => {
+    const navigation = { markRead: vi.fn(), openAssistant: vi.fn(), openTeam: vi.fn() }
+    const row: TodayWaiting = {
+      teamName: 'Data Bot',
+      kind: 'assistant_unread',
+      subject: '报表已经生成',
+      since: NOW - 120_000,
+      waitMs: 120_000,
+      assistant: { assistantId: 'data', name: 'Data Bot', sessionId: 'session-data' },
+    }
+    openWaitingRow(row, navigation)
+    expect(navigation.markRead).toHaveBeenCalledWith('data')
+    expect(navigation.openAssistant).toHaveBeenCalledWith('session-data', 'data')
+    expect(navigation.openTeam).not.toHaveBeenCalled()
+  })
+
+  it('does not mark an actionable decision read, and routes a team row to the team opener', () => {
+    const navigation = { markRead: vi.fn(), openAssistant: vi.fn(), openTeam: vi.fn() }
+    openWaitingRow({
+      teamName: 'Paper Bot',
+      kind: 'assistant_decision',
+      subject: '整理资料',
+      since: NOW - 60_000,
+      waitMs: 60_000,
+      assistant: {
+        assistantId: 'paper',
+        name: 'Paper Bot',
+        sessionId: 'session-paper',
+        taskId: 'task-paper',
+      },
+    }, navigation)
+    expect(navigation.markRead).not.toHaveBeenCalled()
+    expect(navigation.openAssistant).toHaveBeenCalledWith('session-paper', 'paper')
+
+    openWaitingRow({
+      teamId: 'team-a',
+      teamName: '甲队',
+      kind: 'approval',
+      subject: '合并 PR',
+      since: NOW - 60_000,
+      waitMs: 60_000,
+    }, navigation)
+    expect(navigation.openTeam).toHaveBeenCalledWith('team-a')
+  })
+
+  it('keys same-titled assistant tasks by taskId so pending rows cannot collide', () => {
+    const row = (taskId: string): TodayWaiting => ({
+      teamName: 'Paper Bot',
+      kind: 'assistant_decision',
+      subject: '同名任务',
+      since: NOW,
+      waitMs: 0,
+      assistant: {
+        assistantId: 'paper',
+        name: 'Paper Bot',
+        sessionId: `session-${taskId}`,
+        taskId,
+      },
+    })
+    expect(todayRowKey(row('task-a'))).not.toBe(todayRowKey(row('task-b')))
+    expect(todayRowKey(row('task-a'))).toContain('task-a')
+    // The list itself must render through that key, not an inline subject key.
+    expect(source).toContain('key={todayRowKey(row)}')
   })
 })
 

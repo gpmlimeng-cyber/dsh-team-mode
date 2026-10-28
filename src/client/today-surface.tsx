@@ -14,9 +14,10 @@ import {
   readAssistantAutomations,
   type AssistantAutomationEntry,
 } from './assistant-detail.js'
-import { assistantReadState } from './assistant-read-state.js'
+import { assistantReadState, markAssistantRead } from './assistant-read-state.js'
 import { OPEN_ASSISTANT_SETTINGS_EVENT } from './assistant-settings-pane.js'
 import { openAssistantSession, openManageTeamDialog } from './store.js'
+import { readSurfaceMode, type SurfaceMode } from './surface-mode.js'
 import {
   todayActionableCount,
   todayModel,
@@ -69,6 +70,60 @@ export function applyTodayTab(sidebar: TodaySidebar | undefined): boolean {
 /** The menu's half: no service handle travels through the component tree. */
 export function requestToday(): void {
   window.dispatchEvent(new CustomEvent(OPEN_TODAY_EVENT))
+}
+
+/** The archived-team row's answer outside team mode: a visible line, not silence. */
+export const ARCHIVED_TEAM_MODE_NOTICE = '已归档团队需在团队模式打开管理'
+
+export interface ArchivedTeamNavigation {
+  mode: SurfaceMode
+  openManageTeam: (teamId: string) => void
+  notice: (message: string) => void
+}
+
+/**
+ * The manage dialog is mounted by the team-mode host only, so a native-mode
+ * click must say why nothing opened instead of calling a writer whose UI is
+ * absent. Team mode keeps the original one-click path.
+ */
+export function openArchivedTeam(
+  teamId: string,
+  navigation: ArchivedTeamNavigation,
+): boolean {
+  if (navigation.mode !== 'team') {
+    navigation.notice(ARCHIVED_TEAM_MODE_NOTICE)
+    return false
+  }
+  navigation.openManageTeam(teamId)
+  return true
+}
+
+export interface WaitingRowNavigation {
+  /** 未读助手行先记已读，侧栏的点随后消失。 */
+  markRead: (assistantId: string) => void
+  openAssistant: (sessionId: string, assistantId?: string) => void
+  openTeam: (teamId: string) => void
+}
+
+/** One 等你确认 row: mark an unread assistant read first, then navigate by target. */
+export function openWaitingRow(row: TodayWaiting, navigation: WaitingRowNavigation): void {
+  if (row.assistant !== undefined) {
+    if (row.kind === 'assistant_unread') navigation.markRead(row.assistant.assistantId)
+    navigation.openAssistant(row.assistant.sessionId, row.assistant.assistantId)
+    return
+  }
+  if (row.teamId !== undefined) navigation.openTeam(row.teamId)
+}
+
+/**
+ * One waiting row's React key. Assistant rows key by taskId (unread rows have
+ * none), so two same-titled tasks of one assistant never collapse into a
+ * duplicate key; team rows keep their existing team/kind/subject identity.
+ */
+export function todayRowKey(row: TodayWaiting): string {
+  const source = row.teamId ?? row.assistant?.assistantId ?? ''
+  const identity = row.assistant?.taskId ?? row.subject
+  return `${source}:${row.kind}:${identity}`
 }
 
 /**
@@ -255,12 +310,22 @@ export function TodaySurfaceBody(_props: PropsRuntime<'sidebar.right.pane.tab'>)
     setNotice('暂时打不开这个会话：会话界面还没就绪')
   }
 
-  const openWaitingRow = (row: TodayWaiting): void => {
-    if (row.assistant !== undefined) {
-      openSessionOrAssistant(row.assistant.sessionId, row.assistant.assistantId)
-      return
-    }
-    if (row.teamId !== undefined) openTeamRow(row.teamId)
+  const openWaitingRowAction = (row: TodayWaiting): void => {
+    setNotice(undefined)
+    openWaitingRow(row, {
+      markRead: assistantId => { markAssistantRead(assistantId) },
+      openAssistant: (sessionId, assistantId) => { openSessionOrAssistant(sessionId, assistantId) },
+      openTeam: openTeamRow,
+    })
+  }
+
+  const openArchivedTeamRow = (teamId: string): void => {
+    setNotice(undefined)
+    openArchivedTeam(teamId, {
+      mode: readSurfaceMode(window.localStorage),
+      openManageTeam: openManageTeamDialog,
+      notice: setNotice,
+    })
   }
 
   const openArchivedAssistant = (assistant: TodayArchivedAssistant): void => {
@@ -281,9 +346,9 @@ export function TodaySurfaceBody(_props: PropsRuntime<'sidebar.right.pane.tab'>)
       loading={loaded === undefined && error === undefined}
       onRefresh={() => { setNonce(value => value + 1) }}
       onOpenTeam={openTeamRow}
-      onOpenWaiting={openWaitingRow}
+      onOpenWaiting={openWaitingRowAction}
       onOpenAutomation={openUpcomingRow}
-      onOpenArchivedTeam={openManageTeamDialog}
+      onOpenArchivedTeam={openArchivedTeamRow}
       onOpenArchivedAssistant={openArchivedAssistant}
       onOpenThread={sessionId => { openSessionOrAssistant(sessionId) }}
     />
@@ -371,7 +436,7 @@ export function TodaySurfacePanel({
               </h3>
               <ul className={css.rows}>
                 {model.waiting.map(row => (
-                  <li key={`${row.teamId ?? row.assistant?.assistantId}:${row.kind}:${row.subject}`}>
+                  <li key={todayRowKey(row)}>
                     <button
                       type="button"
                       className={css.row}
