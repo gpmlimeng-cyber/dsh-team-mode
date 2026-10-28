@@ -55,11 +55,10 @@ provider `xiaomi-token-plan-cn`（MiMo，便宜，上下文 1M）与 `deepseek-o
 
 | 档 | 模型 | 推理等级 | 说明 |
 |---|---|---|---|
-| **low** | `xiaomi-token-plan-cn / mimo-v2.6-flash` | `low` | 机械活（改常量/文案/图标/补断言） |
-| **medium** | `xiaomi-token-plan-cn / mimo-v2.6-flash` | `medium` | 有规格的实现、接线、有复现的修 bug；卡住就拆小任务，**不升档换模型** |
-| **high** | `deepseek-official / deepseek-flash` | `high` | 调研、评审、schema/迁移/并发 |
+| **low** | `deepseek-official / deepseek-flash` | `low` | 机械活（改常量/文案/图标/补断言） |
+| **high** | `deepseek-official / deepseek-flash` | `high` | 其余全部：实现、调研、评审、schema/迁移 |
 
-**派任务时必须三个字段一起给**：`provider` + `model` + `reasoning_effort`。只给模型不给等级，等于让成员自己猜——猜高了烧钱、猜低了误事。
+**只有两档**：`deepseek-flash` 不支持 `medium`（创建成员时会被 `UNSUPPORTED_REASONING_EFFORT` 拒绝）。不要再分三档。
 
 **mimo-v2.6-pro 不使用**（用户明确要求）：MiMo 只用 flash 一档，需要更强推理时直接走 DeepSeek。
 
