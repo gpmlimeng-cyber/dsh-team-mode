@@ -165,6 +165,14 @@ export const assistantInstanceSchema = z.object({
   assistantSnapshot: assistantSnapshotSchema,
   workspaceId: nonEmpty,
   workspacePath: nonEmpty,
+  /**
+   * Private-workspace marker. Added without a schema-version bump: a row
+   * stored before isolation existed carries no field and reads as shared,
+   * which is exactly what every older Assistant keeps. `true` means
+   * `workspaceId`/`workspacePath` name the Assistant's own registration under
+   * its base workspace, not the base workspace itself.
+   */
+  workspaceIsolated: z.boolean().optional(),
   mainSessionId: nonEmpty.optional(),
   /**
    * Prior main Sessions kept hidden after a checkpoint handoff. Added without a
@@ -883,6 +891,12 @@ export const updateAssistantInputSchema = createAssistantInputSchema.partial().e
  */
 const assistantInstanceOverrides = {
   workspaceId: nonEmpty,
+  /**
+   * Allocate a private workspace under `workspaceId`'s directory and run this
+   * Assistant there. Absent keeps the shared workspace, which is what every
+   * Assistant created before this field existed keeps using.
+   */
+  workspaceIsolated: z.boolean().optional(),
   name: nonEmpty.optional(),
   /** Optional identity lines; an empty string leaves them unset. */
   title: assistantTitle.optional(),

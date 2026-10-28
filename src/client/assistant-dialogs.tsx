@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
-import { Button, IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconSparkleRegular, IconProjectAddOutlineRegular, IconSearchOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Button, IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconSparkleRegular, IconProjectAddOutlineRegular, IconSearchOutlineRegular, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
 import {
   ASSISTANT_BLURB_MAX_CHARS,
@@ -16,6 +16,7 @@ import {
   assistantModelKey,
   emptyAssistantCreateDraft,
   enabledAssistantRoles,
+  workspaceSelectable,
   type AssistantCreateDraft,
   type AssistantCreateSection,
 } from './assistant-form.js'
@@ -400,6 +401,20 @@ function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.E
           )}
         />
         <SettingsRow
+          label="独立工作区"
+          hint={draft.workspaceIsolated === true
+            ? '在上面所选 Workspace 下分配 .dsh-team-mode/assistants/<助手名>-<id> 作为这个助手的私有目录；旧助手保持共享 Workspace，加入团队需要关闭此项。'
+            : '与所选 Workspace 及其他助手共用同一目录，可以加入团队。'}
+          control={(
+            <Switch
+              label="独立工作区"
+              checked={draft.workspaceIsolated === true}
+              disabled={disabled}
+              onChange={next => { props.onDraftChange({ workspaceIsolated: next }) }}
+            />
+          )}
+        />
+        <SettingsRow
           label="模型"
           hint={trigger.subtitle ?? draft.provider}
           control={(
@@ -768,7 +783,7 @@ export function AssistantCreateDialog({
   if (!open) return null
 
   const workspaces = (catalog?.workspaces ?? [])
-    .filter(workspace => workspace.status === 'ok')
+    .filter(workspaceSelectable)
     .map(workspace => ({ id: workspace.id, title: workspace.title }))
   const agentPresets = (catalog?.agentPresets ?? [])
     .filter(preset => preset.broken === undefined)

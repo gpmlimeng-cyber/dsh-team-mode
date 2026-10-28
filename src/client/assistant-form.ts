@@ -95,7 +95,17 @@ export interface AssistantCreateDraft {
   provider: string
   model: string
   reasoningEffort: string
+  /** Base workspace: the shared home, or the directory isolation nests under. */
   workspaceId: string
+  /**
+   * 独立工作区 switch, opt-in. When on, the new coworker gets its own directory
+   * under the chosen base workspace; old Assistants and a draft without the
+   * switch keep the shared workspace. Turn it off when the Assistant must join
+   * a team, because a team's members all run in the team workspace. Optional so
+   * pre-existing draft literals still read as "shared", which is what they were
+   * written for.
+   */
+  workspaceIsolated?: boolean
   agentPresetId: string
   permissionPresetId: string
   group: string
@@ -121,6 +131,7 @@ export function emptyAssistantCreateDraft(): AssistantCreateDraft {
     model: '',
     reasoningEffort: '',
     workspaceId: '',
+    workspaceIsolated: false,
     agentPresetId: '',
     permissionPresetId: '',
     group: '',
@@ -135,6 +146,18 @@ export function emptyAssistantCreateDraft(): AssistantCreateDraft {
 }
 
 /**
+ * Whether a catalog workspace may be offered by a picker. A private Assistant
+ * workspace is a registration under `.dsh-team-mode/assistants`, not a base
+ * home: offering it would nest isolation or create a team where its member
+ * Assistant can never join.
+ */
+export function workspaceSelectable(
+  workspace: { status: string; isolated?: boolean | undefined },
+): boolean {
+  return workspace.status === 'ok' && workspace.isolated !== true
+}
+
+/**
  * The values a freshly opened dialog starts with. Every default comes from the
  * catalog; no value is invented, and a catalog that offers nothing yields empty
  * fields (which the footer then refuses to submit).
@@ -142,7 +165,7 @@ export function emptyAssistantCreateDraft(): AssistantCreateDraft {
 export function assistantCreateDefaults(catalog: CatalogView | undefined): AssistantCreateDraft {
   const draft = emptyAssistantCreateDraft()
   if (catalog === undefined) return draft
-  const workspace = catalog.workspaces.find(entry => entry.status === 'ok')
+  const workspace = catalog.workspaces.find(workspaceSelectable)
   const permission = catalog.permissionPresets.find(entry => entry.value === 'workspace-write')
     ?? catalog.permissionPresets[0]
   const presets = catalog.agentPresets.filter(entry => entry.broken === undefined)
@@ -238,6 +261,7 @@ export function assistantCreatePayload(draft: AssistantCreateDraft): CreateAssis
     ...(title === '' ? {} : { title }),
     ...(blurb === '' ? {} : { blurb }),
     workspaceId: draft.workspaceId,
+    ...(draft.workspaceIsolated ? { workspaceIsolated: true } : {}),
     provider: draft.provider,
     model: draft.model,
     agentPresetId: draft.agentPresetId,

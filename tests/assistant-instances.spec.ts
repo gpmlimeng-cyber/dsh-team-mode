@@ -1,5 +1,8 @@
 import { Context } from '@deepseek-ai/cordis'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
@@ -22,7 +25,13 @@ import type {
 } from '../src/domain/types.js'
 import { isCoordinatorInstance } from '../src/domain/types.js'
 import type { AssistantRuntime } from '../src/runtime/assistant-runtime.js'
-import { AgentTeamService, ASSISTANT_MEMORY_MAX_CHARS } from '../src/service/dsh-team-mode-service.js'
+import {
+  AgentTeamService,
+  ASSISTANT_MEMORY_MAX_CHARS,
+  assistantWorkspacePath,
+  assistantWorkspaceSlug,
+  ensureIsolatedAssistantWorkspace,
+} from '../src/service/dsh-team-mode-service.js'
 import { dshTeamModeDomainSpec } from '../src/storage/domain.js'
 import { DomainAgentTeamStore, type AgentTeamStore } from '../src/storage/store.js'
 
@@ -1427,6 +1436,136 @@ describe('Assistant coordinator', () => {
   })
 })
 
+describe('Assistant isolated workspaces', () => {
+  it('allocates, registers, and records one private workspace per Assistant', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'dsh-assistant-isolated-'))
+    try {
+      const { service, store, workspaces } = createHarness({ workspacePath: base })
+      const instance = await service.createAssistantInstance({
+        workspaceId: 'workspace-1',
+        workspaceIsolated: true,
+        name: '  Research Bot  ',
+        provider: 'openai',
+        model: 'gpt-5',
+        agentPresetId: 'default',
+        permissionPresetId: 'read-only',
+      })
+      const expectedPath = assistantWorkspacePath(base, 'Research Bot', instance.id)
+
+      expect(instance.workspaceIsolated).toBe(true)
+      expect(instance.workspacePath).toBe(expectedPath)
+      // The row stores the canonical registration, never the base workspace.
+      expect(instance.workspaceId).not.toBe('workspace-1')
+      expect(workspaces.get(instance.workspaceId)).toMatchObject({
+        path: expectedPath,
+        title: 'Research Bot · 独立工作区',
+      })
+      expect(existsSync(expectedPath)).toBe(true)
+      expect(store.getAssistantInstance(instance.id)).toEqual(instance)
+      expect(assistantInstanceSchema.parse(instance)).toEqual(instance)
+
+      // The catalog keeps the registration but marks it private, so pickers
+      // can skip it while settings surfaces still name it.
+      const catalog = await service.catalog()
+      expect(catalog.workspaces.find(entry => entry.id === instance.workspaceId))
+        .toMatchObject({ path: expectedPath, isolated: true })
+      expect(catalog.workspaces.find(entry => entry.id === 'workspace-1')?.isolated)
+        .toBeUndefined()
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('reuses the same directory and registration on a retry', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'dsh-assistant-isolated-'))
+    try {
+      const calls: string[] = []
+      const registered = new Map<string, { id: string, path: string }>()
+      const registry = {
+        create: async (path: string) => {
+          calls.push(path)
+          const existing = registered.get(path)
+          if (existing !== undefined) return existing
+          const workspace = { id: `workspace-${registered.size + 1}`, path }
+          registered.set(path, workspace)
+          return workspace
+        },
+      }
+      const first = await ensureIsolatedAssistantWorkspace(
+        registry as never, base, 'Paper Bot', '12345678-abcd-0000',
+      )
+      const second = await ensureIsolatedAssistantWorkspace(
+        registry as never, base, 'Paper Bot', '12345678-abcd-0000',
+      )
+
+      expect(second).toEqual(first)
+      expect(first.workspacePath)
+        .toBe(join(base, '.dsh-team-mode', 'assistants', 'paper-bot-12345678'))
+      expect(calls).toEqual([first.workspacePath, first.workspacePath])
+      expect(existsSync(first.workspacePath)).toBe(true)
+      // Two different Assistants never share one private directory.
+      expect(assistantWorkspacePath(base, 'Paper Bot', '87654321-abcd-0000'))
+        .not.toBe(first.workspacePath)
+      expect(assistantWorkspaceSlug('研究助手')).toBe('assistant')
+      expect(assistantWorkspaceSlug('  Data   Bot! ')).toBe('data-bot')
+    } finally {
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps the shared workspace when isolation is off', async () => {
+    const { service, workspaces } = createHarness()
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Shared Bot',
+      provider: 'openai',
+      model: 'gpt-5',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+    })
+
+    expect(instance.workspaceId).toBe('workspace-1')
+    expect(instance.workspacePath).toBe(WORKSPACE_PATH)
+    expect(instance.workspaceIsolated).toBeUndefined()
+    // No private registration was added for a shared Assistant.
+    expect(workspaces.size).toBe(2)
+  })
+
+  it('refuses to link an isolated Assistant to a team with an explicit conflict', async () => {
+    const base = mkdtempSync(join(tmpdir(), 'dsh-assistant-isolated-'))
+    const { service, store } = createHarness({ workspacePath: base })
+    try {
+      await store.putAssistant(template())
+      const team = await service.createTeamDraft({
+        name: 'Isolation team',
+        workspaceId: 'workspace-1',
+        members: [{ assistantId: 'template-1', role: 'leader' }],
+      })
+      const isolated = await service.createAssistantInstance({
+        workspaceId: 'workspace-1',
+        workspaceIsolated: true,
+        name: 'Solo Bot',
+        provider: 'openai',
+        model: 'gpt-5',
+        agentPresetId: 'default',
+        permissionPresetId: 'read-only',
+      })
+
+      await expect(service.setMemberAssistantInstance(team.id, team.leaderSlotId, isolated.id))
+        .rejects.toMatchObject({
+          code: 'ASSISTANT_INSTANCE_WORKSPACE_MISMATCH',
+          message: expect.stringContaining('独立工作区'),
+        })
+      // The link never happened.
+      expect(service.getTeam(team.id).members[team.leaderSlotId]?.assistantInstanceId)
+        .toBeUndefined()
+    } finally {
+      await service.disposeWorkspaceTracking()
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+})
+
 class FakeTable {
   readonly values = new Map<string, unknown>()
 
@@ -1449,12 +1588,23 @@ class FakeTable {
   }
 }
 
-function createHarness(): { service: AgentTeamService; store: MemoryStore } {
+interface HarnessWorkspace {
+  id: string
+  path: string
+  title: string
+  status: () => Promise<'ok' | 'missing-dir'>
+}
+
+function createHarness(options: { workspacePath?: string } = {}): {
+  service: AgentTeamService
+  store: MemoryStore
+  workspaces: Map<string, HarnessWorkspace>
+} {
   const ctx = new Context()
-  const workspaces = new Map([
+  const workspaces = new Map<string, HarnessWorkspace>([
     ['workspace-1', {
       id: 'workspace-1',
-      path: WORKSPACE_PATH,
+      path: options.workspacePath ?? WORKSPACE_PATH,
       title: 'Workspace',
       status: async () => 'ok' as const,
     }],
@@ -1465,9 +1615,29 @@ function createHarness(): { service: AgentTeamService; store: MemoryStore } {
       status: async () => 'missing-dir' as const,
     }],
   ])
+  // The registry reuses a registration for an already-registered canonical
+  // path, so the isolated-workspace allocation is idempotent like the host.
+  const byPath = new Map<string, HarnessWorkspace>(
+    [...workspaces.values()].map(workspace => [workspace.path, workspace]),
+  )
+  let isolatedSequence = 0
   ctx.provide('workspaceRegistry', {
     get: (id: string) => workspaces.get(id),
     list: () => [...workspaces.values()],
+    create: async (path: string, title?: string) => {
+      const existing = byPath.get(path)
+      if (existing !== undefined) return existing
+      isolatedSequence += 1
+      const workspace: HarnessWorkspace = {
+        id: `workspace-isolated-${isolatedSequence}`,
+        path,
+        title: title ?? 'Isolated workspace',
+        status: async () => 'ok' as const,
+      }
+      workspaces.set(workspace.id, workspace)
+      byPath.set(path, workspace)
+      return workspace
+    },
   } as never)
   ctx.provide('llm', {
     listProviders: () => [
@@ -1528,7 +1698,7 @@ function createHarness(): { service: AgentTeamService; store: MemoryStore } {
     schemas: () => [{ name: 'mcp__github__list_issues', description: 'List issues.' }],
   } as never)
   const store = new MemoryStore()
-  return { service: new AgentTeamService(ctx, config, store), store }
+  return { service: new AgentTeamService(ctx, config, store), store, workspaces }
 }
 
 class MemoryStore implements AgentTeamStore {

@@ -23,6 +23,7 @@ import {
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
+import { workspaceSelectable } from './assistant-form.js'
 import { assistantAvatarSource, assistantInstanceName } from './assistant-instances.js'
 import { PERMISSION_LABELS } from './labels.js'
 import { MemberAvatar } from './member-avatar.js'
@@ -1902,7 +1903,7 @@ function GroupImportDialog({
     void callAgentTeam('catalog.get').then(catalog => {
       if (cancelled) return
       const usable = catalog.workspaces
-        .filter(workspace => workspace.status === 'ok')
+        .filter(workspaceSelectable)
         .map(workspace => ({ id: workspace.id, title: workspace.title, path: workspace.path }))
       setWorkspaces(usable)
       setWorkspaceId(current => (current === '' ? usable[0]?.id ?? '' : current))

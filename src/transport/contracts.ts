@@ -159,7 +159,18 @@ export interface CatalogView {
   models: Record<string, Array<{ id: string; name: string; description?: string }>>
   agentPresets: Array<{ id: string; name: string; description?: string; broken?: string }>
   permissionPresets: Array<{ value: string; name: string; description?: string }>
-  workspaces: Array<{ id: string; path: string; title: string; status: 'ok' | 'missing-dir' }>
+  /**
+   * `isolated` marks a private Assistant workspace. It stays listed so settings
+   * surfaces can name it, while pickers skip it: isolation nests under a base
+   * workspace instead of becoming one.
+   */
+  workspaces: Array<{
+    id: string
+    path: string
+    title: string
+    status: 'ok' | 'missing-dir'
+    isolated?: boolean
+  }>
 }
 
 export interface ModelCapabilitiesView {

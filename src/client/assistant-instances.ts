@@ -185,6 +185,22 @@ export function assistantInstanceForSession(
 }
 
 /**
+ * Workspace ids owned by one isolated Assistant each. The native sidebar draws
+ * a row per registered workspace; a private registration is an implementation
+ * detail of its Assistant (its directory still opens through that Assistant),
+ * so the row hider consumes this set. Archived Assistants are included: their
+ * workspace row must stay hidden after the row is archived, and no archive
+ * path deletes the directory.
+ */
+export function isolatedWorkspaceIds(
+  instances: readonly Pick<AssistantInstance, 'workspaceId' | 'workspaceIsolated'>[],
+): string[] {
+  return [...new Set(instances
+    .filter(instance => instance.workspaceIsolated === true)
+    .map(instance => instance.workspaceId))]
+}
+
+/**
  * Label for the Session whose mainSessionId matches: `name · title` when the
  * Assistant carries a 职能 line, so a breadcrumb names which same-named one is
  * open.

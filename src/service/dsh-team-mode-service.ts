@@ -1,6 +1,9 @@
 import { createHash, randomUUID } from 'node:crypto'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { Context, Service } from '@deepseek-ai/cordis'
 import { WorkspaceId } from '@deepseek-ai/dsh-workspace'
+import type { Workspace } from '@deepseek-ai/dsh-workspace'
 import type { ZodError } from 'zod'
 import { isModelInvocable, isSkillName, isUserInvocable } from '@deepseek-ai/dsh-skill'
 import type { Config } from '../config.js'
@@ -203,6 +206,63 @@ export const ASSISTANT_RETIRED_SESSION_LIMIT = 100
 export const ASSISTANT_THREAD_SESSION_LIMIT = 20
 
 /**
+ * Directory under a base workspace that owns every private Assistant
+ * workspace. Kept out of the base directory's own files by nesting one level
+ * and git-ignoring the whole marker tree.
+ */
+export const ASSISTANT_WORKSPACE_ROOT = '.dsh-team-mode/assistants'
+
+/**
+ * Filesystem-safe ASCII slug for one private Assistant directory. A non-Latin
+ * name yields no usable slug, and the id suffix keeps the directory unique
+ * either way.
+ */
+export function assistantWorkspaceSlug(name: string): string {
+  const slug = name.trim().toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+    .replace(/-+$/g, '')
+  return slug === '' ? 'assistant' : slug
+}
+
+/**
+ * The private directory for one Assistant: a function of the base directory,
+ * the display name, and the instance id only. Retrying an allocation therefore
+ * resolves to the same path instead of leaving a second directory behind.
+ */
+export function assistantWorkspacePath(
+  basePath: string,
+  name: string,
+  assistantId: string,
+): string {
+  const id8 = assistantId.replace(/-/g, '').slice(0, 8).toLowerCase()
+  return join(basePath, ASSISTANT_WORKSPACE_ROOT, `${assistantWorkspaceSlug(name)}-${id8}`)
+}
+
+/**
+ * Create the private directory (idempotently) and register it with the host
+ * workspace registry. The registry canonicalizes the path and reuses an
+ * existing registration for it, so a repeated call returns the same workspace
+ * id; a real registration is required because Session attach validates the
+ * Session header's cwd against the registered workspace path.
+ */
+export async function ensureIsolatedAssistantWorkspace(
+  registry: { create(path: string, title?: string): Promise<Workspace> },
+  basePath: string,
+  name: string,
+  assistantId: string,
+): Promise<{ workspaceId: string; workspacePath: string }> {
+  const directory = assistantWorkspacePath(basePath, name, assistantId)
+  await mkdir(directory, { recursive: true })
+  // Keep the base checkout's own `git status` clean: the marker root is an
+  // implementation detail, never a project directory to commit.
+  await writeFile(join(basePath, '.dsh-team-mode', '.gitignore'), '*\n')
+  const workspace = await registry.create(directory, `${name.trim()} · 独立工作区`)
+  return { workspaceId: String(workspace.id), workspacePath: workspace.path }
+}
+
+/**
  * Structured memory is unbounded by design only up to this many entries; past it
  * a runaway writer would keep growing the record with no reader able to show it.
  */
@@ -271,6 +331,8 @@ export interface CatalogSnapshot {
     path: string
     title: string
     status: 'ok' | 'missing-dir'
+    /** Private Assistant workspace: listed for settings, skipped by pickers. */
+    isolated?: boolean
   }>
 }
 
@@ -452,11 +514,17 @@ export class AgentTeamService extends Service {
       })),
     ] as const))
     const presets = await this.ctx.agentPresets.list()
+    // Private Assistant workspaces stay in the catalog (settings surfaces name
+    // them) but are marked so pickers never offer one as a base.
+    const isolatedWorkspaceIds = new Set(this.store.listAssistantInstances()
+      .filter(instance => instance.workspaceIsolated === true)
+      .map(instance => instance.workspaceId))
     const workspaces = await Promise.all(this.ctx.workspaceRegistry.list().map(async workspace => ({
       id: String(workspace.id),
       path: workspace.path,
       title: workspace.title,
       status: await workspace.status(),
+      ...(isolatedWorkspaceIds.has(String(workspace.id)) ? { isolated: true } : {}),
     })))
     return {
       providers,
@@ -925,14 +993,40 @@ export class AgentTeamService extends Service {
       throw new AgentTeamError('WORKSPACE_UNAVAILABLE', `Workspace '${input.workspaceId}' is unavailable`)
     }
     await this.validateAssistantInstanceSnapshot(assistantSnapshot)
+    let workspaceId = String(workspace.id)
+    let workspacePath = workspace.path
+    let workspaceIsolated = false
+    if (input.workspaceIsolated === true) {
+      try {
+        const isolated = await ensureIsolatedAssistantWorkspace(
+          this.ctx.workspaceRegistry,
+          workspace.path,
+          assistantSnapshot.name,
+          id,
+        )
+        workspaceId = isolated.workspaceId
+        workspacePath = isolated.workspacePath
+        workspaceIsolated = true
+      } catch (cause) {
+        // A base directory that cannot host a subdirectory (permissions,
+        // read-only checkout) fails here rather than creating a broken row
+        // whose workspace does not exist.
+        throw new AgentTeamError(
+          'WORKSPACE_UNAVAILABLE',
+          `Cannot allocate an isolated workspace under '${workspace.path}': ${errorMessage(cause)}`,
+          { workspaceId: input.workspaceId, workspacePath: workspace.path },
+        )
+      }
+    }
     const now = new Date().toISOString()
     const instance: AssistantInstance = {
       schemaVersion: 1,
       id,
       ...(templateId === undefined ? {} : { templateId }),
       assistantSnapshot,
-      workspaceId: String(workspace.id),
-      workspacePath: workspace.path,
+      workspaceId,
+      workspacePath,
+      ...(workspaceIsolated ? { workspaceIsolated: true } : {}),
       status: 'idle',
       pinned: input.pinned ?? false,
       ...(input.mascot === undefined ? {} : { mascot: input.mascot }),
@@ -4676,6 +4770,24 @@ export class AgentTeamService extends Service {
         'ASSISTANT_INSTANCE_ARCHIVED',
         `Assistant instance '${instance.id}' is archived and cannot be linked`,
         { instanceId: instance.id },
+      )
+    }
+    // An isolated Assistant runs alone in its private workspace by design, so
+    // the generic workspace mismatch would read as a bug. Name the actual
+    // conflict; a team can never move into that private directory (pickers
+    // exclude it) and the Assistant must stay where its Sessions attach.
+    if (instance.workspaceIsolated === true) {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_WORKSPACE_MISMATCH',
+        `Assistant instance '${instance.id}' runs in its own isolated workspace `
+          + `'${instance.workspacePath}' and cannot be linked to a team in '${scope.workspacePath}'. `
+          + 'Turn 独立工作区 off when creating the Assistant if it must join a team.',
+        {
+          instanceId: instance.id,
+          instanceWorkspaceId: instance.workspaceId,
+          teamWorkspaceId: scope.workspaceId,
+          isolatedWorkspace: true,
+        },
       )
     }
     if (instance.workspaceId !== scope.workspaceId || instance.workspacePath !== scope.workspacePath) {

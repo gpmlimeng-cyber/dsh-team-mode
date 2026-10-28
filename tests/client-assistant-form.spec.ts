@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { assistantModelKey, assistantModelOptionLabel } from '../src/client/assistant-form.js'
+import {
+  assistantCreateDefaults,
+  assistantCreatePayload,
+  assistantModelKey,
+  assistantModelOptionLabel,
+  emptyAssistantCreateDraft,
+  workspaceSelectable,
+} from '../src/client/assistant-form.js'
+import type { CatalogView } from '../src/transport/contracts.js'
 
 describe('assistantModelKey', () => {
   it('joins provider and model into one stable catalog key', () => {
@@ -23,5 +31,61 @@ describe('assistantModelOptionLabel', () => {
     expect(assistantModelOptionLabel('  DeepSeek  ', '  DeepSeek-V4.1-Flash  ', '  High  '))
       .toBe('DeepSeek-V4.1-Flash — DeepSeek · High')
     expect(assistantModelOptionLabel('', 'Codex', 'Low')).toBe('Codex · Low')
+  })
+})
+
+function catalog(workspaces: CatalogView['workspaces']): CatalogView {
+  return {
+    providers: [{ id: 'openai', name: 'OpenAI' }],
+    models: { openai: [{ id: 'gpt-5', name: 'GPT-5' }] },
+    agentPresets: [{ id: 'default', name: 'Default' }],
+    permissionPresets: [{ value: 'read-only', name: 'Read only' }],
+    workspaces,
+  }
+}
+
+describe('isolated assistant workspaces in the create form', () => {
+  it('offers only real, non-isolated workspaces to pickers', () => {
+    expect(workspaceSelectable({ status: 'ok' })).toBe(true)
+    expect(workspaceSelectable({ status: 'missing-dir' })).toBe(false)
+    // A private Assistant registration nests under a base workspace; offering
+    // it would create isolation inside isolation.
+    expect(workspaceSelectable({ status: 'ok', isolated: true })).toBe(false)
+  })
+
+  it('defaults to the shared base while skipping private workspaces', () => {
+    const draft = emptyAssistantCreateDraft()
+    // Isolation is opt-in; a draft without the switch keeps the shared base.
+    expect(draft.workspaceIsolated).toBe(false)
+
+    const defaults = assistantCreateDefaults(catalog([
+      { id: 'private', path: '/work/.dsh-team-mode/assistants/paper', title: 'Paper', status: 'ok', isolated: true },
+      { id: 'missing', path: '/work/missing', title: 'Missing', status: 'missing-dir' },
+      { id: 'shared', path: '/work', title: 'Work', status: 'ok' },
+    ]))
+    expect(defaults.workspaceId).toBe('shared')
+    expect(defaults.workspaceIsolated).toBe(false)
+  })
+
+  it('sends the isolation opt-in only when the switch is on', () => {
+    const on = {
+      ...emptyAssistantCreateDraft(),
+      name: 'Paper Bot',
+      workspaceId: 'workspace-1',
+      workspaceIsolated: true,
+      provider: 'openai',
+      model: 'gpt-5',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+    }
+    expect(assistantCreatePayload(on)).toMatchObject({
+      workspaceId: 'workspace-1',
+      workspaceIsolated: true,
+    })
+
+    const off = assistantCreatePayload({ ...on, workspaceIsolated: false })
+    expect(off.workspaceIsolated).toBeUndefined()
+    // Shared creation keeps the exact payload older dialogs sent.
+    expect(off).toMatchObject({ workspaceId: 'workspace-1', name: 'Paper Bot' })
   })
 })

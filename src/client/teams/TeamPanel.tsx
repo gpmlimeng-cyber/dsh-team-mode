@@ -24,6 +24,7 @@ import type {
 import type { MemoryEntry, TeamCheckpoint, TeamTask } from '../../domain/types.js'
 import { epochOf } from '../../domain/types.js'
 import { callAgentTeam, subscribeAgentTeamConversation } from '../api.js'
+import { workspaceSelectable } from '../assistant-form.js'
 import { SelectControl } from '../select-control.js'
 import { checkpointNoteError } from '../assistant-checkpoint.js'
 import { AssistantPanel } from '../assistants/AssistantPanel.js'
@@ -799,7 +800,7 @@ function CloneTeamDialog({
   onClose: () => void
   onCreated: (teamId: string) => Promise<void>
 }): JSX.Element {
-  const catalogWorkspaces = catalog?.workspaces.filter(workspace => workspace.status === 'ok') ?? []
+  const catalogWorkspaces = catalog?.workspaces.filter(workspace => workspaceSelectable(workspace)) ?? []
   const [name, setName] = useState(`${team.name} 副本`)
   const [workspaceId, setWorkspaceId] = useState(team.workspaceId)
   const [pickedWorkspace, setPickedWorkspace] = useState<WorkspaceChoice>()
@@ -2675,7 +2676,7 @@ export function teamTemplatePrefill(
   const slots = teamTemplateSlots(template)
   return {
     name: template.name,
-    workspaceId: workspaces.find(workspace => workspace.status === 'ok')?.id ?? '',
+    workspaceId: workspaces.find(workspace => workspaceSelectable(workspace))?.id ?? '',
     assistantIds: pool.length === 0
       ? []
       : slots.map((_, index) => pool[index % pool.length]!.id),
@@ -2725,7 +2726,7 @@ export function TeamForm({
   onCancel: () => void
   onCreated: (teamId: string) => Promise<void>
 }): JSX.Element {
-  const catalogWorkspaces = catalog?.workspaces.filter(workspace => workspace.status === 'ok') ?? []
+  const catalogWorkspaces = catalog?.workspaces.filter(workspace => workspaceSelectable(workspace)) ?? []
   const [name, setName] = useState('')
   const [workspaceId, setWorkspaceId] = useState('')
   const [pickedWorkspace, setPickedWorkspace] = useState<WorkspaceChoice>()

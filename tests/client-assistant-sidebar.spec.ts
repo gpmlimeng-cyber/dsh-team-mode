@@ -8,6 +8,7 @@ import {
   assistantNow,
   assistantPendingDecisions,
   assistantSidebarSummary,
+  isolatedWorkspaceIds,
   shouldPinAssistantMainSession,
   visibleAssistantInstances,
 } from '../src/client/assistant-instances.js'
@@ -156,6 +157,40 @@ describe('assistant sidebar search only narrows the ordinary list', () => {
     expect(assistantPendingDecisions([...instances, archived], [...tasks, archivedTask])
       .map(entry => entry.task.id)).toEqual(['paper-pending', 'data-pending', 'broken-pending'])
     expect(assistantSidebarSummary([...instances, archived], [...tasks, archivedTask], {}).waiting).toBe(3)
+  })
+})
+
+describe('isolated assistant workspace rows', () => {
+  it('collects exactly the private workspace ids, archived Assistants included', () => {
+    const isolated = instance('solo', 'Solo Bot', {
+      workspaceId: 'workspace-solo',
+      workspacePath: '/tmp/work/.dsh-team-mode/assistants/solo-1a2b3c4d',
+      workspaceIsolated: true,
+    })
+    const archivedIsolated = instance('solo-gone', 'Gone Solo', {
+      workspaceId: 'workspace-solo-gone',
+      workspacePath: '/tmp/work/.dsh-team-mode/assistants/gone-5e6f7a8b',
+      workspaceIsolated: true,
+      status: 'archived',
+    })
+    // A shared workspace is never hidden, even when another Assistant is.
+    const shared = instance('shared', 'Shared Bot', { workspaceIsolated: undefined })
+
+    expect(isolatedWorkspaceIds([...instances, isolated, archivedIsolated, shared]))
+      .toEqual(['workspace-solo', 'workspace-solo-gone'])
+    expect(isolatedWorkspaceIds([...instances, shared])).toEqual([])
+  })
+
+  it('hides native workspace rows through the one row hider', () => {
+    const hider = readFileSync(
+      new URL('../src/client/session-row-hider.tsx', import.meta.url),
+      'utf8',
+    )
+    expect(hider).toContain('isolatedWorkspaceIds')
+    expect(hider).toContain("WORKSPACE_ROW_PREFIX = 'workspace:'")
+    expect(hider).toContain("applyPrefix(WORKSPACE_ROW_PREFIX, hiddenWorkspaceIds)")
+    // One owner of display: the same map restores both row kinds.
+    expect(hider).toContain('ownedRows')
   })
 })
 
