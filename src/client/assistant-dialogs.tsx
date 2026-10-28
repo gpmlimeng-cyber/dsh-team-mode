@@ -3,7 +3,9 @@ import type { FormEvent } from 'react'
 import { Button, IconFolderOpenOutlineRegular, IconPlusOutlineRegular, IconSparkleRegular, IconProjectAddOutlineRegular, IconSearchOutlineRegular } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
 import {
+  ASSISTANT_BLURB_MAX_CHARS,
   ASSISTANT_CREATE_SECTIONS,
+  ASSISTANT_TITLE_MAX_CHARS,
   applyStartingRole,
   assistantCreateCanSubmit,
   assistantCreateDefaults,
@@ -215,7 +217,7 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
   const groupOptions = assistantCreateGroupOptions(groups)
   return (
     <>
-      <SectionHeading title="设定与形象" hint="名称、描述、形象与分组" />
+      <SectionHeading title="设定与形象" hint="名称、职能、介绍、形象与分组" />
       <SettingsRows>
         {roleError === undefined
           ? (
@@ -253,6 +255,50 @@ function IdentitySection(props: AssistantCreateBodyProps, disabled: boolean): JS
               aria-label="助手名称"
               onChange={event => { onDraftChange({ name: event.target.value }) }}
             />
+          )}
+        />
+        {/* The one-line identity: crowded rows show the title after the name so
+            two helpers called the same thing stay tellable apart. Both are
+            optional and an emptied field simply writes nothing. */}
+        <SettingsRow
+          label="职能"
+          hint={`最多 ${ASSISTANT_TITLE_MAX_CHARS} 个字；同名助手靠这一行区分，留空则不显示。`}
+          control={(
+            <div>
+              <input
+                className={css.input}
+                value={draft.title ?? ''}
+                disabled={disabled}
+                placeholder="例如：后端工程师"
+                aria-label="职能"
+                data-dsh-assistant-title
+                onChange={event => { onDraftChange({ title: event.target.value }) }}
+              />
+              <span className={css.hint} data-dsh-assistant-title-count>
+                {(draft.title ?? '').length} / {ASSISTANT_TITLE_MAX_CHARS}
+              </span>
+            </div>
+          )}
+        />
+        <SettingsRow
+          label="一句话介绍"
+          hint={`最多 ${ASSISTANT_BLURB_MAX_CHARS} 个字；只影响展示，不写入系统提示。留空则不显示。`}
+          control={(
+            <div>
+              <textarea
+                className={css.input}
+                rows={2}
+                value={draft.blurb ?? ''}
+                disabled={disabled}
+                placeholder="例如：把需求变成可上线的接口和迁移脚本。"
+                aria-label="一句话介绍"
+                data-dsh-assistant-blurb
+                onChange={event => { onDraftChange({ blurb: event.target.value }) }}
+              />
+              <span className={css.hint} data-dsh-assistant-blurb-count>
+                {(draft.blurb ?? '').length} / {ASSISTANT_BLURB_MAX_CHARS}
+              </span>
+            </div>
           )}
         />
         <FoldGroup

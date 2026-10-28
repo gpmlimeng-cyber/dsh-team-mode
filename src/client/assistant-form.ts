@@ -71,9 +71,25 @@ export const ASSISTANT_CREATE_UNSUPPORTED = [
   },
 ] as const
 
+/**
+ * Caps of the optional identity lines. They mirror `ASSISTANT_TITLE_MAX_CHARS`
+ * and `ASSISTANT_BLURB_MAX_CHARS` in src/domain/schemas.ts; the client keeps
+ * its own copy so the browser bundle never imports the zod schema module (the
+ * same split `sidebar-groups.ts` uses for the group brief).
+ */
+export const ASSISTANT_TITLE_MAX_CHARS = 40
+export const ASSISTANT_BLURB_MAX_CHARS = 120
+
 /** Everything the create dialog collects, kept as one value across sections. */
 export interface AssistantCreateDraft {
   name: string
+  /**
+   * Optional 职能 line and one-line introduction. Both are optional here so a
+   * draft literal written before they existed still type-checks; an absent
+   * value and an empty one both mean "not set".
+   */
+  title?: string
+  blurb?: string
   avatar: string
   instructions: string
   provider: string
@@ -97,6 +113,8 @@ export interface AssistantCreateDraft {
 export function emptyAssistantCreateDraft(): AssistantCreateDraft {
   return {
     name: '',
+    title: '',
+    blurb: '',
     avatar: '',
     instructions: '',
     provider: '',
@@ -213,8 +231,12 @@ export function assistantCreateMascot(draft: AssistantCreateDraft): AssistantIns
 /** The direct-create shape; only `group` and `templateId` stay outside it. */
 export function assistantCreatePayload(draft: AssistantCreateDraft): CreateAssistantInstanceInput {
   const mascot = assistantCreateMascot(draft)
+  const title = draft.title?.trim() ?? ''
+  const blurb = draft.blurb?.trim() ?? ''
   return {
     name: draft.name.trim(),
+    ...(title === '' ? {} : { title }),
+    ...(blurb === '' ? {} : { blurb }),
     workspaceId: draft.workspaceId,
     provider: draft.provider,
     model: draft.model,
@@ -229,9 +251,42 @@ export function assistantCreatePayload(draft: AssistantCreateDraft): CreateAssis
   }
 }
 
+/** The cap check both dialogs share; over-cap text is refused, never truncated. */
+export function assistantIdentityError(draft: {
+  title?: string | undefined
+  blurb?: string | undefined
+}): string | undefined {
+  if ((draft.title?.trim() ?? '').length > ASSISTANT_TITLE_MAX_CHARS) {
+    return `职能最多 ${ASSISTANT_TITLE_MAX_CHARS} 个字`
+  }
+  if ((draft.blurb?.trim() ?? '').length > ASSISTANT_BLURB_MAX_CHARS) {
+    return `一句话介绍最多 ${ASSISTANT_BLURB_MAX_CHARS} 个字`
+  }
+  return undefined
+}
+
+/**
+ * The identity lines one save writes: a changed value travels trimmed, so an
+ * emptied field clears the stored line, while an unchanged value stays out of
+ * the patch (the service treats absent as "keep").
+ */
+export function assistantIdentityUpdate(
+  snapshot: { title?: string | undefined; blurb?: string | undefined },
+  draft: { title?: string | undefined; blurb?: string | undefined },
+): { title?: string; blurb?: string } {
+  const patch: { title?: string; blurb?: string } = {}
+  const title = draft.title?.trim() ?? ''
+  if (title !== (snapshot.title ?? '')) patch.title = title
+  const blurb = draft.blurb?.trim() ?? ''
+  if (blurb !== (snapshot.blurb ?? '')) patch.blurb = blurb
+  return patch
+}
+
 /** The first reason the create call would be refused, or undefined when ready. */
 export function assistantCreateValidationError(draft: AssistantCreateDraft): string | undefined {
   if (draft.name.trim() === '') return '请填写显示名称'
+  const identityError = assistantIdentityError(draft)
+  if (identityError !== undefined) return identityError
   if (draft.provider.trim() === '' || draft.model.trim() === '') return '请选择 Provider 和模型'
   if (draft.workspaceId === '') return '请选择 Workspace'
   if (draft.permissionPresetId === '') return '请选择权限预设'

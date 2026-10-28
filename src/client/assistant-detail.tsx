@@ -11,7 +11,7 @@ import {
   IconSlidersTwoOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
-import { assistantAvatarSource, assistantInstanceName } from './assistant-instances.js'
+import { assistantAvatarSource, assistantInstanceName, assistantInstanceTitle } from './assistant-instances.js'
 import {
   assistantInstanceStatusLabel,
   PERMISSION_LABELS,
@@ -53,6 +53,8 @@ export function assistantBoundSessionCount(
  */
 export function assistantDetailSections(instance: AssistantInstanceView): AssistantDetailSection[] {
   const snapshot = instance.assistantSnapshot
+  const title = assistantInstanceTitle(instance)
+  const blurb = snapshot.blurb?.trim() ?? ''
   return [
     {
       id: 'overview',
@@ -69,6 +71,10 @@ export function assistantDetailSections(instance: AssistantInstanceView): Assist
       title: '身份',
       facts: [
         { label: '名称', value: assistantInstanceName(instance) },
+        // Both lines are optional in storage, so the fact only exists once the
+        // Assistant actually carries one — no empty row promising a 职能.
+        ...(title === undefined ? [] : [{ label: '职能', value: title }]),
+        ...(blurb === '' ? [] : [{ label: '一句话介绍', value: blurb }]),
         {
           label: '头像',
           value: assistantAvatarSource(instance) === undefined ? '首字头像' : '自定义头像',

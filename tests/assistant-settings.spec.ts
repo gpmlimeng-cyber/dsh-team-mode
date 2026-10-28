@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AssistantMemory, MemoryEntry } from '../src/domain/types.js'
 import type { AssistantCreateDraft } from '../src/client/assistant-form.js'
 import type { AssistantCreateBodyProps, AssistantCreateFooterProps } from '../src/client/assistant-dialogs.js'
+import type { AssistantInstanceView } from '../src/transport/contracts.js'
 
 // The primitives package needs browser peers this node test does not install.
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
@@ -1002,5 +1003,143 @@ describe('assistant 用量 wiring', () => {
     expect(report.rollup.tokens.total).toBe(10)
     expect(report.rollup.reporting).toBe(1)
     expect(report.rows[1]?.tokens.total).toBeNull()
+  })
+})
+
+const { assistantDetailSections } = await import('../src/client/assistant-detail.js')
+const {
+  ASSISTANT_BLURB_MAX_CHARS,
+  ASSISTANT_TITLE_MAX_CHARS,
+  assistantCreatePayload,
+  assistantCreateValidationError,
+  assistantIdentityError,
+  assistantIdentityUpdate,
+} = await import('../src/client/assistant-form.js')
+
+function identityInstance(overrides: Partial<AssistantInstanceView> = {}): AssistantInstanceView {
+  return {
+    schemaVersion: 1,
+    id: 'assistant-1',
+    templateId: 'template-1',
+    assistantSnapshot: {
+      assistantId: 'template-1',
+      revision: 1,
+      name: '小码',
+      title: '后端工程师',
+      blurb: '把需求变成可上线的接口。',
+      instructions: '',
+      provider: 'deepseek',
+      model: 'deepseek-reasoner',
+      agentPresetId: 'default',
+      permissionPresetId: 'workspace-write',
+      skillAllowlist: [],
+      mcpServers: [],
+      prompts: [],
+    },
+    workspaceId: 'workspace-1',
+    workspacePath: '/tmp/workspace-1',
+    status: 'idle',
+    pinned: false,
+    revision: 1,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  }
+}
+
+describe('assistant identity lines', () => {
+  it('collects 职能 and 一句话介绍 in the create dialog with their counters', () => {
+    const html = renderCreateBody({
+      draft: { ...CREATE_DRAFT, title: '后端工程师', blurb: '负责接口' },
+    })
+
+    expect(html).toContain('aria-label="职能"')
+    expect(html).toContain('aria-label="一句话介绍"')
+    expect(html).toContain(`>5 / ${ASSISTANT_TITLE_MAX_CHARS}<`)
+    expect(html).toContain(`>4 / ${ASSISTANT_BLURB_MAX_CHARS}<`)
+    // Name first, then the two identity lines, then the folded persona.
+    expect(html.indexOf('助手名称')).toBeLessThan(html.indexOf('aria-label="职能"'))
+    expect(html.indexOf('aria-label="职能"')).toBeLessThan(html.indexOf('aria-label="一句话介绍"'))
+    expect(html.indexOf('aria-label="一句话介绍"')).toBeLessThan(html.indexOf('aria-label="描述"'))
+  })
+
+  it('starts both counters at zero and keeps the values out of a blank payload', () => {
+    const html = renderCreateBody()
+    expect(html).toContain(`>0 / ${ASSISTANT_TITLE_MAX_CHARS}<`)
+    expect(html).toContain(`>0 / ${ASSISTANT_BLURB_MAX_CHARS}<`)
+
+    // A blank line is absent from the create payload, not an empty string.
+    const payload = assistantCreatePayload(CREATE_DRAFT)
+    expect(payload).not.toHaveProperty('title')
+    expect(payload).not.toHaveProperty('blurb')
+  })
+
+  it('trims the identity lines it does send', () => {
+    const payload = assistantCreatePayload({
+      ...CREATE_DRAFT,
+      title: '  后端工程师  ',
+      blurb: '  负责接口  ',
+    })
+    expect(payload.title).toBe('后端工程师')
+    expect(payload.blurb).toBe('负责接口')
+  })
+
+  it('refuses an over-cap line instead of truncating it', () => {
+    expect(assistantIdentityError({ title: 'x'.repeat(ASSISTANT_TITLE_MAX_CHARS + 1) }))
+      .toBe(`职能最多 ${ASSISTANT_TITLE_MAX_CHARS} 个字`)
+    expect(assistantIdentityError({ blurb: 'x'.repeat(ASSISTANT_BLURB_MAX_CHARS + 1) }))
+      .toBe(`一句话介绍最多 ${ASSISTANT_BLURB_MAX_CHARS} 个字`)
+    expect(assistantIdentityError({ title: 'x'.repeat(ASSISTANT_TITLE_MAX_CHARS) })).toBeUndefined()
+    expect(assistantCreateValidationError({
+      ...CREATE_DRAFT,
+      blurb: 'x'.repeat(ASSISTANT_BLURB_MAX_CHARS + 1),
+    })).toBe(`一句话介绍最多 ${ASSISTANT_BLURB_MAX_CHARS} 个字`)
+  })
+
+  it('writes a changed line, omits an unchanged one, and clears an emptied one', () => {
+    // Unchanged (modulo surrounding spaces) stays out of the patch.
+    expect(assistantIdentityUpdate({ title: '后端', blurb: '负责接口' }, {
+      title: ' 后端 ',
+      blurb: '负责接口',
+    })).toEqual({})
+    // A cleared field travels as '' so the service removes the stored line.
+    expect(assistantIdentityUpdate({ title: '后端', blurb: '负责接口' }, {
+      title: '  ',
+      blurb: '',
+    })).toEqual({ title: '', blurb: '' })
+    // Setting lines that were never stored carries the trimmed values.
+    expect(assistantIdentityUpdate({}, { title: ' 数据 ', blurb: ' 报表 ' }))
+      .toEqual({ title: '数据', blurb: '报表' })
+  })
+
+  it('edits the same two lines in the settings pane and clears them on save', () => {
+    const settings = readFileSync(
+      new URL('../src/client/assistant-settings-pane.tsx', import.meta.url),
+      'utf8',
+    )
+    // Same two rows as the create dialog, staged on the one 保存 bar.
+    expect(settings).toContain('aria-label="职能"')
+    expect(settings).toContain('aria-label="一句话介绍"')
+    expect(settings).toContain('data-dsh-assistant-title-count')
+    expect(settings).toContain('data-dsh-assistant-blurb-count')
+    expect(settings).toContain('assistantIdentityUpdate(snapshot')
+    expect(settings).toContain('value.title = identityPatch.title')
+    expect(settings).toContain('value.blurb = identityPatch.blurb')
+    expect(settings).toContain('assistantIdentityError({ title, blurb })')
+  })
+
+  it('shows 职能 and 一句话介绍 on the detail only when the snapshot carries them', () => {
+    const identity = assistantDetailSections(identityInstance())
+      .find(section => section.id === 'identity')
+    expect(identity?.facts).toContainEqual({ label: '职能', value: '后端工程师' })
+    expect(identity?.facts).toContainEqual({ label: '一句话介绍', value: '把需求变成可上线的接口。' })
+
+    const plainSnapshot = { ...identityInstance().assistantSnapshot }
+    delete plainSnapshot.title
+    delete plainSnapshot.blurb
+    const plain = identityInstance({ assistantSnapshot: plainSnapshot })
+    const facts = assistantDetailSections(plain).find(section => section.id === 'identity')?.facts ?? []
+    expect(facts.map(fact => fact.label)).toEqual(['名称', '头像'])
+    expect(facts.some(fact => fact.label === '职能' || fact.label === '一句话介绍')).toBe(false)
   })
 })

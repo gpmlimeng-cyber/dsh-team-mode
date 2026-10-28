@@ -36,6 +36,7 @@ import {
 import { AssistantTaskDialog } from './assistant-task-dialog.js'
 import {
   assistantAvatarSource,
+  assistantInstanceLabel,
   assistantInstanceName,
   assistantPendingDecisions,
   assistantRowActivity,
@@ -337,7 +338,7 @@ export function AssistantSidebarSection({
     setNotice({
       assistantId: first.instance.id,
       taskId: first.task.id,
-      name: assistantInstanceName(first.instance),
+      name: assistantInstanceLabel(first.instance),
       title: first.task.title,
     })
     // Desktop notification is best-effort: never prompt for permission here,
@@ -345,7 +346,7 @@ export function AssistantSidebarSection({
     try {
       if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'granted') {
         const notification = new window.Notification('助手需要你处理', {
-          body: `${assistantInstanceName(first.instance)} · ${first.task.title}`,
+          body: `${assistantInstanceLabel(first.instance)} · ${first.task.title}`,
           tag: `dsh-assistant:${first.task.id}`,
         })
         browserNotificationsRef.current.set(first.task.id, notification)
@@ -651,6 +652,9 @@ export function AssistantSidebarSection({
 
   const renderAssistantRow = (instance: AssistantInstanceView): JSX.Element => {
     const name = assistantInstanceName(instance)
+    // The visible row text carries the optional 职能 line; aria labels and the
+    // avatar keep the bare name so the row still reads as one Assistant.
+    const label = assistantInstanceLabel(instance)
     const opening = openingId === instance.id
     const active = selectedAssistantId === instance.id
     const menuOpen = menuOpenId === instance.id
@@ -761,7 +765,7 @@ export function AssistantSidebarSection({
             disabled={opening}
             aria-busy={opening || activity.status === 'running' ? true : undefined}
             aria-current={active ? 'page' : undefined}
-            title={`${name} · ${secondLine} · ${instance.assistantSnapshot.model}`}
+            title={`${label} · ${secondLine} · ${instance.assistantSnapshot.model}`}
           >
             <span className={css.sidebarAssistantAvatar}>
               {assistantShowsMascot(instance)
@@ -791,7 +795,7 @@ export function AssistantSidebarSection({
             </span>
             <span className={`${css.sidebarTeamCopy} ${css.sidebarAssistantCopy}`}>
               <span className={css.sidebarAssistantTop}>
-                <span className={css.sidebarTeamName}>{name}</span>
+                <span className={css.sidebarTeamName}>{label}</span>
                 {isCoordinatorInstance(instance) && (
                   <span
                     className={css.sidebarAssistantCrown}
@@ -1044,13 +1048,13 @@ export function AssistantSidebarSection({
                     type="button"
                     className={css.sidebarAssistantAttentionRow}
                     onClick={() => { void openThreadTask(instance, task) }}
-                    title={`${task.title} · ${assistantInstanceName(instance)} · 待你处理`}
+                    title={`${task.title} · ${assistantInstanceLabel(instance)} · 待你处理`}
                   >
                     <span className={css.sidebarAssistantAttentionBadge} aria-hidden="true">!</span>
                     <span className={css.sidebarAssistantAttentionCopy}>
                       <span className={css.sidebarAssistantAttentionTask}>{task.title}</span>
                       <span className={css.sidebarAssistantAttentionMeta}>
-                        {assistantInstanceName(instance)} · {approval === undefined ? '待你处理' : '请求审批'}
+                        {assistantInstanceLabel(instance)} · {approval === undefined ? '待你处理' : '请求审批'}
                       </span>
                     </span>
                   </button>

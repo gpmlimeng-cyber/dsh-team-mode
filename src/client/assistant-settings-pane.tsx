@@ -30,6 +30,12 @@ import {
   assistantInstanceName,
 } from './assistant-instances.js'
 import {
+  ASSISTANT_BLURB_MAX_CHARS,
+  ASSISTANT_TITLE_MAX_CHARS,
+  assistantIdentityError,
+  assistantIdentityUpdate,
+} from './assistant-form.js'
+import {
   AutomationSection,
   HistorySection,
   PersonaSection,
@@ -147,7 +153,7 @@ export interface AssistantSettingGroup {
  */
 export const ASSISTANT_SETTING_GROUPS: readonly AssistantSettingGroup[] = [
   { id: 'overview', title: '概览', keywords: '概览 待办 待办清单 它是什么 能力边界 描述 模板 workspace 权限' },
-  { id: 'identity', title: '身份与形象', keywords: '身份 形象 头像 显示名称 名称 人设 说明' },
+  { id: 'identity', title: '身份与形象', keywords: '身份 形象 头像 显示名称 名称 职能 一句话介绍 介绍 人设 说明' },
   { id: 'model', title: '模型与权限', keywords: '模型 provider model 思考模式 推理强度 权限预设 权限' },
   { id: 'usage', title: '用量', keywords: '用量 token 令牌 缓存 命中 轮数 上下文 会话' },
   { id: 'capabilities', title: '技能与MCP', keywords: '技能 skills mcp 工具 server' },
@@ -244,6 +250,10 @@ export function AssistantSettingsPane({
     overview: true,
   })
   const [name, setName] = useState(assistantInstanceName(assistant))
+  // The optional identity lines: staged here and written by the one 保存 bar,
+  // where an emptied field clears the stored line.
+  const [title, setTitle] = useState(assistant.assistantSnapshot.title ?? '')
+  const [blurb, setBlurb] = useState(assistant.assistantSnapshot.blurb ?? '')
   // The avatar, its mascot options and its seed are one draft; the floating
   // editor stages it and 保存 writes it.
   const [avatarDraft, setAvatarDraft] = useState<AvatarDraft>(() => avatarDraftFromInstance(assistant))
@@ -316,6 +326,8 @@ export function AssistantSettingsPane({
   useEffect(() => {
     let live = true
     setName(assistantInstanceName(assistant))
+    setTitle(assistant.assistantSnapshot.title ?? '')
+    setBlurb(assistant.assistantSnapshot.blurb ?? '')
     setAvatarDraft(avatarDraftFromInstance(assistant))
     setAvatarEditing(false)
     setTemplateName(undefined)
@@ -433,6 +445,11 @@ export function AssistantSettingsPane({
       setError('显示名称不能为空')
       return
     }
+    const identityError = assistantIdentityError({ title, blurb })
+    if (identityError !== undefined) {
+      setError(identityError)
+      return
+    }
     if (provider.trim() === '' || model.trim() === '') {
       setError('请选择 Provider 和模型')
       return
@@ -448,6 +465,11 @@ export function AssistantSettingsPane({
     }
     const snapshot = assistant.assistantSnapshot
     const value: UpdateAssistantInstanceInput = { name: displayName }
+    // A changed identity line travels trimmed; an emptied one travels as '' so
+    // the service clears it, and an untouched one stays out of the patch.
+    const identityPatch = assistantIdentityUpdate(snapshot, { title, blurb })
+    if (identityPatch.title !== undefined) value.title = identityPatch.title
+    if (identityPatch.blurb !== undefined) value.blurb = identityPatch.blurb
     if (avatarDraft.avatar !== (snapshot.avatar ?? '')) value.avatar = avatarDraft.avatar
     if (provider !== snapshot.provider || model !== snapshot.model) {
       // provider and model always travel together so the service can validate
@@ -837,6 +859,51 @@ export function AssistantSettingsPane({
                     aria-label="显示名称"
                     onChange={event => { setName(event.target.value); setSaved(false) }}
                   />
+                )}
+              />
+            )}
+            {shows('职能') && (
+              <SettingsRow
+                label="职能"
+                hint={`最多 ${ASSISTANT_TITLE_MAX_CHARS} 个字；同名助手靠这一行区分，留空则不显示。`}
+                control={(
+                  <div>
+                    <input
+                      className={css.input}
+                      value={title}
+                      disabled={busy}
+                      placeholder="例如：后端工程师"
+                      aria-label="职能"
+                      data-dsh-assistant-title
+                      onChange={event => { setTitle(event.target.value); setSaved(false) }}
+                    />
+                    <span className={css.hint} data-dsh-assistant-title-count>
+                      {title.length} / {ASSISTANT_TITLE_MAX_CHARS}
+                    </span>
+                  </div>
+                )}
+              />
+            )}
+            {shows('一句话介绍', '介绍') && (
+              <SettingsRow
+                label="一句话介绍"
+                hint={`最多 ${ASSISTANT_BLURB_MAX_CHARS} 个字；只影响展示，不写入系统提示。留空则不显示。`}
+                control={(
+                  <div>
+                    <textarea
+                      className={css.input}
+                      rows={2}
+                      value={blurb}
+                      disabled={busy}
+                      placeholder="例如：把需求变成可上线的接口和迁移脚本。"
+                      aria-label="一句话介绍"
+                      data-dsh-assistant-blurb
+                      onChange={event => { setBlurb(event.target.value); setSaved(false) }}
+                    />
+                    <span className={css.hint} data-dsh-assistant-blurb-count>
+                      {blurb.length} / {ASSISTANT_BLURB_MAX_CHARS}
+                    </span>
+                  </div>
                 )}
               />
             )}

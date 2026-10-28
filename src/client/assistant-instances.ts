@@ -38,9 +38,32 @@ const ASSISTANT_TASK_STATUS_LABELS: Record<AssistantSession['status'], string> =
 }
 
 /** Sidebar-facing name; the snapshot name is the only display name Phase 0 stores. */
-export function assistantInstanceName(instance: AssistantInstance): string {
+export function assistantInstanceName(
+  instance: Pick<AssistantInstance, 'assistantSnapshot'>,
+): string {
   const name = instance.assistantSnapshot.name.trim()
   return name === '' ? '助手' : name
+}
+
+/**
+ * The optional 职能 line. It is what tells two same-named assistants apart in a
+ * cramped row, so a blank or whitespace-only value reads as "not set" instead
+ * of rendering a dangling separator.
+ */
+export function assistantInstanceTitle(
+  instance: Pick<AssistantInstance, 'assistantSnapshot'>,
+): string | undefined {
+  const title = instance.assistantSnapshot.title?.trim() ?? ''
+  return title === '' ? undefined : title
+}
+
+/** `name · title` where a title exists, the bare name everywhere else. */
+export function assistantInstanceLabel(
+  instance: Pick<AssistantInstance, 'assistantSnapshot'>,
+): string {
+  const name = assistantInstanceName(instance)
+  const title = assistantInstanceTitle(instance)
+  return title === undefined ? name : `${name} · ${title}`
 }
 
 /**
@@ -127,13 +150,17 @@ export function assistantInstanceForSession(
   return instances.find(item => item.mainSessionId === sessionId && item.status !== 'archived')
 }
 
-/** Assistant name for the Session whose mainSessionId matches, if any. */
+/**
+ * Label for the Session whose mainSessionId matches: `name · title` when the
+ * Assistant carries a 职能 line, so a breadcrumb names which same-named one is
+ * open.
+ */
 export function assistantNameForSession(
   instances: readonly AssistantInstance[],
   sessionId: string | undefined,
 ): string | undefined {
   const instance = assistantInstanceForSession(instances, sessionId)
-  return instance === undefined ? undefined : assistantInstanceName(instance)
+  return instance === undefined ? undefined : assistantInstanceLabel(instance)
 }
 
 /**
@@ -315,7 +342,8 @@ export function assistantThreadTasks(
 
 /**
  * Archived instances are never listed. Pinned rows lead, then the most recent
- * activity; the id tie-break keeps the order stable across SSE refreshes.
+ * activity; the id tie-break keeps the order stable across SSE refreshes. The
+ * search matches the identity label, so a 职能 line is searchable too.
  */
 export function visibleAssistantInstances<T extends AssistantInstance>(
   instances: readonly T[],
@@ -325,7 +353,7 @@ export function visibleAssistantInstances<T extends AssistantInstance>(
   return instances
     .filter(instance => instance.status !== 'archived')
     .filter(instance => normalized === ''
-      || assistantInstanceName(instance).toLocaleLowerCase().includes(normalized))
+      || assistantInstanceLabel(instance).toLocaleLowerCase().includes(normalized))
     .slice()
     .sort((left, right) => Number(right.pinned === true) - Number(left.pinned === true)
       || Date.parse(right.updatedAt) - Date.parse(left.updatedAt)

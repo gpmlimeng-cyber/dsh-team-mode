@@ -30,13 +30,15 @@ function useAssistantInstances(): AssistantInstance[] {
 /**
  * Assistant main Sessions are ordinary DSH Sessions with no durable title, so
  * the native breadcrumb shows the Workspace directory name. This lineage slot
- * appends the Assistant's display name; the Session itself is never renamed.
+ * appends the Assistant's identity label — `name`, plus its optional 职能 line
+ * when present, so a breadcrumb names which same-named Assistant is open. The
+ * Session itself is never renamed.
  */
 export function AssistantSessionTitle({ sessionId }: { sessionId?: string }): JSX.Element | null {
   const instances = useAssistantInstances()
-  const name = assistantNameForSession(instances, sessionId)
-  if (name === undefined) return null
-  return <span className={css.assistantSessionTitle} title={name}>{name}</span>
+  const label = assistantNameForSession(instances, sessionId)
+  if (label === undefined) return null
+  return <span className={css.assistantSessionTitle} title={label}>{label}</span>
 }
 
 /**

@@ -42,7 +42,12 @@ import {
   setAssistantDisplayMode,
   useAssistantDisplayMode,
 } from './assistant-display-mode.js'
-import { assistantAvatarSource, assistantInstanceName, coordinatorAssistant } from './assistant-instances.js'
+import {
+  assistantAvatarSource,
+  assistantInstanceLabel,
+  assistantInstanceName,
+  coordinatorAssistant,
+} from './assistant-instances.js'
 import { MemberAvatar } from './member-avatar.js'
 import { readTodayAttentionCount, requestToday } from './today-surface.js'
 import { Mascot } from './mascot-view.js'
@@ -1141,7 +1146,9 @@ function useAssistantChats(): BrandChatEntry[] {
             : [coordinator, ...listed.filter(item => item.id !== coordinator.id)]
           setChats(ordered.map(item => ({
             id: item.id,
-            name: assistantInstanceName(item),
+            // The picker lists who to talk to; a 职能 line is what separates two
+            // assistants that share a name.
+            name: assistantInstanceLabel(item),
             portrait: assistantShowsMascot(item)
               ? (
                 <Mascot

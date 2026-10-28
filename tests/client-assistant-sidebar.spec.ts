@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import {
+  assistantInstanceLabel,
+  assistantInstanceTitle,
+  assistantNameForSession,
   assistantPendingDecisions,
   assistantSidebarSummary,
   visibleAssistantInstances,
@@ -56,13 +59,27 @@ function instance(
   }
 }
 
+/** The same instance with an optional 职能 line, as the snapshot stores it. */
+function titled(
+  id: string,
+  name: string,
+  title?: string,
+  overrides: Partial<AssistantInstanceView> = {},
+): AssistantInstanceView {
+  const base = instance(id, name)
+  return {
+    ...base,
+    ...overrides,
+    assistantSnapshot: { ...base.assistantSnapshot, ...(title === undefined ? {} : { title }) },
+  }
+}
+
 function task(
   assistantId: string,
   status: AssistantSession['status'],
   id = `${assistantId}-${status}`,
   overrides: Partial<AssistantSession> = {},
-): AssistantSession {
-  return {
+): AssistantSession {  return {
     schemaVersion: 1,
     id,
     assistantId,
@@ -623,5 +640,63 @@ describe('usage repair-round edges', () => {
     expect(formatUsageTokens(999_999)).toBe('1M')
     expect(formatUsageTokens(1_000_000)).toBe('1M')
     expect(formatUsageTokens(1_234_567)).toBe('1.23M')
+  })
+})
+
+describe('assistant identity label in rows, pickers and breadcrumb', () => {
+  it('reads name · title only when a 职能 line exists', () => {
+    expect(assistantInstanceLabel(titled('back', '小码', '后端工程师'))).toBe('小码 · 后端工程师')
+    expect(assistantInstanceLabel(titled('plain', '小码'))).toBe('小码')
+    // Whitespace is "not set", never a dangling separator.
+    expect(assistantInstanceTitle(titled('blank', '小码', '   '))).toBeUndefined()
+    expect(assistantInstanceLabel(titled('blank', '小码', '   '))).toBe('小码')
+  })
+
+  it('keeps two same-named assistants tellable apart in the row list', () => {
+    const rows = visibleAssistantInstances([
+      titled('back', '小码', '后端工程师'),
+      titled('data', '小码', '数据工程师'),
+    ], '')
+    expect(rows.map(entry => assistantInstanceLabel(entry))).toEqual([
+      '小码 · 后端工程师',
+      '小码 · 数据工程师',
+    ])
+  })
+
+  it('finds an assistant by its 职能 line', () => {
+    const rows = visibleAssistantInstances([
+      titled('back', '小码', '后端工程师'),
+      titled('data', '小码', '数据工程师'),
+    ], '数据')
+    expect(rows.map(entry => entry.id)).toEqual(['data'])
+  })
+
+  it('labels the session breadcrumb with the title', () => {
+    const back = titled('back', '小码', '后端工程师', { mainSessionId: 'session-back' })
+    const plain = instance('plain', '小码', { mainSessionId: 'session-plain' })
+    expect(assistantNameForSession([back, plain], 'session-back')).toBe('小码 · 后端工程师')
+    // An untitled assistant still reads as its bare name.
+    expect(assistantNameForSession([back, plain], 'session-plain')).toBe('小码')
+    expect(assistantNameForSession([back, plain], 'session-other')).toBeUndefined()
+  })
+
+  it('names the ＋ picker and the sidebar row with that same label', () => {
+    const sidebar = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
+    const row = readFileSync(new URL('../src/client/assistant-sidebar.tsx', import.meta.url), 'utf8')
+    expect(sidebar).toContain('name: assistantInstanceLabel(item)')
+    expect(row).toContain('const label = assistantInstanceLabel(instance)')
+    expect(row).toContain('>{label}</span>')
+    expect(row).toContain('${label} · ${secondLine}')
+  })
+
+  it('leaves team member surfaces name-only', () => {
+    // A member row reads the name the Host sends; the instance 职能 line is an
+    // Assistant-side field and never leaks into a team slot.
+    for (const path of ['team-sidebar-data.ts', 'team-member-chrome.tsx']) {
+      const source = readFileSync(new URL(`../src/client/${path}`, import.meta.url), 'utf8')
+      expect(source).not.toContain('assistantInstanceLabel')
+      expect(source).not.toContain('assistantSnapshot.title')
+      expect(source).not.toContain('assistantSnapshot.blurb')
+    }
   })
 })
