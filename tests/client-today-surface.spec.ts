@@ -103,18 +103,25 @@ function model(overrides: Partial<TodayModel> = {}): TodayModel {
       },
     ],
     upcoming: [{ id: 'job-1', name: '每日汇报', nextAt: TOMORROW_9 }],
+    archived: { teams: [], assistants: [], threads: [], total: 0 },
+    attentionCount: 2,
     runningEmpty: false,
     ...overrides,
   }
 }
 
-function render(overrides: Parameters<typeof TodaySurfacePanel>[0] = {
-  now: NOW,
-  onRefresh: () => {},
-  onOpenTeam: () => {},
-  onOpenAutomation: () => {},
-}): string {
-  return renderToStaticMarkup(createElement(TodaySurfacePanel, overrides))
+function render(overrides: Partial<Parameters<typeof TodaySurfacePanel>[0]> = {}): string {
+  return renderToStaticMarkup(createElement(TodaySurfacePanel, {
+    now: NOW,
+    onRefresh: () => {},
+    onOpenTeam: () => {},
+    onOpenWaiting: () => {},
+    onOpenAutomation: () => {},
+    onOpenArchivedTeam: () => {},
+    onOpenArchivedAssistant: () => {},
+    onOpenThread: () => {},
+    ...overrides,
+  }))
 }
 
 describe('today tab registration', () => {
@@ -249,6 +256,69 @@ describe('today surface rendering', () => {
     expect(text(html)).not.toContain('今天没有等你的事')
     expect(html).not.toContain('role="status"')
   })
+
+  it('draws assistant decisions and passive unread rows in the same 等你确认 block', () => {
+    const html = render({
+      model: model({
+        waiting: [
+          {
+            teamName: 'Paper Bot',
+            kind: 'assistant_decision',
+            subject: '整理本周资料',
+            since: NOW - 60_000,
+            waitMs: 60_000,
+            assistant: {
+              assistantId: 'paper',
+              name: 'Paper Bot',
+              sessionId: 'session-paper',
+              taskId: 'task-paper',
+            },
+          },
+          {
+            teamName: 'Data Bot',
+            kind: 'assistant_unread',
+            subject: '报表已经生成',
+            since: NOW - 120_000,
+            waitMs: 120_000,
+            assistant: { assistantId: 'data', name: 'Data Bot', sessionId: 'session-data' },
+          },
+        ],
+      }),
+      now: NOW,
+    })
+    expect(text(html)).toContain('助手待你处理')
+    expect(text(html)).toContain('未读 · 2 分钟前')
+    expect(html.match(/data-dsh-today-row="waiting"/g)?.length).toBe(2)
+  })
+
+  it('folds 已归档 by default, lists all three kinds view-only, and offers no restore', () => {
+    const html = render({
+      model: model({
+        archived: {
+          teams: [{ id: 'team-old', name: '旧团队' }],
+          assistants: [{ id: 'assistant-old', name: '旧助手', sessionId: 'session-old' }],
+          threads: [{ sessionId: 'session-thread', title: '旧线程', source: '甲队' }],
+          total: 3,
+        },
+      }),
+      now: NOW,
+    })
+    expect(html).toContain('<details')
+    expect(html).not.toContain('<details open')
+    expect(text(html)).toContain('已归档')
+    expect(text(html)).toContain('仅查看，暂不支持恢复')
+    expect(html).toContain('data-dsh-today-row="archived-team"')
+    expect(html).toContain('data-dsh-today-row="archived-assistant"')
+    expect(html).toContain('data-dsh-today-row="archived-thread"')
+    // Archived team rows open the manage dialog, never a dead draft Session.
+    expect(text(html)).toContain('草稿团队 · 打开管理')
+    // v1 is view-only: the note says so and no row offers a restore action.
+    expect(html).not.toMatch(/<button[^>]*>[^<]*恢复/)
+  })
+
+  it('draws no 已归档 block when nothing is archived', () => {
+    expect(text(render({ model: model(), now: NOW }))).not.toContain('已归档')
+  })
 })
 
 describe('today surface cost and style rules', () => {
@@ -262,8 +332,28 @@ describe('today surface cost and style rules', () => {
 
   it('reuses existing reads and adds no transport method', () => {
     const reads = [...source.matchAll(/callAgentTeam\('([^']+)'/g)].map(match => match[1] ?? '')
-    expect(reads.sort()).toEqual(['escalation.list', 'team.list'])
+    expect(reads.sort()).toEqual([
+      'assistant.instance.list',
+      'assistant.task.list',
+      'escalation.list',
+      'team.list',
+    ])
     expect(source).toContain('readAssistantAutomations')
+    // The 4th read is a payloadless read; it must not grow a new endpoint.
+    expect(source).toContain("callAgentTeam('assistant.task.list', undefined)")
+  })
+
+  it('builds the one footer entry on truthful waiting data, not on waiting_approval members', () => {
+    expect(plugin).toContain("'sidebar.footer.action'")
+    expect(plugin).toContain('SidebarTodayAction')
+    expect(plugin).toContain("id: 'dsh-team-mode-today-entry'")
+    expect(sidebar).toContain('export function SidebarTodayAction')
+    expect(sidebar).toContain('readTodayAttentionCount')
+    expect(sidebar).toContain('requestToday')
+    expect(sidebar).toContain('footerActionCount')
+    // The count must not be built from the dead member status (S6).
+    expect(sidebar).not.toContain('waiting_approval')
+    expect(source).not.toContain('waiting_approval')
   })
 
   it('dates rows with the host relative-time buckets, not its own thresholds', () => {
@@ -274,10 +364,19 @@ describe('today surface cost and style rules', () => {
     for (const unit of ['now', 'minutes', 'hours', 'days', 'months', 'years']) {
       expect(source).toContain(`${unit}:`)
     }
-    // 等待 row and 进行 row share one formatter.
-    expect(source.match(/elapsedLabel\(row\.since, now\)/g)?.length).toBe(2)
+    // 等待 row (action + passive unread) and 进行 row share one formatter.
+    expect(source.match(/elapsedLabel\(row\.since, now\)/g)?.length).toBe(3)
     // The pane-wide `expanded` flag had no consumer; the tab width is the host's.
     expect(source).not.toContain('data-expanded')
+  })
+
+  it('keeps the new surfaces on native controls and tokens', () => {
+    expect(source).toContain('<details')
+    expect(source).toContain('<summary')
+    expect(styles).not.toContain('position: fixed')
+    expect(styles).not.toMatch(/\bz-index\b/)
+    expect(styles).not.toMatch(/(^|[^\w-])body\b/)
+    expect(styles).toContain('var(--dsw-radius-sm)')
   })
 
   it('styles only through --dsw-* tokens and wraps instead of overflowing', () => {

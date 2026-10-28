@@ -44,7 +44,7 @@ import {
 } from './assistant-display-mode.js'
 import { assistantAvatarSource, assistantInstanceName, coordinatorAssistant } from './assistant-instances.js'
 import { MemberAvatar } from './member-avatar.js'
-import { requestToday } from './today-surface.js'
+import { readTodayAttentionCount, requestToday } from './today-surface.js'
 import { Mascot } from './mascot-view.js'
 import { assistantShowsMascot, mascotMotionForStatus, mascotOptionsFor } from './mascot.js'
 import {
@@ -75,6 +75,7 @@ import {
   type SurfaceMode,
 } from './surface-mode.js'
 import css from './AgentTeam.module.css'
+import todayCss from './Today.module.css'
 import type { TeamView } from '../transport/contracts.js'
 import type { WorkspaceChoice } from './types.js'
 import { LeaderMark } from './team-member-chrome.js'
@@ -2067,3 +2068,45 @@ export function SidebarPortal({
     </>
   )
 }
+
+/**
+ * The sidebar foot's one native entry, registered in `sidebar.footer.action`
+ * beside Settings. It counts only action-worthy waiting rows (open escalations,
+ * stuck members, assistant decisions) — unread assistants are passive and never
+ * inflate it — and opens the existing 今天 tab. Reads once on mount, then rides
+ * the sidebar's own change events; there is no timer.
+ */
+export function SidebarTodayAction({ wide }: { wide: boolean }): JSX.Element {
+  const [count, setCount] = useState(0)
+  useEffect(() => {
+    let live = true
+    const load = (): void => {
+      void readTodayAttentionCount().then(
+        value => { if (live) setCount(value) },
+        () => { if (live) setCount(0) },
+      )
+    }
+    load()
+    const unsubscribe = subscribeAgentTeam(load, () => {}, load)
+    return () => {
+      live = false
+      unsubscribe()
+    }
+  }, [])
+  const label = count > 0 ? `今天：${count} 件事等你` : '今天'
+  return (
+    <button
+      type="button"
+      className={`${todayCss.footerAction}${wide ? '' : ` ${todayCss.footerActionRail}`}`}
+      data-dsh-team-mode-today-entry
+      aria-label={label}
+      title={label}
+      onClick={requestToday}
+    >
+      <IconSparkleRegular size={14} />
+      {wide && <span className={todayCss.footerActionLabel}>今天</span>}
+      {count > 0 && <span className={todayCss.footerActionCount}>{count}</span>}
+    </button>
+  )
+}
+

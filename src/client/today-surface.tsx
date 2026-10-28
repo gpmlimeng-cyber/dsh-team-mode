@@ -6,25 +6,36 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type { Escalation } from '../domain/types.js'
-import type { TeamView } from '../transport/contracts.js'
+import type { AssistantSession, Escalation } from '../domain/types.js'
+import type { AssistantInstanceView, TeamView } from '../transport/contracts.js'
 import { callAgentTeam, teamLeaderSessionId } from './api.js'
 import {
   openAssistantAutomations,
   readAssistantAutomations,
   type AssistantAutomationEntry,
 } from './assistant-detail.js'
-import { openAssistantSession } from './store.js'
-import { todayModel, type TodayModel, type TodayWaiting } from './today-model.js'
+import { assistantReadState } from './assistant-read-state.js'
+import { OPEN_ASSISTANT_SETTINGS_EVENT } from './assistant-settings-pane.js'
+import { openAssistantSession, openManageTeamDialog } from './store.js'
+import {
+  todayActionableCount,
+  todayModel,
+  todayWaiting,
+  type TodayArchivedAssistant,
+  type TodayModel,
+  type TodayWaiting,
+} from './today-model.js'
 import css from './Today.module.css'
 
 /**
- * 「今天」页：抬头一句话回答「要不要动手」，下面三块。这一页只读，打开时拉一次
- * 数据，之后只有顶部的刷新按钮会再拉一次——没有轮询、没有后台任务、没有模型。
+ * 「今天」页：抬头一句话回答「要不要动手」，下面几块，末尾一个默认折叠的
+ * 「已归档」。这一页只读，打开时拉一次数据，之后只有顶部的刷新按钮会再拉一次
+ * ——没有轮询、没有后台任务、没有模型。
  *
- * 数据全部是宿主已有的投影：`team.list`、`escalation.list`、以及自动化面板
- * 已经读过的 schedule catalog。派生逻辑在 `today-model.ts`，这里只负责渲染和
- * 一次读取。
+ * 数据全部是宿主已有的投影：`team.list`、`escalation.list`、
+ * `assistant.instance.list`、`assistant.task.list`，加上自动化面板已经读过的
+ * schedule catalog 和侧栏共用的一份 read-at。派生逻辑在 `today-model.ts`，
+ * 这里只负责渲染和一次读取。
  */
 
 /** The page type this plugin owns on the host's right Sidebar. */
@@ -117,12 +128,37 @@ const WAITING_KIND_LABELS: Readonly<Record<TodayWaiting['kind'], string>> = {
   question: '等你回答',
   blocked_task: '任务被阻塞',
   stuck_member: '成员卡住',
+  assistant_decision: '助手待你处理',
+  assistant_unread: '未读',
 }
 
-interface TodayData {
+interface TodayAttentionReads {
   teams: readonly TeamView[]
   escalations: readonly Escalation[]
+  instances: readonly AssistantInstanceView[]
+  tasks: readonly AssistantSession[]
+  readState: Readonly<Record<string, number>>
+}
+
+interface TodayData extends TodayAttentionReads {
   automations: readonly AssistantAutomationEntry[]
+}
+
+/** 入口计数只读这四份投影；页面再加 automation catalog 与 read-at。 */
+async function readAttention(): Promise<TodayAttentionReads> {
+  const [teams, escalations, instances, tasks] = await Promise.all([
+    callAgentTeam('team.list'),
+    callAgentTeam('escalation.list'),
+    callAgentTeam('assistant.instance.list'),
+    callAgentTeam('assistant.task.list', undefined),
+  ])
+  return {
+    teams: teams.items,
+    escalations: escalations.items,
+    instances: instances.items,
+    tasks: tasks.items,
+    readState: assistantReadState(),
+  }
 }
 
 /**
@@ -132,14 +168,27 @@ interface TodayData {
  */
 async function readToday(): Promise<TodayData> {
   const catalog = readAssistantAutomations()
-  const [teams, escalations, automations] = await Promise.all([
-    callAgentTeam('team.list'),
-    callAgentTeam('escalation.list'),
+  const [attention, automations] = await Promise.all([
+    readAttention(),
     catalog === undefined
       ? Promise.resolve<readonly AssistantAutomationEntry[]>([])
       : catalog.catch(() => [] as readonly AssistantAutomationEntry[]),
   ])
-  return { teams: teams.items, escalations: escalations.items, automations }
+  return { ...attention, automations }
+}
+
+/**
+ * The footer entry's count: the same truthful waiting rows the page draws,
+ * reduced to the ones that actually want an action. Unread assistants are
+ * passive and never inflate it; archived things never count.
+ */
+export async function readTodayAttentionCount(): Promise<number> {
+  const data = await readAttention()
+  return todayActionableCount(todayWaiting(data.teams, data.escalations, Date.now(), {
+    instances: data.instances,
+    tasks: data.tasks,
+    readState: data.readState,
+  }))
 }
 
 /**
@@ -163,6 +212,9 @@ export function TodaySurfaceBody(_props: PropsRuntime<'sidebar.right.pane.tab'>)
           model: todayModel({
             teams: data.teams,
             escalations: data.escalations,
+            assistantInstances: data.instances,
+            assistantTasks: data.tasks,
+            assistantReadState: data.readState,
             automations: data.automations,
             now,
           }),
@@ -190,6 +242,31 @@ export function TodaySurfaceBody(_props: PropsRuntime<'sidebar.right.pane.tab'>)
     if (!openAssistantSession(sessionId)) setNotice('暂时打不开团队页：会话界面还没就绪')
   }
 
+  /** Open a retained Session; a nameless target falls back to 助手设置. */
+  const openSessionOrAssistant = (sessionId: string | undefined, assistantId?: string): void => {
+    setNotice(undefined)
+    if (sessionId !== undefined && sessionId !== '' && openAssistantSession(sessionId)) return
+    if (assistantId !== undefined) {
+      window.dispatchEvent(new CustomEvent(OPEN_ASSISTANT_SETTINGS_EVENT, {
+        detail: { assistantId },
+      }))
+      return
+    }
+    setNotice('暂时打不开这个会话：会话界面还没就绪')
+  }
+
+  const openWaitingRow = (row: TodayWaiting): void => {
+    if (row.assistant !== undefined) {
+      openSessionOrAssistant(row.assistant.sessionId, row.assistant.assistantId)
+      return
+    }
+    if (row.teamId !== undefined) openTeamRow(row.teamId)
+  }
+
+  const openArchivedAssistant = (assistant: TodayArchivedAssistant): void => {
+    openSessionOrAssistant(assistant.sessionId, assistant.id)
+  }
+
   const openUpcomingRow = (): void => {
     setNotice(undefined)
     if (!openAssistantAutomations()) setNotice('没有可用的自动化面板')
@@ -204,7 +281,11 @@ export function TodaySurfaceBody(_props: PropsRuntime<'sidebar.right.pane.tab'>)
       loading={loaded === undefined && error === undefined}
       onRefresh={() => { setNonce(value => value + 1) }}
       onOpenTeam={openTeamRow}
+      onOpenWaiting={openWaitingRow}
       onOpenAutomation={openUpcomingRow}
+      onOpenArchivedTeam={openManageTeamDialog}
+      onOpenArchivedAssistant={openArchivedAssistant}
+      onOpenThread={sessionId => { openSessionOrAssistant(sessionId) }}
     />
   )
 }
@@ -218,9 +299,10 @@ interface LoadedToday {
 }
 
 /**
- * The page itself, pure: given a model it draws the header and three blocks.
- * Empty 等你确认 / 接下来 draw nothing at all; an empty 在进行 draws one grey
- * line, because "nothing is running" is the answer to the page's question.
+ * The page itself, pure: given a model it draws the header, the waiting/
+ * running/upcoming blocks, then the folded 已归档 block. Empty 等你确认 /
+ * 接下来 / 已归档 draw nothing at all; an empty 在进行 draws one grey line,
+ * because "nothing is running" is the answer to the page's question.
  */
 export function TodaySurfacePanel({
   model,
@@ -231,7 +313,11 @@ export function TodaySurfacePanel({
   notice,
   onRefresh,
   onOpenTeam,
+  onOpenWaiting,
   onOpenAutomation,
+  onOpenArchivedTeam,
+  onOpenArchivedAssistant,
+  onOpenThread,
 }: {
   model?: TodayModel | undefined
   hello?: string | undefined
@@ -242,7 +328,11 @@ export function TodaySurfacePanel({
   notice?: string | undefined
   onRefresh: () => void
   onOpenTeam: (teamId: string) => void
+  onOpenWaiting: (row: TodayWaiting) => void
   onOpenAutomation: () => void
+  onOpenArchivedTeam: (teamId: string) => void
+  onOpenArchivedAssistant: (assistant: TodayArchivedAssistant) => void
+  onOpenThread: (sessionId: string) => void
 }): JSX.Element {
   // A failed first read leaves the headline empty on purpose: the alert below
   // already says why, and "今天没有等你的事" would be a confident lie.
@@ -281,20 +371,22 @@ export function TodaySurfacePanel({
               </h3>
               <ul className={css.rows}>
                 {model.waiting.map(row => (
-                  <li key={`${row.teamId}:${row.kind}:${row.subject}`}>
+                  <li key={`${row.teamId ?? row.assistant?.assistantId}:${row.kind}:${row.subject}`}>
                     <button
                       type="button"
                       className={css.row}
                       data-dsh-today-row="waiting"
                       title={`${row.teamName} · ${row.subject}`}
-                      onClick={() => { onOpenTeam(row.teamId) }}
+                      onClick={() => { onOpenWaiting(row) }}
                     >
                       <span className={css.rowMain}>
                         <span className={css.rowTeam}>{row.teamName}</span>
                         <span className={css.rowSubject}>{row.subject}</span>
                       </span>
                       <span className={css.rowMeta}>
-                        {WAITING_KIND_LABELS[row.kind]} · 已等 {elapsedLabel(row.since, now)}
+                        {row.kind === 'assistant_unread'
+                          ? `未读 · ${elapsedLabel(row.since, now)}前`
+                          : `${WAITING_KIND_LABELS[row.kind]} · 已等 ${elapsedLabel(row.since, now)}`}
                       </span>
                     </button>
                   </li>
@@ -358,6 +450,89 @@ export function TodaySurfacePanel({
                 ))}
               </ul>
             </section>
+          )}
+
+          {model.archived.total > 0 && (
+            <details className={css.archive} data-dsh-today-block="archived">
+              <summary className={css.archiveSummary}>
+                <span>已归档</span>
+                <span className={css.count}>{model.archived.total}</span>
+                <span className={css.archiveHint}>只读</span>
+              </summary>
+              <p className={css.archiveNote}>仅查看，暂不支持恢复</p>
+              {model.archived.teams.length > 0 && (
+                <div className={css.archiveGroup}>
+                  <h4 className={css.archiveGroupTitle}>团队</h4>
+                  <ul className={css.rows}>
+                    {model.archived.teams.map(team => (
+                      <li key={team.id}>
+                        <button
+                          type="button"
+                          className={css.row}
+                          data-dsh-today-row="archived-team"
+                          title={`${team.name} · 打开团队管理`}
+                          onClick={() => { onOpenArchivedTeam(team.id) }}
+                        >
+                          <span className={css.rowMain}>
+                            <span className={css.rowSubject}>{team.name}</span>
+                          </span>
+                          <span className={css.rowMeta}>草稿团队 · 打开管理</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {model.archived.assistants.length > 0 && (
+                <div className={css.archiveGroup}>
+                  <h4 className={css.archiveGroupTitle}>助手</h4>
+                  <ul className={css.rows}>
+                    {model.archived.assistants.map(assistant => (
+                      <li key={assistant.id}>
+                        <button
+                          type="button"
+                          className={css.row}
+                          data-dsh-today-row="archived-assistant"
+                          title={assistant.name}
+                          onClick={() => { onOpenArchivedAssistant(assistant) }}
+                        >
+                          <span className={css.rowMain}>
+                            <span className={css.rowSubject}>{assistant.name}</span>
+                          </span>
+                          <span className={css.rowMeta}>
+                            {assistant.sessionId === undefined ? '已归档' : '已归档 · 打开会话'}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {model.archived.threads.length > 0 && (
+                <div className={css.archiveGroup}>
+                  <h4 className={css.archiveGroupTitle}>线程</h4>
+                  <ul className={css.rows}>
+                    {model.archived.threads.map(thread => (
+                      <li key={`${thread.source}:${thread.sessionId}`}>
+                        <button
+                          type="button"
+                          className={css.row}
+                          data-dsh-today-row="archived-thread"
+                          title={`${thread.source} · ${thread.title}`}
+                          onClick={() => { onOpenThread(thread.sessionId) }}
+                        >
+                          <span className={css.rowMain}>
+                            <span className={css.rowTeam}>{thread.source}</span>
+                            <span className={css.rowSubject}>{thread.title}</span>
+                          </span>
+                          <span className={css.rowMeta}>已归档</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </details>
           )}
         </>
       )}

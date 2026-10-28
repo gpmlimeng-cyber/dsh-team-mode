@@ -8,7 +8,7 @@ import {
   AgentTeamSettingsSection,
   type WorkspaceChoice,
 } from './components.js'
-import { SidebarPortal, useSurfaceMode } from './sidebar.js'
+import { SidebarPortal, SidebarTodayAction, useSurfaceMode } from './sidebar.js'
 import {
   AssistantDetailBody,
   DETAIL_TAB_ID,
@@ -470,6 +470,15 @@ export function apply(ctx: AgentTeamClientContext): void {
     order: 80,
     label: '团队提示',
   }, TeamMemberHeroHint as never))
+
+  // One native door at the sidebar foot, beside Settings: the actionable waiting
+  // count, opening the existing 今天 tab. No panellist, no second page.
+  slotApi.inject('sidebar.footer.action', () => slotApi.register({
+    name: 'sidebar.footer.action',
+    id: 'dsh-team-mode-today-entry',
+    order: 10,
+    label: '今天',
+  }, SidebarTodayAction as never))
 
   ctx.slots.inject('shell.overlay', () => ctx.slots.register({
     name: 'shell.overlay',

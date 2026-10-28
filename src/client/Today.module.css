@@ -198,3 +198,124 @@
   font-size: 12px;
   line-height: 18px;
 }
+
+/*
+ * 已归档：原生 details，默认折叠。没有恢复动作，所以样式上也只是一组灰色
+ * 只读行，不放主按钮。
+ */
+.archive {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.archiveSummary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+  cursor: pointer;
+}
+
+.archiveSummary:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.archiveHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.archiveNote {
+  margin: 0;
+  padding: 0 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.archiveGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.archiveGroupTitle {
+  margin: 0;
+  padding: 0 6px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+}
+
+/*
+ * Sidebar footer entry: one row beside Settings. Wide shows icon + 今天 + count;
+ * the rail is a 36px square like the native panel icons, so the count stacks
+ * under the glyph instead of overflowing the column.
+ */
+.footerAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 32px;
+  margin: 0 2px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.footerAction:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.footerAction:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+.footerActionRail {
+  flex-direction: column;
+  justify-content: center;
+  gap: 0;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+}
+
+.footerActionLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.footerActionCount {
+  flex: none;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 14px;
+  text-align: center;
+}
+

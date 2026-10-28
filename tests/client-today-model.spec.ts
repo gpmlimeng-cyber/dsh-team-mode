@@ -1,14 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import {
   greetingLine,
+  todayActionableCount,
+  todayArchive,
   todayGreeting,
   todayModel,
   todayRunning,
   todayUpcoming,
   todayWaiting,
 } from '../src/client/today-model.js'
-import type { Escalation, TeamMemberSlot, TeamTask } from '../src/domain/types.js'
-import type { TeamView } from '../src/transport/contracts.js'
+import type { AssistantSession, Escalation, TeamMemberSlot, TeamTask } from '../src/domain/types.js'
+import type { AssistantInstanceView, TeamView } from '../src/transport/contracts.js'
 
 const ISO = '2026-01-01T00:00:00.000Z'
 const NOW = Date.parse('2026-01-01T01:00:00.000Z')
@@ -64,6 +66,7 @@ function team(overrides: {
   tasks?: TeamTask[]
   updatedAt?: string
   archivedAt?: string
+  retiredThreads?: TeamView['retiredThreads']
 } = {}): TeamView {
   const id = overrides.id ?? 'team-1'
   return {
@@ -84,6 +87,7 @@ function team(overrides: {
     createdAt: ISO,
     updatedAt: overrides.updatedAt ?? ISO,
     ...(overrides.archivedAt === undefined ? {} : { archivedAt: overrides.archivedAt }),
+    ...(overrides.retiredThreads === undefined ? {} : { retiredThreads: overrides.retiredThreads }),
   }
 }
 
@@ -108,6 +112,61 @@ function escalation(overrides: {
     summary: overrides.summary ?? overrides.id,
     status: overrides.status ?? 'open',
     createdAt: overrides.createdAt ?? ISO,
+  }
+}
+
+function assistantInstance(
+  id: string,
+  name: string,
+  overrides: Partial<AssistantInstanceView> = {},
+): AssistantInstanceView {
+  return {
+    schemaVersion: 1,
+    id,
+    templateId: `template-${id}`,
+    assistantSnapshot: {
+      assistantId: `template-${id}`,
+      revision: 1,
+      name,
+      instructions: '',
+      provider: 'deepseek',
+      model: 'deepseek-chat',
+      agentPresetId: 'default',
+      permissionPresetId: 'workspace-write',
+      skillAllowlist: [],
+      mcpServers: [],
+      prompts: [],
+    },
+    workspaceId: 'workspace-1',
+    workspacePath: '/tmp/workspace-1',
+    status: 'idle',
+    pinned: false,
+    revision: 1,
+    createdAt: ISO,
+    updatedAt: ISO,
+    ...overrides,
+  }
+}
+
+function assistantTask(
+  assistantId: string,
+  status: AssistantSession['status'],
+  id = `${assistantId}-${status}`,
+  overrides: Partial<AssistantSession> = {},
+): AssistantSession {
+  return {
+    schemaVersion: 1,
+    id,
+    assistantId,
+    sessionId: `session-${id}`,
+    role: 'task',
+    title: `task ${id}`,
+    brief: '',
+    parentSessionId: `parent-${assistantId}`,
+    status,
+    createdAt: ISO,
+    updatedAt: ISO,
+    ...overrides,
   }
 }
 
@@ -308,5 +367,127 @@ describe('todayUpcoming', () => {
     expect(todayUpcoming([
       { id: 'broken', title: '坏', status: 'active', scheduledAt: 'not-a-date' },
     ])).toEqual([])
+  })
+})
+
+describe('todayWaiting · assistant decisions and unread', () => {
+  it('marks a needs_input worker task as an actionable assistant row', () => {
+    const rows = todayWaiting([], [], NOW, {
+      instances: [assistantInstance('paper', 'Paper Bot', { mainSessionId: 'session-main' })],
+      tasks: [assistantTask('paper', 'needs_input', 'task-paper', { title: '整理本周资料' })],
+      readState: {},
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      kind: 'assistant_decision',
+      teamName: 'Paper Bot',
+      subject: '整理本周资料',
+      assistant: {
+        assistantId: 'paper',
+        sessionId: 'session-task-paper',
+        taskId: 'task-paper',
+      },
+    })
+    expect(todayActionableCount(rows)).toBe(1)
+  })
+
+  it('keeps unread passive: it renders inside 等你确认 but never inflates the count', () => {
+    const readState = { data: NOW - HOUR }
+    const rows = todayWaiting([], [], NOW, {
+      instances: [assistantInstance('data', 'Data Bot', {
+        preview: { role: 'assistant', text: '报表已经生成', time: NOW - 120_000 },
+      })],
+      tasks: [],
+      readState,
+    })
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ kind: 'assistant_unread', subject: '报表已经生成' })
+    expect(todayActionableCount(rows)).toBe(0)
+
+    const model = todayModel({
+      teams: [],
+      now: NOW,
+      assistantInstances: [assistantInstance('data', 'Data Bot', {
+        preview: { role: 'assistant', text: '报表已经生成', time: NOW - 120_000 },
+      })],
+      assistantReadState: readState,
+    })
+    expect(model.greeting).toBe('今天没有等你的事')
+    expect(model.waiting).toHaveLength(1)
+    expect(model.attentionCount).toBe(0)
+  })
+
+  it('shows one row per assistant: a decision wins over its unread preview', () => {
+    const rows = todayWaiting([], [], NOW, {
+      instances: [assistantInstance('paper', 'Paper Bot', {
+        mainSessionId: 'session-main',
+        preview: { role: 'assistant', text: '旧消息', time: NOW - 600_000 },
+      })],
+      tasks: [assistantTask('paper', 'needs_input')],
+      readState: { paper: NOW - HOUR },
+    })
+    expect(rows.map(row => row.kind)).toEqual(['assistant_decision'])
+  })
+
+  it('skips archived assistants entirely', () => {
+    const rows = todayWaiting([], [], NOW, {
+      instances: [assistantInstance('old', '旧助手', {
+        status: 'archived',
+        preview: { role: 'assistant', text: '归档前的消息', time: NOW - 600_000 },
+      })],
+      tasks: [assistantTask('old', 'needs_input')],
+      readState: { old: NOW - HOUR },
+    })
+    expect(rows).toEqual([])
+  })
+
+  it('never turns a waiting_approval member into a waiting row', () => {
+    expect(todayWaiting(
+      [team({ members: [member('parked', { lastRuntimeState: 'waiting_approval' })] })],
+      [],
+      NOW,
+    )).toEqual([])
+  })
+})
+
+describe('todayArchive', () => {
+  const thread = {
+    id: 'thread-1',
+    title: '旧线程',
+    sessionId: 'session-thread',
+    createdAt: 0,
+    updatedAt: 0,
+  }
+
+  it('lists only archived teams, archived assistants and retired threads', () => {
+    const archive = todayArchive(
+      [
+        team({ id: 'team-old', name: '旧团队', archivedAt: '2026-01-01T00:30:00.000Z', retiredThreads: { [thread.id]: thread } }),
+        team({ id: 'team-live', name: '在线团队' }),
+      ],
+      [
+        assistantInstance('old', '旧助手', { status: 'archived', mainSessionId: 'session-old' }),
+        assistantInstance('live', '在线助手'),
+        assistantInstance('threads', 'Thread Bot', { retiredThreadSessionIds: ['session-r'] }),
+      ],
+    )
+    expect(archive.teams).toEqual([{ id: 'team-old', name: '旧团队' }])
+    expect(archive.assistants).toEqual([{ id: 'old', name: '旧助手', sessionId: 'session-old' }])
+    expect(archive.threads).toHaveLength(2)
+    expect(archive.threads).toEqual(expect.arrayContaining([
+      { sessionId: 'session-thread', title: '旧线程', source: '旧团队' },
+      { sessionId: 'session-r', title: '附加会话（已归档）', source: 'Thread Bot' },
+    ]))
+    expect(archive.total).toBe(4)
+  })
+
+  it('is empty when nothing was archived, and stays out of the headline', () => {
+    const model = todayModel({
+      teams: [team({ id: 'live' })],
+      now: NOW,
+      assistantInstances: [assistantInstance('live', '在线助手')],
+    })
+    expect(model.archived).toEqual({ teams: [], assistants: [], threads: [], total: 0 })
+    expect(model.greeting).toBe('今天没有等你的事')
   })
 })
