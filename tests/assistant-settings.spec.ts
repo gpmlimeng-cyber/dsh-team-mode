@@ -90,7 +90,12 @@ const {
   memoryWriteFailure,
 } = await import('../src/client/assistant-memory-panel.js')
 const { AssistantCreateBody, AssistantCreateFooter } = await import('../src/client/assistant-dialogs.js')
-const { AssistantOverviewMemoryRow } = await import('../src/client/assistant-settings-pane.js')
+const {
+  ASSISTANT_SETTING_GROUPS,
+  AssistantOverviewMemoryRow,
+  visibleSettingGroups,
+} = await import('../src/client/assistant-settings-pane.js')
+const { UsageSection, installUsageSessions, usageReport } = await import('../src/client/usage.js')
 const { assistantMemoryCountLine } = await import('../src/client/assistant-overview.js')
 
 const NOW = '2026-10-23T00:00:00.000Z'
@@ -778,5 +783,134 @@ describe('shared memory entry card and team memory section', () => {
     expect(teamPanel).not.toContain('(compact || team.memory !== undefined) &&')
     expect(teamPanel).toContain('还没有团队记忆')
     expect(teamPanel).toContain('添加记忆')
+  })
+})
+
+describe('assistant 用量 section', () => {
+  const snapshot = {
+    phase: 'ready',
+    byId: {
+      main: {
+        projectionValues: {
+          tokenUsage: {
+            uncachedInputTokens: 1000,
+            cacheReadTokens: 3000,
+            cacheWriteTokens: 0,
+            outputTokens: 500,
+          },
+          sessionStats: { turns: 4 },
+          contextPressure: { projectedTokens: 64_000, contextWindow: 128_000 },
+          modelSelection: { lastUsed: { provider: 'deepseek', model: 'deepseek-chat' } },
+        },
+      },
+    },
+    projectionsBySession: {},
+  }
+
+  function render(scope: Array<{ sessionId: string; label?: string; retired?: boolean }>): string {
+    installUsageSessions({
+      list: { getSnapshot: () => snapshot, subscribe: () => () => {} },
+    })
+    try {
+      return renderToStaticMarkup(createElement(UsageSection, { scope }))
+    } finally {
+      installUsageSessions(undefined)
+    }
+  }
+
+  it('reads the four buckets, cache hit, turns and context from the projections', () => {
+    const html = render([{ sessionId: 'main', label: '主会话' }])
+
+    expect(plainText(html)).toContain('输入 1k · 缓存读 3k · 缓存写 0 · 输出 500')
+    expect(html).toContain('data-dsh-usage-total="4500"')
+    // cacheRead / (uncached + cacheRead + cacheWrite)
+    expect(plainText(html)).toContain('缓存命中 75%')
+    expect(plainText(html)).toContain('4 轮')
+    // projectedTokens / contextWindow, read as the current occupancy.
+    expect(plainText(html)).toContain('上下文 50%')
+    // One row per Session, carrying the native conversation opener's target.
+    expect(html).toContain('data-dsh-usage-row="0"')
+    expect(plainText(html)).not.toContain('部分会话')
+  })
+
+  it('renders “—” for a Session the Host has no projections for, never 0', () => {
+    const html = render([{ sessionId: 'main', label: '主会话' }, { sessionId: 'cold', label: '附加会话' }])
+
+    expect(html).toContain('data-dsh-usage-row="1"')
+    expect(plainText(html)).toContain('— tok · 轮数 — · 缓存 — · 上下文 —')
+    expect(plainText(html)).toContain('部分会话暂无法读取，合计只含已读取的 1 个会话')
+    expect(plainText(html)).not.toContain('0 tok')
+  })
+
+  it('shows a wholly unread scope as “—” and keeps no cost, history or split', () => {
+    installUsageSessions({ list: { getSnapshot: () => ({ phase: 'ready' }), subscribe: () => () => {} } })
+    const html = renderToStaticMarkup(createElement(UsageSection, { scope: [{ sessionId: 'cold' }] }))
+    installUsageSessions(undefined)
+
+    expect(plainText(html)).toContain('—tokens')
+    expect(plainText(html)).toContain('缓存命中 —')
+    expect(plainText(html)).toContain('轮数 —')
+    expect(plainText(html)).toContain('上下文 —')
+    // Read-only and native: no price, no time range, no per-model split, no input.
+    expect(html).not.toMatch(/\$|cost|price|currency|USD|金额|费用/i)
+    expect(html).not.toContain('<select')
+    expect(html).not.toContain('<input')
+    expect(html).not.toContain('按模型')
+  })
+})
+
+describe('assistant 用量 wiring', () => {
+  const pane = readFileSync(
+    new URL('../src/client/assistant-settings-pane.tsx', import.meta.url),
+    'utf8',
+  )
+  const usage = readFileSync(new URL('../src/client/usage.ts', import.meta.url), 'utf8')
+
+  it('adds 用量 as its own accordion group on the existing settings surface', () => {
+    const group = ASSISTANT_SETTING_GROUPS.find(entry => entry.id === 'usage')
+    expect(group?.title).toBe('用量')
+    expect(visibleSettingGroups('缓存')).toEqual(['usage'])
+    expect(pane).toContain('dataKind="usage"')
+    expect(pane).toContain('<UsageSection scope={assistantUsageScope(assistant)} />')
+    // Names the source instead of implying this plugin keeps a ledger.
+    expect(pane).toContain('只读 · 来自宿主会话投影')
+  })
+
+  it('opens the native Session from a row and writes nothing', () => {
+    expect(usage).toContain('onClick: () => { open(row.sessionId) }')
+    expect(usage).toContain('if (openAssistantSession(sessionId))')
+    expect(pane).toContain('<UsageSection scope={assistantUsageScope(assistant)} />')
+    // No storage, no request, no ledger: the read channel is the Host store.
+    expect(usage).not.toMatch(/localStorage|sessionStorage|indexedDB|fetch\(|XMLHttpRequest/)
+    // A comment may say "no cost"; no field, sign or currency may exist.
+    expect(usage).not.toMatch(/\$(?!\{)|costUsd|totalCost|currency\s*:|priceUsd|金额|费用/i)
+    expect(usage).not.toContain('setItem')
+  })
+
+  it('sums only Sessions that reported a complete tokenUsage', () => {
+    const report = usageReport(
+      [{ sessionId: 'a' }, { sessionId: 'b' }],
+      {
+        phase: 'ready',
+        byId: {
+          a: {
+            projectionValues: {
+              tokenUsage: {
+                uncachedInputTokens: 1,
+                cacheReadTokens: 2,
+                cacheWriteTokens: 3,
+                outputTokens: 4,
+              },
+            },
+          },
+          // A partial tokenUsage (older state version) contributes nothing.
+          b: { projectionValues: { tokenUsage: { outputTokens: 100 } } },
+        },
+      },
+    )
+
+    expect(report.rollup.tokens.total).toBe(10)
+    expect(report.rollup.reporting).toBe(1)
+    expect(report.rows[1]?.tokens.total).toBeNull()
   })
 })

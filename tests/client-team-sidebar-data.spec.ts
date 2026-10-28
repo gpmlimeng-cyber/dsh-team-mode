@@ -52,6 +52,12 @@ import {
 import { teamPanelView } from '../src/client/team-main-agent-data.js'
 import { globalOverviewModel } from '../src/client/global-overview-data.js'
 import { isTeamExecuting } from '../src/client/team-status.js'
+import {
+  UsageSection,
+  installUsageSessions,
+  teamUsageScope,
+  usageReport,
+} from '../src/client/usage.js'
 
 const NOW = '2026-01-01T00:00:00.000Z'
 
@@ -1306,3 +1312,190 @@ function teamFixture(overrides: Partial<TeamView> & Pick<TeamView, 'members'>): 
     ...overrides,
   } as unknown as TeamView
 }
+
+describe('team usage scope', () => {
+  it('covers member Sessions, threads, archived threads, removed members and handoffs', () => {
+    const team = teamFixture({
+      members: {
+        leader: {
+          id: 'leader',
+          displayName: 'Leader',
+          role: 'leader',
+          sessionId: 'session-leader',
+        },
+        alpha: {
+          id: 'alpha',
+          displayName: 'Alpha',
+          role: 'member',
+          sessionId: 'session-alpha',
+        },
+      } as unknown as TeamView['members'],
+      threads: {
+        thread: {
+          id: 'thread',
+          title: '主线讨论',
+          sessionId: 'session-thread',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+      retiredThreads: {
+        oldThread: {
+          id: 'oldThread',
+          title: '旧讨论',
+          sessionId: 'session-old-thread',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      },
+      retiredSessions: {
+        gone: {
+          formerSlotId: 'gone',
+          displayName: '已移除成员',
+          sessionId: 'session-gone',
+          removedAt: '2026-01-02T00:00:00.000Z',
+        },
+      },
+      // The Leader Session is also a member Session: it must count once.
+      retiredLeaderSessionIds: ['session-leader', 'session-old-leader'],
+    })
+
+    const scope = teamUsageScope(team)
+    expect(scope.map(entry => entry.sessionId)).toEqual([
+      'session-leader',
+      'session-alpha',
+      'session-thread',
+      'session-old-thread',
+      'session-gone',
+      'session-old-leader',
+    ])
+    expect(scope.filter(entry => entry.retired === true).map(entry => entry.sessionId))
+      .toEqual(['session-old-thread', 'session-gone', 'session-old-leader'])
+    expect(scope.find(entry => entry.sessionId === 'session-alpha')?.label).toBe('Alpha')
+    expect(scope.find(entry => entry.sessionId === 'session-thread')?.label).toBe('主线讨论')
+    // The deduplicated Leader row keeps its live label instead of the retired one.
+    expect(scope.filter(entry => entry.sessionId === 'session-leader')).toHaveLength(1)
+    expect(scope.find(entry => entry.sessionId === 'session-leader')?.retired).toBeUndefined()
+  })
+
+  it('rolls the team up from the same host projections as the assistant panel', () => {
+    const team = teamFixture({
+      members: {
+        leader: { id: 'leader', displayName: 'Leader', role: 'leader', sessionId: 'a' },
+        alpha: { id: 'alpha', displayName: 'Alpha', role: 'member', sessionId: 'b' },
+      } as unknown as TeamView['members'],
+      retiredSessions: {},
+    })
+    const report = usageReport(teamUsageScope(team), {
+      phase: 'ready',
+      byId: {
+        a: {
+          projectionValues: {
+            tokenUsage: {
+              uncachedInputTokens: 100,
+              cacheReadTokens: 900,
+              cacheWriteTokens: 0,
+              outputTokens: 50,
+            },
+            sessionStats: { turns: 2 },
+          },
+        },
+        b: {
+          projectionValues: {
+            tokenUsage: {
+              uncachedInputTokens: 0,
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+              outputTokens: 10,
+            },
+          },
+        },
+      },
+    })
+
+    expect(report.rollup.tokens).toEqual({
+      uncachedInput: 100,
+      cacheRead: 900,
+      cacheWrite: 0,
+      output: 60,
+      total: 1060,
+    })
+    expect(report.rollup.cacheHitPercent).toBe(90)
+    expect(report.rollup.turns).toBe(2)
+  })
+})
+
+describe('team card usage surface', () => {
+  const teamPanel = readFileSync(
+    new URL('../src/client/teams/TeamPanel.tsx', import.meta.url),
+    'utf8',
+  )
+  const styles = readFileSync(
+    new URL('../src/client/AgentTeam.module.css', import.meta.url),
+    'utf8',
+  )
+
+  it('sits between 团队成员 and TeamMemorySection and reads the host projections', () => {
+    const membersAt = teamPanel.indexOf('aria-label="团队成员"')
+    const usageAt = teamPanel.indexOf('data-dsh-team-usage')
+    const memoryAt = teamPanel.indexOf('<TeamMemorySection')
+    expect(membersAt).toBeGreaterThan(-1)
+    expect(usageAt).toBeGreaterThan(membersAt)
+    expect(memoryAt).toBeGreaterThan(usageAt)
+    expect(teamPanel).toContain('<UsageSection scope={teamUsageScope(team)} emptyHint="团队还没有会话用量" />')
+    expect(teamPanel).toContain('只读 · 来自宿主会话投影')
+  })
+
+  it('renders member rows from the team scope', () => {
+    installUsageSessions({
+      list: {
+        getSnapshot: () => ({
+          phase: 'ready',
+          byId: {
+            a: {
+              projectionValues: {
+                tokenUsage: {
+                  uncachedInputTokens: 100,
+                  cacheReadTokens: 900,
+                  cacheWriteTokens: 0,
+                  outputTokens: 50,
+                },
+                sessionStats: { turns: 2 },
+                contextPressure: { pressureTokens: 32_000, contextWindow: 128_000 },
+              },
+            },
+          },
+        }),
+        subscribe: () => () => {},
+      },
+    })
+    try {
+      const html = renderToStaticMarkup(createElement(UsageSection, {
+        scope: [
+          { sessionId: 'a', label: 'Leader' },
+          { sessionId: 'gone', label: '已移除成员', retired: true },
+        ],
+      }))
+      const text = html.replace(/<[^>]*>/g, '')
+      expect(text).toContain('1.1k')
+      expect(text).toContain('缓存命中 90%')
+      expect(text).toContain('2 轮')
+      expect(text).toContain('上下文 25%')
+      expect(text).toContain('已退役')
+      expect(html).toContain('data-dsh-usage-row="1"')
+      // The team card never prints a Session id; the row keeps it in its click.
+      expect(html).not.toContain('data-dsh-usage-session="')
+      expect(text).toContain('— tok · 轮数 — · 缓存 — · 上下文 —')
+    } finally {
+      installUsageSessions(undefined)
+    }
+  })
+
+  it('styles only with semantic tokens and never fixes or layers the panel', () => {
+    const block = styles.slice(styles.indexOf('/* 用量'))
+    expect(block).toContain('var(--dsw-alias-label-primary)')
+    expect(block).toContain('var(--dsw-radius-md)')
+    expect(block).not.toMatch(/position:\s*fixed|z-index|!important|#[0-9a-f]{3,6}\b|rgba?\(/i)
+    expect(block).not.toMatch(/(^|\n)\s*body\b/)
+  })
+})

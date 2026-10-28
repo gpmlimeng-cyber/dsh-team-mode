@@ -59,6 +59,7 @@ import { SelectControl } from './select-control.js'
 import type { SelectControlOption } from './select-control.js'
 import { SettingsRow, SettingsRows } from './settings-row.js'
 import { FoldGroup } from './fold-group.js'
+import { UsageSection, assistantUsageScope } from './usage.js'
 import css from './AgentTeam.module.css'
 import { isCoordinatorInstance } from '../domain/types.js'
 import type {
@@ -125,6 +126,7 @@ export type AssistantSettingGroupId =
   | 'overview'
   | 'identity'
   | 'model'
+  | 'usage'
   | 'capabilities'
   | 'memory'
   | 'automations'
@@ -147,6 +149,7 @@ export const ASSISTANT_SETTING_GROUPS: readonly AssistantSettingGroup[] = [
   { id: 'overview', title: '概览', keywords: '概览 待办 待办清单 它是什么 能力边界 描述 模板 workspace 权限' },
   { id: 'identity', title: '身份与形象', keywords: '身份 形象 头像 显示名称 名称 人设 说明' },
   { id: 'model', title: '模型与权限', keywords: '模型 provider model 思考模式 推理强度 权限预设 权限' },
+  { id: 'usage', title: '用量', keywords: '用量 token 令牌 缓存 命中 轮数 上下文 会话' },
   { id: 'capabilities', title: '技能与MCP', keywords: '技能 skills mcp 工具 server' },
   { id: 'memory', title: '记忆', keywords: '记忆 条目 旧版 变更 日志 待确认' },
   { id: 'automations', title: '自动化', keywords: '自动化 定时 任务 提醒' },
@@ -175,6 +178,9 @@ const GROUP_ICONS: Record<AssistantSettingGroupId, JSX.Element> = {
   overview: <IconInfoOutlineRegular size={14} />,
   identity: <IconPersonalizationOutlineRegular size={14} />,
   model: <IconSlidersTwoOutlineRegular size={14} />,
+  // 用量 is the same kind of read-only fact sheet as 概览, so it reuses that
+  // icon: a new icon export would force every partial primitives mock to grow.
+  usage: <IconInfoOutlineRegular size={14} />,
   capabilities: <IconSparkleRegular size={14} />,
   memory: <IconDatabaseOutlineRegular size={14} />,
   automations: <IconClockOutlineRegular size={14} />,
@@ -876,6 +882,19 @@ export function AssistantSettingsPane({
               读取模型能力失败：{modelCapabilities.error}
             </div>
           )}
+        </FoldGroup>
+      )}
+
+      {isVisible('usage') && (
+        <FoldGroup
+          icon={GROUP_ICONS.usage}
+          title="用量"
+          hint="只读 · 来自宿主会话投影"
+          open={isOpen('usage')}
+          onToggle={open => { toggle('usage', open) }}
+          dataKind="usage"
+        >
+          <UsageSection scope={assistantUsageScope(assistant)} />
         </FoldGroup>
       )}
 

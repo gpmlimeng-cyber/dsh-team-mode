@@ -62,6 +62,7 @@ import {
   reconcileVisibleMemberSlots,
   toggleVisibleMemberSlot,
 } from '../member-visibility.js'
+import { UsageSection, teamUsageScope } from '../usage.js'
 import { AnimatedModal, Empty, Field } from '../shared.js'
 import { closeAgentTeam, openTeam } from '../store.js'
 import { isTeamExecuting } from '../team-status.js'
@@ -1375,6 +1376,15 @@ export function TeamCard({
       {goalsPresent && (
         <GoalSummary team={team} selected={goalFilter} onSelect={setGoalFilter} />
       )}
+      <section className={css.teamMemberSection} aria-label="用量" data-dsh-team-usage>
+        <div className={css.teamSectionHeader}>
+          <strong>用量</strong>
+          <span className={css.teamSectionActions}>
+            <span>只读 · 来自宿主会话投影</span>
+          </span>
+        </div>
+        <UsageSection scope={teamUsageScope(team)} emptyHint="团队还没有会话用量" />
+      </section>
       <TeamMemorySection team={team} onChanged={onChanged} />
       <div className={`${css.contextResetPanel} ${css.cloneTeamPanel ?? ''}`}>
         <div className={css.contextResetCopy}>

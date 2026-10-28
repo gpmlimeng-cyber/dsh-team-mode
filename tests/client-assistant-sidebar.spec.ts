@@ -7,6 +7,18 @@ import {
 } from '../src/client/assistant-instances.js'
 import type { AssistantInstance, AssistantSession } from '../src/domain/types.js'
 import type { AssistantInstanceView } from '../src/transport/contracts.js'
+import {
+  USAGE_MISSING,
+  assistantUsageScope,
+  formatUsageContext,
+  formatUsagePercent,
+  formatUsageTokens,
+  installUsageSessions,
+  requestMissingProjections,
+  usageReport,
+  usageRowFacts,
+  type UsageListSnapshot,
+} from '../src/client/usage.js'
 
 const ISO = '2026-01-01T00:00:00Z'
 
@@ -231,5 +243,249 @@ describe('assistant sidebar source contract', () => {
     expect(source).toContain("setGroupDialog({ kind: 'import' })")
     expect(teamSidebar).toContain("openGroupDialog({ kind: 'export', name: group })")
     expect(teamSidebar).toContain("openGroupDialog({ kind: 'import' })")
+  })
+})
+
+const usageSnapshot = (
+  values: Record<string, unknown>,
+  extra: Partial<UsageListSnapshot> = {},
+): UsageListSnapshot => ({
+  phase: 'ready',
+  byId: Object.fromEntries(Object.entries(values).map(([id, projectionValues]) => [
+    id,
+    { projectionValues: projectionValues as never },
+  ])),
+  ...extra,
+})
+
+const fullUsage = (overrides: Record<string, number> = {}): Record<string, unknown> => ({
+  tokenUsage: {
+    uncachedInputTokens: 1000,
+    cacheReadTokens: 3000,
+    cacheWriteTokens: 0,
+    outputTokens: 500,
+    ...overrides,
+  },
+  sessionStats: { turns: 4 },
+  contextPressure: { projectedTokens: 64_000, contextWindow: 128_000 },
+})
+
+describe('assistant usage scope', () => {
+  it('covers the main Session, added threads and both retired lists', () => {
+    const scope = assistantUsageScope({
+      mainSessionId: 'main',
+      threadSessionIds: ['thread-1', 'thread-2'],
+      retiredMainSessionIds: ['old-main'],
+      retiredThreadSessionIds: ['old-thread'],
+    })
+
+    expect(scope.map(entry => entry.sessionId)).toEqual([
+      'main', 'thread-1', 'thread-2', 'old-main', 'old-thread',
+    ])
+    // Retired Sessions are counted (their tokens were really spent) and marked.
+    expect(scope.filter(entry => entry.retired === true).map(entry => entry.sessionId))
+      .toEqual(['old-main', 'old-thread'])
+    expect(assistantUsageScope({})).toEqual([])
+  })
+
+  it('counts one Session once, preferring the live row over a retired one', () => {
+    const scope = assistantUsageScope({
+      mainSessionId: 'shared',
+      threadSessionIds: ['shared'],
+      retiredMainSessionIds: ['shared'],
+    })
+
+    expect(scope).toHaveLength(1)
+    expect(scope[0]?.retired).toBeUndefined()
+    expect(scope[0]?.label).toBe('主会话')
+  })
+})
+
+describe('usage rollup from host projections', () => {
+  it('sums the four buckets, cache hit, turns and the most occupied context', () => {
+    const snapshot = usageSnapshot({
+      main: fullUsage(),
+      thread: {
+        tokenUsage: {
+          uncachedInputTokens: 1000,
+          cacheReadTokens: 1000,
+          cacheWriteTokens: 0,
+          outputTokens: 100,
+        },
+        sessionStats: { turns: 0 },
+        contextPressure: { pressureTokens: 100_000, contextWindow: 200_000 },
+        modelSelection: { lastUsed: { provider: 'deepseek', model: 'deepseek-chat' } },
+      },
+    })
+    const report = usageReport(assistantUsageScope({
+      mainSessionId: 'main',
+      threadSessionIds: ['thread'],
+    }), snapshot)
+
+    expect(report.rollup.reporting).toBe(2)
+    expect(report.rollup.tokens).toEqual({
+      uncachedInput: 2000,
+      cacheRead: 4000,
+      cacheWrite: 0,
+      output: 600,
+      total: 6600,
+    })
+    // cacheRead / (uncached + cacheRead + cacheWrite) over the whole scope.
+    expect(report.rollup.cacheHitPercent).toBe(67)
+    // A real zero turn count is a fact, not a missing value.
+    expect(report.rollup.turns).toBe(4)
+    // Context windows never add up: the highest occupancy wins.
+    expect(report.rollup.context?.sessionId).toBe('thread')
+    expect(report.rollup.context?.percent).toBe(50)
+    expect(report.rollup.partial).toBe(false)
+    expect(report.rows[1]?.model).toBe('deepseek-chat')
+  })
+
+  it('renders “—” for a Session without projections and keeps it out of the sums', () => {
+    const snapshot = usageSnapshot({ main: fullUsage() })
+    const report = usageReport(assistantUsageScope({
+      mainSessionId: 'main',
+      threadSessionIds: ['cold'],
+    }), snapshot)
+
+    expect(report.rollup.tokens.total).toBe(4500)
+    expect(report.rollup.reporting).toBe(1)
+    expect(report.rollup.missing).toBe(1)
+    expect(report.rollup.partial).toBe(true)
+    const cold = report.rows[1]
+    expect(cold?.missing).toBe(true)
+    expect(cold?.tokens.total).toBeNull()
+    expect(cold?.turns).toBeNull()
+    expect(cold?.context).toBeNull()
+    expect(usageRowFacts(cold!)).toBe('— tok · 轮数 — · 缓存 — · 上下文 —')
+    // The missing row never becomes a zero-token contributor: the sum is the
+    // one Session that answered, and the row count says two.
+    expect(report.rollup.sessions).toBe(2)
+    expect(report.rollup.tokens.total).toBe(4500)
+  })
+
+  it('keeps migration-deferred cached values and says the total is partial', () => {
+    const snapshot = usageSnapshot({ main: fullUsage()}, {
+      projectionsBySession: {
+        main: { values: {}, state: 'migration-required' },
+        cold: { values: {}, state: 'migration-required' },
+      },
+    })
+    const report = usageReport(assistantUsageScope({
+      mainSessionId: 'main',
+      threadSessionIds: ['cold'],
+    }), snapshot)
+
+    expect(report.rollup.migrating).toBe(2)
+    expect(report.rollup.partial).toBe(true)
+    expect(report.rows.every(row => row.migrating)).toBe(true)
+    // Cached values still sum: migration only limits what is readable.
+    expect(report.rollup.tokens.total).toBe(4500)
+  })
+
+  it('shows nothing read yet as “—”, never as zero', () => {
+    const report = usageReport(assistantUsageScope({ mainSessionId: 'main' }), undefined)
+
+    expect(report.rollup.tokens).toEqual({
+      uncachedInput: null,
+      cacheRead: null,
+      cacheWrite: null,
+      output: null,
+      total: null,
+    })
+    expect(report.rollup.cacheHitPercent).toBeNull()
+    expect(report.rollup.turns).toBeNull()
+    expect(report.rollup.context).toBeNull()
+    expect(formatUsageTokens(report.rollup.tokens.total)).toBe(USAGE_MISSING)
+    expect(formatUsagePercent(report.rollup.cacheHitPercent)).toBe(USAGE_MISSING)
+    expect(formatUsageContext(report.rollup.context)).toBe(USAGE_MISSING)
+    expect(report.rows[0]?.missing).toBe(true)
+    expect(report.rollup.loading).toBe(false)
+  })
+
+  it('prefers the list row projection and falls back to the store map', () => {
+    const rowValues = fullUsage()
+    const storeValues = { sessionStats: { turns: 9 } }
+    const snapshot: UsageListSnapshot = {
+      phase: 'ready',
+      byId: {
+        row: { projectionValues: rowValues as never },
+        store: {},
+      },
+      projectionsBySession: {
+        row: { values: {} },
+        store: { values: storeValues, state: 'idle' },
+      },
+    }
+
+    const report = usageReport([
+      { sessionId: 'row' },
+      { sessionId: 'store' },
+    ], snapshot)
+    expect(report.rows[0]?.turns).toBe(4)
+    expect(report.rows[0]?.missing).toBe(false)
+    expect(report.rows[1]?.turns).toBe(9)
+    expect(report.rows[1]?.tokens.total).toBeNull()
+  })
+
+  it('keeps a 0% cache hit and a 0-turn Session as real zeroes', () => {
+    const snapshot = usageSnapshot({
+      main: {
+        tokenUsage: {
+          uncachedInputTokens: 500,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens: 50,
+        },
+        sessionStats: { turns: 0 },
+      },
+    })
+    const report = usageReport(assistantUsageScope({ mainSessionId: 'main' }), snapshot)
+
+    expect(report.rollup.cacheHitPercent).toBe(0)
+    expect(report.rollup.turns).toBe(0)
+    expect(usageRowFacts(report.rows[0]!)).toBe('550 tok · 0 轮 · 缓存 0% · 上下文 —')
+  })
+})
+
+/** Flush the promise chain a projection read builds (call, settle, cleanup). */
+async function settle(): Promise<void> {
+  for (let index = 0; index < 4; index += 1) await Promise.resolve()
+}
+
+describe('usage projection reads', () => {
+  function fakeSessions(): { refresh: string[]; sessions: Parameters<typeof installUsageSessions>[0] } {
+    const refresh: string[] = []
+    return {
+      refresh,
+      sessions: {
+        list: { getSnapshot: () => ({}), subscribe: () => () => {} },
+        refreshProjections: async (sessionId: string) => { refresh.push(sessionId) },
+      },
+    }
+  }
+
+  it('asks once per unknown Session and never for one that already answered', async () => {
+    const fake = fakeSessions()
+    installUsageSessions(fake.sessions)
+    const snapshot = usageSnapshot({ known: fullUsage() }, {
+      projectionsBySession: { migrating: { values: {}, state: 'migration-required' } },
+    })
+    const scope = [
+      { sessionId: 'known' },
+      { sessionId: 'migrating' },
+      { sessionId: 'cold' },
+    ]
+
+    requestMissingProjections(scope, snapshot)
+    requestMissingProjections(scope, snapshot)
+    await settle()
+    expect(fake.refresh).toEqual(['cold'])
+
+    // After the one request settles, a later mount may retry the same id.
+    requestMissingProjections(scope, snapshot)
+    await settle()
+    expect(fake.refresh).toEqual(['cold', 'cold'])
+    installUsageSessions(undefined)
   })
 })

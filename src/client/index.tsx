@@ -55,6 +55,7 @@ import {
   teamLeaderSessionId,
 } from './api.js'
 import { installTeamLocale, type TeamLocaleContext } from './team-i18n.js'
+import { installUsageSessions, type UsageSessionsService } from './usage.js'
 import type { TeamView } from '../transport/contracts.js'
 
 export const name = 'dsh-team-mode-client'
@@ -159,6 +160,9 @@ export function apply(ctx: AgentTeamClientContext): void {
   const sessions = (ctx as unknown as {
     sessions?: { refresh?: () => Promise<unknown> }
   }).sessions
+  // 用量 is read-only and uses the Host's own Session projection store: the
+  // same snapshot the native UI subscribes to, no new transport, no storage.
+  installUsageSessions(sessions as unknown as UsageSessionsService | undefined)
   const openSession = (sessionId: string): void => {
     // Navigation only. The right sidebar follows the shell's remembered user
     // state; Team Mode must not force it open or select a tab.
