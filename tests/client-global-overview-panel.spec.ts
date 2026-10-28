@@ -290,7 +290,7 @@ describe('GlobalOverview summary and attention', () => {
 })
 
 describe('GlobalOverview navigation', () => {
-  it('opens teams and only enables assistants that already have a main session', () => {
+  it('opens teams and routes every assistant row through the canonical ensure door', () => {
     const html = render({ ...populated, onOpenAssistant: () => undefined })
 
     expect(text(region(html, 'teams'))).toContain('研发团队')
@@ -299,12 +299,13 @@ describe('GlobalOverview navigation', () => {
     const withMain = buttonTag(html, 'data-assistant-id', 'assistant-run')
     const withoutMain = buttonTag(html, 'data-assistant-id', 'assistant-needs')
     expect(withMain).not.toContain('disabled')
-    expect(withoutMain).toContain('disabled')
+    // A row without a main session is not a dead control: the click
+    // materializes the canonical chat through assistant.instance.ensure first.
+    expect(withoutMain).not.toContain('disabled')
     expect(withoutMain).toContain('未创建主会话')
     expect(buttonTag(html, 'data-team-id', 'team-run')).not.toContain('disabled')
 
-    // Presence of a main session and a host navigation face both decide the
-    // disabled state; an enabled no-op button would be a dead control.
+    // Only the absence of a host navigation face disables an assistant row.
     const noHandler = render(populated)
     const noHandlerRow = buttonTag(noHandler, 'data-assistant-id', 'assistant-run')
     expect(noHandlerRow).toContain('disabled')
@@ -312,7 +313,7 @@ describe('GlobalOverview navigation', () => {
     expect(buttonTag(noHandler, 'data-assistant-id', 'assistant-needs')).toContain('disabled')
 
     const attentionRow = buttonTag(html, 'data-attention-assistant-id', 'assistant-needs')
-    expect(attentionRow).toContain('disabled')
+    expect(attentionRow).not.toContain('disabled')
     expect(attentionRow).toContain('未创建主会话')
   })
 
@@ -327,12 +328,13 @@ describe('GlobalOverview navigation', () => {
     expect(calls).toEqual(['close-workbench', 'open:session-main'])
   })
 
-  it('uses only the existing list calls and never ensures a session or offers bulk actions', () => {
+  it('uses only the existing list calls here and delegates the canonical ensure to the store', () => {
     const overview = source('global-overview.tsx')
     const methods = [...overview.matchAll(/callAgentTeam\('([^']+)'/g)].map(match => match[1]).sort()
 
     expect(methods).toEqual(['assistant.instance.list', 'assistant.task.list'])
-    expect(overview).not.toContain('assistant.instance.ensure')
+    // The ensure/naming/pin door lives in store.ts, not in this surface.
+    expect(overview).toContain('openAssistantMainSession(item.id, sessionId => { onOpenAssistant(sessionId) }')
     expect(overview).not.toContain('team.interaction.respond')
     expect(overview).not.toContain('批量')
     expect(overview).toContain('onClick={() => { onOpenTeam(item.id) }}')

@@ -68,7 +68,13 @@ import { SelectControl } from './select-control.js'
 import type { SelectControlOption } from './select-control.js'
 import { SettingsRow, SettingsRows } from './settings-row.js'
 import { FoldGroup } from './fold-group.js'
-import { openAssistantSession } from './store.js'
+import { AssistantCheckpointDialog } from './assistant-checkpoint-dialog.js'
+import {
+  assistantSessionOps,
+  ensureAssistantMainSession,
+  openAssistantMainSession,
+  openAssistantSession,
+} from './store.js'
 import { UsageSection, assistantUsageScope } from './usage.js'
 import css from './AgentTeam.module.css'
 import { isCoordinatorInstance } from '../domain/types.js'
@@ -237,16 +243,22 @@ export function AssistantNowBlock({
   now,
   at,
   busy,
+  compactBusy,
   onOpenChat,
   onOpenTask,
+  onCompact,
+  onNewRelationship,
   onAllSettings,
 }: {
   now: AssistantNow
   /** Milliseconds clock for the relative "最近" stamp; tests pin it. */
   at?: number | undefined
   busy?: boolean | undefined
+  compactBusy?: boolean | undefined
   onOpenChat: () => void
   onOpenTask: () => void
+  onCompact: () => void
+  onNewRelationship: () => void
   onAllSettings: () => void
 }): JSX.Element {
   const currentTitle = now.current === undefined
@@ -313,6 +325,28 @@ export function AssistantNowBlock({
         >
           全部设置
         </button>
+        {/* Relationship operations: both are native — a slash command in the
+            canonical chat, and the existing checkpoint handoff dialog. */}
+        <button
+          type="button"
+          className={css.assistantNowAction}
+          data-dsh-assistant-now-action="compact"
+          disabled={busy === true || compactBusy === true}
+          title="在主会话里执行原生 /compact；忙碌或不可用时宿主的拒绝会显示在下方"
+          onClick={onCompact}
+        >
+          {compactBusy === true ? '压缩中…' : '压缩上下文'}
+        </button>
+        <button
+          type="button"
+          className={css.assistantNowAction}
+          data-dsh-assistant-now-action="relationship"
+          disabled={busy === true}
+          title="用检查点交接开始一个新关系；旧主会话保留，不归档"
+          onClick={onNewRelationship}
+        >
+          开始新关系
+        </button>
       </div>
     </section>
   )
@@ -362,6 +396,9 @@ export function AssistantSettingsPane({
   const [archiving, setArchiving] = useState(false)
   const [openingChat, setOpeningChat] = useState(false)
   const [openingTask, setOpeningTask] = useState(false)
+  const [compacting, setCompacting] = useState(false)
+  const [checkpointOpen, setCheckpointOpen] = useState(false)
+  const [actionNotice, setActionNotice] = useState<string>()
   const [error, setError] = useState<string>()
   const [mascotMotion, setMascotMotion] = useState<MascotMotion>('idle')
   const [mascotMotionKey, setMascotMotionKey] = useState(0)
@@ -645,13 +682,18 @@ export function AssistantSettingsPane({
     if (openingChat) return
     setOpeningChat(true)
     setError(undefined)
+    setActionNotice(undefined)
     try {
-      const result = await callAgentTeam('assistant.instance.ensure', { id: assistant.id })
-      // ensure binds mainSessionId, so refresh the row before navigating.
+      // One door: ensure the canonical chat, name/mark it, then navigate. A
+      // raw stored session id is never opened from here.
+      const session = await openAssistantMainSession(assistant.id, sessionId => {
+        if (!openAssistantSession(sessionId)) {
+          setError('暂时打不开会话：会话界面还没就绪')
+        }
+      }, { bound: assistant.mainSessionId !== undefined })
+      if (session.notice !== undefined) setActionNotice(session.notice)
+      // ensure binds mainSessionId, so refresh the row after navigating.
       await onSaved()
-      if (!openAssistantSession(result.sessionId)) {
-        setError('暂时打不开会话：会话界面还没就绪')
-      }
     } catch (cause) {
       setError(`打开会话失败：${messageOf(cause)}`)
     } finally {
@@ -675,6 +717,55 @@ export function AssistantSettingsPane({
     } finally {
       setOpeningTask(false)
     }
+  }
+
+  /**
+   * 压缩上下文: run the shipped `/compact` in the canonical chat through the
+   * host's client Session service (the same call the composer uses). No second
+   * compactor and no endpoint; a busy/unavailable host refusal is shown inline,
+   * and the session opens so the native compaction flow/refusal is visible.
+   */
+  async function compactMainSession(): Promise<void> {
+    if (compacting) return
+    setCompacting(true)
+    setError(undefined)
+    setActionNotice(undefined)
+    try {
+      const ops = assistantSessionOps()
+      if (ops === undefined) {
+        setError('宿主会话服务不可用，无法执行 /compact')
+        return
+      }
+      const session = await ensureAssistantMainSession(assistant.id, {
+        bound: assistant.mainSessionId !== undefined,
+      })
+      if (session.notice !== undefined) setActionNotice(session.notice)
+      const verdict = await ops.command(session.sessionId, '/compact')
+      if (!verdict.ok) {
+        setError(`压缩被拒绝：${verdict.message ?? '宿主拒绝执行 /compact'}`)
+        return
+      }
+      if (!verdict.matched) {
+        setError('这个会话没有可用的 /compact 命令')
+        return
+      }
+      setActionNotice('已发送原生 /compact')
+      if (!openAssistantSession(session.sessionId)) {
+        setActionNotice('已发送原生 /compact；会话界面还未就绪')
+      }
+      await onSaved()
+    } catch (cause) {
+      setError(`压缩失败：${messageOf(cause)}`)
+    } finally {
+      setCompacting(false)
+    }
+  }
+
+  /** 开始新关系: reuse the existing checkpoint handoff; never archive main. */
+  function startNewRelationship(): void {
+    setError(undefined)
+    setActionNotice(undefined)
+    setCheckpointOpen(true)
   }
 
   /** 全部设置: clear the search, open every group, and start at 概览. */
@@ -839,8 +930,11 @@ export function AssistantSettingsPane({
         now={now}
         at={Date.now()}
         busy={busy || openingChat || openingTask}
+        compactBusy={compacting}
         onOpenChat={() => { void openChat() }}
         onOpenTask={() => { void openCurrentTask() }}
+        onCompact={() => { void compactMainSession() }}
+        onNewRelationship={startNewRelationship}
         onAllSettings={showAllSettings}
       />
       <label className={css.settingsSearch}>
@@ -854,6 +948,9 @@ export function AssistantSettingsPane({
         />
       </label>
       {error !== undefined && <div className={css.inlineError} role="alert">{error}</div>}
+      {actionNotice !== undefined && (
+        <div className={css.assistantDetailNotice} role="status">{actionNotice}</div>
+      )}
       {catalogError !== undefined && <div className={css.inlineError} role="alert">{catalogError}</div>}
       {visible.length === 0 && (
         <p className={css.assistantDetailHint} role="status">
@@ -1279,6 +1376,19 @@ export function AssistantSettingsPane({
           {saving ? '保存中…' : '保存'}
         </Button>
       </div>
+      {/* The one new-relationship path: the existing checkpoint handoff. It
+          retires the old main Session into the history list and binds a fresh
+          one; this pane never archives the main Session. */}
+      <AssistantCheckpointDialog
+        open={checkpointOpen}
+        assistant={assistant}
+        onClose={() => { setCheckpointOpen(false) }}
+        openSession={sessionId => {
+          if (!openAssistantSession(sessionId)) {
+            setError('暂时打不开新会话：会话界面还没就绪')
+          }
+        }}
+      />
     </div>
   )
 }

@@ -1,4 +1,10 @@
 import { useSyncExternalStore } from 'react'
+import { callAgentTeam } from './api.js'
+import {
+  assistantMainSessionTitle,
+  shouldPinAssistantMainSession,
+} from './assistant-instances.js'
+import type { AssistantInstance } from '../domain/types.js'
 import type { SurfaceMode } from './surface-mode.js'
 
 export type TeamDialog =
@@ -148,4 +154,110 @@ export function openAssistantSession(sessionId: string): boolean {
   if (sessionOpener === undefined) return false
   sessionOpener(sessionId)
   return true
+}
+
+/** One host Session operation the relationship needs; the client entry owns the service. */
+export interface AssistantSessionOps {
+  /** The Session's current host title, from the Host Session list when known. */
+  title(sessionId: string): string | undefined
+  /** Rename through the native session-title path; resolves with the accepted title. */
+  rename(sessionId: string, title: string): Promise<string>
+  /**
+   * Run one native slash command in that Session and report the host verdict.
+   * A refusal is `ok: false` plus the host message; `matched: false` means the
+   * deployment offers no such command.
+   */
+  command(
+    sessionId: string,
+    line: string,
+  ): Promise<{ ok: boolean; matched: boolean; message?: string | undefined }>
+}
+
+let sessionOps: AssistantSessionOps | undefined
+
+/**
+ * Point the relationship flow at the Host's client Session service. Called once
+ * by the client entry, which is the only owner of `ctx.sessions`; passing
+ * `undefined` detaches it (server render and tests).
+ */
+export function installAssistantSessionOps(ops: AssistantSessionOps | undefined): void {
+  sessionOps = ops
+}
+
+export function assistantSessionOps(): AssistantSessionOps | undefined {
+  return sessionOps
+}
+
+export interface AssistantMainSession {
+  instance: AssistantInstance
+  sessionId: string
+  /** Non-fatal naming problem; the Session is still usable. */
+  notice?: string | undefined
+}
+
+/**
+ * Materialize (or resume) the one canonical chat for a coworker, name it after
+ * the assistant, and mark the relationship with the plugin's pinned state.
+ *
+ * `options.bound` is the caller's pre-ensure fact: a first bind is the only one
+ * that writes the plugin pin. Renaming compares the current host title first, so
+ * opening the same assistant repeatedly appends no title events. Naming failure
+ * never blocks the open — it travels back as `notice`.
+ */
+export async function ensureAssistantMainSession(
+  assistantId: string,
+  options?: { bound?: boolean | undefined },
+): Promise<AssistantMainSession> {
+  const result = await callAgentTeam('assistant.instance.ensure', { id: assistantId })
+  const notice = await markAssistantMainSession(
+    result.instance,
+    result.sessionId,
+    options?.bound === true,
+  )
+  return notice === undefined
+    ? { instance: result.instance, sessionId: result.sessionId }
+    : { instance: result.instance, sessionId: result.sessionId, notice }
+}
+
+/**
+ * The one door every coworker row uses: ensure the canonical main Session, then
+ * hand navigation to the host opener. A raw stored session id is never opened.
+ */
+export async function openAssistantMainSession(
+  assistantId: string,
+  open: (sessionId: string) => void,
+  options?: { bound?: boolean | undefined },
+): Promise<AssistantMainSession> {
+  const session = await ensureAssistantMainSession(assistantId, options)
+  open(session.sessionId)
+  return session
+}
+
+async function markAssistantMainSession(
+  instance: AssistantInstance,
+  sessionId: string,
+  wasBound: boolean,
+): Promise<string | undefined> {
+  // Plugin mark, not the host's session pin: the main row is hidden from the
+  // native sidebar, so a host pin would be invisible state on a hidden row.
+  if (shouldPinAssistantMainSession(instance, wasBound)) {
+    try {
+      await callAgentTeam('assistant.instance.update', {
+        id: instance.id,
+        value: { pinned: true },
+      })
+    } catch {
+      // The row marker is decoration; opening the relationship must still work.
+    }
+  }
+  const ops = sessionOps
+  if (ops === undefined) return undefined
+  const title = assistantMainSessionTitle(instance, ops.title(sessionId))
+  if (title === undefined) return undefined
+  try {
+    await ops.rename(sessionId, title)
+    return undefined
+  } catch (cause) {
+    return `主会话命名失败：${cause instanceof Error ? cause.message : String(cause)}`
+  }
 }

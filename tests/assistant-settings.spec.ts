@@ -1213,6 +1213,8 @@ describe('assistant detail 现在 block', () => {
       at: NOW_AT,
       onOpenChat: () => {},
       onOpenTask: () => {},
+      onCompact: () => {},
+      onNewRelationship: () => {},
       onAllSettings: () => {},
     }))
   }
@@ -1271,9 +1273,12 @@ describe('assistant detail 现在 block', () => {
     expect(html).toMatch(/data-dsh-assistant-now-action="task"[^>]*disabled/)
   })
 
-  it('wires 打开会话 through ensure, 处理/查看 through task.open, and 全部设置 locally', () => {
-    expect(pane).toContain("callAgentTeam('assistant.instance.ensure', { id: assistant.id })")
-    expect(pane).toContain('openAssistantSession(result.sessionId)')
+  it('wires 打开会话 through the canonical ensure door, 处理/查看 through task.open, and 全部设置 locally', () => {
+    // The one canonical door owns ensure + naming + pin; the pane never calls
+    // ensure itself and never opens a raw stored session id.
+    expect(pane).toContain('openAssistantMainSession(assistant.id, sessionId => {')
+    expect(pane).toContain('openAssistantSession(sessionId)')
+    expect(pane).not.toContain("callAgentTeam('assistant.instance.ensure'")
     expect(pane).toContain("callAgentTeam('assistant.task.open', { taskId: task.taskId })")
     expect(pane).toContain('onOpenChat={() => { void openChat() }}')
     expect(pane).toContain('onOpenTask={() => { void openCurrentTask() }}')
@@ -1288,5 +1293,64 @@ describe('assistant detail 现在 block', () => {
     // The same live list feeds 用量 and the 现在 summary.
     expect(pane).toContain('scope={assistantUsageScope(assistant, taskUsage.tasks)}')
     expect(pane).toContain('assistantNow(assistant, taskUsage.tasks)')
+  })
+})
+
+describe('assistant detail relationship actions (P0.5)', () => {
+  const pane = readFileSync(
+    new URL('../src/client/assistant-settings-pane.tsx', import.meta.url),
+    'utf8',
+  )
+  const store = readFileSync(new URL('../src/client/store.ts', import.meta.url), 'utf8')
+  const entry = readFileSync(new URL('../src/client/index.tsx', import.meta.url), 'utf8')
+
+  function renderBlock(): string {
+    return renderToStaticMarkup(createElement(AssistantNowBlock, {
+      now: assistantNow(nowInstance({ mainSessionId: 'session-main' }), []),
+      at: NOW_AT,
+      onOpenChat: () => {},
+      onOpenTask: () => {},
+      onCompact: () => {},
+      onNewRelationship: () => {},
+      onAllSettings: () => {},
+    }))
+  }
+
+  it('offers the native compact action and the explicit new-relationship action', () => {
+    const plain = plainText(renderBlock())
+    expect(plain).toContain('压缩上下文')
+    expect(plain).toContain('开始新关系')
+    expect(renderBlock()).toContain('data-dsh-assistant-now-action="compact"')
+    expect(renderBlock()).toContain('data-dsh-assistant-now-action="relationship"')
+  })
+
+  it('runs /compact through the installed host Session face, never a second compactor', () => {
+    expect(store).toContain('export interface AssistantSessionOps')
+    expect(store).toContain('installAssistantSessionOps')
+    expect(entry).toContain('installAssistantSessionOps(')
+    expect(entry).toContain('sessions.using!(')
+    expect(entry).toContain('reference.binding.session.rename(title)')
+    expect(entry).toContain('reference.binding.session.command(line)')
+    // The pane calls the face; it does not import a compaction backend.
+    expect(pane).toContain('assistantSessionOps()')
+    expect(pane).toContain("ops.command(session.sessionId, '/compact')")
+    expect(pane).toContain('压缩被拒绝')
+    expect(pane).not.toMatch(/from '@deepseek-ai\/dsh-compaction'/)
+    // Host session pin is never used: the mark is the plugin's own pinned flag.
+    expect(store).not.toContain('pinSession')
+    expect(entry).not.toContain('pinSession')
+  })
+
+  it('starts a new relationship through the checkpoint handoff, never by archiving main', () => {
+    expect(pane).toContain('<AssistantCheckpointDialog')
+    expect(pane).toContain('function startNewRelationship')
+    const start = pane.indexOf('function startNewRelationship')
+    const end = pane.indexOf('function showAllSettings')
+    const body = pane.slice(start, end)
+    expect(body).toContain('setCheckpointOpen(true)')
+    expect(body).not.toContain('assistant.instance.archive')
+    // /new is not intercepted or rewritten anywhere in the relationship path.
+    expect(pane).not.toContain("'/new'")
+    expect(pane).not.toContain('"/new"')
   })
 })

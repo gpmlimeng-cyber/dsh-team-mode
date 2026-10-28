@@ -14,6 +14,7 @@ import {
 } from './global-overview-data.js'
 import { assistantInstanceStatusLabel, attentionCategoryLabel } from './labels.js'
 import { assistantReadState } from './assistant-read-state.js'
+import { openAssistantMainSession } from './store.js'
 
 const FILTERS: ReadonlyArray<{ value: GlobalFilter; label: string }> = [
   { value: 'all', label: '全部' },
@@ -104,21 +105,23 @@ function attentionMeta(item: GlobalTeamItem | GlobalAssistantItem): string {
   return notes === '' ? decision : `${decision} · ${notes}`
 }
 
-/** A row is inert when there is no target Session or no host navigation face. */
+/**
+ * A row is inert only when this workbench has no navigation face. A missing
+ * `mainSessionId` is not a dead end: the click materializes the canonical chat
+ * through assistant.instance.ensure first.
+ */
 function assistantDisabled(
-  item: GlobalAssistantItem,
-  onOpenAssistant: ((sessionId: string) => void) | undefined,
+  onOpenAssistant: ((item: GlobalAssistantItem) => void) | undefined,
 ): boolean {
-  return item.mainSessionId === undefined || onOpenAssistant === undefined
+  return onOpenAssistant === undefined
 }
 
 function assistantUnavailableTitle(
   item: GlobalAssistantItem,
-  onOpenAssistant: ((sessionId: string) => void) | undefined,
+  onOpenAssistant: ((item: GlobalAssistantItem) => void) | undefined,
 ): string | undefined {
-  if (item.mainSessionId === undefined) return '未创建主会话'
   if (onOpenAssistant === undefined) return '当前工作台无法跳转'
-  return undefined
+  return item.mainSessionId === undefined ? '未创建主会话，点击后创建并打开' : undefined
 }
 
 /**
@@ -183,7 +186,7 @@ function Attention({
 }: {
   model: GlobalOverviewModel
   onOpenTeam: (teamId: string) => void
-  onOpenAssistant: ((sessionId: string) => void) | undefined
+  onOpenAssistant: ((item: GlobalAssistantItem) => void) | undefined
 }): JSX.Element {
   return (
     <section className={css.globalOverviewAttention} aria-label="需要你" data-overview-region="attention">
@@ -216,12 +219,9 @@ function Attention({
                     className={css.globalOverviewAttentionRow}
                     data-attention-assistant-id={item.id}
                     data-attention-categories={item.categories.join(',')}
-                    disabled={assistantDisabled(item, onOpenAssistant)}
+                    disabled={assistantDisabled(onOpenAssistant)}
                     title={assistantUnavailableTitle(item, onOpenAssistant)}
-                    onClick={() => {
-                      const sessionId = item.mainSessionId
-                      if (sessionId !== undefined && onOpenAssistant !== undefined) onOpenAssistant(sessionId)
-                    }}
+                    onClick={() => { onOpenAssistant?.(item) }}
                   >
                     <span className={css.globalOverviewAttentionName}>{item.name}</span>
                     <span className={css.globalOverviewAttentionMeta}>{attentionMeta(item)}</span>
@@ -265,7 +265,7 @@ function AssistantRow({
   onOpenAssistant,
 }: {
   item: GlobalAssistantItem
-  onOpenAssistant: ((sessionId: string) => void) | undefined
+  onOpenAssistant: ((item: GlobalAssistantItem) => void) | undefined
 }): JSX.Element {
   return (
     <li>
@@ -273,12 +273,9 @@ function AssistantRow({
         type="button"
         className={css.globalOverviewRow}
         data-assistant-id={item.id}
-        disabled={assistantDisabled(item, onOpenAssistant)}
+        disabled={assistantDisabled(onOpenAssistant)}
         title={assistantUnavailableTitle(item, onOpenAssistant)}
-        onClick={() => {
-          const sessionId = item.mainSessionId
-          if (sessionId !== undefined && onOpenAssistant !== undefined) onOpenAssistant(sessionId)
-        }}
+        onClick={() => { onOpenAssistant?.(item) }}
       >
         <span className={css.globalOverviewRowMain}>
           <strong className={css.globalOverviewRowName}>{item.name}</strong>
@@ -328,6 +325,7 @@ export function GlobalOverviewPanel({
   onOpenTeam,
   onOpenAssistant,
 }: GlobalOverviewPanelProps): JSX.Element {
+  const [actionError, setActionError] = useState<string>()
   if (teamsLoading === true) return <StatusCard tone="loading" message="正在加载团队和助手…" />
   if (teamsError !== undefined) return <StatusCard tone="error" message={`团队数据加载失败：${teamsError}`} />
   if (loading) return <StatusCard tone="loading" message="正在加载助手和任务…" />
@@ -337,6 +335,20 @@ export function GlobalOverviewPanel({
 
   const model = globalOverviewModel({ teams, instances, tasks, ...(readState === undefined ? {} : { readState }) })
   const visible = filterGlobalOverview(model, filter)
+
+  // One click, one canonical relationship: ensure the main Session first, then
+  // let the workbench close itself and swap panels. Naming/pin problems are
+  // reported here; ownership conflicts from ensure surface in the same line.
+  const openAssistantItem = (item: GlobalAssistantItem): void => {
+    if (onOpenAssistant === undefined) return
+    setActionError(undefined)
+    void openAssistantMainSession(item.id, sessionId => { onOpenAssistant(sessionId) }, {
+      bound: item.mainSessionId !== undefined,
+    }).then(
+      outcome => { if (outcome.notice !== undefined) setActionError(outcome.notice) },
+      cause => { setActionError(`打开助手失败：${messageOf(cause)}`) },
+    )
+  }
   const nothingAtAll = model.teams.length === 0 && model.assistants.length === 0
   const nothingVisible = visible.teams.length === 0 && visible.assistants.length === 0
 
@@ -350,9 +362,16 @@ export function GlobalOverviewPanel({
       </header>
 
       {error !== undefined && <p className={css.globalOverviewError} role="alert">{error}</p>}
+      {actionError !== undefined && (
+        <p className={css.globalOverviewError} role="alert">{actionError}</p>
+      )}
 
       <Summary model={model} />
-      <Attention model={model} onOpenTeam={onOpenTeam} onOpenAssistant={onOpenAssistant} />
+      <Attention
+        model={model}
+        onOpenTeam={onOpenTeam}
+        onOpenAssistant={onOpenAssistant === undefined ? undefined : openAssistantItem}
+      />
 
       <div className={css.globalOverviewFilters} role="group" aria-label="筛选" data-overview-region="filters">
         {FILTERS.map(entry => (
@@ -410,7 +429,11 @@ export function GlobalOverviewPanel({
                   ? <p className={css.globalOverviewEmpty}>{filter === 'all' ? '还没有助手' : '当前筛选下没有助手'}</p>
                   : <ul className={css.globalOverviewRows}>
                       {visible.assistants.map(item => (
-                        <AssistantRow key={item.id} item={item} onOpenAssistant={onOpenAssistant} />
+                        <AssistantRow
+                          key={item.id}
+                          item={item}
+                          onOpenAssistant={onOpenAssistant === undefined ? undefined : openAssistantItem}
+                        />
                       ))}
                     </ul>}
               </section>

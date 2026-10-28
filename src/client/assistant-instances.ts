@@ -72,6 +72,35 @@ export function assistantInstanceLabel(
 }
 
 /**
+ * Whether opening this Assistant should establish the plugin's own pinned mark.
+ *
+ * Only a bind that had no canonical Session before (and a row the user has not
+ * already pinned) is marked; re-opening or deliberately unpinning is never
+ * overwritten. This is the plugin's `pinned` state, not the host's session pin:
+ * the main Session row is hidden from the native sidebar, so a host pin would be
+ * invisible state.
+ */
+export function shouldPinAssistantMainSession(
+  instance: Pick<AssistantInstance, 'pinned'>,
+  wasBound: boolean,
+): boolean {
+  return !wasBound && instance.pinned !== true
+}
+
+/**
+ * The title the canonical main Session should carry, or `undefined` when it
+ * already reads exactly that. Comparing the current host title is what makes the
+ * rename once per bind/name change instead of one write per open.
+ */
+export function assistantMainSessionTitle(
+  instance: Pick<AssistantInstance, 'assistantSnapshot'>,
+  currentTitle: string | undefined,
+): string | undefined {
+  const label = assistantInstanceLabel(instance)
+  return currentTitle === label ? undefined : label
+}
+
+/**
  * The coordinating assistant (总协调机器人): pinned at the top of the DeepBot
  * sidebar instead of sitting in the 单聊 list. Only the `coordinator` field
  * decides — a name or a shipped template is never evidence of the role, because

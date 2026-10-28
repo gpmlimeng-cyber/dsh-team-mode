@@ -53,6 +53,7 @@ import { readTodayAttentionCount, requestToday } from './today-surface.js'
 import { Mascot } from './mascot-view.js'
 import { assistantShowsMascot, mascotMotionForStatus, mascotOptionsFor } from './mascot.js'
 import {
+  openAssistantMainSession,
   openCreateTeamDialog,
   openManageTeamDialog,
   reportNavigationError,
@@ -214,11 +215,14 @@ async function startStewardSession(open: (sessionId: string) => void): Promise<v
     const instances = value.items
     const steward = coordinatorAssistant(instances) ?? instances[0]
     if (steward === undefined) return
-    const result = await callAgentTeam('assistant.instance.ensure', { id: steward.id })
-    open(result.sessionId)
-  } catch {
-    // Opening a session is user-visible when it fails; a silent retry is worse
-    // than leaving the sidebar untouched.
+    const outcome = await openAssistantMainSession(steward.id, open, {
+      bound: steward.mainSessionId !== undefined,
+    })
+    if (outcome.notice !== undefined) reportNavigationError(outcome.notice)
+  } catch (cause) {
+    // Ownership conflicts stay visible: the banner names the failed open and
+    // keeps the rest of the sidebar usable.
+    reportNavigationError(`打开管家会话失败：${cause instanceof Error ? cause.message : String(cause)}`)
   }
 }
 
@@ -259,6 +263,11 @@ export interface BrandChatEntry {
   /** The same picture the sidebar row shows: uploaded avatar, else mascot. */
   portrait: ReactNode
   icon?: ReactNode
+  /**
+   * The canonical chat id as the picker read it. Only used to tell a first bind
+   * (mark the relationship) from a re-open; opening itself always re-ensures.
+   */
+  mainSessionId?: string | undefined
 }
 
 /**
@@ -1146,6 +1155,7 @@ function useAssistantChats(): BrandChatEntry[] {
             : [coordinator, ...listed.filter(item => item.id !== coordinator.id)]
           setChats(ordered.map(item => ({
             id: item.id,
+            mainSessionId: item.mainSessionId,
             // The picker lists who to talk to; a 职能 line is what separates two
             // assistants that share a name.
             name: assistantInstanceLabel(item),
@@ -1178,13 +1188,19 @@ function useAssistantChats(): BrandChatEntry[] {
 }
 
 /** DeepBot mode: open one assistant's main Session, whatever it currently is. */
-async function startAssistantChat(id: string, open: (sessionId: string) => void): Promise<void> {
+async function startAssistantChat(
+  chat: BrandChatEntry,
+  open: (sessionId: string) => void,
+): Promise<void> {
   try {
-    const result = await callAgentTeam('assistant.instance.ensure', { id })
-    open(result.sessionId)
-  } catch {
-    // Same rule as the steward entry: a failed open stays silent rather than
-    // half-navigating the sidebar.
+    const outcome = await openAssistantMainSession(chat.id, open, {
+      bound: chat.mainSessionId !== undefined,
+    })
+    if (outcome.notice !== undefined) reportNavigationError(outcome.notice)
+  } catch (cause) {
+    // Same visible-ownership rule as the steward entry: the conflict names
+    // itself instead of leaving the picker looking like a dead menu row.
+    reportNavigationError(`打开助手失败：${cause instanceof Error ? cause.message : String(cause)}`)
   }
 }
 
@@ -2005,7 +2021,8 @@ export function SidebarPortal({
                   } else if (id === 'library') {
                     setLibraryOpen(true)
                   } else if (id.startsWith('chat:')) {
-                    void startAssistantChat(id.slice('chat:'.length), openSession)
+                    const chat = chats.find(entry => entry.id === id.slice('chat:'.length))
+                    if (chat !== undefined) void startAssistantChat(chat, openSession)
                   } else if (id === 'open-steward') void startStewardSession(openSession)
                 }}
                 anchor={(
@@ -2053,7 +2070,10 @@ export function SidebarPortal({
           onClose={() => { setNewChatOpen(false) }}
           onNewAssistant={() => { window.dispatchEvent(new CustomEvent(SIDEBAR_ASSISTANT_CREATE_EVENT)) }}
           onNewTeam={() => { openCreateTeamDialog() }}
-          onPick={id => { void startAssistantChat(id, openSession) }}
+          onPick={id => {
+            const chat = chats.find(entry => entry.id === id)
+            if (chat !== undefined) void startAssistantChat(chat, openSession)
+          }}
         />
       )}
       {host !== undefined && createPortal(

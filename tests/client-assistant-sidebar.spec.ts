@@ -3,10 +3,12 @@ import { describe, expect, it } from 'vitest'
 import {
   assistantInstanceLabel,
   assistantInstanceTitle,
+  assistantMainSessionTitle,
   assistantNameForSession,
   assistantNow,
   assistantPendingDecisions,
   assistantSidebarSummary,
+  shouldPinAssistantMainSession,
   visibleAssistantInstances,
 } from '../src/client/assistant-instances.js'
 import type { AssistantInstance, AssistantSession } from '../src/domain/types.js'
@@ -746,5 +748,59 @@ describe('assistantNow — the detail pane first answer', () => {
     const noChat = assistantNow(instance('new', '新助手'), [])
     expect(noChat.hasSession).toBe(false)
     expect(noChat.recent).toBeUndefined()
+  })
+})
+
+describe('permanent coworker chat: one canonical door', () => {
+  const store = readFileSync(new URL('../src/client/store.ts', import.meta.url), 'utf8')
+  const entry = readFileSync(new URL('../src/client/index.tsx', import.meta.url), 'utf8')
+  const assistantSidebar = readFileSync(
+    new URL('../src/client/assistant-sidebar.tsx', import.meta.url),
+    'utf8',
+  )
+  const sidebar = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
+  const overview = readFileSync(new URL('../src/client/global-overview.tsx', import.meta.url), 'utf8')
+
+  it('marks only a first bind with the plugin pin, never the host session pin', () => {
+    expect(shouldPinAssistantMainSession({ pinned: false }, false)).toBe(true)
+    expect(shouldPinAssistantMainSession({ pinned: false }, true)).toBe(false)
+    expect(shouldPinAssistantMainSession({ pinned: true }, false)).toBe(false)
+    // Plugin state is the mark; the hidden main row never gets a host pin.
+    expect(store).toContain("value: { pinned: true }")
+    expect(entry).not.toContain('pinSession')
+    expect(store).not.toContain('pinSession')
+  })
+
+  it('renames only when the host title is not already the assistant label', () => {
+    const paper = titled('paper', 'Paper Bot', '研究员')
+    expect(assistantMainSessionTitle(paper, 'Paper Bot · 研究员')).toBeUndefined()
+    expect(assistantMainSessionTitle(paper, 'workspace-1')).toBe('Paper Bot · 研究员')
+    expect(assistantMainSessionTitle(paper, undefined)).toBe('Paper Bot · 研究员')
+    // The store compares the live host title before writing, so re-opening does
+    // not append one title event per click.
+    expect(store).toContain('ops.title(sessionId)')
+    expect(store).toContain('assistantMainSessionTitle(instance,')
+  })
+
+  it('routes every assistant entry through ensure then open', () => {
+    // Row click.
+    expect(assistantSidebar).toContain('openAssistantMainSession(instance.id, openSession')
+    // Picker menu + 新对话 list, fed by the read row's mainSessionId.
+    expect(sidebar).toContain('mainSessionId: item.mainSessionId')
+    expect(sidebar).toContain('openAssistantMainSession(chat.id, open,')
+    // Global overview workbench.
+    expect(overview).toContain('openAssistantMainSession(item.id, sessionId => { onOpenAssistant(sessionId) }')
+    // The door itself always ensures first, then names/marks, then opens.
+    expect(store).toContain("callAgentTeam('assistant.instance.ensure'")
+    expect(store).toContain('open(session.sessionId)')
+  })
+
+  it('surfaces ownership conflicts inline instead of opening a half-bound chat', () => {
+    expect(assistantSidebar).toContain('setError(cause instanceof Error ? cause.message')
+    expect(overview).toContain('setActionError(`打开助手失败：${messageOf(cause)}`)')
+    expect(sidebar).toContain('reportNavigationError(`打开助手失败：')
+    expect(sidebar).toContain('reportNavigationError(`打开管家会话失败：')
+    // A failed ensure is reported before any navigation; no raw fallback open.
+    expect(store).not.toContain("openSession(result.sessionId)")
   })
 })

@@ -17,7 +17,11 @@ import {
   Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
-import { selectAssistant, useAgentTeamUi } from './store.js'
+import {
+  openAssistantMainSession,
+  selectAssistant,
+  useAgentTeamUi,
+} from './store.js'
 import { AssistantCheckpointDialog } from './assistant-checkpoint-dialog.js'
 import { AssistantCreateDialog } from './assistant-dialogs.js'
 import { useAssistantDisplayMode } from './assistant-display-mode.js'
@@ -401,9 +405,13 @@ export function AssistantSidebarSection({
     setOpeningId(instance.id)
     setError(undefined)
     try {
-      const result = await callAgentTeam('assistant.instance.ensure', { id: instance.id })
-      openSession(result.sessionId)
+      const outcome = await openAssistantMainSession(instance.id, openSession, {
+        bound: instance.mainSessionId !== undefined,
+      })
+      if (outcome.notice !== undefined) setError(outcome.notice)
     } catch (cause) {
+      // Ownership conflicts and stale bind failures are shown where the click
+      // happened, never swallowed into a session that opens without its setup.
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
       setOpeningId(undefined)

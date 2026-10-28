@@ -40,6 +40,7 @@ import {
   useTeamPanelOpen,
 } from './store.js'
 import { installAssistantSessionOpener } from './store.js'
+import { installAssistantSessionOps } from './store.js'
 import { SessionRowHider } from './session-row-hider.js'
 import { AssistantSessionTitle, AssistantSessionTitleHost } from './assistant-session-title.js'
 import { TeamModeDialogs } from './team-dialogs.js'
@@ -68,6 +69,35 @@ import type { TeamView } from '../transport/contracts.js'
 
 export const name = 'dsh-team-mode-client'
 export const inject = ['slots', 'workspaces', 'uiWorkspace', 'sessions', 'layout', 'locale']
+
+/**
+ * The Host's client Session service, narrowed to the two operations a coworker
+ * relationship needs. Types for this client package are not shipped with the
+ * installation, so the structural face is local — the same pattern 用量 already
+ * uses for the Session list snapshot.
+ */
+type AssistantRemoteResult<T> =
+  | { ok: true; value: T }
+  | { ok: false; error: { code?: string; message?: string } }
+
+interface AssistantSessionFace {
+  rename(title: string): Promise<AssistantRemoteResult<{ title: string }>>
+  command(line: string): Promise<AssistantRemoteResult<{ matched: boolean }>>
+}
+
+interface AssistantSessionsFace {
+  refresh?: () => Promise<unknown>
+  list?: {
+    getSnapshot?: () => {
+      byId?: Record<string, { displayTitle?: string | undefined } | undefined>
+    }
+  }
+  using?: (
+    sessionId: string,
+    options: { source: string },
+    operation: (reference: { binding: { session: AssistantSessionFace } }) => Promise<unknown>,
+  ) => Promise<unknown>
+}
 
 /** The team whose member Session is currently open, from the existing team list. */
 function useActiveTeam(sessionId: string | undefined): TeamView | undefined {
@@ -194,12 +224,55 @@ export function apply(ctx: AgentTeamClientContext): void {
   // was already open does not know the id yet and `openSession` throws
   // `sessions.retain: unknown session`. Pull the catalog once and retry; any
   // remaining failure is shown instead of swallowed.
+  //
+  // The same service is the host face for the permanent coworker chat: a native
+  // title rename and the native slash-command runner. Only this entry owns
+  // `ctx`, so the narrowed face is installed here; `sessions.using` materializes
+  // the target the way the shipped workspace row menu does. No plugin endpoint
+  // and no second compactor.
   const sessions = (ctx as unknown as {
-    sessions?: { refresh?: () => Promise<unknown> }
+    sessions?: AssistantSessionsFace
   }).sessions
   // 用量 is read-only and uses the Host's own Session projection store: the
   // same snapshot the native UI subscribes to, no new transport, no storage.
   installUsageSessions(sessions as unknown as UsageSessionsService | undefined)
+  installAssistantSessionOps(sessions === undefined || typeof sessions.using !== 'function'
+    ? undefined
+    : {
+        title: sessionId => sessions.list?.getSnapshot?.().byId?.[sessionId]?.displayTitle,
+        rename: async (sessionId, title) => {
+          const result = await sessions.using!(
+            sessionId,
+            { source: 'assistant' },
+            reference => reference.binding.session.rename(title),
+          ) as AssistantRemoteResult<{ title: string }>
+          if (!result.ok) throw new Error(result.error.message ?? '宿主拒绝了会话重命名')
+          return result.value.title
+        },
+        command: async (sessionId, line) => {
+          try {
+            const result = await sessions.using!(
+              sessionId,
+              { source: 'assistant' },
+              reference => reference.binding.session.command(line),
+            ) as AssistantRemoteResult<{ matched: boolean }>
+            if (!result.ok) {
+              return {
+                ok: false,
+                matched: false,
+                message: result.error.message ?? '宿主拒绝了该命令',
+              }
+            }
+            return { ok: true, matched: result.value.matched }
+          } catch (cause) {
+            return {
+              ok: false,
+              matched: false,
+              message: cause instanceof Error ? cause.message : String(cause),
+            }
+          }
+        },
+      })
   const openSession = (sessionId: string): void => {
     // Navigation only. The right sidebar follows the shell's remembered user
     // state; Team Mode must not force it open or select a tab.
