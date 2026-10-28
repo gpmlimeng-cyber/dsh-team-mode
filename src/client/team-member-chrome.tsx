@@ -12,6 +12,13 @@ import {
 import { callAgentTeam, subscribeAgentTeam, teamLeaderSessionId } from './api.js'
 import css from './AgentTeam.module.css'
 import { MemberAvatar } from './member-avatar.js'
+import {
+  SessionPresetMeta,
+  agentPresetLabel,
+  hideNativePresetLabels,
+  knownPresetNames,
+  useAgentCatalog,
+} from './agent-preset-label.js'
 import type { TeamView } from '../transport/contracts.js'
 
 type TeamMember = TeamView['members'][string]
@@ -118,6 +125,8 @@ export interface SessionSwitcherModel {
   threads: SwitcherThreadRow[]
   /** False when no row targets a different Session: no point rendering a switcher. */
   switchable: boolean
+  /** Preset recorded for the Session's composition; absent when no team row names it. */
+  agentPresetId?: string
 }
 
 /**
@@ -137,6 +146,11 @@ export function sessionSwitcherModel(
   const currentMember = Object.values(team.members).find(member => member.sessionId === sessionId)
   const currentThread = Object.values(team.threads ?? {}).find(thread => thread.sessionId === sessionId)
   const currentName = currentMember?.displayName ?? currentThread?.title ?? team.name
+  // A member Session runs its member's preset; a thread runs its speaker's
+  // (the Leader by default); anything else falls back to the Leader's.
+  const speakerSlotId = currentThread?.speakerSlotId ?? team.leaderSlotId
+  const agentPresetId = currentMember?.assistantSnapshot.agentPresetId
+    ?? team.members[speakerSlotId]?.assistantSnapshot.agentPresetId
 
   const members = sortedMembers(team)
     .map(member => ({
@@ -170,6 +184,7 @@ export function sessionSwitcherModel(
     members,
     threads,
     switchable: targets.some(target => target !== sessionId),
+    ...(agentPresetId === undefined ? {} : { agentPresetId }),
   }
 }
 
@@ -200,6 +215,28 @@ export function TeamSessionSwitcher({
       : sessionSwitcherModel(team, sessionId, query)),
     [team, sessionId, query],
   )
+
+  // Neither surface changes until the catalog read settles: an unread catalog
+  // would otherwise print a raw id and hide nothing.
+  const catalog = useAgentCatalog()
+  const presetLabel = catalog === undefined
+    ? undefined
+    : agentPresetLabel(catalog, model?.agentPresetId)
+  const presetNames = useMemo(
+    () => knownPresetNames(catalog, presetLabel),
+    [catalog, presetLabel],
+  )
+  /** The panel (and the preset line inside it) exists only on a switchable team Session. */
+  const panelVisible = model !== undefined && model.switchable
+
+  // The host locks a Session's preset once its conversation starts, so the
+  // native header label is read-only chrome. While BOT shows the same name in
+  // our panel, hide that span by its exact text inside the Session-header slot
+  // (never a hashed class); no match means nothing happens.
+  useEffect(() => {
+    if (!panelVisible || presetLabel === undefined || presetNames.length === 0) return
+    return hideNativePresetLabels(presetNames)
+  }, [panelVisible, presetLabel, presetNames])
 
   useEffect(() => {
     if (!open) return
@@ -467,6 +504,7 @@ export function TeamSessionSwitcher({
               <span>新建会话</span>
             </button>
           </div>
+          <SessionPresetMeta name={presetLabel} />
         </div>
       </Menu>
     </span>

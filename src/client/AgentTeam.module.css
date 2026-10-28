@@ -6412,6 +6412,22 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   font-size: 12px;
 }
 
+/* Read-only Agent-preset line pinned under the create row. A preset cannot be
+   re-chosen once the Session started, so this is text rather than a control:
+   no pointer cursor, no hover surface, no tab stop. */
+.teamSessionPreset {
+  display: block;
+  flex: none;
+  min-width: 0;
+  padding: 4px 8px 2px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .teamMemberHeroHint {
   display: flex;
   align-items: center;
