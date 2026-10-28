@@ -119,11 +119,12 @@ describe('first-use next step: the one-click wiring', () => {
     expect(send).not.toHaveBeenCalled()
   })
 
-  it('renders inside the expanded team row, before the thread list', () => {
-    // The entry has to sit where a new team appears; the roster block is that
-    // place, so the card is mounted there rather than in a separate surface.
+  it('renders directly under the team row, with no expandable roster', () => {
+    // The entry has to sit where a new team appears: under its own row, in the
+    // row's flow, now that the sidebar no longer expands into a thread list.
     const sidebar = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
-    expect(sidebar).toMatch(/data-dsh-team-threads[\s\S]{0,600}<TeamNextStepCard[\s\S]{0,200}onOpenLeader/)
+    expect(sidebar).toMatch(/<\/div>\n\s*\{\/\* First use:[\s\S]{0,400}<TeamNextStepCard team=\{team\} onOpenLeader/)
+    expect(sidebar).not.toContain('data-dsh-team-threads')
   })
 })
 

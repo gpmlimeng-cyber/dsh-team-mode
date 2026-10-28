@@ -39,7 +39,7 @@ import { TeamParallelHost, TeamMentionAction, TeamParallelView } from './team-pa
 import { TeamTriggerEnhancer } from './team-trigger-enhancer.js'
 import { TEAM_MANAGE_VIEW_ID, TEAM_MANAGE_VIEW_LABEL, TEAM_MANAGE_VIEW_ORDER, TeamManageView } from './team-manage.js'
 import { TeamParallelPane } from './team-pane.js'
-import { TeamMemberHeroHint, TeamMemberSwitcher } from './team-member-chrome.js'
+import { TeamMemberHeroHint, TeamSessionSwitcher } from './team-member-chrome.js'
 import {
   TEAM_BOARD_VIEW_ID,
   TEAM_BOARD_VIEW_LABEL,
@@ -419,13 +419,13 @@ export function apply(ctx: AgentTeamClientContext): void {
 
   slotApi.inject('conversation.session.header.actions', () => slotApi.register({
     name: 'conversation.session.header.actions',
-    id: 'dsh-team-mode-member-switcher',
+    id: 'dsh-team-mode-session-switcher',
     order: 20,
-    label: '团队成员',
+    label: '团队会话切换',
     inject: () => ({
       openSession: (sessionId: string) => { ctx.uiWorkspace.openSession(sessionId as never) },
     }),
-  }, TeamMemberSwitcher as never))
+  }, TeamSessionSwitcher as never))
 
   slotApi.inject('conversation.hero.options', () => slotApi.register({
     name: 'conversation.hero.options',

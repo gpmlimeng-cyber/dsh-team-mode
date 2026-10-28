@@ -1,24 +1,18 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  IconCheckOutlineRegular,
   IconChevronDownOutlineRegular,
   IconPlusOutlineRegular,
   IconSearchOutlineRegular,
-  IconUsersOutlineRegular,
   Menu,
 } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
-import { callAgentTeam, subscribeAgentTeam } from './api.js'
-import { useAgentTeamData } from './components.js'
+import { callAgentTeam, subscribeAgentTeam, teamLeaderSessionId } from './api.js'
 import css from './AgentTeam.module.css'
 import { MemberAvatar } from './member-avatar.js'
-import type { AssistantView, TeamView } from '../transport/contracts.js'
+import type { TeamView } from '../transport/contracts.js'
 
 type TeamMember = TeamView['members'][string]
-type Membership = { team: TeamView; member: TeamMember }
-
-function initial(name: string): string {
-  return name.trim().slice(0, 1).toLocaleUpperCase() || '?'
-}
+type TeamThread = NonNullable<TeamView['threads']>[string]
 
 export function LeaderMark({ size = 13 }: { size?: number }): JSX.Element {
   return (
@@ -28,34 +22,42 @@ export function LeaderMark({ size = 13 }: { size?: number }): JSX.Element {
   )
 }
 
-function useMembership(sessionId?: string): Membership | undefined {
-  const [membership, setMembership] = useState<Membership>()
+/** The team whose conversation this Session is, if any. A Session outside every
+ *  team (a plain assistant chat) resolves to undefined and gets no control. */
+export function teamOwningSession(
+  teams: readonly TeamView[],
+  sessionId: string | undefined,
+): TeamView | undefined {
+  if (sessionId === undefined) return undefined
+  return teams.find(candidate => (
+    Object.values(candidate.members).some(member => member.sessionId === sessionId)
+    || Object.values(candidate.threads ?? {}).some(thread => thread.sessionId === sessionId)
+    || teamLeaderSessionId(candidate) === sessionId
+  ))
+}
+
+/** Resolves the team owning this Session — a member Session, a thread Session,
+ *  or the team main Session — so the header switcher can render on any of them. */
+function useTeamForSession(sessionId?: string): TeamView | undefined {
+  const [team, setTeam] = useState<TeamView>()
   useEffect(() => {
-    if (sessionId === undefined) {
-      setMembership(undefined)
-      return
-    }
+    // Never keep the previous Session's team while this one resolves.
+    setTeam(undefined)
+    if (sessionId === undefined) return
     let live = true
     const load = async (): Promise<void> => {
       try {
         const value = await callAgentTeam('team.list')
         if (!live) return
-        for (const team of value.items) {
-          const member = Object.values(team.members).find(candidate => candidate.sessionId === sessionId)
-          if (member !== undefined) {
-            setMembership({ team, member })
-            return
-          }
-        }
-        setMembership(undefined)
+        setTeam(teamOwningSession(value.items, sessionId))
       } catch {
-        if (live) setMembership(undefined)
+        if (live) setTeam(undefined)
       }
     }
     void load()
     return subscribeAgentTeam(() => { void load() }, () => {}, () => { void load() })
   }, [sessionId])
-  return membership
+  return team
 }
 
 function sortedMembers(team: TeamView): TeamMember[] {
@@ -75,241 +77,340 @@ function keepChatView(sessionId: string): void {
   } catch { /* best effort */ }
 }
 
-/** Single-chat header switch between team member Sessions. */
-export function TeamMemberSwitcher({
+/** Relative time for a thread row; mirrors the sidebar's phrasing. */
+function relativeTime(iso: string | number): string {
+  const timestamp = typeof iso === 'number' ? iso : Date.parse(iso)
+  if (Number.isNaN(timestamp)) return ''
+  const diff = Math.max(0, Date.now() - timestamp)
+  if (diff < 60_000) return '刚刚'
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}分钟`
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}小时`
+  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)}天`
+  const date = new Date(timestamp)
+  return `${date.getMonth() + 1}月${date.getDate()}日`
+}
+
+export interface SwitcherMemberRow {
+  sessionId: string
+  name: string
+  avatar?: string
+  leader: boolean
+  current: boolean
+}
+
+export interface SwitcherThreadRow {
+  id: string
+  sessionId: string
+  title: string
+  updatedAt: number
+  current: boolean
+}
+
+export interface SessionSwitcherModel {
+  /** The object this Session shows: its member name, else the thread title. */
+  currentName: string
+  /** Members first; the current one is pinned to the top of its group. */
+  members: SwitcherMemberRow[]
+  /** Real threads only, newest first; the current one is pinned to the top. */
+  threads: SwitcherThreadRow[]
+  /** False when no row targets a different Session: no point rendering a switcher. */
+  switchable: boolean
+}
+
+/**
+ * What the header switcher would show for one Session, as plain data so the
+ * grouping, ordering and filtering are testable without a browser. Members and
+ * threads are two groups; `query` filters both by display name / thread title.
+ */
+export function sessionSwitcherModel(
+  team: TeamView,
+  sessionId: string,
+  query = '',
+): SessionSwitcherModel {
+  const normalized = query.trim().toLocaleLowerCase()
+  const matches = (value: string): boolean =>
+    normalized === '' || value.toLocaleLowerCase().includes(normalized)
+
+  const currentMember = Object.values(team.members).find(member => member.sessionId === sessionId)
+  const currentThread = Object.values(team.threads ?? {}).find(thread => thread.sessionId === sessionId)
+  const currentName = currentMember?.displayName ?? currentThread?.title ?? team.name
+
+  const members = sortedMembers(team)
+    .map(member => ({
+      sessionId: member.sessionId,
+      name: member.displayName,
+      ...(member.assistantSnapshot.avatar === undefined ? {} : { avatar: member.assistantSnapshot.avatar }),
+      leader: member.role === 'leader',
+      current: member.sessionId === sessionId,
+    }))
+    .filter(member => matches(member.name))
+    .sort((left, right) => Number(right.current) - Number(left.current))
+
+  const threads: SwitcherThreadRow[] = Object.values(team.threads ?? {})
+    .sort((left: TeamThread, right: TeamThread) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+    .map(thread => ({
+      id: thread.id,
+      sessionId: thread.sessionId,
+      title: thread.title,
+      updatedAt: thread.updatedAt,
+      current: thread.sessionId === sessionId,
+    }))
+    .filter(thread => matches(thread.title))
+    .sort((left, right) => Number(right.current) - Number(left.current))
+
+  const targets = [
+    ...Object.values(team.members).map(member => member.sessionId),
+    ...Object.values(team.threads ?? {}).map(thread => thread.sessionId),
+  ]
+  return {
+    currentName,
+    members,
+    threads,
+    switchable: targets.some(target => target !== sessionId),
+  }
+}
+
+/** Session-header switch: jump between a team's members and its threads.
+ *  Renders only on a Session owned by a team; a bare Session shows nothing. */
+export function TeamSessionSwitcher({
   sessionId,
   openSession,
 }: {
   sessionId?: string
   openSession?: (sessionId: string) => void
 }): JSX.Element | null {
-  const membership = useMembership(sessionId)
-  const { assistants, load } = useAgentTeamData(true)
+  const team = useTeamForSession(sessionId)
   const [open, setOpen] = useState(false)
-  const [addPanelOpen, setAddPanelOpen] = useState(false)
-  const [addQuery, setAddQuery] = useState('')
-  const [addingId, setAddingId] = useState<string>()
-  const [addError, setAddError] = useState<string>()
-  const addSearchRef = useRef<HTMLInputElement>(null)
-  const members = useMemo(() => (membership === undefined ? [] : sortedMembers(membership.team)), [membership])
-  useEffect(() => {
-    if (!addPanelOpen) return
-    // The host Menu mounts its list hidden for one measuring pass and only then
-    // places it: focusing during mount silently fails, so wait for the
-    // placement frame (and for any trigger focus return to settle).
-    const frame = requestAnimationFrame(() => { addSearchRef.current?.focus() })
-    return () => { cancelAnimationFrame(frame) }
-  }, [addPanelOpen])
-  if (membership === undefined || sessionId === undefined || openSession === undefined) return null
-  const team = membership.team
-  const teamAssistants = assistants.filter(assistant => assistant.enabled && assistant.teamSelectable)
-  const normalizedAddQuery = addQuery.trim().toLocaleLowerCase()
-  const visibleTeamAssistants = normalizedAddQuery === ''
-    ? teamAssistants
-    : teamAssistants.filter(assistant =>
-        assistant.name.toLocaleLowerCase().includes(normalizedAddQuery)
-        || (assistant.description ?? '').toLocaleLowerCase().includes(normalizedAddQuery))
+  const [query, setQuery] = useState('')
+  const searchRef = useRef<HTMLInputElement>(null)
+  /** Set while closing, so the host Menu's focus return cannot reopen us. */
+  const skipFocusOpen = useRef(false)
+  /** A pointer press focuses the trigger too; opening is the click's job then. */
+  const pointerFocus = useRef(false)
+  const hoverClose = useRef<ReturnType<typeof setTimeout>>()
 
-  async function addMemberToTeam(assistant: AssistantView): Promise<void> {
-    if (addingId !== undefined) return
-    setAddingId(assistant.id)
-    setAddError(undefined)
+  const model = useMemo(
+    () => (team === undefined || sessionId === undefined
+      ? undefined
+      : sessionSwitcherModel(team, sessionId, query)),
+    [team, sessionId, query],
+  )
+
+  useEffect(() => {
+    if (!open) return
+    // The host Menu mounts its list hidden for one measuring pass, so focusing
+    // during mount silently fails; wait for the placement frame.
+    const frame = requestAnimationFrame(() => { searchRef.current?.focus() })
+    return () => { cancelAnimationFrame(frame) }
+  }, [open])
+
+  // Switching away from this Session must leave no panel behind.
+  useEffect(() => {
+    setOpen(false)
+    setQuery('')
+  }, [sessionId])
+
+  useEffect(() => () => {
+    if (hoverClose.current !== undefined) clearTimeout(hoverClose.current)
+  }, [])
+
+  if (team === undefined || sessionId === undefined || openSession === undefined || model === undefined) return null
+  if (!model.switchable) return null
+
+  const close = (): void => {
+    skipFocusOpen.current = true
+    setOpen(false)
+    setQuery('')
+  }
+
+  const cancelHoverClose = (): void => {
+    if (hoverClose.current === undefined) return
+    clearTimeout(hoverClose.current)
+    hoverClose.current = undefined
+  }
+
+  const scheduleHoverClose = (): void => {
+    cancelHoverClose()
+    hoverClose.current = setTimeout(() => { close() }, 160)
+  }
+
+  const toggle = (): void => {
+    if (open) {
+      setOpen(false)
+      setQuery('')
+      return
+    }
+    setOpen(true)
+  }
+
+  const goTo = (target: string): void => {
+    close()
+    if (target === sessionId) return
+    keepChatView(target)
+    openSession(target)
+  }
+
+  const createThread = async (teamView: TeamView): Promise<void> => {
+    close()
+    const known = new Set(Object.keys(teamView.threads ?? {}))
     try {
-      await callAgentTeam('team.addMember', {
-        teamId: team.id,
-        value: { assistantId: assistant.id },
-      }, team.revision)
-      await load()
-    } catch (cause) {
-      setAddError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setAddingId(undefined)
+      const next = await callAgentTeam('team.thread.create', { id: teamView.id })
+      const created = Object.values(next.threads ?? {})
+        .find(thread => !known.has(thread.id))
+        ?? Object.values(next.threads ?? {}).sort((left, right) => right.updatedAt - left.updatedAt)[0]
+      if (created !== undefined) goTo(created.sessionId)
+    } catch {
+      // A refused create leaves the reader where they were, panel closed.
     }
   }
-  const current = membership.member
-  const items: MenuEntry[] = members.map(member => ({
-    id: member.sessionId,
-    label: (
-      <span className={css.teamSwitcherItem}>
-        <span
-          className={css.teamSwitcherAvatar}
-          style={{ width: 20, height: 20, minWidth: 20, maxWidth: 20, flex: '0 0 20px', aspectRatio: '1 / 1' }}
-          aria-hidden="true"
-        >{initial(member.displayName)}</span>
-        <span className={css.teamSwitcherItemCopy}>
-          <span className={css.teamSwitcherItemName}>{member.displayName}</span>
-          {member.role === 'leader' && (
-            <span className={css.teamSwitcherLeader}>
-              <LeaderMark size={11} />
-              Leader
-            </span>
-          )}
-        </span>
-      </span>
-    ),
-  }))
+
   return (
-    <>
-    <div className={css.teamSwitcherGroup}>
-    <Menu
-      open={open}
-      onClose={() => { setOpen(false) }}
-      items={items}
-      footer={[{ id: '__manage__', label: '管理团队', icon: <IconUsersOutlineRegular size={16} /> }]}
-      selectedId={sessionId}
-      onSelect={id => {
-        setOpen(false)
-        if (id === '__manage__') {
-          const deadline = Date.now() + 5_000
-          const settle = (): void => {
-            const tab = Array.from(document.querySelectorAll('[data-conversation-tabs] button'))
-              .find(button => button.textContent?.trim() === '团队管理')
-            if (tab !== undefined) {
-              ;(tab as HTMLElement).click()
-              return
-            }
-            if (Date.now() < deadline) setTimeout(settle, 100)
-          }
-          setTimeout(settle, 100)
-          return
-        }
-        if (id === sessionId) return
-        keepChatView(id)
-        openSession(id)
-      }}
-      align="end"
-      side="bottom"
-      className={css.teamSwitcherAnchor}
-      anchor={(
-        <button
-          type="button"
-          className={`${css.teamSwitcherButton} ${css.teamSwitcherButtonGrouped}`}
-          aria-label={`切换团队成员，当前 ${current.displayName}`}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          onClick={() => { setOpen(value => !value) }}
-        >
-          <span
-            className={css.teamSwitcherAvatar}
-            style={{ width: 20, height: 20, minWidth: 20, maxWidth: 20, flex: '0 0 20px', aspectRatio: '1 / 1' }}
-            aria-hidden="true"
-          >{initial(current.displayName)}</span>
-          <span className={css.teamSwitcherName}>{current.displayName}</span>
-          {current.role === 'leader' && <span className={css.teamSwitcherLeader} aria-label="Leader"><LeaderMark size={12} /></span>}
-          <IconChevronDownOutlineRegular size={12} />
-        </button>
-      )}
-    />
-    <Menu
-      open={addPanelOpen}
-      onClose={() => { setAddPanelOpen(false) }}
-      portal
-      align="end"
-      side="bottom"
-      className={css.memberAddWrap}
-      listClassName={css.memberAddMenu}
-      anchor={(
-        <button
-          type="button"
-          className={css.teamSwitcherAdd}
-          aria-label="添加成员"
-          aria-haspopup="menu"
-          aria-expanded={addPanelOpen}
-          title="添加成员"
-          onClick={() => {
-            setAddPanelOpen(value => !value)
-            setAddQuery('')
-            setAddError(undefined)
-          }}
-        >
-          <IconPlusOutlineRegular size={14} />
-        </button>
-      )}
+    <span
+      className={css.teamSessionHover}
+      onMouseEnter={cancelHoverClose}
+      onMouseLeave={scheduleHoverClose}
     >
-      <div className={css.memberAddBody} role="group" aria-label="添加成员">
-        <div className={css.memberAddHeader}>
-          <strong>添加成员</strong>
-          <span>同一助手可被反复添加</span>
-        </div>
-        <div className={css.memberAddSearch}>
-          <IconSearchOutlineRegular size={14} />
-          <input
-            ref={addSearchRef}
-            value={addQuery}
-            onChange={event => { setAddQuery(event.target.value) }}
-            placeholder="搜索"
-            aria-label="搜索助手"
-          />
-        </div>
-        <div className={css.memberAddList}>
-          {visibleTeamAssistants.map(assistant => (
-            <button
-              key={assistant.id}
-              type="button"
-              role="menuitem"
-              className={css.memberAddRow}
-              disabled={addingId !== undefined}
-              onClick={() => { void addMemberToTeam(assistant) }}
-            >
-              <span className={css.memberAddAvatar} aria-hidden="true">
-                {assistant.avatar !== undefined && assistant.avatar !== ''
-                  ? <img src={assistant.avatar} alt="" />
-                  : initial(assistant.name)}
-              </span>
-              <span className={css.memberAddName}>{assistant.name}</span>
-              <IconPlusOutlineRegular size={14} className={css.memberAddPlus} />
-            </button>
-          ))}
-          {visibleTeamAssistants.length === 0 && (
-            <div className={css.memberAddEmpty}>
-              {teamAssistants.length === 0 ? '没有可加入团队的助手' : '没有匹配的助手'}
-            </div>
-          )}
-        </div>
-        {addError !== undefined && <div className={css.memberAddError} role="alert">{addError}</div>}
-        <div className={css.memberAddFooter}>
-          <span>没有合适的？让 Leader 帮你安排。</span>
+      <Menu
+        open={open}
+        onClose={close}
+        portal
+        align="start"
+        side="bottom"
+        className={css.teamSessionAnchor}
+        listClassName={css.teamSessionMenu}
+        anchor={(
           <button
             type="button"
-            role="menuitem"
-            className={css.memberAddFooterLink}
-            onClick={() => {
-              setAddPanelOpen(false)
-              const leader = members.find(member => member.role === 'leader')
-              if (leader !== undefined) {
-                keepChatView(leader.sessionId)
-                openSession(leader.sessionId)
+            className={css.teamSessionTrigger}
+            data-dsh-team-session-switcher
+            aria-label={`切换团队会话：${model.currentName}`}
+            aria-haspopup="menu"
+            aria-expanded={open}
+            onMouseEnter={() => { cancelHoverClose(); setOpen(true) }}
+            onPointerDown={() => { pointerFocus.current = true }}
+            onFocus={() => {
+              if (pointerFocus.current) {
+                pointerFocus.current = false
+                skipFocusOpen.current = false
+                return
               }
+              if (skipFocusOpen.current) {
+                skipFocusOpen.current = false
+                return
+              }
+              setOpen(true)
             }}
+            onBlur={() => { skipFocusOpen.current = false; pointerFocus.current = false }}
+            onClick={() => { pointerFocus.current = false; toggle() }}
           >
-            告诉 Leader →
+            <span className={css.teamSessionTriggerName}>{model.currentName}</span>
+            <IconChevronDownOutlineRegular size={12} className={css.teamSessionTriggerChevron} />
           </button>
+        )}
+      >
+        <div
+          className={css.teamSessionBody}
+          onMouseEnter={cancelHoverClose}
+          onMouseLeave={scheduleHoverClose}
+        >
+          <div className={css.teamSessionSearch}>
+            <IconSearchOutlineRegular size={14} />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={event => { setQuery(event.target.value) }}
+              placeholder="搜索成员或会话"
+              aria-label="搜索成员或会话"
+            />
+          </div>
+          <div className={css.teamSessionList}>
+            {model.members.length > 0 && (
+              <div className={css.teamSessionGroup} role="group" aria-label="成员">
+                <div className={css.teamSessionGroupLabel}>成员</div>
+                {model.members.map(member => (
+                  <button
+                    key={member.sessionId}
+                    type="button"
+                    role="menuitem"
+                    className={css.teamSessionRow}
+                    onClick={() => { goTo(member.sessionId) }}
+                  >
+                    <span className={css.teamSessionAvatar} aria-hidden="true">
+                      <MemberAvatar name={member.name} avatar={member.avatar} size={20} />
+                    </span>
+                    <span className={css.teamSessionRowName}>{member.name}</span>
+                    {member.leader && (
+                      <span className={css.teamSessionLeader} title="队长" aria-label="队长">
+                        <LeaderMark size={11} />
+                      </span>
+                    )}
+                    {member.current && (
+                      <IconCheckOutlineRegular size={14} className={css.teamSessionCheck} aria-label="当前会话" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+            {model.threads.length > 0 && (
+              <div className={css.teamSessionGroup} role="group" aria-label="团队会话">
+                <div className={css.teamSessionGroupLabel}>团队会话</div>
+                {model.threads.map(thread => (
+                  <button
+                    key={thread.id}
+                    type="button"
+                    role="menuitem"
+                    className={css.teamSessionRow}
+                    onClick={() => { goTo(thread.sessionId) }}
+                  >
+                    <span className={css.teamSessionRowName}>{thread.title}</span>
+                    <span className={css.teamSessionTime}>{relativeTime(thread.updatedAt)}</span>
+                    {thread.current && (
+                      <IconCheckOutlineRegular size={14} className={css.teamSessionCheck} aria-label="当前会话" />
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+            {model.members.length === 0 && model.threads.length === 0 && (
+              <div className={css.teamSessionEmpty}>没有匹配的成员或会话</div>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              className={css.teamSessionCreate}
+              onClick={() => { void createThread(team) }}
+            >
+              <IconPlusOutlineRegular size={14} />
+              <span>新建会话</span>
+            </button>
+          </div>
         </div>
-      </div>
-    </Menu>
-    </div>
-    </>
+      </Menu>
+    </span>
   )
 }
 
 /** Additive AionUi-style guidance under the shipped hero; never replaces hero or composer. */
 export function TeamMemberHeroHint({ sessionId }: { sessionId?: string }): JSX.Element | null {
-  const membership = useMembership(sessionId)
-  if (membership === undefined) return null
-  const leader = membership.member.role === 'leader'
-  const configuredPrompts = membership.member.assistantSnapshot.prompts ?? []
+  const team = useTeamForSession(sessionId)
+  const member = team === undefined || sessionId === undefined
+    ? undefined
+    : Object.values(team.members).find(candidate => candidate.sessionId === sessionId)
+  if (member === undefined) return null
+  const leader = member.role === 'leader'
+  const configuredPrompts = member.assistantSnapshot.prompts ?? []
   const suggestions = configuredPrompts.length > 0
     ? configuredPrompts.slice(0, 3)
     : leader
       ? ['组织一场辩论赛，让不同助手各持立场', '帮我在团队里加一个擅长 ___ 的成员', '多位专家会诊同一个问题']
       : []
-  const avatar = membership.member.assistantSnapshot.avatar
+  const avatar = member.assistantSnapshot.avatar
   return (
     <div className={css.teamMemberHeroHint} role="note">
       <span className={css.teamMemberHeroHeader}>
-        <MemberAvatar name={membership.member.displayName} avatar={avatar} size={44} />
+        <MemberAvatar name={member.displayName} avatar={avatar} size={44} />
         <span className={css.teamMemberHeroTitleGroup}>
-          <span className={css.teamMemberHeroName}>{membership.member.displayName}</span>
+          <span className={css.teamMemberHeroName}>{member.displayName}</span>
           <span className={css.teamMemberHeroRole}>{leader ? 'Leader' : '成员'}</span>
         </span>
       </span>

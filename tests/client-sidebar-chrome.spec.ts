@@ -32,7 +32,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
   return Object.fromEntries(names.map(name => [name, Stub]))
 })
 
-const { SidebarTeamSection, brandCreateItems, teamThreadRows } = await import('../src/client/sidebar.js')
+const { SidebarTeamSection, brandCreateItems, teamLastSessionId, teamThreadRows } = await import('../src/client/sidebar.js')
 const { AssistantSidebarSection } = await import('../src/client/assistant-sidebar.js')
 
 const sidebar = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
@@ -174,7 +174,7 @@ function teamThreadFixture(overrides: Record<string, unknown> = {}): Parameters<
   } as unknown as Parameters<typeof teamThreadRows>[0]
 }
 
-describe('an expanded team lists threads, with a main-Session fallback', () => {
+describe('a team row resolves its last used conversation', () => {
   it('takes every row title and Session from the thread, newest first', () => {
     const rows = teamThreadRows(teamThreadFixture({
       threads: {
@@ -207,5 +207,17 @@ describe('an expanded team lists threads, with a main-Session fallback', () => {
   it('has no row when a team has neither threads nor a resolvable Leader Session', () => {
     expect(teamThreadRows(teamThreadFixture({ members: {} }))).toEqual([])
     expect(teamThreadRows(teamThreadFixture({ members: { leader: { sessionId: '' } } }))).toEqual([])
+  })
+
+  it('opens the newest thread, or the main Session when there is none', () => {
+    const withThreads = teamThreadFixture({
+      threads: {
+        older: { id: 'older', title: '上周的排期', sessionId: 'session-older', createdAt: 1_000, updatedAt: 1_000 },
+        newer: { id: 'newer', title: '今天的发布', sessionId: 'session-newer', createdAt: 2_000, updatedAt: 2_000 },
+      },
+    })
+    expect(teamLastSessionId(withThreads)).toBe('session-newer')
+    expect(teamLastSessionId(teamThreadFixture())).toBe('session-main')
+    expect(teamLastSessionId(teamThreadFixture({ members: {} }))).toBeUndefined()
   })
 })

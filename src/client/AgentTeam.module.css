@@ -6158,92 +6158,199 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   outline-offset: 1px;
 }
 
-.teamSwitcherAnchor {
+/* ── Session-header switcher ──────────────────────────────────────────────
+   A borderless pill (current name + caret) opens one panel: search, members,
+   threads, new conversation. The panel is capped at 280px and scrolls only its
+   list, so a long team never reaches the composer or widens the header. */
+.teamSessionHover {
   display: inline-flex;
   min-width: 0;
+  max-width: 100%;
 }
 
-.teamSwitcherButton {
+.teamSessionAnchor {
+  display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.teamSessionTrigger {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  max-width: 220px;
+  gap: 4px;
+  max-width: 240px;
   height: 28px;
   min-width: 0;
-  padding: 0 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-1);
+  padding: 0 4px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
   color: var(--dsw-alias-label-primary);
   font: inherit;
-  font-size: 12px;
-  line-height: 18px;
+  font-size: 13px;
+  line-height: 20px;
   cursor: pointer;
 }
 
-.teamSwitcherButton:hover {
+.teamSessionTrigger:hover,
+.teamSessionTrigger[aria-expanded='true'] {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.teamSwitcherButton:focus-visible {
+.teamSessionTrigger:focus-visible {
   outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 1px;
 }
 
-.teamSwitcherAvatar {
+.teamSessionTriggerName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teamSessionTriggerChevron {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.teamSessionMenu {
+  box-sizing: border-box;
+  width: min(280px, calc(100vw - 24px));
+  max-width: 280px;
+}
+
+.teamSessionBody {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: min(320px, 50vh);
+  padding: 4px;
+}
+
+.teamSessionList {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.teamSessionSearch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 28px;
+  margin-bottom: 2px;
+  padding: 0 8px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.teamSessionSearch input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+}
+
+.teamSessionGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.teamSessionGroupLabel {
+  flex: none;
+  padding: 4px 8px 2px;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.teamSessionRow,
+.teamSessionCreate {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.teamSessionRow:hover,
+.teamSessionRow:focus-visible,
+.teamSessionCreate:hover,
+.teamSessionCreate:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.teamSessionRow:focus-visible,
+.teamSessionCreate:focus-visible {
+  outline: none;
+}
+
+.teamSessionCreate {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.teamSessionAvatar {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 20px;
   height: 20px;
   flex: none;
-  corner-shape: superellipse(1);
-  border-radius: 50%;
-  background: var(--dsw-alias-bg-module-platform);
-  color: var(--dsw-alias-label-secondary);
-  font-size: 10px;
-  line-height: 14px;
-  font-weight: 500;
 }
 
-.teamSwitcherName {
+.teamSessionRowName {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.teamSwitcherLeader {
+.teamSessionLeader {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
   flex: none;
   color: var(--dsw-alias-state-warn-primary);
-  font-size: 10px;
-  line-height: 14px;
 }
 
-.teamSwitcherItem {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+.teamSessionTime {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
 }
 
-.teamSwitcherItemCopy {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  gap: 1px;
+.teamSessionCheck {
+  flex: none;
+  color: var(--dsw-alias-state-business-primary);
 }
 
-.teamSwitcherItemName {
-  overflow: hidden;
-  color: var(--dsw-alias-label-primary);
-  font-size: 13px;
-  line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.teamSessionEmpty {
+  padding: 8px;
+  color: var(--dsw-alias-label-quaternary);
+  font-size: 12px;
 }
 
 .teamMemberHeroHint {
@@ -6455,43 +6562,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   flex: none;
 }
 
-.teamSwitcherGroup {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-}
-
-.teamSwitcherButtonGrouped {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-
-.teamSwitcherAdd {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  flex: none;
-  padding: 0;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-left: 0;
-  border-radius: 0 var(--dsw-radius-md) var(--dsw-radius-md) 0;
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
-
-.teamSwitcherAdd:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.teamSwitcherAdd:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: 1px;
-}
-
 @media (max-width: 900px) {
   .teamParallelGrid {
     display: flex;
@@ -6532,21 +6602,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   align-self: center;
   box-sizing: border-box;
 }
-
-.teamSwitcherAvatar {
-  width: 20px !important;
-  height: 20px !important;
-  min-width: 20px !important;
-  max-width: 20px !important;
-  flex: 0 0 20px !important;
-  aspect-ratio: 1 / 1;
-  box-sizing: border-box;
-}
-
-
-
-
-
 
 .teamParallelPendingBadge {
   display: inline-flex;
@@ -6843,216 +6898,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
    all composers share one horizontal line. */
 [data-team-pane] [data-composer-seat] {
   min-height: 128px;
-}
-
-.memberAddWrap {
-  position: relative;
-  display: inline-flex;
-}
-
-/* The native Menu owns the card surface, the portal placement and the
-   dismissal; only the panel's own metrics and inner scroll layout live here.
-   The doubled class wins the viewport's scroll rule so the header and the
-   footer stay pinned while only the candidate list scrolls. */
-.memberAddMenu {
-  width: 220px;
-  max-height: 360px;
-  padding: 0;
-  overflow: hidden;
-}
-
-.memberAddMenu.memberAddMenu > [role='presentation'] {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: visible;
-}
-
-.memberAddBody {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.memberAddHeader {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 12px 12px 6px;
-}
-
-.memberAddHeader strong {
-  color: var(--dsw-alias-label-primary);
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 18px;
-}
-
-.memberAddHeader span {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 10px;
-  line-height: 15px;
-}
-
-.memberAddSearch {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 6px;
-  margin: 2px 10px 8px;
-  height: 32px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 9px;
-  background: var(--dsw-alias-bg-module-platform);
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.memberAddSearch:focus-within {
-  box-shadow: inset 0 0 0 1px var(--dsw-alias-border-l2);
-}
-
-.memberAddSearch input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 13px;
-}
-
-.memberAddSearch input::placeholder {
-  color: var(--dsw-alias-label-tertiary);
-  opacity: 1;
-}
-
-.memberAddList {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 4px 4px;
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
-}
-
-.memberAddRow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  padding: 6px 8px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.memberAddRow:hover,
-.memberAddRow:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.memberAddRow:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: -2px;
-}
-
-.memberAddRow:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-.memberAddAvatar {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  overflow: hidden;
-  border-radius: 7px;
-  background: var(--dsw-alias-bg-module-platform);
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.memberAddAvatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-.memberAddName {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-size: 12px;
-  line-height: 18px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.memberAddPlus {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.memberAddEmpty {
-  padding: 18px 10px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  text-align: center;
-}
-
-.memberAddError {
-  padding: 0 12px 8px;
-  color: var(--dsw-alias-state-error-primary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.memberAddFooter {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  gap: 1px;
-  padding: 8px 10px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 10px;
-  line-height: 15px;
-}
-
-.memberAddFooterLink {
-  width: fit-content;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.memberAddFooterLink:hover {
-  text-decoration: underline;
-}
-
-/* Keep the team member selector at the far right of the session title cluster,
-   immediately left of the host's own header utilities. The native
-   `headerActions` slot wraps our group, so let it grow and push the group over. */
-[class*="headerActions"]:has([class*="teamSwitcherGroup"]) {
-  flex: 1;
-  min-width: 0;
-}
-
-[class*="teamSwitcherGroup"] {
-  margin-left: auto;
 }
 
 /* Hero panes: keep the official welcome branding but pin its composer to the
@@ -9471,52 +9316,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   }
 }
 
-/* Per-team recent-task disclosure: a sibling of the row button, never nested
-   inside it, so opening the team and expanding the list stay separate actions. */
-.sidebarTeamExpand {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  /* Narrow on purpose: the chevron is a 12px glyph, so a 20px cell plus the
-     row gap pushed the avatar far enough right to read as an empty column. */
-  width: 14px;
-  height: 20px;
-  flex: none;
-  /* Pull toward the row edge: 8px row padding minus 4px lands the glyph 4px in,
-     and the right margin keeps the flex gap from opening an empty column. */
-  margin-left: -4px;
-  margin-right: -2px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--dsw-radius-xs);
-  background: transparent;
-  color: var(--dsw-alias-label-tertiary);
-  cursor: pointer;
-}
-
-.sidebarTeamExpand:hover {
-  color: var(--dsw-alias-label-secondary);
-}
-
-.sidebarTeamExpand:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: -1px;
-}
-
-.sidebarTeamExpandChevron {
-  transition: transform 120ms var(--ds-ease-in-out);
-}
-
-.sidebarTeamExpandChevronOpen {
-  transform: rotate(90deg);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .sidebarTeamExpandChevron {
-    transition: none;
-  }
-}
-
 /* Newest three tasks, indented under the row copy. Titles ellipsize; the block
    is navigation only and never renders a member roster. */
 .sidebarTeamTaskList {
@@ -9627,13 +9426,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   padding-left: 24px;
 }
 
-.sidebarRosterEmpty {
-  padding: 4px 8px;
-  color: var(--dsw-alias-label-quaternary);
-  font-size: 11px;
-  line-height: 16px;
-}
-
 /* Shipped session-row metrics: 32px tall, 8px gutters, radius-md, one line,
    hover fill. Members are sessions here, so they read as sessions. */
 .sidebarRosterRow {
@@ -9655,43 +9447,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   cursor: pointer;
 }
 
-/* Hover-only actions, exactly where the shipped row puts its ⋯ menu. */
-.sidebarRosterActions {
-  display: none;
-  align-items: center;
-  flex: none;
-}
-
-.sidebarRosterRow:hover .sidebarRosterActions,
-.sidebarRosterRow[aria-selected='true'] .sidebarRosterActions {
-  display: inline-flex;
-}
-
-/* The status label yields to the actions, like the shipped row's time does. */
-.sidebarRosterRow:hover .sidebarRosterMeta,
-.sidebarRosterRow[aria-selected='true'] .sidebarRosterMeta {
-  display: none;
-}
-
-.sidebarRosterIconButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--dsw-radius-sm);
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  cursor: pointer;
-}
-
-.sidebarRosterIconButton:hover {
-  background: var(--dsw-alias-interactive-bg-active);
-  color: var(--dsw-alias-label-primary);
-}
-
 .sidebarRosterRow:hover {
   background: var(--dsw-alias-interactive-bg-hover);
 }
@@ -9706,15 +9461,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-}
-
-/* State rides the trailing edge and gives way to nothing else, like the row's
-   timestamp does in the shipped list. */
-.sidebarRosterMeta {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  white-space: nowrap;
 }
 
 .sidebarRosterRow:hover {

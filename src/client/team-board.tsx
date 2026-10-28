@@ -260,6 +260,18 @@ export function keepNativeConversationTab(sessionId: string): void {
   keepConversationView(sessionId, NATIVE_CONVERSATION_VIEW_ID)
 }
 
+/** View id for the 群聊 tab: every member conversation side by side. */
+const TEAM_CHAT_VIEW_ID = 'team-parallel'
+
+/**
+ * Land a Session on the 群聊 tab. The sidebar's 查看全部会话 entry opens the last
+ * used conversation and shows every member conversation there, without
+ * duplicating a thread list in the sidebar.
+ */
+export function keepTeamChatTab(sessionId: string): void {
+  keepConversationView(sessionId, TEAM_CHAT_VIEW_ID)
+}
+
 function useNow(): number {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {

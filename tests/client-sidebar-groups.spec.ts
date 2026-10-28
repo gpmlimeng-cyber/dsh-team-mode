@@ -417,7 +417,7 @@ describe('native menu unification for the floating pickers', () => {
   })
 })
 
-describe('native overlays for member add and the enlarged conversation', () => {
+describe('native overlays for the session header and the enlarged conversation', () => {
   const chrome = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
   const teamPanel = readFileSync(new URL('../src/client/teams/TeamPanel.tsx', import.meta.url), 'utf8')
   const columnCss = readFileSync(
@@ -426,47 +426,27 @@ describe('native overlays for member add and the enlarged conversation', () => {
   )
   const components = readFileSync(new URL('../src/client/components.tsx', import.meta.url), 'utf8')
   const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
-  const memberAddCss = css.slice(css.indexOf('.memberAddWrap {'), css.indexOf('.memberAddHeader {'))
   const expandedColumnCss = columnCss.slice(
     columnCss.indexOf('.conversationColumnExpanded {'),
     columnCss.indexOf('.conversationColumnExpanded .columnHeader {'),
   )
 
-  it('adds a member from a portalled host Menu anchored to the ＋ button', () => {
-    expect(chrome).toContain('<Menu')
-    expect(chrome).toContain('portal')
-    expect(chrome).toContain('listClassName={css.memberAddMenu}')
-    expect(chrome).toContain('aria-haspopup="menu"')
-    expect(chrome).toContain('role="menuitem"')
-    // The bespoke scrim, dialog semantics and page Escape listener are gone.
-    expect(chrome).not.toContain('memberAddScrim')
-    expect(chrome).not.toContain('memberAddPanel')
-    expect(chrome).not.toContain('aria-haspopup="dialog"')
-    expect(chrome).not.toContain("document.addEventListener('keydown'")
-    expect(chrome).not.toContain('autoFocus')
-  })
-
-  it('keeps the member-add content and every action', () => {
-    for (const copy of [
-      '添加成员',
-      '同一助手可被反复添加',
-      '搜索助手',
-      '没有可加入团队的助手',
-      '没有匹配的助手',
-      '没有合适的？让 Leader 帮你安排。',
-      '告诉 Leader →',
-    ]) {
-      expect(chrome).toContain(copy)
-    }
-    expect(chrome).toContain("callAgentTeam('team.addMember'")
-    expect(chrome).toContain('keepChatView(leader.sessionId)')
-    expect(memberAddCss.length).toBeGreaterThan(0)
-    expect(memberAddCss).not.toContain('position: fixed')
-    expect(memberAddCss).not.toContain('position: absolute')
-    expect(memberAddCss).not.toContain('z-index')
-    // The scrim class is gone entirely.
+  it('moved member add out of the Session header', () => {
+    // The header owns one control now: the Session switcher. Adding a member
+    // had a second entry all along (team page → 添加助手), so the ＋ and its
+    // search panel left with the old member selector.
+    expect(chrome).not.toContain('添加成员')
+    expect(chrome).not.toContain('team.addMember')
+    expect(chrome).not.toContain('memberAdd')
+    expect(css).not.toContain('.memberAddWrap')
     expect(css).not.toContain('.memberAddScrim')
     expect(css).not.toContain('.memberAddPanel')
+  })
+
+  it('keeps adding members reachable from the team page dialog', () => {
+    expect(teamPanel).toContain('添加助手')
+    expect(teamPanel).toContain("callAgentTeam('team.addMember'")
+    expect(teamPanel).toContain('同一个助手可以多次加入')
   })
 
   it('enlarges a conversation in a headless host Modal instead of a fixed layer', () => {
@@ -516,14 +496,14 @@ describe('initial focus in the unified pickers', () => {
     expect(panel).not.toContain('autoFocus')
   })
 
-  it('focuses the member-add search on the Menu placement frame, not via autoFocus', () => {
-    expect(chrome).toContain('const addSearchRef = useRef<HTMLInputElement>(null)')
+  it('focuses the session-switcher search on the Menu placement frame, not via autoFocus', () => {
+    expect(chrome).toContain('const searchRef = useRef<HTMLInputElement>(null)')
     expect(chrome).toContain(
-      'const frame = requestAnimationFrame(() => { addSearchRef.current?.focus() })',
+      'const frame = requestAnimationFrame(() => { searchRef.current?.focus() })',
     )
     expect(chrome).toContain('cancelAnimationFrame(frame)')
-    expect(chrome).toContain('}, [addPanelOpen])')
-    expect(chrome).toContain('ref={addSearchRef}')
+    expect(chrome).toContain('}, [open])')
+    expect(chrome).toContain('ref={searchRef}')
     expect(chrome).not.toContain('autoFocus')
   })
 
@@ -542,7 +522,7 @@ describe('initial focus in the unified pickers', () => {
     expect(panel).not.toContain("event.key === 'Escape'")
     expect(panel).not.toContain("event.key === 'Tab'")
     expect(panel).toContain('trigger?.focus()')
-    // Member add: native menu rows, so the Menu walks them and Tab settles them.
+    // Session switcher: native menu rows, so the Menu walks them and Tab settles them.
     expect(chrome).toContain('role="menuitem"')
     expect(chrome).not.toContain("event.key === 'Escape'")
     expect(chrome).not.toContain("event.key === 'Tab'")
