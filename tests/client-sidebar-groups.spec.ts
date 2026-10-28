@@ -15,10 +15,14 @@ import {
   SIDEBAR_GROUP_MAX_CHARS,
   UNGROUPED_PARTITION_ID,
   applyGroupBatch,
+  groupBatchLevelNeedsDefault,
   groupBatchLevels,
   groupBatchMembers,
+  groupBatchModelKey,
   groupBatchModelRefs,
   groupBatchPatch,
+  groupBatchPendingMembers,
+  groupBatchRoundResults,
   groupExportFileName,
   groupImportPlanLines,
   groupMembershipCandidates,
@@ -33,6 +37,7 @@ import {
   sidebarGroupNameError,
   sidebarPartitions,
   type GroupBatchMember,
+  type GroupBatchResult,
   type SidebarGroupCandidate,
 } from '../src/client/sidebar-groups.js'
 
@@ -687,6 +692,28 @@ describe('groupBatchLevels', () => {
   })
 })
 
+describe('groupBatchLevelNeedsDefault', () => {
+  const served = [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }]
+
+  it('keeps a level the newly picked model serves', () => {
+    expect(groupBatchLevelNeedsDefault('high', served)).toBe(false)
+  })
+
+  it('narrows a level the newly picked model cannot serve', () => {
+    // Every row gets the same model+level pair, so this would be refused
+    // uniformly instead of per row.
+    expect(groupBatchLevelNeedsDefault('max', served)).toBe(true)
+    expect(groupBatchLevelNeedsDefault('high', [])).toBe(true)
+  })
+
+  it('never narrows 模型默认, an untouched pick, or a failed capability read', () => {
+    expect(groupBatchLevelNeedsDefault('', served)).toBe(false)
+    expect(groupBatchLevelNeedsDefault(undefined, served)).toBe(false)
+    // Unknown is not "no levels": a read error must not drop a valid pick.
+    expect(groupBatchLevelNeedsDefault('max', undefined)).toBe(false)
+  })
+})
+
 describe('groupBatchPatch', () => {
   it('sends nothing when no picker was touched', () => {
     expect(groupBatchPatch({})).toBeUndefined()
@@ -800,6 +827,67 @@ describe('applyGroupBatch', () => {
   })
 })
 
+describe('groupBatchPendingMembers', () => {
+  const members = [
+    { id: 'a1', name: '助手一' },
+    { id: 'a2', name: '助手二' },
+    { id: 'a3', name: '助手三' },
+  ]
+
+  it('writes every member on the first apply', () => {
+    expect(groupBatchPendingMembers(members, undefined)).toEqual(members)
+  })
+
+  it('retries only the refused rows, never one that already landed', () => {
+    const results: GroupBatchResult[] = [
+      { id: 'a1', name: '助手一' },
+      { id: 'a2', name: '助手二', error: 'MODEL_REFERENCE_INVALID' },
+      { id: 'a3', name: '助手三' },
+    ]
+
+    // a1/a3 already landed; rewriting them would count them again.
+    expect(groupBatchPendingMembers(members, results))
+      .toEqual([{ id: 'a2', name: '助手二' }])
+  })
+
+  it('keeps a row a retry skipped as 未变化 out of the next retry', () => {
+    const results: GroupBatchResult[] = [
+      { id: 'a1', name: '助手一', unchanged: true },
+      { id: 'a2', name: '助手二', error: 'refused again' },
+    ]
+
+    expect(groupBatchPendingMembers(members.slice(0, 2), results))
+      .toEqual([{ id: 'a2', name: '助手二' }])
+  })
+})
+
+describe('groupBatchRoundResults', () => {
+  const members = [
+    { id: 'a1', name: '助手一' },
+    { id: 'a2', name: '助手二' },
+  ]
+
+  it('keeps the first round\'s outcomes as written', () => {
+    expect(groupBatchRoundResults(members, [
+      { id: 'a1', name: '助手一' },
+      { id: 'a2', name: '助手二', error: 'MODEL_REFERENCE_INVALID' },
+    ])).toEqual([
+      { id: 'a1', name: '助手一' },
+      { id: 'a2', name: '助手二', error: 'MODEL_REFERENCE_INVALID' },
+    ])
+  })
+
+  it('reads a row a retry skipped as 未变化, not as another 已更新', () => {
+    // The retry wrote only a2; a1 was already landed and must not be counted.
+    expect(groupBatchRoundResults(members, [
+      { id: 'a2', name: '助手二', error: 'still refused' },
+    ])).toEqual([
+      { id: 'a1', name: '助手一', unchanged: true },
+      { id: 'a2', name: '助手二', error: 'still refused' },
+    ])
+  })
+})
+
 describe('group batch settings source contract', () => {
   const source = readFileSync(new URL('../src/client/sidebar-group-ui.tsx', import.meta.url), 'utf8')
   const moduleCss = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
@@ -842,7 +930,8 @@ describe('group batch settings source contract', () => {
     expect(dialog).toContain('ariaLabel="思考模式"')
     expect(dialog).toContain('ariaLabel="权限"')
     expect(dialog.match(/<SelectControl/g) ?? []).toHaveLength(3)
-    expect(dialog).toContain('applyGroupBatch(members, patch')
+    // A retry writes the pending rows only.
+    expect(dialog).toContain('applyGroupBatch(pending, patch')
     expect(dialog).toContain("callAgentTeam('assistant.instance.update', { id, value })")
     // The batch is a settings write only; a group label would move the rows.
     expect(dialog).not.toContain('value: { group')
@@ -852,9 +941,22 @@ describe('group batch settings source contract', () => {
     expect(dialog).toContain('data-dsh-group-batch-row={member.id}')
     expect(dialog).toContain('data-dsh-group-batch-failed')
     expect(dialog).toContain('已更新')
+    // A row a retry left alone says 未变化 instead of counting as changed again.
+    expect(dialog).toContain('未变化')
     expect(dialog).toContain('个被拒绝')
     expect(dialog).toContain('还没有助手')
     expect(dialog).toContain('data-dsh-group-batch-empty')
+  })
+
+  it('lets the user retry from the same dialog without rewriting landed rows', () => {
+    expect(dialog).toContain('groupBatchPendingMembers(members, results)')
+    expect(dialog).toContain('groupBatchRoundResults(members, written)')
+    expect(dialog).toContain('重试 ${pending.length} 个被拒绝的助手')
+    expect(dialog).toContain('未变化 ${unchanged} 个')
+    // The pickers stay usable after an apply: the user may narrow a rejected
+    // level first, then retry the refused rows only.
+    expect(dialog).not.toContain('disabled={locked')
+    expect(dialog).not.toContain('const locked =')
   })
 
   it('treats thinking as its own axis over the group\'s models', () => {
@@ -880,7 +982,18 @@ describe('group batch settings source contract', () => {
     // groupBatchPatch already proves the patch shape; this pins that the dialog
     // does not synthesise a model reference when only the level is picked.
     expect(dialog).toContain('...(pickedProvider === \'\' || pickedModel === \'\'')
-    expect(dialog).toContain('reasoningEffort: thinkingPick.reasoningEffort')
+    expect(dialog).toContain('reasoningEffort: thinkingEffort')
+  })
+
+  it('narrows a level the newly picked model cannot serve to 模型默认', () => {
+    // The picked model's own levels are kept per reference, so the narrowing
+    // reads that model instead of the union.
+    expect(dialog).toContain('groupBatchModelKey(')
+    expect(dialog).toContain('effortsByModel.get(')
+    expect(dialog).toContain('groupBatchLevelNeedsDefault(')
+    expect(dialog).toContain("setThinkingRow(modelControlEffortRow(''))")
+    // The narrowing cannot wait for the read if apply fires first.
+    expect(dialog).toContain('levelsPending')
   })
 
   it('never turns a failed catalog onto the empty state', () => {

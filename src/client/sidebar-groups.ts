@@ -300,6 +300,14 @@ export interface GroupBatchModelRef {
   model: string
 }
 
+/**
+ * Stable key for one model reference. The NUL separator cannot occur in a
+ * provider or model id, so two references can never collide into one key.
+ */
+export function groupBatchModelKey(ref: GroupBatchModelRef): string {
+  return `${ref.provider}\u0000${ref.model}`
+}
+
 /** One assistant a group batch write targets, as the result list shows it. */
 export interface GroupBatchMember {
   id: string
@@ -318,6 +326,11 @@ export interface GroupBatchResult {
   id: string
   name: string
   error?: string
+  /**
+   * A retry left this row alone because an earlier apply already landed it.
+   * That round changed nothing here, so the row must not read as a second 已更新.
+   */
+  unchanged?: true
 }
 
 /**
@@ -366,9 +379,7 @@ export function groupBatchModelRefs(
   const refs: GroupBatchModelRef[] = []
   const seen = new Set<string>()
   const add = (ref: GroupBatchModelRef): void => {
-    // The NUL separator cannot occur in a provider or model id, so two
-    // references can never collide into one key.
-    const key = `${ref.provider}\u0000${ref.model}`
+    const key = groupBatchModelKey(ref)
     if (seen.has(key)) return
     seen.add(key)
     refs.push(ref)
@@ -403,6 +414,24 @@ export function groupBatchLevels(
     }
   }
   return levels
+}
+
+/**
+ * True when a model change must narrow the thinking pick to 模型默认: a concrete
+ * level is chosen and the newly picked model, whose capabilities are known, does
+ * not serve it. Every row carries the same model+level pair, so leaving an
+ * unsupported level in place would get the whole batch refused together.
+ *
+ * A failed capability read (`undefined` efforts) never narrows: a read error
+ * cannot tell anything about the model and must not throw a valid pick away.
+ */
+export function groupBatchLevelNeedsDefault(
+  levelId: string | undefined,
+  modelEfforts: readonly GroupBatchLevel[] | undefined,
+): boolean {
+  if (levelId === undefined || levelId === '') return false
+  if (modelEfforts === undefined) return false
+  return !modelEfforts.some(level => level.id === levelId)
 }
 
 /** The engine fields one apply writes; an absent field keeps its stored value. */
@@ -465,6 +494,37 @@ export async function applyGroupBatch(
     }
   }
   return results
+}
+
+/**
+ * The members one apply still has to write: everyone without a landed result.
+ * A retry therefore reruns only the rows that were refused, and cannot
+ * double-count a row an earlier apply already changed.
+ */
+export function groupBatchPendingMembers<T extends { id: string }>(
+  members: readonly T[],
+  results: readonly GroupBatchResult[] | undefined,
+): T[] {
+  if (results === undefined) return [...members]
+  const landed = new Set<string>()
+  for (const result of results) {
+    if (result.error === undefined) landed.add(result.id)
+  }
+  return members.filter(member => !landed.has(member.id))
+}
+
+/**
+ * The result rows after one apply or retry. Written rows carry the new outcome
+ * (updated or refused); every row the round left alone reads 未变化 instead of
+ * repeating a stale 已更新.
+ */
+export function groupBatchRoundResults(
+  members: readonly { id: string; name: string }[],
+  written: readonly GroupBatchResult[],
+): GroupBatchResult[] {
+  const byId = new Map(written.map(result => [result.id, result]))
+  return members.map(member => byId.get(member.id)
+    ?? { id: member.id, name: member.name, unchanged: true })
 }
 
 /**

@@ -41,10 +41,14 @@ import {
   UNGROUPED_PARTITION_ID,
   GROUP_SHARE_MAX_DOCUMENT_BYTES,
   applyGroupBatch,
+  groupBatchLevelNeedsDefault,
   groupBatchLevels,
   groupBatchMembers,
+  groupBatchModelKey,
   groupBatchModelRefs,
   groupBatchPatch,
+  groupBatchPendingMembers,
+  groupBatchRoundResults,
   groupCreateRows,
   groupCreateSelection,
   groupExportFileName,
@@ -767,6 +771,11 @@ function GroupBatchDialog({
   const [thinkingRow, setThinkingRow] = useState('')
   const [permission, setPermission] = useState('')
   const [levels, setLevels] = useState<GroupBatchLevel[]>([])
+  // The levels each read model serves. The union feeds the menu; this map is
+  // what lets a model change drop a level the new model cannot serve.
+  const [effortsByModel, setEffortsByModel] = useState<
+    ReadonlyMap<string, readonly GroupBatchLevel[]>
+  >(() => new Map())
   const [levelsLoading, setLevelsLoading] = useState(false)
   const [levelsError, setLevelsError] = useState<string>()
   const [membersError, setMembersError] = useState<string>()
@@ -830,6 +839,7 @@ function GroupBatchDialog({
     let cancelled = false
     if (modelRefs.length === 0) {
       setLevels([])
+      setEffortsByModel(new Map())
       setLevelsError(undefined)
       setLevelsLoading(false)
       return () => { cancelled = true }
@@ -840,6 +850,15 @@ function GroupBatchDialog({
       callAgentTeam('catalog.model.get', { provider: ref.provider, model: ref.model })
     ))).then(settled => {
       if (cancelled) return
+      const byModel = new Map<string, readonly GroupBatchLevel[]>()
+      modelRefs.forEach((ref, index) => {
+        const result = settled[index]
+        // A rejected read stays out of the map: unknown is not "no levels",
+        // and the narrowing rule below must not act on it.
+        if (result?.status !== 'fulfilled') return
+        byModel.set(groupBatchModelKey(ref), result.value.reasoning?.efforts ?? [])
+      })
+      setEffortsByModel(byModel)
       setLevels(groupBatchLevels(settled.map(result => (
         result.status === 'fulfilled' ? result.value.reasoning?.efforts ?? [] : []
       ))))
@@ -888,31 +907,54 @@ function GroupBatchDialog({
   ], [catalog])
 
   const thinkingPick = thinkingRow === '' ? undefined : modelControlPick(thinkingRow)
+  const thinkingEffort = thinkingPick?.reasoningEffort
+  // Every assistant receives the same model+level pair, so an unsupported level
+  // left over from the previous model would be refused on every row at once.
+  // Narrow it to 模型默认 as soon as the newly picked model's levels are known.
+  useEffect(() => {
+    if (pickedProvider === '' || pickedModel === '') return
+    const efforts = effortsByModel.get(groupBatchModelKey({
+      provider: pickedProvider,
+      model: pickedModel,
+    }))
+    if (groupBatchLevelNeedsDefault(thinkingEffort, efforts)) {
+      setThinkingRow(modelControlEffortRow(''))
+    }
+  }, [effortsByModel, pickedModel, pickedProvider, thinkingEffort])
   const patch = groupBatchPatch({
     ...(pickedProvider === '' || pickedModel === ''
       ? {}
       : { model: { provider: pickedProvider, model: pickedModel } }),
-    ...(thinkingPick?.reasoningEffort === undefined
-      ? {}
-      : { reasoningEffort: thinkingPick.reasoningEffort }),
+    ...(thinkingEffort === undefined ? {} : { reasoningEffort: thinkingEffort }),
     ...(permission === '' ? {} : { permissionPresetId: permission }),
   })
+  // The narrowing above runs on the picked model's levels, which arrive async:
+  // until the read settles an early click could still send a pair that model
+  // cannot serve. The level '' (模型默认) needs no such wait.
+  const levelsPending = levelsLoading
+    && pickedProvider !== ''
+    && pickedModel !== ''
+    && thinkingEffort !== undefined
+    && thinkingEffort !== ''
   const done = results !== undefined
-  const locked = busy || done
+  const pending = groupBatchPendingMembers(members, results)
   const failures = results?.filter(result => result.error !== undefined) ?? []
   const failureOf = new Map(failures.map(failure => [failure.id, failure.error ?? '']))
-  const updated = (results?.length ?? 0) - failures.length
+  const resultOf = new Map((results ?? []).map(result => [result.id, result]))
+  const unchanged = results?.filter(result => result.unchanged === true).length ?? 0
+  const updated = (results?.length ?? 0) - failures.length - unchanged
 
   const apply = async (): Promise<void> => {
-    if (locked || patch === undefined || members.length === 0) return
+    if (busy || patch === undefined || pending.length === 0) return
     setBusy(true)
-    setResults(undefined)
     // applyGroupBatch never throws for a refused row, so there is no catch here:
     // every outcome — including the Host's reason — comes back as a result row.
-    const next = await applyGroupBatch(members, patch, (id, value) => (
+    const written = await applyGroupBatch(pending, patch, (id, value) => (
       callAgentTeam('assistant.instance.update', { id, value })
     ))
-    setResults(next)
+    // A retry writes only the rows still pending; the rows an earlier apply
+    // landed read 未变化, so they are never counted as changed a second time.
+    setResults(groupBatchRoundResults(members, written))
     setBusy(false)
     onChanged()
   }
@@ -926,7 +968,7 @@ function GroupBatchDialog({
       closeLabel="关闭"
       className={css.sidebarGroupDialog ?? ''}
       contentClassName={css.sidebarGroupDialogContent ?? ''}
-      footer={done || (loaded && (members.length === 0 || membersError !== undefined))
+      footer={loaded && (members.length === 0 || membersError !== undefined)
         ? (
           <Button variant="primary" type="button" onClick={onClose}>
             {done ? '完成' : '关闭'}
@@ -934,15 +976,21 @@ function GroupBatchDialog({
         )
         : (
           <>
-            <Button variant="outline" type="button" disabled={busy} onClick={onClose}>取消</Button>
-            <Button
-              variant="primary"
-              type="button"
-              disabled={locked || patch === undefined || members.length === 0}
-              onClick={() => { void apply() }}
-            >
-              {busy ? '应用中…' : `应用到 ${members.length} 个助手`}
+            <Button variant="outline" type="button" disabled={busy} onClick={onClose}>
+              {done ? '完成' : '取消'}
             </Button>
+            {(!done || pending.length > 0) && (
+              <Button
+                variant="primary"
+                type="button"
+                disabled={busy || patch === undefined || pending.length === 0 || levelsPending}
+                onClick={() => { void apply() }}
+              >
+                {busy
+                  ? '应用中…'
+                  : done ? `重试 ${pending.length} 个被拒绝的助手` : `应用到 ${members.length} 个助手`}
+              </Button>
+            )}
           </>
         )}
     >
@@ -1033,13 +1081,14 @@ function GroupBatchDialog({
                     组内助手（{members.length}）
                     {done && (
                       <span className={css.groupBatchSummary} role="status">
-                        已更新 {updated} 个，{failures.length} 个被拒绝
+                        已更新 {updated} 个，{unchanged > 0 && `未变化 ${unchanged} 个，`}{failures.length} 个被拒绝
                       </span>
                     )}
                   </h4>
                   <div className={css.groupBatchList}>
                     {members.map(member => {
                       const failure = failureOf.get(member.id)
+                      const result = resultOf.get(member.id)
                       return (
                         <div
                           key={member.id}
@@ -1047,9 +1096,8 @@ function GroupBatchDialog({
                           data-dsh-group-batch-row={member.id}
                         >
                           <span className={css.groupBatchName}>{member.name}</span>
-                          {done && (failure === undefined
-                            ? <span className={css.groupBatchOk}>已更新</span>
-                            : (
+                          {done && (failure !== undefined
+                            ? (
                               <span
                                 className={css.groupBatchFailed}
                                 title={failure}
@@ -1057,7 +1105,12 @@ function GroupBatchDialog({
                               >
                                 {failure}
                               </span>
-                            ))}
+                            )
+                            : result?.unchanged === true
+                              // A retry skipped this row because it already landed;
+                              // calling that 已更新 again would count it twice.
+                              ? <span className={css.groupBatchHint}>未变化</span>
+                              : <span className={css.groupBatchOk}>已更新</span>)}
                         </div>
                       )
                     })}
