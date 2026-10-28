@@ -3101,6 +3101,15 @@ textarea.input {
   margin-left: auto;
 }
 
+/* Desktop already has the shell's own collapse control in the title bar, so the
+   mode row never shows a second one there; the narrow drawer keeps it, because
+   the rail's control is out of reach. */
+@media (min-width: 761px) {
+  [data-dsh-team-mode-mode-row] [data-dsh-team-mode-collapse] {
+    display: none;
+  }
+}
+
 
 
 /* Right-aligned icon actions on the brand row: 搜索 / 筛选 / 新建. */
