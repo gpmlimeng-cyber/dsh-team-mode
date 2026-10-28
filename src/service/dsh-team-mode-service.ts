@@ -1010,10 +1010,21 @@ export class AgentTeamService extends Service {
     const display = overrideAssistantSnapshot(current.assistantSnapshot, patch.name, patch.avatar)
     const {
       reasoningEffort: _previousReasoning,
+      title: _previousTitle,
+      blurb: _previousBlurb,
       ...snapshotRest
     } = display
+    // Absent keeps the stored identity line; an empty string clears it.
+    const title = patch.title === undefined
+      ? current.assistantSnapshot.title
+      : identityLine(patch.title)
+    const blurb = patch.blurb === undefined
+      ? current.assistantSnapshot.blurb
+      : identityLine(patch.blurb)
     const snapshot: AssistantSnapshot = {
       ...snapshotRest,
+      ...(title === undefined ? {} : { title }),
+      ...(blurb === undefined ? {} : { blurb }),
       // The persona is part of the snapshot the create dialog fills; a patch may
       // replace it, and an absent field keeps the stored text.
       instructions: patch.instructions ?? current.assistantSnapshot.instructions,
@@ -1042,6 +1053,8 @@ export class AgentTeamService extends Service {
     // The auto-capture switch is stored on the instance row; absent keeps it.
     const memoryAutoCapture = patch.memoryAutoCapture ?? current.memoryAutoCapture
     const changed = snapshot.name !== current.assistantSnapshot.name
+      || snapshot.title !== current.assistantSnapshot.title
+      || snapshot.blurb !== current.assistantSnapshot.blurb
       || snapshot.avatar !== current.assistantSnapshot.avatar
       || snapshot.instructions !== current.assistantSnapshot.instructions
       || snapshot.provider !== current.assistantSnapshot.provider
@@ -4948,6 +4961,16 @@ function requireAssistantSession(store: AgentTeamStore, id: string): AssistantSe
 }
 
 /**
+ * Trim an optional identity line. `undefined` means "keep the stored value";
+ * an empty result means "clear it", so callers drop the field from the
+ * snapshot instead of storing an empty string.
+ */
+function identityLine(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined
+  return value.trim() || undefined
+}
+
+/**
  * Apply instance-local name/avatar overrides to a template snapshot. An absent
  * name keeps the snapshot's name; an absent avatar keeps the snapshot's
  * avatar, while an empty string clears it (matching template editing).
@@ -4972,6 +4995,8 @@ function overrideAssistantSnapshot(
 
 interface AssistantSnapshotOverrides {
   name?: string | undefined
+  title?: string | undefined
+  blurb?: string | undefined
   avatar?: string | undefined
   provider?: string | undefined
   model?: string | undefined
@@ -4985,6 +5010,8 @@ interface AssistantSnapshotOverrides {
 
 interface DirectAssistantSnapshotInput {
   name: string
+  title?: string | undefined
+  blurb?: string | undefined
   avatar?: string | undefined
   provider: string
   model: string
@@ -5004,10 +5031,14 @@ interface DirectAssistantSnapshotInput {
 function directAssistantSnapshot(id: string, input: DirectAssistantSnapshotInput): AssistantSnapshot {
   const avatar = input.avatar?.trim()
   const reasoningEffort = input.reasoningEffort?.trim()
+  const title = identityLine(input.title)
+  const blurb = identityLine(input.blurb)
   return {
     assistantId: id,
     revision: 1,
     name: input.name.trim(),
+    ...(title === undefined ? {} : { title }),
+    ...(blurb === undefined ? {} : { blurb }),
     ...(avatar === undefined || avatar === '' ? {} : { avatar }),
     instructions: input.instructions ?? '',
     provider: input.provider.trim(),
@@ -5033,13 +5064,20 @@ function applyAssistantSnapshotOverrides(
   const display = overrideAssistantSnapshot(snapshot, overrides.name, overrides.avatar)
   const {
     reasoningEffort: previousReasoning,
+    title: previousTitle,
+    blurb: previousBlurb,
     ...rest
   } = display
   const reasoningEffort = overrides.reasoningEffort === undefined
     ? previousReasoning
     : overrides.reasoningEffort.trim() || undefined
+  // Absent keeps the inherited identity line; an empty string clears it.
+  const title = overrides.title === undefined ? previousTitle : identityLine(overrides.title)
+  const blurb = overrides.blurb === undefined ? previousBlurb : identityLine(overrides.blurb)
   return {
     ...rest,
+    ...(title === undefined ? {} : { title }),
+    ...(blurb === undefined ? {} : { blurb }),
     ...(overrides.provider === undefined ? {} : { provider: overrides.provider.trim() }),
     ...(overrides.model === undefined ? {} : { model: overrides.model.trim() }),
     ...(overrides.agentPresetId === undefined ? {} : { agentPresetId: overrides.agentPresetId.trim() }),

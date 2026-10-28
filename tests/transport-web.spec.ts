@@ -296,6 +296,8 @@ describe('web transport authentication and upload contract', () => {
     const created = await post('assistant.instance.create', {
       templateId: 'template-1',
       workspaceId: 'workspace-1',
+      title: 'Code reviewer',
+      blurb: 'Finds the bug before you ship it.',
     })
     expect(created.status).toBe(200)
     expect(JSON.parse(created.body)).toMatchObject({
@@ -305,11 +307,13 @@ describe('web transport authentication and upload contract', () => {
     expect(service.createAssistantInstance).toHaveBeenCalledWith({
       templateId: 'template-1',
       workspaceId: 'workspace-1',
+      title: 'Code reviewer',
+      blurb: 'Finds the bug before you ship it.',
     })
 
     const updated = await post('assistant.instance.update', {
       id: 'instance-1',
-      value: { name: 'Renamed', pinned: true },
+      value: { name: 'Renamed', title: 'Renamed reviewer', blurb: '', pinned: true },
     })
     expect(updated.status).toBe(200)
     expect(JSON.parse(updated.body)).toMatchObject({
@@ -318,6 +322,8 @@ describe('web transport authentication and upload contract', () => {
     })
     expect(service.updateAssistantInstance).toHaveBeenCalledWith('instance-1', {
       name: 'Renamed',
+      title: 'Renamed reviewer',
+      blurb: '',
       pinned: true,
     })
 

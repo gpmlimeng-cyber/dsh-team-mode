@@ -3,7 +3,13 @@ import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
-import { assistantInstanceSchema, assistantMemorySchema, assistantSessionSchema } from '../src/domain/schemas.js'
+import {
+  assistantInstanceSchema,
+  assistantMemorySchema,
+  assistantSessionSchema,
+  ASSISTANT_BLURB_MAX_CHARS,
+  ASSISTANT_TITLE_MAX_CHARS,
+} from '../src/domain/schemas.js'
 import type {
   AssistantInstance,
   AssistantMemory,
@@ -262,6 +268,113 @@ describe('Assistant instances', () => {
       permissionPresetId: 'read-only',
       skillAllowlist: ['code-review'],
     })
+  })
+
+  it('stores optional title and blurb on create and omits blank ones', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+
+    const templated = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+      title: '  Code reviewer  ',
+      blurb: '  Finds the bug before you ship it.  ',
+    })
+    expect(templated.assistantSnapshot.title).toBe('Code reviewer')
+    expect(templated.assistantSnapshot.blurb).toBe('Finds the bug before you ship it.')
+    expect(assistantInstanceSchema.parse(templated)).toEqual(templated)
+
+    const direct = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Direct',
+      title: 't'.repeat(ASSISTANT_TITLE_MAX_CHARS),
+      blurb: 'b'.repeat(ASSISTANT_BLURB_MAX_CHARS),
+      provider: 'openai',
+      model: 'gpt-5',
+      agentPresetId: 'default',
+      permissionPresetId: 'read-only',
+    })
+    expect(direct.assistantSnapshot.title).toHaveLength(ASSISTANT_TITLE_MAX_CHARS)
+    expect(direct.assistantSnapshot.blurb).toHaveLength(ASSISTANT_BLURB_MAX_CHARS)
+
+    // An empty override means "not set": the key is left out, not stored as ''.
+    const blank = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+      title: '',
+      blurb: '   ',
+    })
+    expect(Object.hasOwn(blank.assistantSnapshot, 'title')).toBe(false)
+    expect(Object.hasOwn(blank.assistantSnapshot, 'blurb')).toBe(false)
+  })
+
+  it('patches title and blurb with one revision bump and a no-op on the same value', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+    const created = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+    expect(created.assistantSnapshot.title).toBeUndefined()
+
+    // A title-only patch must change the record: it is not a silent no-op.
+    const titled = await service.updateAssistantInstance(created.id, { title: 'Code reviewer' })
+    expect(titled.revision).toBe(created.revision + 1)
+    expect(titled.assistantSnapshot.title).toBe('Code reviewer')
+    expect(titled.assistantSnapshot.blurb).toBeUndefined()
+
+    const blurbed = await service.updateAssistantInstance(titled.id, { blurb: 'Finds bugs.' })
+    expect(blurbed.revision).toBe(titled.revision + 1)
+    expect(blurbed.assistantSnapshot.blurb).toBe('Finds bugs.')
+    expect(blurbed.assistantSnapshot.title).toBe('Code reviewer')
+
+    const stable = await service.updateAssistantInstance(blurbed.id, {
+      title: 'Code reviewer',
+      blurb: 'Finds bugs.',
+    })
+    expect(stable).toEqual(blurbed)
+    expect(stable.revision).toBe(blurbed.revision)
+
+    // An empty patch clears the identity line by removing the stored field.
+    const cleared = await service.updateAssistantInstance(blurbed.id, { title: '', blurb: '   ' })
+    expect(cleared.revision).toBe(blurbed.revision + 1)
+    expect(Object.hasOwn(cleared.assistantSnapshot, 'title')).toBe(false)
+    expect(Object.hasOwn(cleared.assistantSnapshot, 'blurb')).toBe(false)
+    expect(assistantInstanceSchema.parse(cleared)).toEqual(cleared)
+  })
+
+  it('rejects over-cap identity lines and keeps legacy snapshots readable', async () => {
+    const { service, store } = createHarness()
+    await store.putAssistant(template())
+    const created = await service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+    })
+
+    await expect(service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+      title: 'x'.repeat(ASSISTANT_TITLE_MAX_CHARS + 1),
+    })).rejects.toBeInstanceOf(Error)
+    await expect(service.createAssistantInstance({
+      templateId: 'template-1',
+      workspaceId: 'workspace-1',
+      blurb: 'x'.repeat(ASSISTANT_BLURB_MAX_CHARS + 1),
+    })).rejects.toBeInstanceOf(Error)
+    await expect(service.updateAssistantInstance(created.id, {
+      title: 'x'.repeat(ASSISTANT_TITLE_MAX_CHARS + 1),
+    })).rejects.toBeInstanceOf(Error)
+    await expect(service.updateAssistantInstance(created.id, {
+      blurb: 'x'.repeat(ASSISTANT_BLURB_MAX_CHARS + 1),
+    })).rejects.toBeInstanceOf(Error)
+    expect(service.getAssistantInstance(created.id)).toEqual(created)
+
+    // A record persisted before title/blurb existed carries neither key, still
+    // parses under schemaVersion 1, and reads as "not set".
+    const { title: _title, blurb: _blurb, ...legacySnapshot } = created.assistantSnapshot
+    const legacy = { ...created, assistantSnapshot: legacySnapshot }
+    expect(assistantInstanceSchema.parse(legacy)).toEqual(legacy)
+    expect(legacy.schemaVersion).toBe(1)
   })
 
   it('rejects direct creation when a required field is missing or the payload is not strict', async () => {

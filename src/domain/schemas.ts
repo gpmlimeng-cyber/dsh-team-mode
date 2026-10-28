@@ -68,10 +68,28 @@ export function legacySidebarGroupMemoryKey(name: string): string {
   return `sidebar-group:${name}`
 }
 
+/**
+ * Caps of the optional Assistant self-description. The title names the persona
+ * in cramped rows; the blurb is the one-liner shown where names collide. Both
+ * are trimmed before the cap applies, and an empty value is never stored.
+ */
+export const ASSISTANT_TITLE_MAX_CHARS = 40
+export const ASSISTANT_BLURB_MAX_CHARS = 120
+
+const assistantTitle = z.string().trim().max(ASSISTANT_TITLE_MAX_CHARS)
+const assistantBlurb = z.string().trim().max(ASSISTANT_BLURB_MAX_CHARS)
+
 export const assistantSnapshotSchema = z.object({
   assistantId: nonEmpty,
   revision: z.int().positive(),
   name: nonEmpty,
+  /**
+   * Optional identity lines, added without a schema-version bump: an older row
+   * carries no field and readers fall back to the name alone. Absent (rather
+   * than empty) is the stored form of "not set".
+   */
+  title: assistantTitle.optional(),
+  blurb: assistantBlurb.optional(),
   avatar: z.string().max(400_000).optional(),
   instructions: z.string(),
   provider: nonEmpty,
@@ -866,6 +884,9 @@ export const updateAssistantInputSchema = createAssistantInputSchema.partial().e
 const assistantInstanceOverrides = {
   workspaceId: nonEmpty,
   name: nonEmpty.optional(),
+  /** Optional identity lines; an empty string leaves them unset. */
+  title: assistantTitle.optional(),
+  blurb: assistantBlurb.optional(),
   avatar: z.string().max(400_000).optional(),
   provider: nonEmpty.optional(),
   model: nonEmpty.optional(),
@@ -919,6 +940,9 @@ export const createAssistantInstanceInputSchema = z.union([
  */
 export const updateAssistantInstanceInputSchema = z.object({
   name: nonEmpty.optional(),
+  /** Replace an identity line; an empty string clears it. */
+  title: assistantTitle.optional(),
+  blurb: assistantBlurb.optional(),
   avatar: z.string().max(400_000).optional(),
   /** Persona text of the snapshot; an empty string clears it. */
   instructions: z.string().optional(),
