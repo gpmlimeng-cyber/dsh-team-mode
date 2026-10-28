@@ -14,6 +14,8 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
       disabled: props.disabled,
     }, props.children as never),
     Input: (props: Record<string, unknown>) => h('input', { placeholder: props.placeholder as string }),
+    // Modals render their children and footer so dialog bodies stay inspectable.
+    Modal: (props: Record<string, unknown>) => h('div', null, props.children as never, props.footer as never),
     Tooltip: passthrough,
     // The native Menu always renders its anchor; the list only exists while open.
     Menu: (props: { anchor?: unknown; open?: boolean; children?: unknown }) =>
@@ -35,7 +37,12 @@ import type { TeamMemberSlot, TeamTask } from '../src/domain/types.js'
 import type { AssistantView, CatalogView, TeamView } from '../src/transport/contracts.js'
 import { callAgentTeam, invalidateTeamListSnapshot } from '../src/client/api.js'
 import {
+  TeamAnnouncementDialog,
+  TeamAnnouncementSection,
   TeamForm,
+  TEAM_ANNOUNCEMENT_UI_LIMIT,
+  teamAnnouncementError,
+  teamAnnouncementUsage,
   teamTemplateBrief,
   teamTemplatePrefill,
   templateRoleRenames,
@@ -72,7 +79,7 @@ const NOW = '2026-01-01T00:00:00.000Z'
 
 type SidebarFixture = Partial<Pick<
   TeamView,
-  'members' | 'tasks' | 'pinned' | 'updatedAt' | 'id' | 'name' | 'archivedAt' | 'state' | 'memberOrder'
+  'members' | 'tasks' | 'pinned' | 'updatedAt' | 'id' | 'name' | 'archivedAt' | 'state' | 'memberOrder' | 'announcement'
 >>
 
 function team(overrides: SidebarFixture = {}): TeamView {
@@ -1684,5 +1691,102 @@ describe('team usage repair-round edges', () => {
     } finally {
       installUsageSessions(undefined)
     }
+  })
+})
+
+describe('团队公告 · team detail', () => {
+  const teamPanel = readFileSync(
+    new URL('../src/client/teams/TeamPanel.tsx', import.meta.url),
+    'utf8',
+  )
+  const styles = readFileSync(
+    new URL('../src/client/AgentTeam.module.css', import.meta.url),
+    'utf8',
+  )
+
+  it('renders the current announcement read-only on the team detail', () => {
+    const html = renderToStaticMarkup(createElement(TeamAnnouncementSection, {
+      announcement: '冻结期：只提交修复。\n第二行保持原样。',
+    }))
+    expect(html).toContain('aria-label="团队公告"')
+    expect(html).toContain('data-dsh-team-announcement')
+    expect(html).toContain('每位成员的下一轮对话都会读到')
+    expect(html).toContain('冻结期：只提交修复。')
+    // The display is read-only: editing lives in the user-only modal.
+    expect(html).not.toContain('<textarea')
+    expect(html).not.toContain('<input')
+  })
+
+  it('hides the display when the team has no announcement', () => {
+    for (const absent of [undefined, '', '   ']) {
+      expect(renderToStaticMarkup(createElement(TeamAnnouncementSection, {
+        announcement: absent,
+      }))).toBe('')
+    }
+  })
+
+  it('opens the native editor with the stored text and no revision fence', () => {
+    const html = renderToStaticMarkup(createElement(TeamAnnouncementDialog, {
+      team: team({ announcement: '提交前跑 npm run check。' }),
+      onClose: () => {},
+      onChanged: async () => {},
+    }))
+    expect(html).toContain('data-dsh-team-announcement-input')
+    expect(html).toContain('提交前跑 npm run check。')
+    expect(html).toContain(teamAnnouncementUsage('提交前跑 npm run check。'))
+    expect(html).toContain('保存公告')
+    expect(html).toContain('清除公告')
+    // Only the user transport writes; a revision fence would be a second guard
+    // the group-brief precedent does not have.
+    expect(teamPanel).toContain("callAgentTeam('team.announcement.set', { teamId: team.id, announcement })")
+    // After the write the aggregate reload finishes before the dialog closes, so
+    // the next member turn reads the new text.
+    const callAt = teamPanel.indexOf("callAgentTeam('team.announcement.set'")
+    expect(callAt).toBeGreaterThan(-1)
+    expect(teamPanel.indexOf('await onChanged()', callAt)).toBeGreaterThan(callAt)
+    expect(teamPanel.indexOf('onClose()', callAt)).toBeGreaterThan(teamPanel.indexOf('await onChanged()', callAt))
+    // Clear is the same route with blank text; the service drops the field.
+    expect(teamPanel).toContain("void write('')")
+  })
+
+  it('offers clear only when there is something to clear', () => {
+    const empty = renderToStaticMarkup(createElement(TeamAnnouncementDialog, {
+      team: team(),
+      onClose: () => {},
+      onChanged: async () => {},
+    }))
+    expect(empty).toContain('公告内容')
+    expect(empty).not.toMatch(/<button[^>]*>清除公告<\/button>/)
+  })
+
+  it('mirrors the Host cap locally and refuses instead of truncating', () => {
+    expect(TEAM_ANNOUNCEMENT_UI_LIMIT).toBe(2_000)
+    expect(teamAnnouncementUsage('公告')).toBe('2 / 2000')
+    expect(teamAnnouncementError('x'.repeat(TEAM_ANNOUNCEMENT_UI_LIMIT))).toBeUndefined()
+    expect(teamAnnouncementError('x'.repeat(TEAM_ANNOUNCEMENT_UI_LIMIT + 3)))
+      .toBe('公告最多 2000 个字符，请删减 3 个字符')
+  })
+
+  it('wires the user entry point into the team card header and no agent tool', () => {
+    expect(teamPanel).toContain('<TeamAnnouncementSection announcement={team.announcement} />')
+    // Both native team surfaces keep the user entry: the detail card and the page toolbar.
+    expect(teamPanel.match(/setAnnouncementOpen\(true\)/g)).toHaveLength(2)
+    expect(teamPanel).toMatch(/announcement === '' \? '添加公告' : '编辑公告'/)
+    expect(teamPanel).toContain('css.workbenchAnnouncement')
+    expect(teamPanel).toContain('每位成员的下一轮对话都会读到')
+    // The prompt/tool surface stays untouched: no member-facing announcement tool.
+    const tools = readFileSync(new URL('../src/runtime/team-tools.ts', import.meta.url), 'utf8')
+    expect(tools).not.toMatch(/announcement/i)
+  })
+
+  it('styles the announcement with native tokens only, never a fixed layer', () => {
+    const start = styles.indexOf('/* 团队公告')
+    const block = styles.slice(start, styles.indexOf('.teamMemorySection', start))
+    expect(start).toBeGreaterThan(-1)
+    expect(block).toContain('var(--dsw-alias-label-primary)')
+    expect(block).toContain('var(--dsw-alias-border-l2)')
+    expect(block).toContain('var(--dsw-radius-md)')
+    expect(block).not.toMatch(/position:\s*fixed|z-index|!important|#[0-9a-f]{3,6}\b|rgba?\(/i)
+    expect(block).not.toMatch(/(^|\n)\s*body\b/)
   })
 })

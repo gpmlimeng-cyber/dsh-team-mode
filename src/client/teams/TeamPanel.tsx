@@ -78,6 +78,57 @@ import {
   type TeamTemplateId,
 } from '../team-templates.js'
 
+/**
+ * The Host's announcement cap (`TEAM_ANNOUNCEMENT_MAX_CHARS` in the domain
+ * schemas). The client bundle stays Zod-free, so the number is repeated here —
+ * the same split the sidebar group brief already uses.
+ */
+export const TEAM_ANNOUNCEMENT_UI_LIMIT = 2_000
+
+/** The announcement as the detail surface renders it; blank is no announcement. */
+export function teamAnnouncementText(value: string | undefined): string {
+  return value?.trim() ?? ''
+}
+
+/** `已用 / 上限`, native counter text for the editor. */
+export function teamAnnouncementUsage(value: string): string {
+  return `${value.length} / ${TEAM_ANNOUNCEMENT_UI_LIMIT}`
+}
+
+/**
+ * The local mirror of the Host's refusal. The editor keeps the text instead of
+ * truncating it, and the save button stays disabled until it fits.
+ */
+export function teamAnnouncementError(value: string): string | undefined {
+  if (value.length <= TEAM_ANNOUNCEMENT_UI_LIMIT) return undefined
+  return `公告最多 ${TEAM_ANNOUNCEMENT_UI_LIMIT} 个字符，请删减 ${value.length - TEAM_ANNOUNCEMENT_UI_LIMIT} 个字符`
+}
+
+/**
+ * The standing notice on the team detail. It renders only when the team has
+ * one: an unused announcement must not occupy the card. The editor is the
+ * user-only modal below; this section is read-only.
+ */
+export function TeamAnnouncementSection({
+  announcement,
+}: {
+  announcement: string | undefined
+}): JSX.Element | null {
+  const text = teamAnnouncementText(announcement)
+  if (text === '') return null
+  return (
+    <section className={css.teamAnnouncementSection} aria-label="团队公告" data-dsh-team-announcement>
+      <div className={css.teamSectionHeader}>
+        <strong>团队公告</strong>
+        <span className={css.teamSectionActions}>
+          <span>每位成员的下一轮对话都会读到</span>
+        </span>
+      </div>
+      <p className={css.teamAnnouncementText}>{text}</p>
+    </section>
+  )
+}
+
 export function TeamPanel({
   catalog,
   assistants,
@@ -259,6 +310,7 @@ function TeamWorkbench({
   const [expandedSlotId, setExpandedSlotId] = useState<string>()
   const [workspaceVisible, setWorkspaceVisible] = useState(true)
   const [taskBoardOpen, setTaskBoardOpen] = useState(false)
+  const [announcementOpen, setAnnouncementOpen] = useState(false)
   const [view, setView] = useState<'parallel' | 'board'>('parallel')
   const [workspaceRefreshSignal, setWorkspaceRefreshSignal] = useState(0)
   const refreshTimer = useRef<ReturnType<typeof setTimeout>>()
@@ -342,6 +394,11 @@ function TeamWorkbench({
   return (
     <div className={css.workbench}>
       <div className={css.workbenchMainPane}>
+        {teamAnnouncementText(team.announcement) !== '' && (
+          <div className={css.workbenchAnnouncement}>
+            <TeamAnnouncementSection announcement={team.announcement} />
+          </div>
+        )}
         <div className={css.memberTabs} aria-label="团队成员">
         {members.map(member => {
           const conversation = conversations.get(member.id)
@@ -416,6 +473,9 @@ function TeamWorkbench({
           </Button>
           <Button variant="ghost" size="sm" className={css.manageButton} onClick={() => { setView(value => value === 'parallel' ? 'board' : 'parallel') }}>
             {view === 'parallel' ? '看板' : '会话'}
+          </Button>
+          <Button variant="ghost" size="sm" className={css.manageButton} onClick={() => { setAnnouncementOpen(true) }}>
+            公告
           </Button>
           <Button variant="ghost" size="sm" className={css.manageButton} onClick={() => { setManagementOpen(value => !value) }}>
             {managementOpen ? '收起管理' : '团队管理'}
@@ -592,6 +652,13 @@ function TeamWorkbench({
           {memberActionError && <div role="alert" className={css.inlineError}>{memberActionError}</div>}
         </div>
       </AnimatedModal>
+      {announcementOpen && (
+        <TeamAnnouncementDialog
+          team={team}
+          onClose={() => { setAnnouncementOpen(false) }}
+          onChanged={onChanged}
+        />
+      )}
     </div>
   )
 }
@@ -917,6 +984,7 @@ export function TeamCard({
   const [teamNameDraft, setTeamNameDraft] = useState(team.name)
   const [teamRenameBusy, setTeamRenameBusy] = useState(false)
   const [teamRenameError, setTeamRenameError] = useState<string>()
+  const [announcementOpen, setAnnouncementOpen] = useState(false)
   const [memberToRemove, setMemberToRemove] = useState<{ slotId: string; displayName: string }>()
   const [leaderTarget, setLeaderTarget] = useState<{ slotId: string; displayName: string }>()
   const [contextTarget, setContextTarget] = useState<{ slotId: string; displayName: string }>()
@@ -941,6 +1009,7 @@ export function TeamCard({
   const tasks = Object.values(team.tasks)
   const executing = isTeamExecuting(team)
   const goalsPresent = hasTeamGoals(team)
+  const announcement = teamAnnouncementText(team.announcement)
 
   useEffect(() => {
     if (!goalsPresent) {
@@ -1207,6 +1276,14 @@ export function TeamCard({
             variant="ghost"
             size="sm"
             disabled={busy}
+            onClick={() => { setAnnouncementOpen(true) }}
+          >
+            {announcement === '' ? '添加公告' : '编辑公告'}
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
             onClick={() => {
               setTeamNameDraft(team.name)
               setTeamRenameError(undefined)
@@ -1218,6 +1295,8 @@ export function TeamCard({
           {headerActions}
         </div>
       </header>
+
+      <TeamAnnouncementSection announcement={team.announcement} />
 
       <section className={css.teamMemberSection} aria-label="团队成员">
         <div className={css.teamSectionHeader}>
@@ -1820,7 +1899,124 @@ export function TeamCard({
         </form>
         {teamRenameError && <div role="alert" className={css.inlineError}>{teamRenameError}</div>}
       </AnimatedModal>
+      {announcementOpen && (
+        <TeamAnnouncementDialog
+          team={team}
+          onClose={() => { setAnnouncementOpen(false) }}
+          onChanged={onChanged}
+        />
+      )}
     </>
+  )
+}
+
+/**
+ * The user-only announcement editor. It mounts per open, so the draft always
+ * starts from the stored text; the explicit save is the only write, and the
+ * aggregate reload is what gives the next member turn the new text (the prompt
+ * layer reads the aggregate, not this component). There is deliberately no
+ * revision fence: like the sidebar group brief, the last user save wins.
+ */
+export function TeamAnnouncementDialog({
+  team,
+  onClose,
+  onChanged,
+}: {
+  team: TeamView
+  onClose: () => void
+  onChanged: () => Promise<void>
+}): JSX.Element {
+  const initial = teamAnnouncementText(team.announcement)
+  const [value, setValue] = useState(initial)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  const fieldId = `dsh-team-announcement-${team.id}`
+  const hintId = `${fieldId}-hint`
+  const overLimit = teamAnnouncementError(value)
+  const dirty = value.trim() !== initial
+  const canSave = !busy && dirty && overLimit === undefined
+
+  async function write(announcement: string): Promise<void> {
+    if (busy) return
+    setBusy(true)
+    setError(undefined)
+    try {
+      await callAgentTeam('team.announcement.set', { teamId: team.id, announcement })
+      // Reload before closing: the card, and the next member prompt, both read
+      // this aggregate.
+      await onChanged()
+      onClose()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AnimatedModal
+      open
+      onClose={() => { if (!busy) onClose() }}
+      title="团队公告"
+      description="写一段全队长期有效的约定。每位成员（含 Leader）的下一轮对话都会读到它；只有你能编辑，Agent 没有写入入口。"
+      closeLabel="关闭"
+      footer={(
+        <>
+          <Button variant="outline" type="button" disabled={busy} onClick={onClose}>
+            取消
+          </Button>
+          {initial !== '' && (
+            <Button
+              variant="outline"
+              type="button"
+              disabled={busy}
+              onClick={() => { void write('') }}
+            >
+              {busy ? '处理中…' : '清除公告'}
+            </Button>
+          )}
+          <Button
+            variant="primary"
+            type="button"
+            disabled={!canSave}
+            onClick={() => { void write(value) }}
+          >
+            {busy ? '保存中…' : '保存公告'}
+          </Button>
+        </>
+      )}
+    >
+      <div className={css.memoryForm}>
+        <div className={css.sidebarGroupBriefHead}>
+          <label className={css.sidebarGroupBriefLabel} htmlFor={fieldId}>公告内容</label>
+          <span
+            className={`${css.sidebarGroupBriefCount} ${overLimit === undefined ? '' : css.sidebarGroupBriefCountOver}`}
+            data-dsh-team-announcement-count
+          >
+            {teamAnnouncementUsage(value)}
+          </span>
+        </div>
+        <textarea
+          id={fieldId}
+          className={`${css.input} ${css.memoryTextarea}`}
+          data-modal-autofocus
+          data-dsh-team-announcement-input
+          rows={8}
+          value={value}
+          placeholder="写下全队都要遵守的长期约定，例如：冻结期只提交修复。"
+          aria-label="团队公告"
+          aria-describedby={hintId}
+          aria-invalid={overLimit !== undefined}
+          disabled={busy}
+          onChange={event => { setValue(event.target.value) }}
+        />
+        <p id={hintId} className={css.sidebarGroupBriefHint}>
+          留空保存会清除公告；最多 {TEAM_ANNOUNCEMENT_UI_LIMIT.toLocaleString('en-US')} 个字符，超出时不会截断，而是拒绝保存。
+        </p>
+        {overLimit !== undefined && <div role="alert" className={css.inlineError}>{overLimit}</div>}
+        {error !== undefined && <div role="alert" className={css.inlineError}>{error}</div>}
+      </div>
+    </AnimatedModal>
   )
 }
 

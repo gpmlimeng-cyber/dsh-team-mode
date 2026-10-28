@@ -8588,6 +8588,37 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   line-height: 16px;
 }
 
+/* 团队公告 — the user-authored standing notice. It renders only when the team
+   has one; the read-only text keeps the author's line breaks, and the editor
+   is the native modal in TeamPanel (the existing memoryForm and group-brief
+   field styles), so no control or overlay is added here. */
+.teamAnnouncementSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.teamAnnouncementText {
+  margin: 0;
+  padding: 10px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-module-platform);
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* The team page shows the same section above its member tabs; the padding
+   matches the tabs' so the notice lines up with the conversation pane. */
+.workbenchAnnouncement {
+  flex: none;
+  padding: 10px 14px 0;
+}
+
 .teamMemorySection {
   display: flex;
   flex-direction: column;
