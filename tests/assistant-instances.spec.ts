@@ -1478,7 +1478,7 @@ describe('Assistant pause and restore lifecycle', () => {
   })
 
   it('never turns a non-queued row into running when the start write lands late', async () => {
-    const { service } = createHarness()
+    const { service, store } = createHarness()
     const instance = await createInstance(service, 'Race owner')
     const task = await service.createAssistantSession({
       assistantId: instance.id,
@@ -1500,10 +1500,17 @@ describe('Assistant pause and restore lifecycle', () => {
     expect((await service.markAssistantTaskStarted(task.id)).status).toBe('completed')
 
     // Only a queued row may start, and the started stamp is written once.
-    await service.updateAssistantSession(task.id, { status: 'queued' })
+    // A stale pause provenance from a previous round is cleared on that
+    // legitimate running transition.
+    await store.updateAssistantSession(task.id, value => ({
+      ...value,
+      status: 'queued',
+      pausedBy: 'user',
+    }))
     const started = await service.markAssistantTaskStarted(task.id)
     expect(started.status).toBe('running')
     expect(started.startedAt).toBeDefined()
+    expect(started.pausedBy).toBeUndefined()
     expect((await service.markAssistantTaskStarted(task.id)).startedAt).toBe(started.startedAt)
   })
 })

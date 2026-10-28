@@ -2432,6 +2432,69 @@ describe('AssistantRuntime', () => {
     expect(h.handles[2]?.followup).toHaveBeenCalledTimes(1)
   })
 
+  it('starts one queued row once when a settle drain and a click race a slow resume', async () => {
+    const h = createHarness({}, { assistantWorkerConcurrency: 1 })
+    const first = await h.runtime.createTask('instance-1', { title: 'First', brief: 'A' })
+    const second = await h.runtime.createTask('instance-1', { title: 'Second', brief: 'B' })
+    expect(second.status).toBe('queued')
+    // A persisted log makes the queued row start through agents.resume, which
+    // this test parks so the click can race the in-flight drain.
+    h.seedPersistedSession(second.sessionId)
+    const gate = deferred()
+    const originalResume = h.resumeMock.getMockImplementation()
+    expect(originalResume).toBeDefined()
+    h.resumeMock.mockImplementationOnce(async (options: ResumeAgentOptions) => {
+      await gate.promise
+      return originalResume!(options)
+    })
+
+    h.emit('agent/status', { agent: h.handles[1]!.agent, status: 'idle' })
+    await settle()
+    expect(h.getAssistantSession(first.id).status).toBe('completed')
+
+    // The drain is parked inside resume; the click joins the same claim.
+    const clicking = h.runtime.openTask(second.id)
+    gate.resolve()
+    const opened = await clicking
+
+    expect(opened.sessionId).toBe(second.sessionId)
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+    expect(h.handles[2]?.followup).toHaveBeenCalledTimes(1)
+    expect(h.getAssistantSession(second.id).status).toBe('running')
+    // The loser path never fails the row or removes the winner's mapping.
+    expect(h.getAssistantSession(second.id).error).toBeUndefined()
+    const again = await h.runtime.openTask(second.id)
+    expect(again.sessionId).toBe(second.sessionId)
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses sendTask for a paused task or a paused assistant', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Held', brief: 'Work.' })
+    const worker = h.handles[1]
+    expect(worker?.followup).toHaveBeenCalledTimes(1)
+
+    await h.service.setAssistantTaskPaused(task.id, 'user')
+    await h.runtime.stopTaskForPause(task.id)
+    await expect(h.runtime.sendTask('instance-1', task.id, 'More.'))
+      .rejects.toMatchObject({
+        code: 'ASSISTANT_TASK_NOT_ACTIVE',
+        details: { taskId: task.id, status: 'paused' },
+      })
+    expect(h.resumeMock).not.toHaveBeenCalled()
+    expect(worker?.followup).toHaveBeenCalledTimes(1)
+
+    // A live row still refuses while its assistant is paused.
+    await h.service.updateAssistantSession(task.id, { status: 'running' })
+    h.setInstancePaused(NOW)
+    await expect(h.runtime.sendTask('instance-1', task.id, 'More.'))
+      .rejects.toMatchObject({
+        code: 'ASSISTANT_TASK_NOT_ACTIVE',
+        details: { taskId: task.id, paused: true },
+      })
+    expect(worker?.followup).toHaveBeenCalledTimes(1)
+  })
+
   it('puts bounded recent tasks and routing instructions into the main prompt', async () => {
     const h = createHarness()
     const task = await h.runtime.createTask('instance-1', {

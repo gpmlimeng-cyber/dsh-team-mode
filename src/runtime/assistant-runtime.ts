@@ -156,6 +156,13 @@ export class AssistantRuntime {
   private readonly queueDrains = new Map<string, Promise<void>>()
   private readonly queueDrainRequested = new Set<string>()
   /**
+   * Synchronous per-task start claim shared by the FIFO drain and the explicit
+   * click admission. Checked and set before any await, so two callers on the
+   * same queued row join one start instead of racing: the loser awaits the
+   * winner's run and never touches its worker mapping or task status.
+   */
+  private readonly startingTaskRuns = new Map<string, Promise<void>>()
+  /**
    * Last completed turn already handled per Session. A turn's `turn/end` may be
    * observed more than once by a resumed Session, so the highest handled turn is
    * remembered instead of counting events.
@@ -281,6 +288,7 @@ export class AssistantRuntime {
       ...this.starting.values(),
       ...this.startingWorkers.values(),
       ...this.queueDrains.values(),
+      ...this.startingTaskRuns.values(),
     ]
     this.starting.clear()
     this.startingWorkers.clear()
@@ -560,6 +568,23 @@ export class AssistantRuntime {
     const assistantId = requireText(rawAssistantId, 'Assistant instance id')
     const task = this.requireTask(assistantId, rawTaskId)
     const message = requireText(rawMessage, 'Task message')
+    // Sending to a paused row would silently restart the work the pause
+    // stopped. Route the caller through the explicit resume path instead.
+    if (task.status === 'paused') {
+      throw new AgentTeamError(
+        'ASSISTANT_TASK_NOT_ACTIVE',
+        `Task '${task.title}' is paused; resume the task before sending another instruction`,
+        { taskId: task.id, status: 'paused' },
+      )
+    }
+    const instance = this.service.getAssistantInstance(assistantId)
+    if (instance.pausedAt !== undefined) {
+      throw new AgentTeamError(
+        'ASSISTANT_TASK_NOT_ACTIVE',
+        `Assistant '${instance.id}' is paused; resume it before sending a task instruction`,
+        { taskId: task.id, paused: true },
+      )
+    }
     const worker = await this.ensureWorker(task)
     worker.handle.agent.followup(workerMessage(message))
     return this.service.updateAssistantSession(task.id, { status: 'running' })
@@ -1546,7 +1571,21 @@ export class AssistantRuntime {
    * A failure marks the task failed so the queue moves on instead of retrying a
    * broken row forever.
    */
-  private async startQueuedTask(
+  private startQueuedTask(
+    instance: AssistantInstance,
+    task: AssistantSession,
+  ): Promise<void> {
+    const running = this.startingTaskRuns.get(task.id)
+    if (running !== undefined) return running
+    let run: Promise<void>
+    run = this.startQueuedTaskRun(instance, task).finally(() => {
+      if (this.startingTaskRuns.get(task.id) === run) this.startingTaskRuns.delete(task.id)
+    })
+    this.startingTaskRuns.set(task.id, run)
+    return run
+  }
+
+  private async startQueuedTaskRun(
     instance: AssistantInstance,
     task: AssistantSession,
   ): Promise<void> {

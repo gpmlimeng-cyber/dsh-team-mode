@@ -1466,16 +1466,17 @@ export class AgentTeamService extends Service {
     const now = new Date().toISOString()
     // Conditional inside the store write: a pause, cancel or terminal transition
     // that committed after the read above must never be turned back into
-    // running. Only a row still queued may start.
-    return this.writeAssistantTask(task.id, value => (
-      value.status !== 'queued'
-        ? value
-        : {
-            ...value,
-            status: 'running',
-            ...(value.startedAt === undefined ? { startedAt: now } : {}),
-          }
-    ))
+    // running. Only a row still queued may start, and a legitimate running
+    // transition clears the pause provenance so a later pause starts clean.
+    return this.writeAssistantTask(task.id, value => {
+      if (value.status !== 'queued') return value
+      const { pausedBy: _pausedBy, ...rest } = value
+      return {
+        ...rest,
+        status: 'running',
+        ...(value.startedAt === undefined ? { startedAt: now } : {}),
+      }
+    })
   }
 
   /** Runtime-only hook: mark a live task paused by the assistant-level pause. */
