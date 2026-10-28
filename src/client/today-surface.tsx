@@ -66,7 +66,9 @@ export function requestToday(): void {
  * this page with every other surface; only the wording is ours.
  */
 const ELAPSED_WORDS: Readonly<Record<RelativeTimeUnit, string>> = {
-  now: '刚刚',
+  // Read after 已等 / 已跑, so it cannot be the adverb 刚刚 ("已等 刚刚");
+  // it names the span instead.
+  now: '不到 1 分钟',
   minutes: '分钟',
   hours: '小时',
   days: '天',
