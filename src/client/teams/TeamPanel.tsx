@@ -71,6 +71,12 @@ import { ConversationColumn } from '../workbench/ConversationColumn.js'
 import { WorkspacePanel } from '../workspace/WorkspacePanel.js'
 import { TeamActivityBoard } from '../team-activity.js'
 import { useTeamText } from '../team-i18n.js'
+import {
+  TEAM_TEMPLATES,
+  teamTemplateSlots,
+  type TeamTemplate,
+  type TeamTemplateId,
+} from '../team-templates.js'
 
 export function TeamPanel({
   catalog,
@@ -2435,6 +2441,75 @@ function assistantGlyph(assistant: AssistantView): string {
   return assistant.name.slice(0, 1).toLocaleUpperCase()
 }
 
+/** What selecting a built-in template writes into the form, before the user edits it. */
+export interface TeamTemplatePrefill {
+  readonly name: string
+  readonly workspaceId: string
+  readonly assistantIds: readonly string[]
+  readonly brief: string
+  readonly missingAssistants: boolean
+}
+
+/**
+ * One textarea carries the template's tasks and acceptance criteria. The form
+ * sends this after `team.start`; the created team has no task write API, so the
+ * Leader materializes the board from this brief.
+ */
+export function teamTemplateBrief(template: TeamTemplate): string {
+  return [
+    '请把以下任务建到任务板并开始推进：',
+    ...template.tasks.map((task, index) =>
+      `${index + 1}. ${task.title}\n   验收：${task.acceptance.join('；')}`),
+  ].join('\n')
+}
+
+/**
+ * Default prefill for one template: its name, the first usable workspace, and
+ * eligible assistants in form order (repeated only when the template asks for
+ * more slots than there are assistants). Blank/empty inputs produce no
+ * fabricated values.
+ */
+export function teamTemplatePrefill(
+  template: TeamTemplate,
+  assistants: readonly AssistantView[],
+  workspaces: readonly CatalogView['workspaces'][number][],
+): TeamTemplatePrefill {
+  const pool = assistants.filter(assistant => assistant.enabled && assistant.teamSelectable)
+  const slots = teamTemplateSlots(template)
+  return {
+    name: template.name,
+    workspaceId: workspaces.find(workspace => workspace.status === 'ok')?.id ?? '',
+    assistantIds: pool.length === 0
+      ? []
+      : slots.map((_, index) => pool[index % pool.length]!.id),
+    brief: teamTemplateBrief(template),
+    missingAssistants: pool.length === 0,
+  }
+}
+
+/**
+ * Role names come from the template, but only when the created slots still line
+ * up with what the form submitted. A member the user removed (or replaced)
+ * skips every rename rather than mislabelling someone else's slot.
+ */
+export function templateRoleRenames(
+  team: Pick<TeamView, 'members' | 'memberOrder'>,
+  template: TeamTemplate,
+  submitted: readonly Pick<DraftMember, 'assistantId'>[],
+): Array<{ slotId: string, displayName: string }> {
+  const slots = teamTemplateSlots(template)
+  const order = team.memberOrder ?? Object.keys(team.members)
+  if (order.length !== slots.length || submitted.length !== slots.length) return []
+  const renames: Array<{ slotId: string, displayName: string }> = []
+  for (let index = 0; index < order.length; index += 1) {
+    const member = team.members[order[index]!]
+    if (member === undefined || member.assistantId !== submitted[index]?.assistantId) return []
+    const displayName = slots[index]!.role
+    if (member.displayName !== displayName) renames.push({ slotId: member.id, displayName })
+  }
+  return renames
+}
+
 export function TeamForm({
   catalog,
   catalogLoading,
@@ -2465,6 +2540,8 @@ export function TeamForm({
   const [pickingWorkspace, setPickingWorkspace] = useState(false)
   const [creatingAssistant, setCreatingAssistant] = useState(false)
   const [error, setError] = useState<string>()
+  const [templateId, setTemplateId] = useState<TeamTemplateId | 'blank'>('blank')
+  const [brief, setBrief] = useState('')
   const t = useTeamText()
   const workspaces = useMemo(() => {
     if (pickedWorkspace === undefined || catalogWorkspaces.some(workspace => workspace.id === pickedWorkspace.id)) {
@@ -2554,10 +2631,38 @@ export function TeamForm({
     if (leaderKey === key) setLeaderKey(remaining[0]?.key)
   }
 
+  function selectTemplate(id: TeamTemplateId | 'blank'): void {
+    setTemplateId(id)
+    setError(undefined)
+    if (id === 'blank') {
+      setName('')
+      setWorkspaceId('')
+      setPickedWorkspace(undefined)
+      setMembers([])
+      setLeaderKey(undefined)
+      setBrief('')
+      return
+    }
+    const template = TEAM_TEMPLATES.find(entry => entry.id === id)
+    if (template === undefined) return
+    const prefill = teamTemplatePrefill(template, assistants, workspaces)
+    const next = prefill.assistantIds.map(assistantId => ({
+      key: crypto.randomUUID(),
+      assistantId,
+    }))
+    setName(prefill.name)
+    setWorkspaceId(prefill.workspaceId)
+    setPickedWorkspace(undefined)
+    setMembers(next)
+    setLeaderKey(next[0]?.key)
+    setBrief(prefill.brief)
+  }
+
   async function submit(event: FormEvent): Promise<void> {
     event.preventDefault()
     if (leaderKey === undefined || members.length === 0) return
     setSaving(true)
+    setError(undefined)
     try {
       const draft = await callAgentTeam('team.createDraft', {
         name,
@@ -2568,7 +2673,32 @@ export function TeamForm({
           role: member.key === leaderKey ? 'leader' : 'member',
         })),
       })
-      await callAgentTeam('team.start', { id: draft.id }, draft.revision)
+      const started = await callAgentTeam('team.start', { id: draft.id }, draft.revision)
+      const template = templateId === 'blank'
+        ? undefined
+        : TEAM_TEMPLATES.find(entry => entry.id === templateId)
+      if (template !== undefined) {
+        // The team already exists: role names and the first brief are best-effort
+        // extras and must never turn a created team into a form error.
+        for (const rename of templateRoleRenames(started, template, members)) {
+          try {
+            await callAgentTeam('team.renameMember', { teamId: started.id, ...rename })
+          } catch {
+            // Best effort: a role label never blocks creation.
+          }
+        }
+        if (brief.trim().length > 0) {
+          try {
+            await callAgentTeam('team.message.send', {
+              teamId: started.id,
+              content: brief.trim(),
+              targetSlotId: started.leaderSlotId,
+            })
+          } catch {
+            // Best effort: open the created team even when the brief cannot be sent.
+          }
+        }
+      }
       await onCreated(draft.id)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
@@ -2581,6 +2711,11 @@ export function TeamForm({
     && workspaceId.length > 0
     && leaderKey !== undefined
     && members.length > 0
+  const activeTemplate = templateId === 'blank'
+    ? undefined
+    : TEAM_TEMPLATES.find(entry => entry.id === templateId)
+  const templateHasNoAssistants = activeTemplate !== undefined
+    && !assistants.some(assistant => assistant.enabled && assistant.teamSelectable)
 
   const workspaceMenuItems: MenuEntry[] = [
     ...workspaces.map(workspace => ({
@@ -2604,7 +2739,60 @@ export function TeamForm({
   ]
 
   return (
-    <form onSubmit={(event) => { void submit(event) }} className={css.teamBuilderForm}>
+    <form
+      onSubmit={(event) => { void submit(event) }}
+      className={`${css.teamBuilderForm} ${activeTemplate === undefined ? '' : css.teamBuilderFormTemplate}`}
+    >
+      <div className={css.teamTemplateBar}>
+        <span className={css.teamTemplateLabel} id="dsh-team-template-label">团队模板</span>
+        <div className={css.teamTemplateOptions} role="group" aria-labelledby="dsh-team-template-label">
+          <Button
+            variant="outline"
+            size="sm"
+            type="button"
+            className={css.teamTemplateOption}
+            aria-pressed={templateId === 'blank'}
+            onClick={() => { selectTemplate('blank') }}
+          >
+            空白
+          </Button>
+          {TEAM_TEMPLATES.map(template => (
+            <Button
+              key={template.id}
+              variant="outline"
+              size="sm"
+              type="button"
+              className={css.teamTemplateOption}
+              aria-pressed={templateId === template.id}
+              onClick={() => { selectTemplate(template.id) }}
+            >
+              {template.name}
+            </Button>
+          ))}
+        </div>
+        {templateHasNoAssistants && (
+          <span className={css.teamTemplateNote} role="status">
+            没有可选的成员模板，已预填团队名与工作区；请先创建成员模板。
+          </span>
+        )}
+      </div>
+      {activeTemplate !== undefined && (
+        <label className={css.teamTemplateBrief}>
+          <span className={css.teamTemplateBriefLabel}>
+            <span>首条任务简报</span>
+            <span className={css.teamTemplateBriefHint}>
+              {activeTemplate.tasks.length} 项任务与验收标准 · 创建后发送给 Leader，可修改
+            </span>
+          </span>
+          <textarea
+            className={css.teamTemplateBriefInput}
+            rows={2}
+            value={brief}
+            aria-label="首条任务简报"
+            onChange={event => { setBrief(event.target.value) }}
+          />
+        </label>
+      )}
       <div className={css.teamBuilderGrid}>
         <section className={css.assistantPicker}>
           <div className={css.builderSectionHeading}>

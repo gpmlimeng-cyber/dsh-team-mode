@@ -1096,6 +1096,116 @@
   flex-direction: column;
 }
 
+/* One compact row above the builder: the blank path keeps the taller grid. */
+.teamTemplateBar {
+  flex: none;
+  box-sizing: border-box;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.teamTemplateLabel {
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.teamTemplateOptions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.teamTemplateOption {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--dsw-radius-sm);
+  color: var(--dsw-alias-label-secondary);
+}
+
+.teamTemplateOption:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary);
+}
+
+.teamTemplateOption[aria-pressed='true'] {
+  border-color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent);
+  color: var(--dsw-alias-brand-primary);
+}
+
+.teamTemplateNote {
+  min-width: 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+/* The template's brief is the only new vertical content; the fixed-height grid
+ * gives back room so the footer still fits a 700px-high viewport. */
+.teamTemplateBrief {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 20px 8px;
+}
+
+.teamTemplateBriefLabel {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.teamTemplateBriefHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 16px;
+}
+
+.teamTemplateBriefInput {
+  box-sizing: border-box;
+  width: 100%;
+  height: 44px;
+  padding: 5px 8px;
+  resize: none;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.teamTemplateBriefInput:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 1px;
+}
+
+.teamBuilderFormTemplate .teamBuilderGrid {
+  height: min(42vh, 420px);
+  min-height: 300px;
+}
+
+.teamBuilderFormTemplate .selectedMemberPanel {
+  min-height: 90px;
+}
+
 .teamBuilderGrid {
   display: grid;
   grid-template-columns: 1fr 1fr;

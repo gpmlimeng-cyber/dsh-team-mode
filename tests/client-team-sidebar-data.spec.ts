@@ -9,7 +9,10 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
   const { createElement: h } = await import('react')
   const passthrough = (props: { children?: unknown }) => (props.children ?? null) as never
   const api: Record<string, unknown> = {
-    Button: (props: Record<string, unknown>) => h('button', null, props.children as never),
+    Button: (props: Record<string, unknown>) => h('button', {
+      'aria-pressed': props['aria-pressed'],
+      disabled: props.disabled,
+    }, props.children as never),
     Input: (props: Record<string, unknown>) => h('input', { placeholder: props.placeholder as string }),
     Tooltip: passthrough,
     // The native Menu always renders its anchor; the list only exists while open.
@@ -29,9 +32,15 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
 })
 
 import type { TeamMemberSlot, TeamTask } from '../src/domain/types.js'
-import type { CatalogView, TeamView } from '../src/transport/contracts.js'
+import type { AssistantView, CatalogView, TeamView } from '../src/transport/contracts.js'
 import { callAgentTeam, invalidateTeamListSnapshot } from '../src/client/api.js'
-import { TeamForm } from '../src/client/teams/TeamPanel.js'
+import {
+  TeamForm,
+  teamTemplateBrief,
+  teamTemplatePrefill,
+  templateRoleRenames,
+} from '../src/client/teams/TeamPanel.js'
+import { TEAM_TEMPLATES } from '../src/client/team-templates.js'
 import { teamMentionInsertion, teamMentionText } from '../src/client/labels.js'
 import {
   TeamMentionAction,
@@ -1170,6 +1179,129 @@ describe('创建默认成员 waits for the catalog', () => {
     // A catalog that never resolved is a load problem, not an empty provider list.
     expect(panel).toContain('还没有读取到模型目录，请稍后重试。')
     expect(panel).toContain("当前没有可用的 Provider")
+  })
+})
+
+describe('团队模板 in 新建团队', () => {
+  const template = TEAM_TEMPLATES[0]!
+  const assistants = (ids: string[]): AssistantView[] => ids.map(id => ({
+    id,
+    name: id.toLocaleUpperCase(),
+    enabled: true,
+    teamSelectable: true,
+  }) as AssistantView)
+  const workspaces = [
+    { id: 'ws-missing', path: '/missing', title: 'Missing', status: 'missing-dir' },
+    { id: 'ws-ok', path: '/ok', title: 'OK', status: 'ok' },
+  ] as CatalogView['workspaces']
+  const catalog: CatalogView = {
+    providers: [],
+    models: {},
+    agentPresets: [],
+    permissionPresets: [],
+    workspaces,
+  }
+  const renderForm = (assistantIds: string[] = []): string => renderToStaticMarkup(
+    createElement(TeamForm, {
+      catalog,
+      catalogLoading: false,
+      assistants: assistants(assistantIds),
+      pickWorkspace: async () => null,
+      onAssistantsChanged: async () => undefined,
+      onCancel: () => undefined,
+      onCreated: async () => undefined,
+    }),
+  )
+
+  it('renders 空白 + three templates as one native pressed-button row', () => {
+    const html = renderForm()
+    expect(html).toContain('团队模板')
+    for (const label of ['空白', '代码库体检', '功能开发', '发布检查']) {
+      expect(html).toContain(`>${label}</button>`)
+    }
+    expect(html.match(/aria-pressed="true"/g)).toHaveLength(1)
+    expect(html).toContain('aria-pressed="true">空白</button>')
+    // Blank creation keeps the form exactly as it was: no brief editor.
+    expect(html).not.toContain('首条任务简报')
+  })
+
+  it('prefills a template with its name, first usable workspace and ordered assistants', () => {
+    const prefill = teamTemplatePrefill(template, assistants(['a1', 'a2', 'a3', 'a4']), workspaces)
+    expect(prefill.name).toBe('代码库体检')
+    expect(prefill.workspaceId).toBe('ws-ok')
+    expect(prefill.assistantIds).toEqual(['a1', 'a2', 'a3', 'a4'])
+    expect(prefill.missingAssistants).toBe(false)
+  })
+
+  it('repeats assistants only when the template needs more slots than the pool', () => {
+    expect(teamTemplatePrefill(template, assistants(['a1', 'a2']), workspaces).assistantIds)
+      .toEqual(['a1', 'a2', 'a1', 'a2'])
+    const empty = teamTemplatePrefill(template, [], workspaces)
+    expect(empty.assistantIds).toEqual([])
+    expect(empty.missingAssistants).toBe(true)
+    // The name and workspace still prefill; only members are impossible.
+    expect(empty.name).toBe('代码库体检')
+    expect(empty.workspaceId).toBe('ws-ok')
+  })
+
+  it('prefills the brief with all three tasks and every acceptance criterion', () => {
+    const brief = teamTemplateBrief(template)
+    expect(brief.split('\n').filter(line => /^\d+\./.test(line))).toHaveLength(3)
+    for (const task of template.tasks) {
+      expect(brief).toContain(task.title)
+      for (const criterion of task.acceptance) expect(brief).toContain(criterion)
+    }
+  })
+
+  it('renames aligned slots to template roles and skips edited membership', () => {
+    const started = {
+      memberOrder: ['slot-1', 'slot-2', 'slot-3', 'slot-4'],
+      members: {
+        'slot-1': { id: 'slot-1', assistantId: 'a1', displayName: '通用成员' },
+        'slot-2': { id: 'slot-2', assistantId: 'a2', displayName: '审查员' },
+        'slot-3': { id: 'slot-3', assistantId: 'a3', displayName: '通用成员' },
+        'slot-4': { id: 'slot-4', assistantId: 'a4', displayName: '通用成员' },
+      },
+    } as unknown as TeamView
+    const submitted = [{ assistantId: 'a1' }, { assistantId: 'a2' }, { assistantId: 'a3' }, { assistantId: 'a4' }]
+    expect(templateRoleRenames(started, template, submitted)).toEqual([
+      { slotId: 'slot-1', displayName: 'Leader' },
+      { slotId: 'slot-3', displayName: '审查员' },
+      { slotId: 'slot-4', displayName: '复核员' },
+    ])
+    // Removing a member makes index-to-role mapping unsafe: rename nothing.
+    expect(templateRoleRenames(started, template, submitted.slice(0, 3))).toEqual([])
+    expect(templateRoleRenames(started, template, [
+      submitted[0]!, submitted[1]!, submitted[2]!, { assistantId: 'other' },
+    ])).toEqual([])
+  })
+
+  it('sends the brief after start and still opens a created team when it fails', () => {
+    const panel = readFileSync(new URL('../src/client/teams/TeamPanel.tsx', import.meta.url), 'utf8')
+    const start = panel.indexOf("callAgentTeam('team.start'")
+    const send = panel.indexOf("callAgentTeam('team.message.send'")
+    const created = panel.indexOf('await onCreated(draft.id)', send)
+    expect(start).toBeGreaterThan(0)
+    expect(send).toBeGreaterThan(start)
+    expect(created).toBeGreaterThan(send)
+    expect(panel).toContain('targetSlotId: started.leaderSlotId')
+    expect(panel).toContain('Best effort: open the created team even when the brief cannot be sent.')
+    // The picker sits before the builder grid, and choosing a template only
+    // writes form state through the same helpers tested above.
+    const barIndex = panel.indexOf('className={css.teamTemplateBar}')
+    const briefIndex = panel.indexOf('className={css.teamTemplateBrief}')
+    const gridIndex = panel.indexOf('className={css.teamBuilderGrid}')
+    expect(barIndex).toBeGreaterThan(0)
+    expect(barIndex).toBeLessThan(briefIndex)
+    expect(barIndex).toBeLessThan(gridIndex)
+    expect(panel).toContain('onClick={() => { selectTemplate(template.id) }}')
+    expect(panel).toContain("onClick={() => { selectTemplate('blank') }}")
+    expect(panel).toContain('setName(prefill.name)')
+    expect(panel).toContain('setMembers(next)')
+    expect(panel).toContain('setBrief(prefill.brief)')
+    // The draft payload stays the existing strict shape, with no template link.
+    const draftCall = panel.slice(panel.indexOf("callAgentTeam('team.createDraft'"), start)
+    expect(draftCall).not.toContain('template')
   })
 })
 
