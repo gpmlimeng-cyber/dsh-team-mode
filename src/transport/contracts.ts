@@ -54,9 +54,13 @@ export const AGENT_TEAM_METHODS = [
   'assistant.instance.create',
   'assistant.instance.update',
   'assistant.instance.archive',
+  'assistant.instance.restore',
+  'assistant.instance.pause',
+  'assistant.instance.resume',
   'assistant.instance.ensure',
   'assistant.thread.create',
   'assistant.thread.archive',
+  'assistant.thread.restore',
   'assistant.coordinator.get',
   'assistant.coordinator.set',
   'assistant.memory.get',
@@ -74,6 +78,10 @@ export const AGENT_TEAM_METHODS = [
   'assistant.task.interactions',
   'assistant.task.interaction.respond',
   'assistant.task.open',
+  'assistant.task.pause',
+  'assistant.task.resume',
+  'assistant.task.archive',
+  'assistant.task.restore',
   'assistant.builder.list',
   'assistant.builder.draft.get',
   'assistant.builder.draft.configure',
@@ -432,13 +440,21 @@ export interface AgentTeamRequestMap {
   'assistant.update': { payload: { id: string; value: UpdateAssistantInput }; result: AssistantView }
   'assistant.clone': { payload: { id: string; name?: string }; result: AssistantView }
   'assistant.delete': { payload: { id: string }; result: null }
-  'assistant.instance.list': { payload: undefined; result: PageView<AssistantInstanceView> }
+  /** Omitted payload keeps the historical unfiltered page; false hides archived rows. */
+  'assistant.instance.list': {
+    payload: { includeArchived?: boolean } | undefined
+    result: PageView<AssistantInstanceView>
+  }
   'assistant.instance.create': { payload: CreateAssistantInstanceInput; result: AssistantInstance }
   'assistant.instance.update': {
     payload: { id: string; value: UpdateAssistantInstanceInput }
     result: AssistantInstance
   }
   'assistant.instance.archive': { payload: { id: string }; result: AssistantInstance }
+  'assistant.instance.restore': { payload: { id: string }; result: AssistantInstance }
+  /** Persist the assistant-level pause marker; running turns stop server-side. */
+  'assistant.instance.pause': { payload: { id: string }; result: AssistantInstance }
+  'assistant.instance.resume': { payload: { id: string }; result: AssistantInstance }
   'assistant.instance.ensure': {
     payload: { id: string }
     result: { instance: AssistantInstance; sessionId: string }
@@ -450,6 +466,11 @@ export interface AgentTeamRequestMap {
   }
   /** Move one thread Session to the retired list; the main Session is refused. */
   'assistant.thread.archive': {
+    payload: { instanceId: string; sessionId: string }
+    result: AssistantInstanceView
+  }
+  /** Put one retired thread Session back on the visible list. */
+  'assistant.thread.restore': {
     payload: { instanceId: string; sessionId: string }
     result: AssistantInstanceView
   }
@@ -516,13 +537,23 @@ export interface AgentTeamRequestMap {
     result: { checkpoint: ContextCheckpoint; sessionId: string }
   }
   'assistant.task.list': {
-    payload: { assistantId?: string } | undefined
+    payload: { assistantId?: string; includeArchived?: boolean } | undefined
     result: PageView<AssistantSession>
   }
   'assistant.task.open': {
     payload: { taskId: string }
     result: { task: AssistantSession; sessionId: string }
   }
+  /**
+   * queued → paused only; running/needs_input marks paused then cancels that
+   * turn and releases the worker. The cancellation is destructive.
+   */
+  'assistant.task.pause': { payload: { taskId: string }; result: AssistantSession }
+  /** paused → queued and drain; a new turn starts on the same reserved Session. */
+  'assistant.task.resume': { payload: { taskId: string }; result: AssistantSession }
+  /** Only a terminal task archives; its Session log and workspace are untouched. */
+  'assistant.task.archive': { payload: { taskId: string }; result: AssistantSession }
+  'assistant.task.restore': { payload: { taskId: string }; result: AssistantSession }
   'assistant.task.interactions': {
     payload: { taskId: string }
     result: PendingInteractionView[]

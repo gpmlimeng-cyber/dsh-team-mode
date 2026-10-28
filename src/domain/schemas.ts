@@ -213,6 +213,13 @@ export const assistantInstanceSchema = z.object({
    * the source of truth; the runtime replays it on attach.
    */
   memoryAutoCapture: z.boolean().optional(),
+  /**
+   * Assistant-level pause marker. Added without a schema-version bump: an old
+   * row carries no field and runs normally. While present the runtime starts no
+   * queued worker task; pausing also stops the assistant's running turns and
+   * marks their tasks paused.
+   */
+  pausedAt: isoDate.optional(),
   /** Offline mascot identity; absent means the avatar-less fallback is the initials. */
   mascot: assistantMascotSchema.optional(),
   revision: z.int().positive(),
@@ -224,6 +231,7 @@ export const assistantInstanceSchema = z.object({
 export const assistantTaskStatusSchema = z.enum([
   'queued',
   'running',
+  'paused',
   'needs_input',
   'completed',
   'failed',
@@ -246,6 +254,18 @@ export const assistantSessionSchema = z.object({
   /** The assistant instance's main Session that requested this task. */
   parentSessionId: nonEmpty,
   status: assistantTaskStatusSchema,
+  /**
+   * Who paused this task. `user` pauses survive an assistant-level resume;
+   * `assistant` marks a task stopped by pausing the whole assistant, which its
+   * resume re-admits. Absent when the task is not paused.
+   */
+  pausedBy: z.enum(['user', 'assistant']).optional(),
+  /**
+   * When the first turn was handed to the worker. Absent means the brief has
+   * never been delivered, so resuming a queued/paused task sends the brief
+   * again; a later resume sends a continue-after-pause instruction instead.
+   */
+  startedAt: isoDate.optional(),
   /** Compact result written by `assistant_task_summary`. */
   resultSummary: z.string().optional(),
   error: z.string().optional(),

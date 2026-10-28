@@ -100,6 +100,21 @@ function harness(overrides: {
     createAssistantInstance: vi.fn(async (input: object) => ({ id: 'instance-1', ...input })),
     updateAssistantInstance: vi.fn(async (id: string, value: object) => ({ id, ...value })),
     archiveAssistantInstance: vi.fn(async (id: string) => ({ id, status: 'archived' })),
+    restoreAssistantInstance: vi.fn(async (id: string) => ({ id, status: 'active' })),
+    pauseAssistantInstance: vi.fn(async (id: string) => ({ id, pausedAt: '2026-01-01T00:00:00.000Z' })),
+    resumeAssistantInstance: vi.fn(async (id: string) => ({ id })),
+    listAssistantSessions: vi.fn((assistantId?: string) => ({
+      items: [{ id: 'task-1', assistantId: assistantId ?? 'instance-1', status: 'queued' }],
+      total: 1,
+    })),
+    pauseAssistantTask: vi.fn(async (taskId: string) => ({ id: taskId, status: 'paused' })),
+    resumeAssistantTask: vi.fn(async (taskId: string) => ({ id: taskId, status: 'queued' })),
+    archiveAssistantTask: vi.fn(async (taskId: string) => ({
+      id: taskId,
+      status: 'completed',
+      archivedAt: '2026-01-01T00:00:00.000Z',
+    })),
+    restoreAssistantTask: vi.fn(async (taskId: string) => ({ id: taskId, status: 'completed' })),
     ensureAssistantInstance: vi.fn(async (id: string) => ({
       instance: { id, status: 'active' },
       sessionId: 'session-main',
@@ -109,6 +124,7 @@ function harness(overrides: {
       sessionId: 'session-thread',
     })),
     archiveAssistantThread: vi.fn(async (id: string, sessionId: string) => ({ id, sessionId })),
+    restoreAssistantThread: vi.fn(async (id: string, sessionId: string) => ({ id, sessionId })),
     writeAssistantMemoryEntry: vi.fn(async (
       assistantId: string,
       entry: Record<string, unknown>,
@@ -400,6 +416,67 @@ describe('web transport authentication and upload contract', () => {
     expect(reply.status).toBe(400)
     expect(JSON.parse(reply.body)).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
     expect(service.archiveAssistantThread).toHaveBeenCalledWith('instance-1', 'session-main')
+  })
+
+  it('dispatches pause/resume and restore for the assistant, its threads and tasks', async () => {
+    const { call, service } = harness()
+    const post = (method: string, payload: unknown) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ requestId: method, method, payload }),
+    }))
+
+    // `includeArchived` is carried explicitly; omitting the payload keeps the
+    // historical unfiltered read.
+    const listed = await post('assistant.instance.list', { includeArchived: false })
+    expect(listed.status).toBe(200)
+    expect(service.listAssistantInstanceViews).toHaveBeenCalledWith({ includeArchived: false })
+    await post('assistant.instance.list', {})
+    expect(service.listAssistantInstanceViews).toHaveBeenLastCalledWith({})
+
+    const restored = await post('assistant.instance.restore', { id: 'instance-1' })
+    expect(restored.status).toBe(200)
+    expect(JSON.parse(restored.body)).toMatchObject({ ok: true, value: { id: 'instance-1', status: 'active' } })
+    expect(service.restoreAssistantInstance).toHaveBeenCalledWith('instance-1')
+
+    const paused = await post('assistant.instance.pause', { id: 'instance-1' })
+    expect(JSON.parse(paused.body)).toMatchObject({ ok: true, value: { id: 'instance-1' } })
+    expect(service.pauseAssistantInstance).toHaveBeenCalledWith('instance-1')
+
+    const resumed = await post('assistant.instance.resume', { id: 'instance-1' })
+    expect(JSON.parse(resumed.body)).toMatchObject({ ok: true, value: { id: 'instance-1' } })
+    expect(service.resumeAssistantInstance).toHaveBeenCalledWith('instance-1')
+
+    const thread = await post('assistant.thread.restore', {
+      instanceId: 'instance-1',
+      sessionId: 'session-a',
+    })
+    expect(JSON.parse(thread.body)).toMatchObject({ ok: true, value: { id: 'instance-1', sessionId: 'session-a' } })
+    expect(service.restoreAssistantThread).toHaveBeenCalledWith('instance-1', 'session-a')
+
+    const taskPaused = await post('assistant.task.pause', { taskId: 'task-1' })
+    expect(JSON.parse(taskPaused.body)).toMatchObject({ ok: true, value: { id: 'task-1', status: 'paused' } })
+    expect(service.pauseAssistantTask).toHaveBeenCalledWith('task-1')
+
+    const taskResumed = await post('assistant.task.resume', { taskId: 'task-1' })
+    expect(JSON.parse(taskResumed.body)).toMatchObject({ ok: true, value: { id: 'task-1', status: 'queued' } })
+    expect(service.resumeAssistantTask).toHaveBeenCalledWith('task-1')
+
+    const taskArchived = await post('assistant.task.archive', { taskId: 'task-1' })
+    expect(JSON.parse(taskArchived.body)).toMatchObject({ ok: true, value: { id: 'task-1' } })
+    expect(service.archiveAssistantTask).toHaveBeenCalledWith('task-1')
+
+    const taskRestored = await post('assistant.task.restore', { taskId: 'task-1' })
+    expect(JSON.parse(taskRestored.body)).toMatchObject({ ok: true, value: { id: 'task-1', status: 'completed' } })
+    expect(service.restoreAssistantTask).toHaveBeenCalledWith('task-1')
+
+    const taskList = await post('assistant.task.list', { includeArchived: false })
+    expect(taskList.status).toBe(200)
+    expect(service.listAssistantSessions).toHaveBeenCalledWith(undefined, { includeArchived: false })
+
+    // Strict payloads: unknown fields are refused, never silently dropped.
+    const extra = await post('assistant.task.pause', { taskId: 'task-1', force: true })
+    expect(extra.status).toBe(400)
+    expect(JSON.parse(extra.body)).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
   })
 
   it('dispatches assistant memory entry writes with a proposed status', async () => {

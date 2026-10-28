@@ -36,6 +36,7 @@ export interface AssistantRowActivity {
 const ASSISTANT_TASK_STATUS_LABELS: Record<AssistantSession['status'], string> = {
   queued: '排队中',
   running: '运行中',
+  paused: '已暂停',
   needs_input: '待你处理',
   completed: '已完成',
   failed: '失败',

@@ -62,8 +62,8 @@ export function invalidateTeamListSnapshot(): void {
 
 export function callAgentTeam<M extends AgentTeamMethod>(
   method: M,
-  ...args: AgentTeamPayload<M> extends undefined
-    ? [payload?: undefined, expectedRevision?: number]
+  ...args: undefined extends AgentTeamPayload<M>
+    ? [payload?: AgentTeamPayload<M>, expectedRevision?: number]
     : [payload: AgentTeamPayload<M>, expectedRevision?: number]
 ): Promise<AgentTeamResult<M>> {
   const [payload, expectedRevision] = args

@@ -394,6 +394,8 @@ export function AssistantSettingsPane({
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [archiving, setArchiving] = useState(false)
+  const [restoring, setRestoring] = useState(false)
+  const [pausing, setPausing] = useState(false)
   const [openingChat, setOpeningChat] = useState(false)
   const [openingTask, setOpeningTask] = useState(false)
   const [compacting, setCompacting] = useState(false)
@@ -423,7 +425,7 @@ export function AssistantSettingsPane({
   // that makes the 概览 count re-read when a thread is added or removed.
   const overviewSessionKey = [assistant.mainSessionId ?? '', ...(assistant.threadSessionIds ?? [])].join('\u0000')
 
-  const busy = saving || archiving
+  const busy = saving || archiving || restoring || pausing
   const modelCapabilities = useModelCapabilities(provider, model)
   // The pane's first answer, derived from the same live task read as 用量.
   const now = assistantNow(assistant, taskUsage.tasks)
@@ -478,6 +480,8 @@ export function AssistantSettingsPane({
     setConfirmArchive(false)
     setSaving(false)
     setArchiving(false)
+    setRestoring(false)
+    setPausing(false)
     setSaved(false)
     setError(undefined)
     setMascotMotion('idle')
@@ -674,6 +678,39 @@ export function AssistantSettingsPane({
       setError(`归档失败：${messageOf(cause)}`)
     } finally {
       setArchiving(false)
+    }
+  }
+
+  /** Pause stops the live turn (destructive) and gates the queue; resume drains it. */
+  async function togglePause(): Promise<void> {
+    if (busy) return
+    setPausing(true)
+    setError(undefined)
+    try {
+      await callAgentTeam(
+        assistant.pausedAt === undefined ? 'assistant.instance.pause' : 'assistant.instance.resume',
+        { id: assistant.id },
+      )
+      await onSaved()
+    } catch (cause) {
+      setError(`${assistant.pausedAt === undefined ? '暂停' : '继续'}失败：${messageOf(cause)}`)
+    } finally {
+      setPausing(false)
+    }
+  }
+
+  /** Restore an archived assistant row; Sessions and the workspace stay untouched. */
+  async function restore(): Promise<void> {
+    if (busy) return
+    setRestoring(true)
+    setError(undefined)
+    try {
+      await callAgentTeam('assistant.instance.restore', { id: assistant.id })
+      await onSaved()
+    } catch (cause) {
+      setError(`恢复失败：${messageOf(cause)}`)
+    } finally {
+      setRestoring(false)
     }
   }
 
@@ -1329,26 +1366,65 @@ export function AssistantSettingsPane({
           onToggle={open => { toggle('archive', open) }}
           dataKind="archive"
         >
+          {assistant.status !== 'archived' && (
+            <div className={css.assistantSettingsArchive}>
+              <div className={css.assistantSettingsArchiveCopy}>
+                <span className={css.assistantSettingsArchiveTitle}>
+                  {assistant.pausedAt === undefined ? '暂停运行' : '继续运行'}
+                </span>
+                <span className={css.assistantSettingsArchiveHint}>
+                  {assistant.pausedAt === undefined
+                    ? '暂停会取消正在进行的回合（无法回放），并停止领取排队任务；之后可继续运行。'
+                    : '继续会清空暂停标记，重新排队被暂停的任务并从原会话继续。'}
+                </span>
+              </div>
+              <button
+                type="button"
+                className={css.dangerButton}
+                disabled={busy}
+                onClick={() => { void togglePause() }}
+              >
+                {pausing ? '处理中…' : assistant.pausedAt === undefined ? '暂停运行' : '继续运行'}
+              </button>
+            </div>
+          )}
           <div className={css.assistantSettingsArchive}>
             <div className={css.assistantSettingsArchiveCopy}>
-              <span className={css.assistantSettingsArchiveTitle}>归档助手</span>
-              <span className={css.assistantSettingsArchiveHint}>
-                归档后该助手将从「单聊」列表移除，并停止正在运行的后台任务；主会话记录不会被删除。
+              <span className={css.assistantSettingsArchiveTitle}>
+                {assistant.status === 'archived' ? '恢复助手' : '归档助手'}
               </span>
-              {confirmArchive && (
+              <span className={css.assistantSettingsArchiveHint}>
+                {assistant.status === 'archived'
+                  ? '恢复后该助手重新出现在「单聊」列表；主会话、线程与工作区文件都还在原处。'
+                  : '归档后该助手将从「单聊」列表移除，并停止正在运行的后台任务；主会话记录不会被删除。'}
+              </span>
+              {confirmArchive && assistant.status !== 'archived' && (
                 <span className={css.assistantSettingsArchiveWarning} role="alert">
                   再次点击「确认归档」完成归档。
                 </span>
               )}
             </div>
-            <button
-              type="button"
-              className={`${css.dangerButton} ${css.confirmDangerButton} ${confirmArchive ? css.assistantSettingsArchiveConfirm : ''}`}
-              disabled={busy}
-              onClick={() => { void archive() }}
-            >
-              {archiving ? '归档中…' : confirmArchive ? '确认归档' : '归档助手'}
-            </button>
+            {assistant.status === 'archived'
+              ? (
+                <button
+                  type="button"
+                  className={css.dangerButton}
+                  disabled={busy}
+                  onClick={() => { void restore() }}
+                >
+                  {restoring ? '恢复中…' : '恢复助手'}
+                </button>
+              )
+              : (
+                <button
+                  type="button"
+                  className={`${css.dangerButton} ${css.confirmDangerButton} ${confirmArchive ? css.assistantSettingsArchiveConfirm : ''}`}
+                  disabled={busy}
+                  onClick={() => { void archive() }}
+                >
+                  {archiving ? '归档中…' : confirmArchive ? '确认归档' : '归档助手'}
+                </button>
+              )}
           </div>
         </FoldGroup>
       )}

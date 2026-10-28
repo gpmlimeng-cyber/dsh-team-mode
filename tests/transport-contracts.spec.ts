@@ -52,7 +52,10 @@ describe('Agent Team transport contracts', () => {
   })
 
   it('associates Assistant instance methods with their payload and result types', () => {
-    expectTypeOf<AgentTeamPayload<'assistant.instance.list'>>().toEqualTypeOf<undefined>()
+    // `includeArchived` is an explicit opt-out filter; omitting the payload keeps
+    // the historical unfiltered page, so the payload is optional.
+    expectTypeOf<AgentTeamPayload<'assistant.instance.list'>>()
+      .toEqualTypeOf<{ includeArchived?: boolean } | undefined>()
     expectTypeOf<AgentTeamResult<'assistant.instance.list'>>().toEqualTypeOf<PageView<AssistantInstanceView>>()
     expectTypeOf<AgentTeamPayload<'assistant.instance.create'>>()
       .toEqualTypeOf<CreateAssistantInstanceInput>()

@@ -380,6 +380,66 @@ export class AssistantRuntime {
   }
 
   /**
+   * Start queued rows after a resume or a re-admission. Same single-flight drain
+   * every other trigger uses, so the caller never starts a row directly.
+   */
+  async drainAssistantQueue(rawAssistantId: string): Promise<void> {
+    const assistantId = requireText(rawAssistantId, 'Assistant instance id')
+    await this.drainQueue(assistantId)
+  }
+
+  /**
+   * Stop one task's live turn after its row was already marked paused. The turn
+   * cancellation is destructive: the cancelled turn is not replayed, and the
+   * worker Session log is flushed and released so a resume starts a fresh turn.
+   */
+  async stopTaskForPause(rawTaskId: string): Promise<void> {
+    if (this.closing) return
+    const taskId = requireText(rawTaskId, 'Task id')
+    const worker = this.workers.get(taskId)
+    if (worker !== undefined) {
+      try {
+        worker.handle.agent.cancel({ kind: 'user' })
+        await worker.handle.agent.whenIdle()
+      } catch (error) {
+        this.ctx.logger.warn(`dsh-team-mode: failed to pause worker '${taskId}' cleanly`, error)
+      }
+    }
+    await this.releaseWorker(taskId, 'paused')
+  }
+
+  /**
+   * Assistant-level pause. Every live turn of the assistant is marked paused
+   * (`pausedBy: 'assistant'`), cancelled and its worker released; queued rows are
+   * left queued because the instance-level marker already gates the drain.
+   */
+  async pauseAssistantWorkers(rawAssistantId: string): Promise<void> {
+    if (this.closing) return
+    const assistantId = requireText(rawAssistantId, 'Assistant instance id')
+    await this.withAssistantLock(assistantId, async () => {
+      const instance = this.service.getAssistantInstance(assistantId)
+      if (instance.status === 'archived') return
+      for (const task of this.service.listAssistantSessions(assistantId).items) {
+        if (task.status !== 'running' && task.status !== 'needs_input') continue
+        await this.service.setAssistantTaskPaused(task.id, 'assistant')
+        const worker = this.workers.get(task.id)
+        if (worker !== undefined) {
+          try {
+            worker.handle.agent.cancel({ kind: 'user' })
+            await worker.handle.agent.whenIdle()
+          } catch (error) {
+            this.ctx.logger.warn(
+              `dsh-team-mode: failed to pause assistant worker '${task.id}' cleanly`,
+              error,
+            )
+          }
+        }
+        await this.releaseWorker(task.id, 'paused')
+      }
+    })
+  }
+
+  /**
    * Create one additional visible Session for an instance and attach it as a
    * thread. It goes through the same create → attach → flush path as the main
    * Session, so the Host owns it natively before the instance lists it. `cwd`
@@ -1264,7 +1324,9 @@ export class AssistantRuntime {
   private async markTaskRunning(taskId: string): Promise<void> {
     if (this.closing) return
     const task = this.service.getAssistantSession(taskId)
-    if (task.status === 'running' || isTerminalTaskStatus(task.status)) return
+    // A paused row stays paused: a late status event from the cancelled turn
+    // must not silently restart it.
+    if (task.status === 'running' || task.status === 'paused' || isTerminalTaskStatus(task.status)) return
     // This also resumes a needs_input task after an approval is granted.
     await this.service.updateAssistantSession(taskId, { status: 'running' })
   }
@@ -1277,7 +1339,7 @@ export class AssistantRuntime {
   private async markTaskNeedsInput(taskId: string): Promise<void> {
     if (this.closing) return
     const task = this.service.getAssistantSession(taskId)
-    if (task.status === 'needs_input' || isTerminalTaskStatus(task.status)) return
+    if (task.status === 'needs_input' || task.status === 'paused' || isTerminalTaskStatus(task.status)) return
     await this.service.updateAssistantSession(taskId, { status: 'needs_input' })
   }
 
@@ -1313,7 +1375,8 @@ export class AssistantRuntime {
   private async markTaskFailed(taskId: string, error: unknown): Promise<void> {
     if (this.closing) return
     const task = this.service.getAssistantSession(taskId)
-    if (task.status === 'cancelled') return
+    // A pause owns the row: the cancelled turn's error must not fail it.
+    if (task.status === 'cancelled' || task.status === 'paused') return
     const message = error instanceof Error ? error.message : String(error)
     await this.service.updateAssistantSession(taskId, {
       status: 'failed',
@@ -1394,7 +1457,9 @@ export class AssistantRuntime {
     const limit = this.workerConcurrencyLimit()
     while (!this.closing && this.liveWorkerCount(assistantId) < limit) {
       const instance = this.service.getAssistantInstance(assistantId)
-      if (instance.status === 'archived') return
+      // An archived or paused assistant starts nothing; queued rows stay durable
+      // and the next resume/settle pass picks them up.
+      if (instance.status === 'archived' || instance.pausedAt !== undefined) return
       const next = this.nextQueuedTask(assistantId)
       if (next === undefined) return
       try {
@@ -1433,8 +1498,10 @@ export class AssistantRuntime {
   /**
    * Start one queued row on its reserved Session id: resume the stored log when
    * the crash happened after the worker was flushed, otherwise create that same
-   * id. A failure marks the task failed so the queue moves on instead of
-   * retrying a broken row forever.
+   * id. The first start delivers the brief; a start after a pause resumes the
+   * same Session with a continue instruction instead of replaying the brief.
+   * A failure marks the task failed so the queue moves on instead of retrying a
+   * broken row forever.
    */
   private async startQueuedTask(
     instance: AssistantInstance,
@@ -1462,24 +1529,32 @@ export class AssistantRuntime {
       handle = await this.openReservedWorkerSession(task, instance, snapshot)
       await workspace.attachSession(SessionId(task.sessionId))
       await this.ctx.sessions.flush(handle.agent.session)
-      // Cancel or archive may have won while the Session was starting; the
-      // stale handle belongs to this start, so dispose it instead of mapping.
+      // Pause, cancel or archive may have won while the Session was starting;
+      // the stale handle belongs to this start, so dispose it instead of mapping.
       const current = this.service.getAssistantSession(task.id)
-      if (current.status !== 'queued') {
+      if (current.status !== 'queued'
+        || this.service.getAssistantInstance(instance.id).pausedAt !== undefined) {
         throw new AgentTeamError(
           'ASSISTANT_TASK_NOT_ACTIVE',
           `Task '${task.title}' left the queue while it was starting`,
-          { taskId: task.id },
+          { taskId: task.id, status: current.status },
         )
       }
       this.mapWorker(task.id, { assistantId: instance.id, sessionId: task.sessionId, handle })
-      await this.service.updateAssistantSession(task.id, { status: 'running' })
-      handle.agent.followup(workerMessage(task.brief))
+      await this.service.markAssistantTaskStarted(task.id)
+      handle.agent.followup(workerMessage(
+        task.startedAt === undefined ? task.brief : resumeAfterPauseMessage(task),
+      ))
     } catch (error) {
       this.removeWorker(task.id)
       if (handle !== undefined) {
         await this.disposeQuietly(handle, `queued worker Session '${task.sessionId}' failed to start`)
       }
+      // A pause that landed mid-start leaves the row queued/paused; failing it
+      // would lose the pause the user just asked for.
+      const current = this.service.getAssistantSession(task.id)
+      if (current.status === 'paused') return
+      if (this.service.getAssistantInstance(instance.id).pausedAt !== undefined) return
       await this.failTask(task.id, error)
     }
   }
@@ -1951,6 +2026,17 @@ function workerMessage(text: string): UserMessage {
     content: [{ type: 'text', text }],
     source: { kind: 'user' },
   })
+}
+
+/**
+ * What a paused-then-resumed worker receives. The brief was already delivered
+ * before the pause, so repeating it would invite a restart; this asks the same
+ * Session to continue from its transcript instead.
+ */
+function resumeAfterPauseMessage(task: AssistantSession): string {
+  return `Task "${task.title}" was paused and its previous turn was cancelled. `
+    + 'Continue from where it stopped using the work already in this conversation; '
+    + 'do not restart finished parts.'
 }
 
 /**

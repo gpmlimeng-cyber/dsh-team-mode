@@ -353,6 +353,27 @@ function createHarness(
     tasks.set(id, next)
     return next
   })
+  const markAssistantTaskStarted = vi.fn(async (id: string) => {
+    const task = getAssistantSession(id)
+    const next: AssistantSession = {
+      ...task,
+      status: 'running',
+      ...(task.startedAt === undefined ? { startedAt: NOW } : {}),
+      updatedAt: NOW,
+    }
+    tasks.set(id, next)
+    return next
+  })
+  const setAssistantTaskPaused = vi.fn(async (
+    id: string,
+    pausedBy: NonNullable<AssistantSession['pausedBy']>,
+  ) => {
+    const task = getAssistantSession(id)
+    const next: AssistantSession = { ...task, status: 'paused', pausedBy, updatedAt: NOW }
+    tasks.set(id, next)
+    return next
+  })
+  const drainAssistantQueue = vi.fn(async (_assistantId: string) => {})
 
   const captureAssistantTaskMemory = vi.fn(async (_assistantId: string, _taskId: string) => true)
 
@@ -534,6 +555,9 @@ function createHarness(
     getAssistantSession,
     listAssistantSessions,
     updateAssistantSession,
+    markAssistantTaskStarted,
+    setAssistantTaskPaused,
+    drainAssistantQueue,
     notifyAssistantTaskChanged: vi.fn(),
     captureAssistantTaskMemory,
     getAssistantMemory,
@@ -562,6 +586,9 @@ function createHarness(
     getAssistantSession,
     listAssistantSessions,
     updateAssistantSession,
+    markAssistantTaskStarted,
+    setAssistantTaskPaused,
+    drainAssistantQueue,
     captureAssistantTaskMemory,
     getAssistantMemory,
     writeAssistantMemory,
@@ -591,6 +618,10 @@ function createHarness(
     },
     setInstanceStatus(status: AssistantInstance['status']) {
       current = { ...current, status }
+    },
+    setInstancePaused(pausedAt: string | undefined) {
+      const { pausedAt: _pausedAt, ...rest } = current
+      current = pausedAt === undefined ? rest : { ...rest, pausedAt }
     },
     setLive(sessionId: string, agent?: Agent) {
       live.set(sessionId, agent ?? { id: SessionId(sessionId) } as unknown as Agent)
@@ -2194,6 +2225,104 @@ describe('AssistantRuntime', () => {
     const created = h.createMock.mock.calls.slice(before)
     expect(created).toHaveLength(1)
     expect(String((created[0]![0] as CreateAgentOptions).sessionId)).toBe(queued.sessionId)
+  })
+
+  it('gates the queue at the assistant pause and drains it again on resume', async () => {
+    const h = createHarness({}, { assistantWorkerConcurrency: 1 })
+    const running = await h.runtime.createTask('instance-1', { title: 'Running', brief: 'A' })
+    const queued = await h.runtime.createTask('instance-1', { title: 'Queued', brief: 'B' })
+    expect(queued.status).toBe('queued')
+
+    h.setInstancePaused(NOW)
+    h.emit('agent/status', { agent: h.handles[1]!.agent, status: 'idle' })
+    await settle()
+    // The settle pass ran but the assistant-level pause gates admission.
+    expect(h.getAssistantSession(running.id).status).toBe('completed')
+    expect(h.getAssistantSession(queued.id).status).toBe('queued')
+    expect(h.createMock).toHaveBeenCalledTimes(2)
+
+    await h.runtime.drainAssistantQueue('instance-1')
+    expect(h.getAssistantSession(queued.id).status).toBe('queued')
+
+    h.setInstancePaused(undefined)
+    await h.runtime.drainAssistantQueue('instance-1')
+    expect(h.getAssistantSession(queued.id).status).toBe('running')
+    expect(h.createMock).toHaveBeenCalledTimes(3)
+  })
+
+  it('enqueues a new task without starting it while the assistant is paused', async () => {
+    const h = createHarness()
+    h.setInstancePaused(NOW)
+
+    const task = await h.runtime.createTask('instance-1', { title: 'Held', brief: 'Later.' })
+
+    expect(task.status).toBe('queued')
+    // Only the main Session opened; the paused marker gated the worker start.
+    expect(h.createMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('pausing an assistant marks its running task paused and releases the worker', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Running', brief: 'A' })
+    const worker = h.handles[1]
+
+    await h.runtime.pauseAssistantWorkers('instance-1')
+
+    expect(h.getAssistantSession(task.id)).toMatchObject({
+      status: 'paused',
+      pausedBy: 'assistant',
+    })
+    expect(worker?.cancel).toHaveBeenCalledWith({ kind: 'user' })
+    expect(worker?.whenIdle).toHaveBeenCalledTimes(1)
+    expect(worker?.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('pauses a running task destructively and resumes a new turn on the same Session', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Interrupted', brief: 'A' })
+    const worker = h.handles[1]
+
+    await h.service.setAssistantTaskPaused(task.id, 'user')
+    await h.runtime.stopTaskForPause(task.id)
+    expect(worker?.cancel).toHaveBeenCalledWith({ kind: 'user' })
+    expect(worker?.whenIdle).toHaveBeenCalledTimes(1)
+    expect(worker?.dispose).toHaveBeenCalledTimes(1)
+    expect(h.getAssistantSession(task.id).status).toBe('paused')
+
+    // The service requeues the row; the drain resumes the reserved Session and
+    // sends a continue-after-pause turn instead of replaying the brief.
+    await h.service.updateAssistantSession(task.id, { status: 'queued' })
+    await h.runtime.drainAssistantQueue('instance-1')
+
+    expect(h.getAssistantSession(task.id).status).toBe('running')
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+    const options = h.resumeMock.mock.calls[0]![0] as ResumeAgentOptions
+    expect(String(options.resumeSessionId)).toBe(task.sessionId)
+    const resumed = h.handles[2]
+    expect(textOf(resumed?.followup.mock.calls[0]?.[0])).toContain('was paused')
+    expect(textOf(resumed?.followup.mock.calls[0]?.[0])).toContain('Interrupted')
+  })
+
+  it('pauses a queued task without starting it and resumes it with the original brief', async () => {
+    const h = createHarness({}, { assistantWorkerConcurrency: 1 })
+    await h.runtime.createTask('instance-1', { title: 'First', brief: 'A' })
+    const queued = await h.runtime.createTask('instance-1', { title: 'Second', brief: 'Second brief.' })
+    expect(h.createMock).toHaveBeenCalledTimes(2)
+
+    await h.service.setAssistantTaskPaused(queued.id, 'user')
+    expect(h.getAssistantSession(queued.id).status).toBe('paused')
+    expect(h.createMock).toHaveBeenCalledTimes(2)
+
+    await h.service.updateAssistantSession(queued.id, { status: 'queued' })
+    h.emit('agent/status', { agent: h.handles[1]!.agent, status: 'idle' })
+    await settle()
+
+    expect(h.getAssistantSession(queued.id).status).toBe('running')
+    expect(h.createMock).toHaveBeenCalledTimes(3)
+    const started = h.createMock.mock.calls[2]![0] as CreateAgentOptions
+    expect(String(started.sessionId)).toBe(queued.sessionId)
+    // First delivery was never made, so resume carries the brief.
+    expect(textOf(h.handles[2]?.followup.mock.calls[0]?.[0])).toBe('Second brief.')
   })
 
   it('puts bounded recent tasks and routing instructions into the main prompt', async () => {

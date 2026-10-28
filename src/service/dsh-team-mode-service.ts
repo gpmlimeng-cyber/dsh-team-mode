@@ -953,11 +953,18 @@ export class AgentTeamService extends Service {
   /**
    * Sidebar view: the persisted instances plus a bounded latest-message
    * preview. A preview failure is presentation-only and never hides the row.
+   * `includeArchived:false` is an explicit filter; the default keeps the
+   * historical unfiltered page so an archive stays reversible from the client.
    */
-  async listAssistantInstanceViews(): Promise<Page<AssistantInstance & { preview?: AssistantPreview }>> {
+  async listAssistantInstanceViews(
+    options: { includeArchived?: boolean | undefined } = {},
+  ): Promise<Page<AssistantInstance & { preview?: AssistantPreview }>> {
     const page = this.listAssistantInstances()
-    if (this.assistantRuntime === undefined) return page
-    const items = await Promise.all(page.items.map(async instance => {
+    const items = options.includeArchived === false
+      ? page.items.filter(instance => instance.status !== 'archived')
+      : page.items
+    if (this.assistantRuntime === undefined) return { items, total: items.length }
+    const withPreviews = await Promise.all(items.map(async instance => {
       try {
         const preview = await this.assistantRuntime?.latestPreview(instance.id)
         return preview === undefined ? instance : { ...instance, preview }
@@ -965,7 +972,7 @@ export class AgentTeamService extends Service {
         return instance
       }
     }))
-    return { items, total: page.total }
+    return { items: withPreviews, total: withPreviews.length }
   }
 
 
@@ -1248,6 +1255,249 @@ export class AgentTeamService extends Service {
       }
     })
     this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.archived')
+    return next
+  }
+
+  /**
+   * Bring one archived instance back. This is a row write only: the main Session
+   * log, thread Sessions, worker Sessions, the workspace and its files are all
+   * left exactly where archive left them. A paused assistant stays paused.
+   */
+  async restoreAssistantInstance(id: string): Promise<AssistantInstance> {
+    const current = requireAssistantInstance(this.store, id)
+    if (current.status !== 'archived') return current
+    const now = new Date().toISOString()
+    const next = await this.store.updateAssistantInstance(id, value => {
+      const { archivedAt: _archivedAt, ...rest } = value
+      return {
+        ...rest,
+        // A bound main Session is still usable; an unbound one keeps the row idle
+        // until the user opens it and the runtime binds a fresh Session.
+        status: value.mainSessionId === undefined ? 'idle' : 'active',
+        revision: value.revision + 1,
+        updatedAt: now,
+      }
+    })
+    this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.restored')
+    return next
+  }
+
+  /**
+   * Pause one Assistant. The marker is persisted before the runtime is asked to
+   * stop anything, so a queue drain that starts in between already sees the
+   * pause. Running worker turns are cancelled and their tasks marked paused;
+   * queued rows stay queued and simply do not start.
+   */
+  async pauseAssistantInstance(id: string): Promise<AssistantInstance> {
+    const current = requireAssistantInstance(this.store, id)
+    if (current.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${id}' is archived`,
+        { instanceId: id },
+      )
+    }
+    if (current.pausedAt !== undefined) {
+      await this.assistantRuntime?.pauseAssistantWorkers(id)
+      return current
+    }
+    const now = new Date().toISOString()
+    const next = await this.store.updateAssistantInstance(id, value => ({
+      ...value,
+      pausedAt: now,
+      revision: value.revision + 1,
+      updatedAt: now,
+    }))
+    this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.paused')
+    await this.assistantRuntime?.pauseAssistantWorkers(id)
+    return next
+  }
+
+  /**
+   * Clear the Assistant pause, re-admit the tasks the pause stopped, and drain
+   * the queue. A task paused by the user stays paused: only `pausedBy:
+   * 'assistant'` rows are re-admitted.
+   */
+  async resumeAssistantInstance(id: string): Promise<AssistantInstance> {
+    const current = requireAssistantInstance(this.store, id)
+    if (current.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${id}' is archived`,
+        { instanceId: id },
+      )
+    }
+    if (current.pausedAt === undefined) return current
+    const now = new Date().toISOString()
+    const next = await this.store.updateAssistantInstance(id, value => {
+      const { pausedAt: _pausedAt, ...rest } = value
+      return {
+        ...rest,
+        revision: value.revision + 1,
+        updatedAt: now,
+      }
+    })
+    this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.resumed')
+    for (const task of this.listAssistantSessions(id).items) {
+      if (task.status === 'paused' && task.pausedBy === 'assistant') {
+        await this.requeueAssistantTask(task.id)
+      }
+    }
+    await this.assistantRuntime?.drainAssistantQueue(id)
+    return next
+  }
+
+  /**
+   * Pause one worker task. A queued task only changes status and is never
+   * started. A running task is marked paused first, then its live turn is
+   * cancelled and the worker released — that cancellation is destructive, the
+   * cancelled turn is not replayed, and resume starts a fresh turn on the same
+   * Session.
+   */
+  async pauseAssistantTask(rawTaskId: string): Promise<AssistantSession> {
+    const taskId = rawTaskId.trim()
+    if (taskId === '') throw new AgentTeamError('INVALID_REQUEST', 'Task id cannot be empty')
+    const task = requireAssistantSession(this.store, taskId)
+    if (this.getAssistantInstance(task.assistantId).status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${task.assistantId}' is archived`,
+        { instanceId: task.assistantId, taskId },
+      )
+    }
+    if (task.archivedAt !== undefined) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Task '${taskId}' is archived; restore it before pausing`,
+        { taskId },
+      )
+    }
+    if (task.status === 'paused') return task
+    if (isTerminalAssistantTaskStatus(task.status)) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Task '${taskId}' is already ${task.status}; only queued or live tasks can pause`,
+        { taskId },
+      )
+    }
+    const paused = await this.writeAssistantTask(task.id, value => ({
+      ...value,
+      status: 'paused',
+      pausedBy: 'user',
+    }))
+    if (task.status === 'running' || task.status === 'needs_input') {
+      await this.assistantRuntime?.stopTaskForPause(task.id)
+    }
+    return paused
+  }
+
+  /** Re-admit one paused task and drain; the worker resumes its stored Session. */
+  async resumeAssistantTask(rawTaskId: string): Promise<AssistantSession> {
+    const taskId = rawTaskId.trim()
+    if (taskId === '') throw new AgentTeamError('INVALID_REQUEST', 'Task id cannot be empty')
+    const task = requireAssistantSession(this.store, taskId)
+    if (this.getAssistantInstance(task.assistantId).status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${task.assistantId}' is archived`,
+        { instanceId: task.assistantId, taskId },
+      )
+    }
+    if (task.status !== 'paused') {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Task '${taskId}' is ${task.status}; only a paused task can resume`,
+        { taskId, status: task.status },
+      )
+    }
+    await this.requeueAssistantTask(task.id)
+    await this.assistantRuntime?.drainAssistantQueue(task.assistantId)
+    return this.getAssistantSession(task.id)
+  }
+
+  /**
+   * Archive one finished task row. Only terminal tasks archive: a live or paused
+   * task must first be cancelled (or resumed/completed), so archiving can never
+   * strand a worker. The row, its Session log and the workspace are untouched.
+   */
+  async archiveAssistantTask(rawTaskId: string): Promise<AssistantSession> {
+    const taskId = rawTaskId.trim()
+    if (taskId === '') throw new AgentTeamError('INVALID_REQUEST', 'Task id cannot be empty')
+    const task = requireAssistantSession(this.store, taskId)
+    if (task.archivedAt !== undefined) return task
+    if (!isTerminalAssistantTaskStatus(task.status)) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Task '${taskId}' is ${task.status}; cancel it before archiving`,
+        { taskId, status: task.status },
+      )
+    }
+    return this.writeAssistantTask(task.id, value => ({
+      ...value,
+      archivedAt: new Date().toISOString(),
+    }))
+  }
+
+  /** Restore one archived task row to its previous finished status. */
+  async restoreAssistantTask(rawTaskId: string): Promise<AssistantSession> {
+    const taskId = rawTaskId.trim()
+    if (taskId === '') throw new AgentTeamError('INVALID_REQUEST', 'Task id cannot be empty')
+    const task = requireAssistantSession(this.store, taskId)
+    if (task.archivedAt === undefined) return task
+    return this.writeAssistantTask(task.id, value => {
+      const { archivedAt: _archivedAt, ...rest } = value
+      return rest
+    })
+  }
+
+  /**
+   * Runtime-only hook: the first turn has been handed to a task's worker. The
+   * started stamp is what a later pause/resume uses to decide whether the brief
+   * still needs delivering or the Session only needs a continue instruction.
+   */
+  async markAssistantTaskStarted(rawTaskId: string): Promise<AssistantSession> {
+    const task = requireAssistantSession(this.store, rawTaskId.trim())
+    if (task.status === 'running' && task.startedAt !== undefined) return task
+    const now = new Date().toISOString()
+    return this.writeAssistantTask(task.id, value => ({
+      ...value,
+      status: 'running',
+      ...(value.startedAt === undefined ? { startedAt: now } : {}),
+    }))
+  }
+
+  /** Runtime-only hook: mark a live task paused by the assistant-level pause. */
+  async setAssistantTaskPaused(
+    rawTaskId: string,
+    pausedBy: NonNullable<AssistantSession['pausedBy']>,
+  ): Promise<AssistantSession> {
+    const task = requireAssistantSession(this.store, rawTaskId.trim())
+    if (isTerminalAssistantTaskStatus(task.status)) return task
+    return this.writeAssistantTask(task.id, value => ({
+      ...value,
+      status: 'paused',
+      pausedBy,
+    }))
+  }
+
+  /** Re-admit one paused (or queued) row without touching its Session or brief. */
+  private async requeueAssistantTask(taskId: string): Promise<AssistantSession> {
+    return this.writeAssistantTask(taskId, value => {
+      const { pausedBy: _pausedBy, ...rest } = value
+      return { ...rest, status: 'queued' }
+    })
+  }
+
+  private async writeAssistantTask(
+    taskId: string,
+    mutate: (current: AssistantSession) => AssistantSession,
+  ): Promise<AssistantSession> {
+    const now = new Date().toISOString()
+    const next = await this.store.updateAssistantSession(taskId, value => ({
+      ...mutate(value),
+      updatedAt: now,
+    }))
+    this.publish('assistant-session', next.id, 0, 'assistant.session.updated')
     return next
   }
 
@@ -2054,6 +2304,65 @@ export class AgentTeamService extends Service {
   }
 
   /**
+   * Put one archived thread back on the visible thread list. The Session log was
+   * never deleted by archive, so this is the same row update in reverse.
+   */
+  async restoreAssistantThread(assistantId: string, sessionId: string): Promise<AssistantInstance> {
+    const id = assistantId.trim()
+    const threadSessionId = sessionId.trim()
+    if (id === '' || threadSessionId === '') {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        'Assistant instance id and thread Session id cannot be empty',
+      )
+    }
+    const current = requireAssistantInstance(this.store, id)
+    if (current.status === 'archived') {
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_ARCHIVED',
+        `Assistant instance '${id}' is archived`,
+        { instanceId: id },
+      )
+    }
+    if (!(current.retiredThreadSessionIds ?? []).includes(threadSessionId)) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Session '${threadSessionId}' is not archived for assistant instance '${id}'`,
+        { instanceId: id, sessionId: threadSessionId },
+      )
+    }
+    if ((current.threadSessionIds ?? []).length >= ASSISTANT_THREAD_SESSION_LIMIT) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Assistant instance '${id}' already lists ${ASSISTANT_THREAD_SESSION_LIMIT} threads`,
+        { instanceId: id, sessionId: threadSessionId },
+      )
+    }
+    const now = new Date().toISOString()
+    const next = await this.store.updateAssistantInstance(id, value => {
+      if (value.status === 'archived') {
+        throw new AgentTeamError(
+          'ASSISTANT_INSTANCE_ARCHIVED',
+          `Assistant instance '${id}' is archived`,
+          { instanceId: id },
+        )
+      }
+      const threads = [...(value.threadSessionIds ?? [])]
+      if (!threads.includes(threadSessionId)) threads.push(threadSessionId)
+      return {
+        ...value,
+        threadSessionIds: threads,
+        retiredThreadSessionIds: (value.retiredThreadSessionIds ?? [])
+          .filter(item => item !== threadSessionId),
+        revision: value.revision + 1,
+        updatedAt: now,
+      }
+    })
+    this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.thread_restored')
+    return next
+  }
+
+  /**
    * Runtime-only hook: mark a checkpoint consumed by the handoff that used it.
    * A checkpoint that is no longer `ready` cannot be consumed twice.
    */
@@ -2368,9 +2677,19 @@ export class AgentTeamService extends Service {
     this.publish('assistant-session', taskId, 0, 'assistant.task.interaction')
   }
 
-  listAssistantSessions(assistantId?: string): Page<AssistantSession> {
+  /**
+   * Worker task rows, newest-first from the store. Archived rows stay in the
+   * default page (the Historical behaviour) because the client owns hiding;
+   * `includeArchived:false` filters them for readers that need finished work out
+   * of the way.
+   */
+  listAssistantSessions(
+    assistantId?: string,
+    options: { includeArchived?: boolean } = {},
+  ): Page<AssistantSession> {
     const items = this.store.listAssistantSessions()
       .filter(session => assistantId === undefined || session.assistantId === assistantId)
+      .filter(session => options.includeArchived !== false || session.archivedAt === undefined)
     return { items, total: items.length }
   }
 
@@ -6013,6 +6332,11 @@ function portableIssues(error: ZodError): Array<{ path: string, message: string 
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'unknown error'
+}
+
+/** Whether a task row can no longer move on its own (pause/archive refuse it). */
+function isTerminalAssistantTaskStatus(status: AssistantSession['status']): boolean {
+  return status === 'completed' || status === 'failed' || status === 'cancelled'
 }
 
 function hasDropped(dropped: GroupImportDropped): boolean {

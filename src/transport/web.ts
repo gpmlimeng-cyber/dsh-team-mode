@@ -278,7 +278,12 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       return service.cloneAssistant(payload.id, payload.name)
     }
     case 'assistant.delete': await service.deleteAssistant(idPayload.parse(request.payload).id); return null
-    case 'assistant.instance.list': return service.listAssistantInstanceViews()
+    case 'assistant.instance.list': {
+      const payload = request.payload === undefined || request.payload === null
+        ? undefined
+        : z.object({ includeArchived: z.boolean().optional() }).strict().parse(request.payload)
+      return service.listAssistantInstanceViews(payload)
+    }
     case 'assistant.instance.create': return service.createAssistantInstance(request.payload as never)
     case 'assistant.instance.update': {
       const payload = z.object({
@@ -290,6 +295,18 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
     case 'assistant.instance.archive': {
       const payload = z.object({ id: z.string().trim().min(1).max(200) }).strict().parse(request.payload)
       return service.archiveAssistantInstance(payload.id)
+    }
+    case 'assistant.instance.restore': {
+      const payload = z.object({ id: z.string().trim().min(1).max(200) }).strict().parse(request.payload)
+      return service.restoreAssistantInstance(payload.id)
+    }
+    case 'assistant.instance.pause': {
+      const payload = z.object({ id: z.string().trim().min(1).max(200) }).strict().parse(request.payload)
+      return service.pauseAssistantInstance(payload.id)
+    }
+    case 'assistant.instance.resume': {
+      const payload = z.object({ id: z.string().trim().min(1).max(200) }).strict().parse(request.payload)
+      return service.resumeAssistantInstance(payload.id)
     }
     case 'assistant.instance.ensure':
       return service.ensureAssistantInstance(idPayload.parse(request.payload).id)
@@ -309,6 +326,13 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
         sessionId: z.string().trim().min(1).max(200),
       }).strict().parse(request.payload)
       return service.archiveAssistantThread(payload.instanceId, payload.sessionId)
+    }
+    case 'assistant.thread.restore': {
+      const payload = z.object({
+        instanceId: z.string().trim().min(1).max(200),
+        sessionId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.restoreAssistantThread(payload.instanceId, payload.sessionId)
     }
     case 'assistant.coordinator.get':
       return service.getCoordinatorInstance() ?? null
@@ -401,14 +425,41 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
         ? undefined
         : z.object({
           assistantId: z.string().trim().min(1).max(200).optional(),
+          includeArchived: z.boolean().optional(),
         }).strict().parse(request.payload)
-      return service.listAssistantSessions(payload?.assistantId)
+      return service.listAssistantSessions(payload?.assistantId, {
+        ...(payload?.includeArchived === undefined ? {} : { includeArchived: payload.includeArchived }),
+      })
     }
     case 'assistant.task.open': {
       const payload = z.object({
         taskId: z.string().trim().min(1).max(200),
       }).strict().parse(request.payload)
       return service.openAssistantTask(payload.taskId)
+    }
+    case 'assistant.task.pause': {
+      const payload = z.object({
+        taskId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.pauseAssistantTask(payload.taskId)
+    }
+    case 'assistant.task.resume': {
+      const payload = z.object({
+        taskId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.resumeAssistantTask(payload.taskId)
+    }
+    case 'assistant.task.archive': {
+      const payload = z.object({
+        taskId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.archiveAssistantTask(payload.taskId)
+    }
+    case 'assistant.task.restore': {
+      const payload = z.object({
+        taskId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      return service.restoreAssistantTask(payload.taskId)
     }
     case 'assistant.task.interactions': {
       const payload = z.object({

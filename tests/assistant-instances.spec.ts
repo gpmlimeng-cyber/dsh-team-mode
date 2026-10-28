@@ -1310,6 +1310,174 @@ describe('Assistant sessions', () => {
   })
 })
 
+describe('Assistant pause and restore lifecycle', () => {
+  it('restores an archived instance as a row write, keeping its main Session', async () => {
+    const { service, store } = createHarness()
+    const instance = await createInstance(service, 'Restorable')
+    await service.bindAssistantMainSession(instance.id, 'session-main')
+    const archived = await service.archiveAssistantInstance(instance.id)
+    expect(archived.status).toBe('archived')
+
+    const filtered = await service.listAssistantInstanceViews({ includeArchived: false })
+    expect(filtered.items.map(item => item.id)).not.toContain(instance.id)
+    const all = await service.listAssistantInstanceViews()
+    expect(all.items.map(item => item.id)).toContain(instance.id)
+
+    const restored = await service.restoreAssistantInstance(instance.id)
+    expect(restored).toMatchObject({ status: 'active', mainSessionId: 'session-main' })
+    expect(restored.archivedAt).toBeUndefined()
+    // The Session binding, workspace and the row's other fields are untouched.
+    expect(store.getAssistantInstance(instance.id)).toMatchObject({
+      mainSessionId: 'session-main',
+      workspaceId: instance.workspaceId,
+      workspacePath: instance.workspacePath,
+    })
+    expect(await service.restoreAssistantInstance(instance.id)).toEqual(restored)
+
+    const unbound = await createInstance(service, 'Never opened')
+    await service.archiveAssistantInstance(unbound.id)
+    expect((await service.restoreAssistantInstance(unbound.id)).status).toBe('idle')
+  })
+
+  it('restores an archived thread without deleting its Session', async () => {
+    const { service } = createHarness()
+    const instance = await createInstance(service, 'Thread owner')
+    await service.attachAssistantThread(instance.id, 'session-thread')
+    await service.archiveAssistantThread(instance.id, 'session-thread')
+    expect(service.getAssistantInstance(instance.id).retiredThreadSessionIds)
+      .toEqual(['session-thread'])
+
+    const restored = await service.restoreAssistantThread(instance.id, 'session-thread')
+    expect(restored.threadSessionIds).toEqual(['session-thread'])
+    expect(restored.retiredThreadSessionIds).toEqual([])
+    await expect(service.restoreAssistantThread(instance.id, 'session-thread'))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  })
+
+  it('persists the assistant pause, stops live work, and re-admits only its own pauses', async () => {
+    const { service } = createHarness()
+    const instance = await createInstance(service, 'Pausable')
+    const runtime = {
+      pauseAssistantWorkers: vi.fn(async () => {}),
+      drainAssistantQueue: vi.fn(async () => {}),
+      setMemoryAutoCapture: vi.fn(),
+    } as unknown as AssistantRuntime
+    service.attachAssistantRuntime(runtime)
+    const stopped = await service.createAssistantSession({
+      assistantId: instance.id,
+      sessionId: 'session-stopped',
+      title: 'Stopped task',
+      brief: 'Brief',
+      parentSessionId: 'session-main',
+    })
+    const userPaused = await service.createAssistantSession({
+      assistantId: instance.id,
+      sessionId: 'session-user-paused',
+      title: 'User paused',
+      brief: 'Brief',
+      parentSessionId: 'session-main',
+    })
+    await service.setAssistantTaskPaused(stopped.id, 'assistant')
+    await service.setAssistantTaskPaused(userPaused.id, 'user')
+
+    const paused = await service.pauseAssistantInstance(instance.id)
+    expect(paused.pausedAt).toBeDefined()
+    expect(runtime.pauseAssistantWorkers).toHaveBeenCalledWith(instance.id)
+    // Idempotent: a second pause keeps the marker and still asks for the stop.
+    const again = await service.pauseAssistantInstance(instance.id)
+    expect(again.pausedAt).toBe(paused.pausedAt)
+
+    const resumed = await service.resumeAssistantInstance(instance.id)
+    expect(resumed.pausedAt).toBeUndefined()
+    const readmitted = service.getAssistantSession(stopped.id)
+    expect(readmitted.status).toBe('queued')
+    expect(readmitted.pausedBy).toBeUndefined()
+    // A user-paused task is not silently re-admitted by the assistant resume.
+    expect(service.getAssistantSession(userPaused.id)).toMatchObject({
+      status: 'paused',
+      pausedBy: 'user',
+    })
+    expect(runtime.drainAssistantQueue).toHaveBeenCalledWith(instance.id)
+    // A no-op resume changes nothing.
+    expect(await service.resumeAssistantInstance(instance.id)).toEqual(resumed)
+  })
+
+  it('pauses a queued task without starting it and pauses a running one destructively', async () => {
+    const { service } = createHarness()
+    const instance = await createInstance(service, 'Task owner')
+    const runtime = {
+      stopTaskForPause: vi.fn(async () => {}),
+      drainAssistantQueue: vi.fn(async () => {}),
+      setMemoryAutoCapture: vi.fn(),
+    } as unknown as AssistantRuntime
+    service.attachAssistantRuntime(runtime)
+    const task = await service.createAssistantSession({
+      assistantId: instance.id,
+      sessionId: 'session-worker',
+      title: 'Queued task',
+      brief: 'Brief',
+      parentSessionId: 'session-main',
+    })
+
+    const paused = await service.pauseAssistantTask(task.id)
+    expect(paused).toMatchObject({ status: 'paused', pausedBy: 'user' })
+    // A queued task has no live turn, so nothing is cancelled.
+    expect(runtime.stopTaskForPause).not.toHaveBeenCalled()
+
+    const requeued = await service.resumeAssistantTask(task.id)
+    expect(requeued).toMatchObject({ status: 'queued' })
+    expect(requeued.pausedBy).toBeUndefined()
+    expect(runtime.drainAssistantQueue).toHaveBeenCalledWith(instance.id)
+
+    const running = await service.createAssistantSession({
+      assistantId: instance.id,
+      sessionId: 'session-running',
+      title: 'Running task',
+      brief: 'Brief',
+      parentSessionId: 'session-main',
+    })
+    await service.updateAssistantSession(running.id, { status: 'running' })
+    const pausedRunning = await service.pauseAssistantTask(running.id)
+    expect(pausedRunning.status).toBe('paused')
+    expect(runtime.stopTaskForPause).toHaveBeenCalledWith(running.id)
+
+    // Terminal and archived rows refuse a pause; live rows refuse archive.
+    await service.updateAssistantSession(running.id, { status: 'completed' })
+    await expect(service.pauseAssistantTask(running.id))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    await expect(service.archiveAssistantTask(requeued.id))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+  })
+
+  it('archives and restores a terminal task while filtering only archived rows', async () => {
+    const { service } = createHarness()
+    const instance = await createInstance(service, 'Archive owner')
+    const task = await service.createAssistantSession({
+      assistantId: instance.id,
+      sessionId: 'session-worker',
+      title: 'Finished task',
+      brief: 'Brief',
+      parentSessionId: 'session-main',
+    })
+    await service.updateAssistantSession(task.id, { status: 'completed' })
+
+    const archived = await service.archiveAssistantTask(task.id)
+    expect(archived.archivedAt).toBeDefined()
+    expect(service.getAssistantSession(task.id)).toEqual(archived)
+    const filtered = await service.listAssistantSessions(instance.id, { includeArchived: false })
+    expect(filtered.items.map(item => item.id)).not.toContain(task.id)
+    const all = await service.listAssistantSessions(instance.id)
+    expect(all.items.map(item => item.id)).toContain(task.id)
+
+    const restored = await service.restoreAssistantTask(task.id)
+    expect(restored.status).toBe('completed')
+    expect(restored.archivedAt).toBeUndefined()
+    // Archive/restore never moved the row's reserved Session.
+    expect(restored.sessionId).toBe(task.sessionId)
+    expect(await service.restoreAssistantTask(task.id)).toEqual(restored)
+  })
+})
+
 /** A directly configured instance: no template row, so the test owns every field. */
 function createInstance(service: AgentTeamService, name: string): Promise<AssistantInstance> {
   return service.createAssistantInstance({
