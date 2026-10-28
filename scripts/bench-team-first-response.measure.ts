@@ -8,7 +8,8 @@
  * between the send and the first user-visible output, and where does the time
  * go. It has four parts:
  *
- *   1 SEAMS    pinned source facts the numbers depend on (fails loudly if moved)
+ *   1 SEAMS    pinned source facts the numbers depend on (fails loudly if moved),
+ *              plus the strings the P1 fast path removed (they must stay gone)
  *   2 PROMPTS  the fixed 12-prompt benchmark definition (4/4/4)
  *   3 ANALYZER one leader turn log -> timestamps + round-trip counts, with a
  *              synthetic fixture that proves the extraction before real data
@@ -16,6 +17,11 @@
  *
  * Part 4 needs real recorded runs to say anything. When there are none it says
  * so instead of printing a number that came from a different machine.
+ *
+ * Repinned 2026-10-28 after the P1 fast path (`src/runtime/team-prompts.ts`,
+ * commit 7aee654): the forced first-turn roster call and approval are gone, so
+ * the seam ledger now pins the fast-path rules and asserts the old gate strings
+ * are absent everywhere they used to live.
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -48,22 +54,28 @@ const SESSIONS_ROOT = process.env.DSH_SESSIONS_DIR ?? join(homedir(), '.dsh', 's
  */
 const SEAMS: ReadonlyArray<{ id: string; file: string; pattern: RegExp; what: string }> = [
   {
-    id: 'forced-roster-call',
+    id: 'fast-path-at-once',
     file: 'src/runtime/team-prompts.ts',
-    pattern: /First turn: call team_members to inspect the current roster/,
-    what: 'LEADER_RULES forces one team_members round-trip on the first turn',
+    pattern: /A team that already has members starts the requested work at once: state the mode in one line, then act\./,
+    what: 'LEADER_RULES starts the work at once on a built team (P1 fast path)',
   },
   {
-    id: 'forced-roster-approval',
+    id: 'approval-only-user-decisions',
     file: 'src/runtime/team-prompts.ts',
-    pattern: /Wait for the user to approve before spawning or assigning work/,
-    what: 'the same rule forces one human round-trip before any work',
+    pattern: /Ask for approval only for decisions the user owns: creating a new team, adding members, or accepting a scope\/risk trade-off\./,
+    what: 'approval is scoped to decisions the user owns, not to every first turn',
   },
   {
-    id: 'tool-description-repeat',
+    id: 'roster-ask-only-on-request',
+    file: 'src/runtime/team-prompts.ts',
+    pattern: /If the user asks for a roster\/plan, the Leader proposes it\. Adding members needs the user.s approval; assigning work to the existing roster does not\./,
+    what: 'rosterPrompt offers a plan only when asked; assigning to the existing roster needs no approval',
+  },
+  {
+    id: 'members-tool-not-forced',
     file: 'src/runtime/team-tools.ts',
-    pattern: /Call this before planning or delegating\./,
-    what: 'team_members repeats the forcing instruction in its own description',
+    pattern: /The roster is already in the Leader prompt every turn, so call this only when it may be stale\./,
+    what: 'team_members no longer asks to be called before planning or delegating',
   },
   {
     id: 'roster-already-in-prompt',
@@ -85,6 +97,44 @@ const SEAMS: ReadonlyArray<{ id: string; file: string; pattern: RegExp; what: st
   },
 ]
 
+/**
+ * The other half of the ledger: the strings the P1 fast path deleted. Pinning
+ * their absence means a regression that puts the forced roster approval back
+ * fails this run instead of quietly changing what the benchmark measures.
+ */
+const REMOVED: ReadonlyArray<{ id: string; file: string; text: string; what: string }> = [
+  {
+    id: 'gate-first-turn-members',
+    file: 'src/runtime/team-prompts.ts',
+    text: 'First turn: call team_members to inspect the current roster',
+    what: 'forced team_members call before any work',
+  },
+  {
+    id: 'gate-roster-approval',
+    file: 'src/runtime/team-prompts.ts',
+    text: 'Wait for the user to approve before spawning or assigning work',
+    what: 'forced human approval before any work',
+  },
+  {
+    id: 'gate-next-turn-approval',
+    file: 'src/runtime/team-prompts.ts',
+    text: 'Next turn, after the user approves',
+    what: 'the second-turn half of the same gate',
+  },
+  {
+    id: 'gate-roster-tail',
+    file: 'src/runtime/team-prompts.ts',
+    text: 'If the user asks for a roster/plan, the Leader proposes it first; only spawn or assign after approval.',
+    what: 'the rosterPrompt copy of the same gate',
+  },
+  {
+    id: 'gate-tool-description',
+    file: 'src/runtime/team-tools.ts',
+    text: 'Call this before planning or delegating.',
+    what: 'the team_members description copy of the same gate',
+  },
+]
+
 /** The floor a zero-latency model would still pay before the first node paints. */
 const VISIBLE_FLOOR_MS = CONVERSATION_PUBLISH_MS + CLIENT_RELOAD_DEBOUNCE_MS
 
@@ -93,9 +143,9 @@ const VISIBLE_FLOOR_MS = CONVERSATION_PUBLISH_MS + CLIENT_RELOAD_DEBOUNCE_MS
  * Fixed prompts against a **pre-built** team (1 leader + 2 members already
  * built, no spawn needed). `expect` is what a responsive team should produce
  * under the *current* prompt, so a run can be scored automatically:
- * `goals`/`tasks` are board artifacts, `rosterApprovals` is the human
- * round-trip the first-turn rule asks for, `firstTurnToolCalls` is the
- * leader's tool round-trips before the user sees anything.
+ * `goals`/`tasks` are board artifacts, `rosterApprovals` is the roster-approval
+ * round-trip P1 removed (0 everywhere now), `firstTurnToolCalls` is the leader's
+ * tool round-trips before the user sees anything.
  */
 interface BenchmarkPrompt {
   id: string
@@ -524,6 +574,9 @@ describe('team first-response benchmark', () => {
     for (const seam of SEAMS) {
       expect(SRC(seam.file), `${seam.id}: ${seam.what} (${seam.file})`).toMatch(seam.pattern)
     }
+    for (const gone of REMOVED) {
+      expect(SRC(gone.file), `${gone.id}: ${gone.what} came back (${gone.file})`).not.toContain(gone.text)
+    }
     expect(VISIBLE_FLOOR_MS).toBe(168)
 
     const team = fixtureTeam()
@@ -533,10 +586,17 @@ describe('team first-response benchmark', () => {
     // The roster the first turn is told to fetch is already built every turn.
     expect(roster).toContain('Member A (member), slotId=member-a, status=idle')
     expect(roster).toContain('Bench Leader (leader), slotId=leader-slot, status=idle')
+    // The assembled leader prompt carries the fast path and no longer asks to
+    // wait for a roster approval.
+    expect(prompt).toContain('starts the requested work at once')
+    expect(prompt).not.toContain('Wait for the user to approve before spawning or assigning work')
     console.log([
       '',
       'Seams pinned:',
       ...SEAMS.map(seam => `  ${seam.id.padEnd(28)} ${seam.what}`),
+      '',
+      'Removed by the P1 fast path (must stay gone):',
+      ...REMOVED.map(gone => `  ${gone.id.padEnd(28)} ${gone.what}`),
       `  ${'visible-output floor'.padEnd(28)} ${CONVERSATION_PUBLISH_MS}ms publish + ${CLIENT_RELOAD_DEBOUNCE_MS}ms client = ${VISIBLE_FLOOR_MS}ms`,
       '',
       `Leader prompt (identity section) ${prompt.length} chars; roster section ${roster.length} chars already appended every turn.`,
@@ -622,9 +682,9 @@ describe('team first-response benchmark', () => {
       'Benchmark definition (pre-built team: leader + 2 members, no spawn):',
       table(rows, ['id', 'kind', 'board', 'human-approvals', 'leader-tools', 'prompt']),
       '',
-      'Current prompt forces `rosterApprovals=1` + one team_members call for EVERY row,',
-      'including direct questions: LEADER_RULES "First turn: ..." is unconditional.',
-      '`expect.rosterApprovals=0` and `firstTurnToolCalls` describe the P1 target.',
+      'P1 fast path has landed (7aee654): every row now expects rosterApprovals=0 and no',
+      'forced team_members call — an extra tool call or an approval round-trip is a regression.',
+      '`expect.firstTurnToolCalls` is the current target per mode.',
     ].join('\n'))
     expect(PROMPTS).toHaveLength(12)
     expect(PROMPTS.filter(prompt => prompt.kind === 'direct')).toHaveLength(4)
