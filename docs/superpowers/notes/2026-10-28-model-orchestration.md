@@ -53,15 +53,17 @@ reviewer         high    判对错，降档等于没评审
 
 provider `xiaomi-token-plan-cn`（MiMo，便宜，上下文 1M）与 `deepseek-official`（DeepSeek）并存，按下面的默认走：
 
-| 档 | 首选 | 备选 | 说明 |
-|---|---|---|---|
-| **low** | `xiaomi-token-plan-cn / mimo-v2.6-flash` | DeepSeek-V4.1-Flash | 机械活（改常量/文案/图标/补断言） |
-| **medium** | `xiaomi-token-plan-cn / mimo-v2.6-flash` 起步，卡住再升 pro | `mimo-v2.6-pro` | 有规格的实现、接线、有复现的修 bug |
-| **high** | `mimo-v2.6-pro` 或 `deepseek-official / deepseek-flash` | — | 调研、评审、schema/迁移/并发 |
+| 档 | 用哪个 | 说明 |
+|---|---|---|
+| **low** | `xiaomi-token-plan-cn / mimo-v2.6-flash` | 机械活（改常量/文案/图标/补断言） |
+| **medium** | `xiaomi-token-plan-cn / mimo-v2.6-flash` | 有规格的实现、接线、有复现的修 bug；卡住就拆小任务，**不升档换模型** |
+| **high** | `deepseek-official / deepseek-flash` | 调研、评审、schema/迁移/并发 |
+
+**mimo-v2.6-pro 不使用**（用户明确要求）：MiMo 只用 flash 一档，需要更强推理时直接走 DeepSeek。
 
 规则：
 
-1. **默认走 MiMo**（单价低、上下文大）；只有在**同一件事连续失败两次**或**需要极强推理**时才换 DeepSeek；
+1. **默认走 mimo-v2.6-flash**（单价低、上下文 1M）；需要更强推理时换 `deepseek-flash`，**不启用 pro**；
 2. 换模型要**换人**（新建一个成员），不要在同一成员上反复切——切换会让它带着旧上下文重新想；
 3. 评审必须用与实现**不同的**模型（同模型的评审容易共享盲点）；
 4. 长上下文任务（读整个文件树、长文档汇总）优先 MiMo 的 1M 窗口，**少切分就少一次上下文**。
