@@ -135,6 +135,11 @@ export async function apply(ctx: Context, config: AgentTeamConfig): Promise<void
 
     await runtime.recoverTeams()
     if (disposed) return
+    // After team recovery, start queued assistant tasks from their durable rows.
+    // This never opens a main Session: a queued task is its own reserved worker
+    // Session, resumed or created under the stored id.
+    await assistantRuntime.recoverAssistantQueues()
+    if (disposed) return
     service.startWorkspaceTracking()
   } catch (error) {
     await closeResources()

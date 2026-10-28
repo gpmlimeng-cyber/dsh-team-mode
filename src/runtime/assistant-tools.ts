@@ -102,7 +102,7 @@ export function registerAssistantTaskTools(
 
   register(defineTool({
     name: 'assistant_task_create',
-    description: 'Create a hidden worker Session for one background task. The user never sees the worker Session or its transcript; this main conversation receives only the tool result and later assistant_task_wait/assistant_task_summary output. The worker inherits this assistant’s workspace, model, preset, permission, and instructions.',
+    description: 'Create a hidden worker Session for one background task. The task is persisted in this assistant’s FIFO queue and starts as soon as a worker slot is free, so its status may be queued; use assistant_task_wait to follow it. The user never sees the worker Session or its transcript; this main conversation receives only the tool result and later assistant_task_wait/assistant_task_summary output. The worker inherits this assistant’s workspace, model, preset, permission, and instructions.',
     parameters: {
       title: { type: 'string', required: true, description: 'Short task title shown in task lists.' },
       brief: { type: 'string', required: true, description: 'Complete instruction for the worker, including the expected deliverable.' },

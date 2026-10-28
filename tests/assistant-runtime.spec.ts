@@ -229,6 +229,11 @@ function createHarness(
   const workspace = { attachSession, status: workspaceStatus }
   const workspaceGet = vi.fn((id: WorkspaceId) => (String(id) === WORKSPACE_ID ? workspace : undefined))
   const sessionPersistence = {
+    stat: vi.fn(async (id: SessionId) => (
+      persistedEvents.has(String(id))
+        ? { header: { id }, revision: 0 }
+        : undefined
+    )),
     open: vi.fn(async (id: SessionId) => ({
       read: async () => ({ events: [...(persistedEvents.get(String(id)) ?? [])] }),
       close: async () => {},
@@ -592,6 +597,10 @@ function createHarness(
     },
     clearLive(sessionId: string) {
       live.delete(sessionId)
+    },
+    /** Record a durable Session log so queue recovery resumes instead of creating. */
+    seedPersistedSession(sessionId: string) {
+      persistedEvents.set(sessionId, [])
     },
   }
 }
@@ -2021,19 +2030,170 @@ describe('AssistantRuntime', () => {
     expect((error as Error).cause).toBeInstanceOf(Error)
   })
 
-  it('enforces the per-assistant worker limit and frees capacity after terminal', async () => {
+  it('queues tasks at the worker limit and drains them FIFO on settle', async () => {
     const h = createHarness({}, { assistantWorkerConcurrency: 1 })
-    const first = await h.runtime.createTask('instance-1', { title: 'First', brief: 'Start.' })
+    const first = await h.runtime.createTask('instance-1', { title: 'First', brief: 'First brief.' })
+    const second = await h.runtime.createTask('instance-1', { title: 'Second', brief: 'Second brief.' })
+    const third = await h.runtime.createTask('instance-1', { title: 'Third', brief: 'Third brief.' })
 
-    await expect(h.runtime.createTask('instance-1', { title: 'Second', brief: 'Start.' }))
-      .rejects.toMatchObject({ code: 'ASSISTANT_WORKER_LIMIT' })
+    expect(first.status).toBe('running')
+    expect(second.status).toBe('queued')
+    expect(third.status).toBe('queued')
+    // Main Session + the one running worker: queued rows allocate no Session.
     expect(h.createMock).toHaveBeenCalledTimes(2)
+    expect(second.sessionId).toMatch(/^session-/)
+    expect(third.sessionId).not.toBe(second.sessionId)
+    expect(second.parentSessionId).toBe(h.current().mainSessionId)
+    expect(h.getAssistantSession(second.id)).toMatchObject({
+      status: 'queued',
+      sessionId: second.sessionId,
+    })
 
-    await h.updateAssistantSession(first.id, { status: 'completed' })
-    const second = await h.runtime.createTask('instance-1', { title: 'Third', brief: 'Start.' })
+    // Settling the live worker frees exactly one slot and starts the oldest row
+    // on its reserved Session id.
+    h.emit('agent/status', { agent: h.handles[1]!.agent, status: 'idle' })
+    await settle()
 
-    expect(second.status).toBe('running')
+    expect(h.getAssistantSession(first.id).status).toBe('completed')
+    expect(h.getAssistantSession(second.id).status).toBe('running')
+    expect(h.getAssistantSession(third.id).status).toBe('queued')
     expect(h.createMock).toHaveBeenCalledTimes(3)
+    const started = h.createMock.mock.calls[2]![0] as CreateAgentOptions
+    expect(String(started.sessionId)).toBe(second.sessionId)
+    expect(textOf(h.handles[2]?.followup.mock.calls[0]?.[0])).toBe('Second brief.')
+  })
+
+  it('drains two settles through one single-flight pass without double-starting a row', async () => {
+    const h = createHarness({}, { assistantWorkerConcurrency: 2 })
+    const first = await h.runtime.createTask('instance-1', { title: 'First', brief: 'A' })
+    const second = await h.runtime.createTask('instance-1', { title: 'Second', brief: 'B' })
+    const third = await h.runtime.createTask('instance-1', { title: 'Third', brief: 'C' })
+    const fourth = await h.runtime.createTask('instance-1', { title: 'Fourth', brief: 'D' })
+    expect([first.status, second.status, third.status, fourth.status])
+      .toEqual(['running', 'running', 'queued', 'queued'])
+
+    // Two independent settle signals must each admit one row, never the same one.
+    h.emit('agent/status', { agent: h.handles[1]!.agent, status: 'idle' })
+    h.emit('agent/status', { agent: h.handles[2]!.agent, status: 'idle' })
+    await settle()
+
+    expect(h.getAssistantSession(third.id).status).toBe('running')
+    expect(h.getAssistantSession(fourth.id).status).toBe('running')
+    const started = h.createMock.mock.calls
+      .slice(1)
+      .map(call => String((call[0] as CreateAgentOptions).sessionId))
+    expect(new Set(started).size).toBe(started.length)
+    expect(started).toEqual([first.sessionId, second.sessionId, third.sessionId, fourth.sessionId])
+  })
+
+  it('recovers queued tasks at startup by creating the reserved Session when absent', async () => {
+    const h = createHarness()
+    h.tasks.set('task-a', {
+      schemaVersion: 1,
+      id: 'task-a',
+      assistantId: 'instance-1',
+      sessionId: 'session-reserved-a',
+      role: 'task',
+      title: 'Queued A',
+      brief: 'Do A',
+      parentSessionId: 'session-main',
+      status: 'queued',
+      createdAt: NOW,
+      updatedAt: NOW,
+    })
+
+    await h.runtime.recoverAssistantQueues()
+
+    expect(h.resumeMock).not.toHaveBeenCalled()
+    expect(h.createMock).toHaveBeenCalledTimes(1)
+    const options = h.createMock.mock.calls[0]![0] as CreateAgentOptions
+    expect(String(options.sessionId)).toBe('session-reserved-a')
+    // Startup never opens a main Session; the stored parent id is just data.
+    expect(h.bindAssistantMainSession).not.toHaveBeenCalled()
+    expect(h.current().mainSessionId).toBeUndefined()
+    expect(h.getAssistantSession('task-a')).toMatchObject({
+      status: 'running',
+      parentSessionId: 'session-main',
+      sessionId: 'session-reserved-a',
+    })
+    expect(h.handles[0]?.followup).toHaveBeenCalledTimes(1)
+  })
+
+  it('recovers queued tasks at startup by resuming an already-flushed Session', async () => {
+    const h = createHarness()
+    h.seedPersistedSession('session-reserved-b')
+    h.tasks.set('task-b', {
+      schemaVersion: 1,
+      id: 'task-b',
+      assistantId: 'instance-1',
+      sessionId: 'session-reserved-b',
+      role: 'task',
+      title: 'Queued B',
+      brief: 'Do B',
+      parentSessionId: 'session-main',
+      status: 'queued',
+      createdAt: NOW,
+      updatedAt: NOW,
+    })
+
+    await h.runtime.recoverAssistantQueues()
+
+    expect(h.createMock).not.toHaveBeenCalled()
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+    const options = h.resumeMock.mock.calls[0]![0] as ResumeAgentOptions
+    expect(String(options.resumeSessionId)).toBe('session-reserved-b')
+    expect(h.getAssistantSession('task-b')).toMatchObject({ status: 'running' })
+  })
+
+  it('admits startup queued tasks in createdAt/id order', async () => {
+    const h = createHarness({}, { assistantWorkerConcurrency: 1 })
+    for (const id of ['task-c', 'task-a', 'task-b']) {
+      h.tasks.set(id, {
+        schemaVersion: 1,
+        id,
+        assistantId: 'instance-1',
+        sessionId: `session-reserved-${id.slice(-1)}`,
+        role: 'task',
+        title: id,
+        brief: 'Start.',
+        parentSessionId: 'session-main',
+        status: 'queued',
+        createdAt: NOW,
+        updatedAt: NOW,
+      })
+    }
+
+    await h.runtime.recoverAssistantQueues()
+
+    // Equal timestamps: the id is the strict tiebreak, so task-a runs first.
+    expect(h.getAssistantSession('task-a').status).toBe('running')
+    expect(h.getAssistantSession('task-b').status).toBe('queued')
+    expect(h.getAssistantSession('task-c').status).toBe('queued')
+    const options = h.createMock.mock.calls[0]![0] as CreateAgentOptions
+    expect(String(options.sessionId)).toBe('session-reserved-a')
+  })
+
+  it('survives a restart and recovers the queued row a dropped runtime left behind', async () => {
+    const h = createHarness({}, { assistantWorkerConcurrency: 1 })
+    const running = await h.runtime.createTask('instance-1', { title: 'Running', brief: 'Keep going.' })
+    const queued = await h.runtime.createTask('instance-1', { title: 'Queued', brief: 'Do it next.' })
+    expect(queued.status).toBe('queued')
+
+    // A new runtime has none of the old handles; the durable rows are all it
+    // reads, and only the queued row is started.
+    const before = h.createMock.mock.calls.length
+    const recovered = h.createRuntime()
+    await recovered.recoverAssistantQueues()
+
+    expect(h.getAssistantSession(queued.id)).toMatchObject({
+      status: 'running',
+      sessionId: queued.sessionId,
+      parentSessionId: running.parentSessionId,
+    })
+    // Only the queued worker is created; no main Session is opened again.
+    const created = h.createMock.mock.calls.slice(before)
+    expect(created).toHaveLength(1)
+    expect(String((created[0]![0] as CreateAgentOptions).sessionId)).toBe(queued.sessionId)
   })
 
   it('puts bounded recent tasks and routing instructions into the main prompt', async () => {

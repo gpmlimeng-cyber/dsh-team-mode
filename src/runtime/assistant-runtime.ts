@@ -147,6 +147,15 @@ export class AssistantRuntime {
   private readonly workerGenerations = new Map<string, number>()
   private readonly assistantLocks = new Map<string, Promise<void>>()
   /**
+   * Single-flight FIFO drain per assistant. A request arriving while a drain is
+   * running only sets `queueDrainRequested`; the running loop picks every queued
+   * row up again until none is left, so two callers can never start the same
+   * queued task. The set also closes the exit race: a request that lands while
+   * the loop is unwinding re-arms one more pass.
+   */
+  private readonly queueDrains = new Map<string, Promise<void>>()
+  private readonly queueDrainRequested = new Set<string>()
+  /**
    * Last completed turn already handled per Session. A turn's `turn/end` may be
    * observed more than once by a resumed Session, so the highest handled turn is
    * remembered instead of counting events.
@@ -268,9 +277,14 @@ export class AssistantRuntime {
     this.capturedTurnBySession.clear()
     this.capturingAssistants.clear()
     this.autoCaptureAssistants.clear()
-    const pending = [...this.starting.values(), ...this.startingWorkers.values()]
+    const pending = [
+      ...this.starting.values(),
+      ...this.startingWorkers.values(),
+      ...this.queueDrains.values(),
+    ]
     this.starting.clear()
     this.startingWorkers.clear()
+    this.queueDrainRequested.clear()
     await Promise.allSettled(pending)
     const workers = [...this.workers.values()]
     this.workers.clear()
@@ -296,16 +310,19 @@ export class AssistantRuntime {
   }
 
   /**
-   * Create one hidden worker Session from the assistant snapshot and deliver
-   * the brief as its first follow-up turn. The worker is attached to the same
-   * workspace and flushed before any message is sent, so its Session header is
-   * durable even if delivery fails.
+   * Enqueue one hidden worker task, then drain this assistant's queue. The row
+   * is durable before any worker exists and carries the reserved worker Session
+   * id, so a crash between enqueue and start resumes exactly that Session. At
+   * the worker limit the task stays `queued` and starts when a live worker
+   * settles; queued rows never count as capacity.
    */
   async createTask(rawAssistantId: string, input: AssistantTaskBrief): Promise<AssistantSession> {
     if (this.closing) throw new AgentTeamError('INVALID_REQUEST', 'Assistant runtime is closing')
     const assistantId = requireText(rawAssistantId, 'Assistant instance id')
     const title = requireText(input.title, 'Task title')
     const brief = requireText(input.brief, 'Task brief')
+    // The main Session supplies the parent id the task row records; it is
+    // already open when this tool runs. Startup recovery never takes this path.
     const main = await this.ensureInstance(assistantId)
     return this.withAssistantLock(assistantId, async () => {
       // Re-read under the lock: archive may have won it while ensureInstance
@@ -324,57 +341,42 @@ export class AssistantRuntime {
           `Workspace '${instance.workspaceId}' is unavailable`,
         )
       }
-      this.assertWorkerCapacity(assistantId)
-
-      const snapshot = instance.assistantSnapshot
-      const taskId = randomUUID()
-      const sessionId = `session-${randomUUID()}`
-      const setup = this.workerSetup(assistantId, taskId, title)
-
-      let handle: AgentHandle
-      try {
-        handle = await this.ctx.agents.create({
-          sessionId: SessionId(sessionId),
-          meta: { cwd: instance.workspacePath, agentPreset: snapshot.agentPresetId },
-          agentOptions: agentOptionsFor(snapshot),
-          setup,
-        })
-      } catch (error) {
-        throw this.workerStartupError(instance, title, error)
-      }
-
-      let task: AssistantSession | undefined
-      try {
-        await workspace.attachSession(SessionId(sessionId))
-        // Persist the empty worker Session before the task record exists, so the
-        // native session directory never shows a row without a stored task.
-        await this.ctx.sessions.flush(handle.agent.session)
-        task = await this.service.createAssistantSession({
-          assistantId: instance.id,
-          sessionId,
-          title,
-          brief,
-          parentSessionId: main.sessionId,
-        })
-        this.mapWorker(task.id, {
-          assistantId: instance.id,
-          sessionId,
-          handle,
-        })
-        const running = await this.service.updateAssistantSession(task.id, { status: 'running' })
-        handle.agent.followup(workerMessage(brief))
-        return running
-      } catch (error) {
-        if (task !== undefined) {
-          this.removeWorker(task.id)
-          await this.failTask(task.id, error)
-        }
-        await this.disposeQuietly(handle, `worker Session '${sessionId}' failed to start`)
-        throw error instanceof AgentTeamError
-          ? error
-          : this.workerStartupError(instance, title, error)
-      }
+      const task = await this.service.createAssistantSession({
+        assistantId: instance.id,
+        sessionId: `session-${randomUUID()}`,
+        title,
+        brief,
+        parentSessionId: main.sessionId,
+      })
+      // A drain failure leaves the row queued for the next settle or startup
+      // pass instead of losing the task.
+      await this.drainQueue(assistantId)
+      return this.service.getAssistantSession(task.id)
     })
+  }
+
+  /**
+   * Startup pass: start every persisted queued task exactly once per assistant.
+   * It reads only stored rows and the instance snapshot — it never opens a main
+   * Session — and a worker resumes its reserved Session when the log exists or
+   * creates that same id when the crash landed before the worker started.
+   */
+  async recoverAssistantQueues(): Promise<void> {
+    if (this.closing) return
+    const assistants = [...new Set(this.service.listAssistantSessions().items
+      .filter(task => task.status === 'queued')
+      .map(task => task.assistantId))]
+    for (const assistantId of assistants) {
+      if (this.closing) return
+      try {
+        await this.drainQueue(assistantId)
+      } catch (error) {
+        this.ctx.logger.warn(
+          `dsh-team-mode: failed to recover the queued tasks of assistant '${assistantId}'`,
+          error,
+        )
+      }
+    }
   }
 
   /**
@@ -435,7 +437,20 @@ export class AssistantRuntime {
    */
   async openTask(rawTaskId: string): Promise<{ task: AssistantSession; sessionId: string }> {
     const taskId = requireText(rawTaskId, 'Task id')
-    const task = this.service.getAssistantSession(taskId)
+    let task = this.service.getAssistantSession(taskId)
+    if (task.status === 'queued') {
+      // A queued row has no worker Session yet. Opening it runs the same drain
+      // every other caller uses; capacity is respected rather than bypassed.
+      await this.drainQueue(task.assistantId)
+      task = this.service.getAssistantSession(taskId)
+      if (task.status === 'queued') {
+        throw new AgentTeamError(
+          'ASSISTANT_TASK_NOT_ACTIVE',
+          `Task '${task.title}' is queued behind this assistant's live workers`,
+          { taskId: task.id },
+        )
+      }
+    }
     const worker = await this.ensureWorker(task)
     return { task, sessionId: worker.sessionId }
   }
@@ -1219,7 +1234,13 @@ export class AssistantRuntime {
       this.startingWorkers.delete(taskId)
     }
     const worker = this.workers.get(taskId)
-    if (worker === undefined) return
+    if (worker === undefined) {
+      // Cancelling a row that never had a live worker still frees the queue
+      // from a stale head; archive suppresses the pass because every row is
+      // being cancelled anyway.
+      if (reason !== 'archived') this.scheduleQueueDrain(this.service.getAssistantSession(taskId).assistantId)
+      return
+    }
     this.workers.delete(taskId)
     this.workerBySession.delete(worker.sessionId)
     this.interactionSessions.delete(worker.sessionId)
@@ -1236,6 +1257,8 @@ export class AssistantRuntime {
       worker.handle,
       `failed to dispose worker Session for task '${taskId}' (${reason})`,
     )
+    // Every settle frees one capacity slot; the next queued row starts here.
+    if (reason !== 'archived') this.scheduleQueueDrain(worker.assistantId)
   }
 
   private async markTaskRunning(taskId: string): Promise<void> {
@@ -1330,17 +1353,180 @@ export class AssistantRuntime {
     this.workerBySession.set(worker.sessionId, taskId)
   }
 
-  private assertWorkerCapacity(assistantId: string): void {
+  /**
+   * Start queued tasks while live workers leave room. Admission counts mapped
+   * and starting workers only; a queued row is a durable intention, not a
+   * running worker, so a full worker set can never deadlock the queue.
+   */
+  private async drainQueue(assistantId: string): Promise<void> {
+    if (this.closing) return
+    this.queueDrainRequested.add(assistantId)
+    const running = this.queueDrains.get(assistantId)
+    if (running !== undefined) {
+      // The request flag above makes the running loop take one more pass.
+      await running
+      return
+    }
+    const run = (async (): Promise<void> => {
+      try {
+        while (this.queueDrainRequested.delete(assistantId)) {
+          await this.drainOnce(assistantId)
+        }
+      } finally {
+        this.queueDrains.delete(assistantId)
+        // A request that landed while the loop was unwinding still gets a pass.
+        if (!this.closing && this.queueDrainRequested.has(assistantId)) {
+          void this.drainQueue(assistantId).catch(error => {
+            this.ctx.logger.warn(
+              `dsh-team-mode: failed to drain the queued tasks of assistant '${assistantId}'`,
+              error,
+            )
+          })
+        }
+      }
+    })()
+    this.queueDrains.set(assistantId, run)
+    await run
+  }
+
+  private async drainOnce(assistantId: string): Promise<void> {
+    if (this.closing) return
     const limit = this.workerConcurrencyLimit()
-    const active = this.service.listAssistantSessions(assistantId).items
-      .filter(task => ACTIVE_TASK_STATUSES.has(task.status))
-      .length
-    if (active < limit) return
-    throw new AgentTeamError(
-      'ASSISTANT_WORKER_LIMIT',
-      `Assistant '${assistantId}' already has ${active} active worker task(s); the limit is ${limit}`,
-      { assistantId, active, limit },
-    )
+    while (!this.closing && this.liveWorkerCount(assistantId) < limit) {
+      const instance = this.service.getAssistantInstance(assistantId)
+      if (instance.status === 'archived') return
+      const next = this.nextQueuedTask(assistantId)
+      if (next === undefined) return
+      try {
+        await this.startQueuedTask(instance, next)
+      } catch (error) {
+        // Workspace/registry faults leave the row queued and stop this pass
+        // instead of spinning on the same head.
+        this.ctx.logger.warn(
+          `dsh-team-mode: failed to start queued task '${next.id}' of assistant '${assistantId}'`,
+          error,
+        )
+        return
+      }
+    }
+  }
+
+  /** FIFO: oldest durable row first; id breaks an equal timestamp deterministically. */
+  private nextQueuedTask(assistantId: string): AssistantSession | undefined {
+    return this.service.listAssistantSessions(assistantId).items
+      .filter(task => task.status === 'queued')
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt)
+        || left.id.localeCompare(right.id))[0]
+  }
+
+  private liveWorkerCount(assistantId: string): number {
+    let count = 0
+    for (const worker of this.workers.values()) {
+      if (worker.assistantId === assistantId) count += 1
+    }
+    for (const pending of this.startingWorkers.values()) {
+      if (pending.assistantId === assistantId) count += 1
+    }
+    return count
+  }
+
+  /**
+   * Start one queued row on its reserved Session id: resume the stored log when
+   * the crash happened after the worker was flushed, otherwise create that same
+   * id. A failure marks the task failed so the queue moves on instead of
+   * retrying a broken row forever.
+   */
+  private async startQueuedTask(
+    instance: AssistantInstance,
+    task: AssistantSession,
+  ): Promise<void> {
+    const foreign = this.ctx.agents.get(SessionId(task.sessionId))
+    if (foreign !== undefined) {
+      await this.failTask(task.id, new AgentTeamError(
+        'AGENT_HANDLE_OWNERSHIP_CONFLICT',
+        `Queued task '${task.title}' reserved Session '${task.sessionId}' is live under another lifecycle; restart the DSH host if ownership persists`,
+        { taskId: task.id, sessionId: task.sessionId },
+      ))
+      return
+    }
+    const workspace = this.ctx.workspaceRegistry.get(WorkspaceId(instance.workspaceId))
+    if (workspace === undefined || await workspace.status() !== 'ok') {
+      throw new AgentTeamError(
+        'WORKSPACE_UNAVAILABLE',
+        `Workspace '${instance.workspaceId}' is unavailable`,
+      )
+    }
+    const snapshot = instance.assistantSnapshot
+    let handle: AgentHandle | undefined
+    try {
+      handle = await this.openReservedWorkerSession(task, instance, snapshot)
+      await workspace.attachSession(SessionId(task.sessionId))
+      await this.ctx.sessions.flush(handle.agent.session)
+      // Cancel or archive may have won while the Session was starting; the
+      // stale handle belongs to this start, so dispose it instead of mapping.
+      const current = this.service.getAssistantSession(task.id)
+      if (current.status !== 'queued') {
+        throw new AgentTeamError(
+          'ASSISTANT_TASK_NOT_ACTIVE',
+          `Task '${task.title}' left the queue while it was starting`,
+          { taskId: task.id },
+        )
+      }
+      this.mapWorker(task.id, { assistantId: instance.id, sessionId: task.sessionId, handle })
+      await this.service.updateAssistantSession(task.id, { status: 'running' })
+      handle.agent.followup(workerMessage(task.brief))
+    } catch (error) {
+      this.removeWorker(task.id)
+      if (handle !== undefined) {
+        await this.disposeQuietly(handle, `queued worker Session '${task.sessionId}' failed to start`)
+      }
+      await this.failTask(task.id, error)
+    }
+  }
+
+  /** Resume the reserved Session when its log exists; create it when the crash beat the first flush. */
+  private async openReservedWorkerSession(
+    task: AssistantSession,
+    instance: AssistantInstance,
+    snapshot: AssistantSnapshot,
+  ): Promise<AgentHandle> {
+    const options = {
+      agentOptions: agentOptionsFor(snapshot),
+      setup: this.workerSetup(instance.id, task.id, task.title),
+    }
+    if (await this.sessionStored(task.sessionId)) {
+      return this.ctx.agents.resume({
+        resumeSessionId: SessionId(task.sessionId),
+        ...options,
+      })
+    }
+    return this.ctx.agents.create({
+      sessionId: SessionId(task.sessionId),
+      meta: { cwd: instance.workspacePath, agentPreset: snapshot.agentPresetId },
+      ...options,
+    })
+  }
+
+  private async sessionStored(sessionId: string): Promise<boolean> {
+    try {
+      return (await this.ctx.sessionPersistence.stat(SessionId(sessionId))) !== undefined
+    } catch (error) {
+      this.ctx.logger.warn(
+        `dsh-team-mode: failed to read the stored state of Session '${sessionId}'`,
+        error,
+      )
+      return false
+    }
+  }
+
+  private scheduleQueueDrain(assistantId: string): void {
+    if (this.closing) return
+    void this.drainQueue(assistantId).catch(error => {
+      this.ctx.logger.warn(
+        `dsh-team-mode: failed to drain the queued tasks of assistant '${assistantId}'`,
+        error,
+      )
+    })
   }
 
   private workerConcurrencyLimit(): number {
