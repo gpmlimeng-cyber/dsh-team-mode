@@ -600,6 +600,9 @@ describe('assistantCreateDefaults', () => {
       provider: 'deepseek',
       model: 'flash',
     })
+    // New coworkers default to their own workspace; only an explicit off is shared.
+    expect(draft.workspaceIsolated).toBe(true)
+    expect(emptyAssistantCreateDraft().workspaceIsolated).toBe(true)
   })
 
   it('falls back to the first usable entries when the preferred defaults are absent', () => {
@@ -713,6 +716,7 @@ describe('assistantCreatePayload', () => {
     expect(payload).toEqual({
       name: '工程师',
       workspaceId: 'ws-1',
+      workspaceIsolated: true,
       provider: 'deepseek',
       model: 'flash',
       agentPresetId: 'standard',
@@ -725,6 +729,20 @@ describe('assistantCreatePayload', () => {
     expect('templateId' in payload).toBe(false)
     // The group is not part of the create contract; it fails strict parsing.
     expect(createAssistantInstanceInputSchema.safeParse({ ...payload, group: '工作' }).success).toBe(false)
+  })
+
+  it('keeps an explicit shared choice and an older draft without the switch shared', () => {
+    const catalog = createCatalog()
+    const shared = assistantCreatePayload({ ...readyDraft(catalog), workspaceIsolated: false })
+    expect(shared).not.toHaveProperty('workspaceIsolated')
+    expect(createAssistantInstanceInputSchema.safeParse(shared).success).toBe(true)
+
+    // A draft literal from before isolation existed carries no field at all; it
+    // still creates a shared Assistant, matching every stored old row.
+    const { workspaceIsolated: _omitted, ...legacyDraft } = readyDraft(catalog)
+    const legacy = assistantCreatePayload(legacyDraft)
+    expect(legacy).not.toHaveProperty('workspaceIsolated')
+    expect(legacy.workspaceId).toBe('ws-1')
   })
 
   it('omits empty avatar and reasoning effort but keeps an empty persona', () => {

@@ -53,10 +53,10 @@ describe('isolated assistant workspaces in the create form', () => {
     expect(workspaceSelectable({ status: 'ok', isolated: true })).toBe(false)
   })
 
-  it('defaults to the shared base while skipping private workspaces', () => {
+  it('defaults to an isolated workspace while still skipping private bases', () => {
     const draft = emptyAssistantCreateDraft()
-    // Isolation is opt-in; a draft without the switch keeps the shared base.
-    expect(draft.workspaceIsolated).toBe(false)
+    // Isolation is on by default; only an explicit off keeps the shared base.
+    expect(draft.workspaceIsolated).toBe(true)
 
     const defaults = assistantCreateDefaults(catalog([
       { id: 'private', path: '/work/.dsh-team-mode/assistants/paper', title: 'Paper', status: 'ok', isolated: true },
@@ -64,15 +64,14 @@ describe('isolated assistant workspaces in the create form', () => {
       { id: 'shared', path: '/work', title: 'Work', status: 'ok' },
     ]))
     expect(defaults.workspaceId).toBe('shared')
-    expect(defaults.workspaceIsolated).toBe(false)
+    expect(defaults.workspaceIsolated).toBe(true)
   })
 
-  it('sends the isolation opt-in only when the switch is on', () => {
+  it('sends the isolation default unless the user explicitly chooses shared', () => {
     const on = {
       ...emptyAssistantCreateDraft(),
       name: 'Paper Bot',
       workspaceId: 'workspace-1',
-      workspaceIsolated: true,
       provider: 'openai',
       model: 'gpt-5',
       agentPresetId: 'default',
