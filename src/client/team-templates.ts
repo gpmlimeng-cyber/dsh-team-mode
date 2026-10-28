@@ -34,6 +34,7 @@ export interface TeamTemplate {
 
 /** One ordered member slot; the first role of a template is the Leader. */
 export interface TeamTemplateSlot {
+  /** Display name of the slot; a repeated role is numbered (审查员 1 / 审查员 2). */
   readonly role: string
   readonly leader: boolean
 }
@@ -104,7 +105,10 @@ export const TEAM_TEMPLATES: readonly TeamTemplate[] = deepFreeze([
 export function teamTemplateSlots(template: TeamTemplate): readonly TeamTemplateSlot[] {
   return template.roles.flatMap(group =>
     Array.from({ length: group.count }, (_, index) => ({
-      role: group.role,
+      // A repeated role is numbered so no two members share one display name.
+      // `team.renameMember` refuses a name another member already owns, and the
+      // post-start renames are best effort, so a duplicate would be swallowed.
+      role: group.count > 1 ? `${group.role} ${index + 1}` : group.role,
       leader: group.leader === true && index === 0,
     })),
   )

@@ -79,14 +79,24 @@ describe('built-in team templates', () => {
   it('expands roles into ordered slots with the Leader first', () => {
     expect(teamTemplateSlots(template('repo-audit'))).toEqual([
       { role: 'Leader', leader: true },
-      { role: '审查员', leader: false },
-      { role: '审查员', leader: false },
+      { role: '审查员 1', leader: false },
+      { role: '审查员 2', leader: false },
       { role: '复核员', leader: false },
     ])
     expect(teamTemplateSlots(template('feature-delivery')).map(slot => slot.role))
       .toEqual(['Leader', '实现', '测试'])
     expect(teamTemplateSlots(template('release-check')).map(slot => slot.role))
       .toEqual(['Leader', '构建', '回归'])
+  })
+
+  it('numbers repeated roles so two slots never share one display name', () => {
+    // `team.renameMember` refuses a name another member already owns, and the
+    // post-start renames are best effort: a duplicate would be silently lost.
+    const slots = teamTemplateSlots(template('repo-audit'))
+    expect(new Set(slots.map(slot => slot.role)).size).toBe(slots.length)
+    // Templates with no repeated role keep their bare label.
+    expect(teamTemplateSlots(template('feature-delivery')).map(slot => slot.role))
+      .toEqual(['Leader', '实现', '测试'])
   })
 })
 

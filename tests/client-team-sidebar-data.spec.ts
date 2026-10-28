@@ -34,6 +34,7 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', async () => {
 })
 
 import type { TeamMemberSlot, TeamTask } from '../src/domain/types.js'
+import { TEAM_ANNOUNCEMENT_MAX_CHARS } from '../src/domain/schemas.js'
 import type { AssistantView, CatalogView, TeamView } from '../src/transport/contracts.js'
 import { callAgentTeam, invalidateTeamListSnapshot } from '../src/client/api.js'
 import {
@@ -1223,7 +1224,8 @@ describe('团队模板 in 新建团队', () => {
   it('renders 空白 + three templates as one native pressed-button row', () => {
     const html = renderForm()
     expect(html).toContain('团队模板')
-    for (const label of ['空白', '代码库体检', '功能开发', '发布检查']) {
+    // The picker names each template by its label (队), not its bare team name.
+    for (const label of ['空白', '代码库体检队', '功能开发队', '发布检查队']) {
       expect(html).toContain(`>${label}</button>`)
     }
     expect(html.match(/aria-pressed="true"/g)).toHaveLength(1)
@@ -1273,7 +1275,8 @@ describe('团队模板 in 新建团队', () => {
     const submitted = [{ assistantId: 'a1' }, { assistantId: 'a2' }, { assistantId: 'a3' }, { assistantId: 'a4' }]
     expect(templateRoleRenames(started, template, submitted)).toEqual([
       { slotId: 'slot-1', displayName: 'Leader' },
-      { slotId: 'slot-3', displayName: '审查员' },
+      { slotId: 'slot-2', displayName: '审查员 1' },
+      { slotId: 'slot-3', displayName: '审查员 2' },
       { slotId: 'slot-4', displayName: '复核员' },
     ])
     // Removing a member makes index-to-role mapping unsafe: rename nothing.
@@ -1281,6 +1284,29 @@ describe('团队模板 in 新建团队', () => {
     expect(templateRoleRenames(started, template, [
       submitted[0]!, submitted[1]!, submitted[2]!, { assistantId: 'other' },
     ])).toEqual([])
+  })
+
+  it('gives the two 审查员 slots distinct labels so both renames can land', () => {
+    const started = {
+      memberOrder: ['slot-1', 'slot-2', 'slot-3', 'slot-4'],
+      members: {
+        'slot-1': { id: 'slot-1', assistantId: 'a1', displayName: 'Leader' },
+        'slot-2': { id: 'slot-2', assistantId: 'a2', displayName: '通用成员' },
+        'slot-3': { id: 'slot-3', assistantId: 'a3', displayName: '通用成员' },
+        'slot-4': { id: 'slot-4', assistantId: 'a4', displayName: '复核员' },
+      },
+    } as unknown as TeamView
+    const submitted = [{ assistantId: 'a1' }, { assistantId: 'a2' }, { assistantId: 'a3' }, { assistantId: 'a4' }]
+    const renames = templateRoleRenames(started, template, submitted)
+
+    expect(renames).toEqual([
+      { slotId: 'slot-2', displayName: '审查员 1' },
+      { slotId: 'slot-3', displayName: '审查员 2' },
+    ])
+    // renameMember refuses a name another member owns, and these renames are
+    // best effort: distinct labels are what keeps the second one from being
+    // swallowed.
+    expect(new Set(renames.map(rename => rename.displayName)).size).toBe(renames.length)
   })
 
   it('sends the brief after start and still opens a created team when it fails', () => {
@@ -1760,11 +1786,13 @@ describe('团队公告 · team detail', () => {
   })
 
   it('mirrors the Host cap locally and refuses instead of truncating', () => {
-    expect(TEAM_ANNOUNCEMENT_UI_LIMIT).toBe(2_000)
-    expect(teamAnnouncementUsage('公告')).toBe('2 / 2000')
-    expect(teamAnnouncementError('x'.repeat(TEAM_ANNOUNCEMENT_UI_LIMIT))).toBeUndefined()
-    expect(teamAnnouncementError('x'.repeat(TEAM_ANNOUNCEMENT_UI_LIMIT + 3)))
-      .toBe('公告最多 2000 个字符，请删减 3 个字符')
+    // The client repeats the number to stay Zod-free; this pin keeps the two
+    // copies from drifting apart.
+    expect(TEAM_ANNOUNCEMENT_UI_LIMIT).toBe(TEAM_ANNOUNCEMENT_MAX_CHARS)
+    expect(teamAnnouncementUsage('公告')).toBe(`2 / ${TEAM_ANNOUNCEMENT_MAX_CHARS}`)
+    expect(teamAnnouncementError('x'.repeat(TEAM_ANNOUNCEMENT_MAX_CHARS))).toBeUndefined()
+    expect(teamAnnouncementError('x'.repeat(TEAM_ANNOUNCEMENT_MAX_CHARS + 3)))
+      .toBe(`公告最多 ${TEAM_ANNOUNCEMENT_MAX_CHARS} 个字符，请删减 3 个字符`)
   })
 
   it('wires the user entry point into the team card header and no agent tool', () => {

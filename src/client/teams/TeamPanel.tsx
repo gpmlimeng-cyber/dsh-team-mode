@@ -82,6 +82,7 @@ import {
  * The Host's announcement cap (`TEAM_ANNOUNCEMENT_MAX_CHARS` in the domain
  * schemas). The client bundle stays Zod-free, so the number is repeated here —
  * the same split the sidebar group brief already uses.
+ * `tests/client-team-sidebar-data.spec.ts` pins the two numbers together.
  */
 export const TEAM_ANNOUNCEMENT_UI_LIMIT = 2_000
 
@@ -2962,7 +2963,7 @@ export function TeamForm({
               aria-pressed={templateId === template.id}
               onClick={() => { selectTemplate(template.id) }}
             >
-              {template.name}
+              {template.label}
             </Button>
           ))}
         </div>
