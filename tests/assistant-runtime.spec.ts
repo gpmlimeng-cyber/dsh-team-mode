@@ -157,6 +157,18 @@ function createHarness(
   const emit = (event: string, ...args: unknown[]): void => {
     for (const listener of listeners.get(event) ?? []) listener(...args)
   }
+  // Worker-scoped handlers (the interaction bridge's two waterfalls) live on
+  // each Agent context, separate from the runtime listeners above.
+  const agentListeners = new Map<string, Set<(...args: unknown[]) => void>>()
+  const agentOn = vi.fn((event: string, listener: (...args: unknown[]) => void) => {
+    const set = agentListeners.get(event) ?? new Set()
+    set.add(listener)
+    agentListeners.set(event, set)
+    return () => { set.delete(listener) }
+  })
+  const fireAgent = (event: string, ...args: unknown[]): void => {
+    for (const listener of agentListeners.get(event) ?? []) listener(...args)
+  }
 
   const createHandle = async (sessionId: string, setup?: AgentSetup): Promise<AgentRecord> => {
     const events: SessionEvent[] = []
@@ -181,6 +193,7 @@ function createHarness(
     const agentCtx = {
       systemPrompt: { section },
       tools: { register: toolsRegister },
+      on: agentOn,
     } as unknown as Context
     if (setup !== undefined) await setup(agentCtx, agent)
     const dispose = vi.fn(async () => {})
@@ -516,6 +529,7 @@ function createHarness(
     getAssistantSession,
     listAssistantSessions,
     updateAssistantSession,
+    notifyAssistantTaskChanged: vi.fn(),
     captureAssistantTaskMemory,
     getAssistantMemory,
     writeAssistantMemory,
@@ -560,6 +574,8 @@ function createHarness(
     handles,
     createHandle,
     emit,
+    agentOn,
+    fireAgent,
     tasks,
     memories,
     current: () => current,
@@ -1291,6 +1307,55 @@ describe('AssistantRuntime', () => {
     h.emit('agent/status', { agent: worker?.agent, status: 'idle' })
     await settle()
     expect(h.getAssistantSession(task.id).status).toBe('needs_input')
+  })
+
+  it('marks a worker needs_input while an approval is parked and running once it resolves', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Approval task', brief: 'Start.' })
+    const worker = h.handles[1]
+    expect(worker).toBeDefined()
+
+    h.fireAgent('approval/request', {
+      toolName: 'write_file',
+      callId: 'call-1',
+      reason: 'needs the workspace',
+    }, async () => 'allowed-once')
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('needs_input')
+
+    const pending = await h.runtime.taskInteractions(task.id)
+    expect(pending).toMatchObject([{ kind: 'approval', toolName: 'write_file', callId: 'call-1' }])
+
+    await h.runtime.respondTaskInteraction(task.id, pending[0]!.id, {
+      kind: 'approval',
+      outcome: 'allowed-once',
+    })
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('running')
+    expect(await h.runtime.taskInteractions(task.id)).toEqual([])
+  })
+
+  it('keeps a worker needs_input while a question waits on the user', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Question task', brief: 'Start.' })
+    const worker = h.handles[1]
+    expect(worker).toBeDefined()
+
+    h.fireAgent('user-questions/request', {
+      questions: [{ id: 'q1', question: 'Which file?' }],
+    }, async () => ({ answers: [] }))
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('needs_input')
+
+    const pending = await h.runtime.taskInteractions(task.id)
+    expect(pending).toMatchObject([{ kind: 'question' }])
+
+    await h.runtime.respondTaskInteraction(task.id, pending[0]!.id, {
+      kind: 'question',
+      answers: [{ id: 'q1', selected: [], custom: 'src/a.ts' }],
+    })
+    await settle()
+    expect(h.getAssistantSession(task.id).status).toBe('running')
   })
 
   it('keeps needs_input visible in task lists and the prompt digest', async () => {

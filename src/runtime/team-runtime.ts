@@ -205,6 +205,15 @@ export class TeamRuntime {
     return this.interactions
   }
 
+  /**
+   * The lazy escalation aggregation, exposed for the read path: `escalation.list`
+   * runs it so the rows it returns are the gates alive right now, not the ones
+   * the last agent-triggered pass happened to see.
+   */
+  refreshEscalations(now = new Date().toISOString()): Promise<void> {
+    return this.commands.refreshEscalations(now)
+  }
+
   async getWorkbench(teamId: string): Promise<TeamWorkbenchView> {
     const team = this.service.getTeam(teamId)
     const conversations = await Promise.all(Object.values(team.members).map(async member => {

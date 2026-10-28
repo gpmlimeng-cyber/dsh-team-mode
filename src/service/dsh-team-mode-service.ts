@@ -330,6 +330,13 @@ export class AgentTeamService extends Service {
    * switch. A failed switch never poisons the queue.
    */
   private coordinatorQueue: Promise<unknown> = Promise.resolve()
+  /**
+   * Serializes escalation aggregation passes. `liftEscalations` closes every
+   * open gate missing from the batch it was given, so two overlapping passes
+   * could lift a gate the other just recorded; one pass at a time keeps the
+   * read-triggered aggregation monotonic.
+   */
+  private escalationPass: Promise<void> = Promise.resolve()
 
   constructor(
     ctx: Context,
@@ -366,6 +373,19 @@ export class AgentTeamService extends Service {
   /** Every persisted escalation row; empty when the store has no such table. */
   listEscalations(): Escalation[] {
     return this.escalationStore?.listEscalations() ?? []
+  }
+
+  /**
+   * Run the lazy gate aggregation before a read. A transport test or a store
+   * double has no runtime attached, so there is nothing live to aggregate and
+   * the persisted rows are already the whole truth.
+   */
+  refreshEscalations(now = new Date().toISOString()): Promise<void> {
+    const pass = this.escalationPass
+      .then(() => this.runtime?.refreshEscalations(now))
+      .then(() => undefined)
+    this.escalationPass = pass.catch(() => undefined)
+    return pass
   }
 
   /** Record one stalled gate; undefined when this store has no escalation table. */

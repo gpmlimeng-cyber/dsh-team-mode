@@ -805,8 +805,11 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       return service.getWorkspaceDiff(payload.teamId, payload.path, payload.scope, payload.layout, payload.theme)
     }
     case 'escalation.list': {
-      // Leader-agnostic read: every row is persisted, and the client filters
-      // `open` for the badge. No payload, so nothing to parse.
+      // The read is also the aggregation pass: a live approval or question is
+      // recorded (and a cleared gate lifted) before the rows go out, so 今天's
+      // 等你确认 and every badge never lag behind the runtime. No payload, so
+      // nothing to parse.
+      await service.refreshEscalations()
       const items = service.listEscalations()
       return { items, total: items.length }
     }

@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
 import { TEAM_ANNOUNCEMENT_MAX_CHARS } from '../src/domain/schemas.js'
+import type { Escalation } from '../src/domain/types.js'
 import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import {
   AGENT_TEAM_API_PATH,
@@ -92,6 +93,8 @@ function harness(overrides: {
       bytes: data.byteLength,
     }))),
     listTeams: vi.fn(() => ({ items: [], total: 0 })),
+    refreshEscalations: vi.fn(async () => {}),
+    listEscalations: vi.fn(() => []),
     listAssistantInstances: vi.fn(() => ({ items: [], total: 0 })),
     listAssistantInstanceViews: vi.fn(async () => ({ items: [], total: 0 })),
     createAssistantInstance: vi.fn(async (input: object) => ({ id: 'instance-1', ...input })),
@@ -248,6 +251,35 @@ describe('web transport authentication and upload contract', () => {
 
     expect(reply.status).toBe(200)
     expect(JSON.parse(reply.body)).toMatchObject({ ok: true, value: { items: [], total: 0 } })
+  })
+
+  it('refreshes live gates before returning escalation rows', async () => {
+    const { call, service } = harness()
+    const row: Escalation = {
+      schemaVersion: 1,
+      id: 'team-1:member-1:approval:gate-1',
+      teamId: 'team-1',
+      teamName: 'Alpha',
+      memberSlotId: 'member-1',
+      sessionId: 'session-1',
+      kind: 'approval',
+      gateId: 'gate-1',
+      summary: 'Alice: write_file',
+      status: 'open',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    }
+    const rows: Escalation[] = []
+    vi.mocked(service.refreshEscalations).mockImplementation(async () => { rows.push(row) })
+    vi.mocked(service.listEscalations).mockReturnValue(rows)
+
+    const reply = await call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ requestId: 'r1', method: 'escalation.list', payload: {} }),
+    }))
+
+    expect(service.refreshEscalations).toHaveBeenCalledTimes(1)
+    expect(reply.status).toBe(200)
+    expect(JSON.parse(reply.body)).toMatchObject({ ok: true, value: { items: [row], total: 1 } })
   })
 
   it('dispatches the Assistant instance methods', async () => {

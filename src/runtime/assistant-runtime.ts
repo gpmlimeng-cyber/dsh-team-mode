@@ -172,7 +172,20 @@ export class AssistantRuntime {
       onChange: sessionId => {
         const taskId = this.workerBySession.get(sessionId)
           ?? this.service.listAssistantSessions().items.find(task => task.sessionId === sessionId)?.id
-        if (taskId !== undefined) this.service.notifyAssistantTaskChanged(taskId)
+        if (taskId === undefined) return
+        this.service.notifyAssistantTaskChanged(taskId)
+        // DSH 0.2.1 reports only idle|running, so the status listener can never
+        // see a parked approval. The bridge record is the truthful signal: while
+        // one exists the worker waits on the user; once it clears it runs again.
+        if (this.interactions.list(sessionId).length > 0) {
+          void this.markTaskNeedsInput(taskId).catch(error => {
+            this.ctx.logger.warn('dsh-team-mode: failed to record worker waiting status', error)
+          })
+          return
+        }
+        void this.markTaskRunning(taskId).catch(error => {
+          this.ctx.logger.warn('dsh-team-mode: failed to resume worker task status', error)
+        })
       },
     })
     this.disposeStatusListener = ctx.on('agent/status', ({ agent, status }) => {
