@@ -55,6 +55,7 @@ import {
   memberPrompt,
   rosterPrompt,
   serviceGroupBrief,
+  teamAnnouncementPrompt,
 } from './team-prompts.js'
 import {
   allowedInheritedToolNames,
@@ -868,17 +869,20 @@ export class TeamRuntime {
           await this.ctx.agentPresets.mount(agentCtx, leader.assistantSnapshot.agentPresetId)
           installModelSelection(agentCtx, modelSelection)
           // A team thread carries no member identity section, but it still
-          // belongs to the team's sidebar group, so the group brief applies.
-          // Read live so an edit reaches the next turn.
+          // belongs to the team, so the group brief and the team announcement
+          // apply. Read live so an edit reaches the next turn.
           agentCtx.systemPrompt?.section({
             name: `dsh-team-mode:group-brief:${team.id}`,
             order: 9,
-            // The brief is user prose: a literal {{unknown}} must stay literal
-            // instead of failing Host prompt interpolation.
+            // Both blocks are user prose: a literal {{unknown}} must stay
+            // literal instead of failing Host prompt interpolation.
             interpolate: false,
             text: () => {
               const latest = this.service.getTeam(team.id)
-              return groupBriefPrompt(latest.group, serviceGroupBrief(this.service, latest.group))
+              return [
+                groupBriefPrompt(latest.group, serviceGroupBrief(this.service, latest.group)),
+                teamAnnouncementPrompt(latest),
+              ].filter(block => block !== '').join('\n\n')
             },
           })
           this.ctx.permissionPresets.set(agent.session, leader.permissionPresetId)

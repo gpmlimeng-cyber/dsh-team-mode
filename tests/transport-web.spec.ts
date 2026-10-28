@@ -4,6 +4,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { describe, expect, it, vi } from 'vitest'
 import type { Config } from '../src/config.js'
 import { AgentTeamError } from '../src/domain/errors.js'
+import { TEAM_ANNOUNCEMENT_MAX_CHARS } from '../src/domain/schemas.js'
 import type { AgentTeamService } from '../src/service/dsh-team-mode-service.js'
 import {
   AGENT_TEAM_API_PATH,
@@ -127,6 +128,10 @@ function harness(overrides: {
       sessionId: 'session-worker',
     })),
     setTeamGroup: vi.fn(async (teamId: string, group: string | null) => ({ id: teamId, group })),
+    setTeamAnnouncement: vi.fn(async (teamId: string, announcement: string) => ({
+      id: teamId,
+      announcement,
+    })),
     listGroups: vi.fn(() => ['工作']),
     createGroup: vi.fn(async (name: string) => ['工作', name]),
     renameGroup: vi.fn(async (_from: string, to: string) => [to]),
@@ -609,6 +614,60 @@ describe('web transport authentication and upload contract', () => {
       error: { code: 'INVALID_REQUEST' },
     })
     expect(service.setGroupBrief).toHaveBeenCalledTimes(1)
+  })
+
+  it('writes the team announcement through the user transport only', async () => {
+    const { call, service } = harness()
+    const post = (method: string, payload: unknown, expectedRevision?: number) => call(
+      AGENT_TEAM_API_PATH,
+      request({
+        headers: authed({ 'content-type': 'application/json' }),
+        body: JSON.stringify({ requestId: method, method, payload, expectedRevision }),
+      }),
+    )
+
+    const written = await post('team.announcement.set', {
+      teamId: 'team-1',
+      announcement: 'Freeze: ship fixes only.',
+    })
+    expect(written.status).toBe(200)
+    expect(JSON.parse(written.body)).toMatchObject({
+      ok: true,
+      value: { id: 'team-1', announcement: 'Freeze: ship fixes only.' },
+    })
+    expect(service.setTeamAnnouncement).toHaveBeenCalledWith('team-1', 'Freeze: ship fixes only.')
+
+    const cleared = await post('team.announcement.set', { teamId: 'team-1', announcement: '' })
+    expect(cleared.status).toBe(200)
+    expect(service.setTeamAnnouncement).toHaveBeenLastCalledWith('team-1', '')
+
+    // The service's own revision fence stays unused: the user-transport
+    // boundary is what protects this write, matching the group brief.
+    const fenced = await post('team.announcement.set', {
+      teamId: 'team-1',
+      announcement: 'Ignored fence.',
+    }, 99)
+    expect(fenced.status).toBe(200)
+    expect(service.setTeamAnnouncement).toHaveBeenLastCalledWith('team-1', 'Ignored fence.')
+
+    const oversized = await post('team.announcement.set', {
+      teamId: 'team-1',
+      announcement: 'x'.repeat(TEAM_ANNOUNCEMENT_MAX_CHARS + 1),
+    })
+    expect(oversized.status).toBe(400)
+    expect(JSON.parse(oversized.body)).toMatchObject({
+      ok: false,
+      error: { code: 'INVALID_REQUEST' },
+    })
+    expect(service.setTeamAnnouncement).toHaveBeenCalledTimes(3)
+
+    const extra = await post('team.announcement.set', {
+      teamId: 'team-1',
+      announcement: 'Extra field.',
+      pinned: true,
+    })
+    expect(extra.status).toBe(400)
+    expect(service.setTeamAnnouncement).toHaveBeenCalledTimes(3)
   })
 
   it('dispatches the portable group export, preview and apply with strict payloads', async () => {

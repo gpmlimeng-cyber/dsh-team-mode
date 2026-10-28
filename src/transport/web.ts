@@ -4,7 +4,7 @@ import { z } from 'zod'
 import type { Config } from '../config.js'
 import { AgentTeamError, isAgentTeamError } from '../domain/errors.js'
 import { GROUP_SHARE_MAX_REQUEST_BYTES } from '../domain/group-share.js'
-import { SIDEBAR_GROUP_BRIEF_MAX_CHARS } from '../domain/schemas.js'
+import { SIDEBAR_GROUP_BRIEF_MAX_CHARS, TEAM_ANNOUNCEMENT_MAX_CHARS } from '../domain/schemas.js'
 import type { AgentTeamService, AgentTeamChange } from '../service/dsh-team-mode-service.js'
 import {
   AGENT_TEAM_API_PATH,
@@ -50,6 +50,12 @@ const sidebarGroupLabel = z.string().trim().min(1)
  * service. The service keeps the same cap for direct callers.
  */
 const sidebarGroupBrief = z.string().max(SIDEBAR_GROUP_BRIEF_MAX_CHARS)
+/**
+ * The announcement is checked here as well so an oversized request never
+ * reaches the service. The service keeps the same cap for direct callers and
+ * refuses instead of truncating; a blank value clears the field.
+ */
+const teamAnnouncement = z.string().max(TEAM_ANNOUNCEMENT_MAX_CHARS)
 const interactionResponseSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('question'),
@@ -531,6 +537,14 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
         name: z.string().trim().min(1).max(80),
       }).strict().parse(request.payload)
       return service.renameTeam(payload.teamId, payload.name, options)
+    }
+    case 'team.announcement.set': {
+      const payload = z.object({
+        teamId: z.string().min(1),
+        announcement: teamAnnouncement,
+      }).strict().parse(request.payload)
+      // User-only write: no expectedRevision fence, matching the group brief.
+      return service.setTeamAnnouncement(payload.teamId, payload.announcement)
     }
     case 'team.removeMember': {
       const payload = z.object({ teamId: z.string().min(1), slotId: z.string().min(1) }).strict().parse(request.payload)

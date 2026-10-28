@@ -50,6 +50,7 @@ import {
   SIDEBAR_GROUP_BRIEF_MAX_CHARS,
   SIDEBAR_GROUP_MAX_CHARS,
   SIDEBAR_GROUP_MAX_COUNT,
+  TEAM_ANNOUNCEMENT_MAX_CHARS,
   teamCheckpointSchema,
   updateAssistantInputSchema,
   updateAssistantInstanceInputSchema,
@@ -3451,6 +3452,38 @@ export class AgentTeamService extends Service {
       current => ({ ...current, pinned }),
       'team.pinned',
       pinned ? 'Team pinned' : 'Team unpinned',
+    )
+  }
+
+  /**
+   * Set the user-authored announcement for the whole team, or clear it with
+   * blank text. This is the only write path: no agent tool accepts an
+   * announcement, so a member cannot post a standing notice for everyone else.
+   * The text is prompt context for every member and every team thread, so it is
+   * refused over the cap instead of truncated, and blank text removes the field
+   * entirely instead of storing an empty string. The fence here is the
+   * user-transport boundary, not the aggregate revision (same precedent as the
+   * group brief), so a stale panel edit still lands on the latest record.
+   */
+  async setTeamAnnouncement(teamId: string, announcement: string): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    const text = announcement.trim()
+    if (text.length > TEAM_ANNOUNCEMENT_MAX_CHARS) {
+      throw new AgentTeamError(
+        'INVALID_REQUEST',
+        `Team announcement exceeds ${TEAM_ANNOUNCEMENT_MAX_CHARS} characters`,
+        { length: text.length, limit: TEAM_ANNOUNCEMENT_MAX_CHARS },
+      )
+    }
+    if ((team.announcement ?? '') === text) return team
+    return this.updateRuntimeTeam(
+      teamId,
+      current => {
+        const { announcement: _previous, ...rest } = current
+        return text === '' ? rest : { ...rest, announcement: text }
+      },
+      'team.announcement',
+      text === '' ? 'Team announcement cleared' : 'Team announcement updated',
     )
   }
 

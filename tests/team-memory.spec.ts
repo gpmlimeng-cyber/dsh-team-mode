@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { Context } from '@deepseek-ai/cordis'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -19,10 +20,13 @@ import type {
   TeamMessage,
 } from '../src/domain/types.js'
 import { TeamCommandHandler } from '../src/runtime/team-command-handler.js'
+import { TEAM_ANNOUNCEMENT_MAX_CHARS, teamAggregateSchema } from '../src/domain/schemas.js'
+import { TEAM_TOOL_NAMES } from '../src/runtime/team-tools.js'
 import {
   groupBriefPrompt,
   linkedAssistantMemoryPrompt,
   memberPrompt,
+  teamAnnouncementPrompt,
   teamMemoryPrompt,
 } from '../src/runtime/team-prompts.js'
 import { TeamRuntime } from '../src/runtime/team-runtime.js'
@@ -424,6 +428,203 @@ describe('M2 team memory scope and UI', () => {
     expect(alpha.text()).toContain('ALPHA-NEXT-TURN')
     expect(alpha.text()).not.toContain('ALPHA-BRIEF')
     expect(beta.text()).not.toContain('ALPHA-NEXT-TURN')
+  })
+})
+
+describe('team announcement', () => {
+  it('injects the announcement once into every member prompt and nothing when empty', () => {
+    const silent = teamAggregate()
+    expect(teamAnnouncementPrompt(silent)).toBe('')
+    expect(memberPrompt(silent, silent.members.leader!)).not.toContain('Team announcement')
+    expect(memberPrompt(silent, silent.members.worker!)).not.toContain('Team announcement')
+
+    const team = {
+      ...teamAggregate(),
+      announcement: 'FREEZE: ship fixes only. Literal {{braces}} stay literal.',
+    }
+    const block = teamAnnouncementPrompt(team)
+    expect(block).toContain('FREEZE: ship fixes only.')
+    expect(block).toContain('{{braces}}')
+    expect(block).toContain('no tool can change it')
+    // Both roles receive the same block exactly once.
+    for (const slot of ['leader', 'worker'] as const) {
+      const prompt = memberPrompt(team, team.members[slot]!)
+      expect(prompt.split('Team announcement —').length - 1).toBe(1)
+      expect(prompt).toContain('FREEZE: ship fixes only.')
+    }
+    // Blank text is no announcement at all, not an empty section.
+    expect(teamAnnouncementPrompt({ announcement: '   ' })).toBe('')
+  })
+
+  it('accepts a stored team record with no announcement and no migration failure', async () => {
+    const { service } = createHarness()
+    const assistant = await service.createAssistant({
+      name: 'Legacy leader',
+      instructions: 'Lead.',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+      skillAllowlist: [],
+      mcpServers: [],
+    })
+    const team = await service.createTeamDraft({
+      name: 'Legacy team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const { announcement: _absent, ...stored } = team
+    expect('announcement' in team).toBe(false)
+
+    // A record written before the field existed still parses as a v1 team: the
+    // field is optional, so there is no schema bump and no migration.
+    const parsed = teamAggregateSchema.parse({ ...stored, schemaVersion: 1 })
+    expect(parsed.announcement).toBeUndefined()
+    expect(teamAnnouncementPrompt(parsed)).toBe('')
+    expect(memberPrompt(parsed, parsed.members[parsed.leaderSlotId]!))
+      .not.toContain('Team announcement')
+  })
+
+  it('writes the announcement through the user service only, and refuses over-long text', async () => {
+    const h = createHarness()
+    const service = h.service
+    const assistant = await service.createAssistant({
+      name: 'Announcement leader',
+      instructions: 'Lead.',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+      skillAllowlist: [],
+      mcpServers: [],
+    })
+    const draft = await service.createTeamDraft({
+      name: 'Announcement team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+
+    const written = await service.setTeamAnnouncement(draft.id, '  Ship fixes only.  ')
+    expect(written.announcement).toBe('Ship fixes only.')
+    expect(written.revision).toBe(draft.revision + 1)
+    expect(h.store.getTeam(draft.id)!.announcement).toBe('Ship fixes only.')
+    expect(h.store.listActivities(draft.id).map(activity => activity.kind))
+      .toContain('team.announcement')
+
+    const atCap = 'x'.repeat(TEAM_ANNOUNCEMENT_MAX_CHARS)
+    expect((await service.setTeamAnnouncement(draft.id, atCap)).announcement).toBe(atCap)
+    // Over-long text is refused, never silently truncated.
+    await expect(service.setTeamAnnouncement(draft.id, `${atCap}x`))
+      .rejects.toMatchObject({ code: 'INVALID_REQUEST' })
+    expect(service.getTeam(draft.id).announcement).toBe(atCap)
+
+    // Blank text clears the field entirely instead of storing an empty string.
+    const cleared = await service.setTeamAnnouncement(draft.id, '   ')
+    expect(cleared.announcement).toBeUndefined()
+    expect('announcement' in cleared).toBe(false)
+  })
+
+  it('exposes no agent tool that can write the team announcement', () => {
+    expect(TEAM_TOOL_NAMES.filter(name => /announcement|notice/i.test(name))).toEqual([])
+    const tools = readFileSync(new URL('../src/runtime/team-tools.ts', import.meta.url), 'utf8')
+    expect(tools).not.toMatch(/announcement/i)
+  })
+
+  it('delivers the announcement to both member roles and to a team thread, live each turn', async () => {
+    const h = createHarness()
+    const service = h.service
+    const makeAssistant = (name: string) => service.createAssistant({
+      name,
+      instructions: 'Follow the announcement.',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+      skillAllowlist: [],
+      mcpServers: [],
+    })
+    const leaderAssistant = await makeAssistant('Announcement leader')
+    const workerAssistant = await makeAssistant('Announcement worker')
+    const draft = await service.createTeamDraft({
+      name: 'Announcement runtime team',
+      workspaceId: 'workspace-1',
+      members: [
+        { assistantId: leaderAssistant.id, role: 'leader' },
+        { assistantId: workerAssistant.id, role: 'member' },
+      ],
+    })
+    await service.updateRuntimeTeam(
+      draft.id,
+      current => ({ ...current, state: 'active' }),
+      'test.active',
+      'active for the announcement scope test',
+    )
+    await service.setTeamAnnouncement(draft.id, 'FREEZE-1: ship fixes only.')
+
+    const created: Array<{ sessionId: string; sections: Map<string, PromptSection> }> = []
+    h.setAgentFactory(async (options: any) => {
+      const sessionId = String(options.sessionId ?? options.resumeSessionId)
+      const sections = new Map<string, PromptSection>()
+      const session = { id: sessionId, snapshotEvents: () => [] }
+      const agent = {
+        id: sessionId,
+        session,
+        status: 'idle',
+        followup: vi.fn(),
+        cancel: vi.fn(),
+        whenIdle: vi.fn(async () => {}),
+      }
+      await options.setup(fakePromptAgentContext(sections), agent)
+      created.push({ sessionId, sections })
+      return { agent, dispose: vi.fn(async () => {}) }
+    })
+    const runtime = new TeamRuntime(h.ctx as never, config, service)
+    const internals = runtime as unknown as TeamRuntimeInternals
+    await internals.ensureMembersOnline(service.getTeam(draft.id))
+
+    const sectionOf = (sessionId: string, prefix: string): PromptSection => {
+      const record = created.find(value => value.sessionId === sessionId)
+      expect(record).toBeDefined()
+      const section = [...record!.sections.entries()]
+        .find(([name]) => name.startsWith(prefix))?.[1]
+      expect(section).toBeDefined()
+      return section!
+    }
+    const announcementCount = (text: string): number =>
+      text.split('Team announcement —').length - 1
+
+    for (const member of Object.values(service.getTeam(draft.id).members)) {
+      const identity = sectionOf(member.sessionId, 'dsh-team-mode:identity')
+      expect(identity.interpolate).toBe(false)
+      expect(identity.text()).toContain('FREEZE-1')
+      expect(announcementCount(identity.text())).toBe(1)
+    }
+
+    await runtime.createThread(draft.id)
+    const thread = Object.values(service.getTeam(draft.id).threads ?? {})[0]!
+    const threadSection = sectionOf(thread.sessionId, `dsh-team-mode:group-brief:${draft.id}`)
+    expect(threadSection.interpolate).toBe(false)
+    expect(threadSection.text()).toContain('FREEZE-1')
+    expect(announcementCount(threadSection.text())).toBe(1)
+
+    // Every section is read live, so an edit lands on the next turn without
+    // restarting any Session.
+    await service.setTeamAnnouncement(draft.id, 'FREEZE-2: also update the docs.')
+    for (const member of Object.values(service.getTeam(draft.id).members)) {
+      const text = sectionOf(member.sessionId, 'dsh-team-mode:identity').text()
+      expect(text).toContain('FREEZE-2')
+      expect(text).not.toContain('FREEZE-1')
+    }
+    expect(threadSection.text()).toContain('FREEZE-2')
+    expect(threadSection.text()).not.toContain('FREEZE-1')
+
+    // Clearing removes the block: an empty announcement adds no section.
+    await service.setTeamAnnouncement(draft.id, '')
+    for (const member of Object.values(service.getTeam(draft.id).members)) {
+      expect(sectionOf(member.sessionId, 'dsh-team-mode:identity').text())
+        .not.toContain('Team announcement')
+    }
+    expect(threadSection.text()).not.toContain('Team announcement')
   })
 })
 

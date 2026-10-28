@@ -128,6 +128,8 @@ export const AGENT_TEAM_METHODS = [
   'team.pin',
   'team.archive',
   'team.group.set',
+  /** User-only standing notice; the prompt layer reads it, no agent tool writes it. */
+  'team.announcement.set',
   'team.memory.write',
   'team.memory.decide',
   'team.memory.undo',
@@ -642,6 +644,15 @@ export interface AgentTeamRequestMap {
   'team.archive': { payload: { teamId: string; archived: boolean }; result: TeamView }
   /** Sidebar group move; `null` (or a blank string) puts the team back to ungrouped. */
   'team.group.set': { payload: { teamId: string; group: string | null }; result: TeamView }
+  /**
+   * Set or clear the team's user-authored announcement. Blank text clears it;
+   * over-cap text is refused, never truncated. Read-only in the prompt layer:
+   * the value rides on `TeamView`, so there is no separate read method.
+   */
+  'team.announcement.set': {
+    payload: { teamId: string; announcement: string }
+    result: TeamView
+  }
   /** User-authority team memory write; the fence is the memory revision, not the aggregate revision. */
   'team.memory.write': {
     payload: {

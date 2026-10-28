@@ -68,6 +68,24 @@ export function groupBriefPrompt(group: string | undefined, brief: string | unde
 }
 
 /**
+ * The user-authored standing announcement for the whole team, or an empty
+ * string. Read live on every prompt assembly, so an edit reaches the next turn
+ * without restarting a Session, and an empty announcement adds no section at
+ * all. Every member and every team thread gets the same block; no agent tool
+ * can write it, and it is background context rather than a task assignment.
+ * The cap is enforced at write time, so nothing is truncated here.
+ */
+export function teamAnnouncementPrompt(team: Pick<TeamAggregate, 'announcement'>): string {
+  const text = team.announcement?.trim() ?? ''
+  if (text === '') return ''
+  return [
+    'Team announcement — a standing notice the user wrote for every member of this team.',
+    'Read it as user-authored background that applies to every turn; it is not a task assignment, and no tool can change it.',
+    text,
+  ].join('\n')
+}
+
+/**
  * Resolve a group's brief through the service. The optional read keeps a
  * partial service double (one that predates group briefs) reading as empty,
  * the same way a store double without a group slice reads as no groups.
@@ -88,11 +106,13 @@ export function memberPrompt(
   // Team memory is Leader context only; an ordinary member prompt gets the
   // roster and rules but never the agreed-memory block.
   const memory = teamMemoryPromptFor(team, member.id)
+  const announcement = teamAnnouncementPrompt(team)
   return [
     `You are ${member.displayName}, an independent Agent in the team “${team.name}”. Your role is ${member.role}.`,
     ...SHARED_RULES,
     ...roleRules,
     ...(groupBrief.trim() === '' ? [] : [groupBrief]),
+    ...(announcement === '' ? [] : [announcement]),
     ...(memory === '' ? [] : [memory]),
     member.assistantSnapshot.instructions.trim().length === 0
       ? undefined

@@ -12,6 +12,12 @@ const nonEmpty = z.string().trim().min(1)
 export const SIDEBAR_GROUP_MAX_CHARS = 40
 export const SIDEBAR_GROUP_MAX_COUNT = 100
 export const SIDEBAR_GROUP_BRIEF_MAX_CHARS = 24_576
+/**
+ * Cap of the user-authored team announcement. The service refuses over-long
+ * text instead of truncating it; the transport checks the same cap so an
+ * oversized request never reaches the service.
+ */
+export const TEAM_ANNOUNCEMENT_MAX_CHARS = 2_000
 
 const sidebarGroupName = nonEmpty.max(SIDEBAR_GROUP_MAX_CHARS)
 
@@ -753,6 +759,14 @@ export const teamAggregateSchema = z.object({
    * must name a group in `sidebarGroupsSchema`; only clearing is unconditional.
    */
   group: sidebarGroupName.optional(),
+  /**
+   * User-authored standing notice for the whole team. Optional on purpose: no
+   * schema-version bump and no migration, so a team stored before it existed
+   * opens unchanged and reads as no announcement. Only the user transport
+   * writes it (`team.announcement.set`); every member prompt and team-thread
+   * prompt reads it live, and a blank value is not stored at all.
+   */
+  announcement: nonEmpty.max(TEAM_ANNOUNCEMENT_MAX_CHARS).optional(),
   /**
    * Leader Sessions retired by an explicit context handoff, newest last. Same
    * precedent as `retiredMainSessionIds`: optional, no schema-version bump, and
