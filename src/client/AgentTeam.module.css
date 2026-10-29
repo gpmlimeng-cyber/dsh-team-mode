@@ -5879,12 +5879,19 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
 
 /* The title is a button for the details surface, but it must read as plain
    text in the header: no border, no fill, no ring — only the pointer. */
-/* No horizontal padding and no negative margin: the header clips at its own
-   edge, so a negative pull would cut the left side of the hover wash. The wash
-   hugs the face and the name instead. */
+/* The header clips at its own edge, so the crumb row is told to show the wash
+   that hangs a few pixels past the title's text box. */
+[class*='crumbs'],
+[class*='crumbSeg'] {
+  overflow: visible;
+}
+
+/* Padding gives the hover wash room; the negative start margin keeps the text
+   on the same baseline as the shipped title it replaces. */
 .teamSessionTitleButton {
-  padding: 1px 0;
-  margin: 0;
+  padding: 2px 8px;
+  margin-inline-start: -8px;
+  margin-block: 0;
   border: 0;
   background: none;
   box-shadow: none;

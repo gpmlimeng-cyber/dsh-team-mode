@@ -17,7 +17,6 @@ import {
 import { callAgentTeam, subscribeAgentTeam, teamLeaderSessionId } from './api.js'
 import { setTeamPanelOpen } from './store.js'
 import { openAssistantDetail } from './assistant-settings-pane.js'
-import { assistantLineageTitle } from './assistant-session-title.js'
 import css from './AgentTeam.module.css'
 import { MemberAvatar } from './member-avatar.js'
 import {
@@ -32,7 +31,7 @@ import type { AssistantInstance } from '../domain/types.js'
 import { Mascot } from './mascot-view.js'
 import { teamAvatarStack } from './team-avatar.js'
 import { assistantShowsMascot, mascotOptionsFor } from './mascot.js'
-import { assistantInstanceName, assistantOwningSession } from './assistant-instances.js'
+import { assistantInstanceLabel, assistantInstanceName, assistantOwningSession } from './assistant-instances.js'
 
 type TeamMember = TeamView['members'][string]
 type TeamThread = NonNullable<TeamView['threads']>[string]
@@ -374,7 +373,9 @@ export function AssistantSessionTitle({
 }): JSX.Element | null {
   const instances = useAssistantInstances()
   const instance = assistantOwningSession(instances, lineageSessionId)
-  const label = assistantLineageTitle(instance, displayTitle)
+  // The face-and-name IS the title now, so the old "the crumb already says it"
+  // rule would suppress it exactly when the crumb shows the same words.
+  const label = instance === undefined ? undefined : assistantInstanceLabel(instance)
   if (label === undefined || instance === undefined) return null
   return (
     <button
@@ -496,10 +497,13 @@ export function TeamSessionSwitcher({
   // native header label is read-only chrome. While BOT shows the same name in
   // our panel, hide that span by its exact text inside the Session-header slot
   // (never a hashed class); no match means nothing happens.
+  // Hiding is not conditional on the panel being switchable: even a team whose
+  // only conversation is the main one should not keep the read-only preset label
+  // between its title and its topics.
   useEffect(() => {
-    if (!panelVisible || presetLabel === undefined || presetNames.length === 0) return
+    if (team === undefined || presetLabel === undefined || presetNames.length === 0) return
     return hideNativePresetLabels(presetNames)
-  }, [panelVisible, presetLabel, presetNames])
+  }, [team, presetLabel, presetNames])
 
   useEffect(() => {
     if (!open) return
