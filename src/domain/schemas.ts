@@ -562,6 +562,15 @@ export const teamMemberSlotSchema = z.object({
    * unchanged, and no template or workspace inference ever fills it in.
    */
   assistantInstanceId: nonEmpty.optional(),
+  /**
+   * When the linked instance was archived while the link stayed. The link itself
+   * is kept: it is the historical fact the team row was built on, and a restore
+   * revives it. This marker is what makes the archive visible on the team side
+   * instead of a silent empty memory projection. Cleared by a restore or by any
+   * link rewrite (`withAssistantInstanceId`), since linking rejects an archived
+   * instance. Added without a schema-version bump: absent means a live link.
+   */
+  assistantInstanceArchivedAt: isoDate.optional(),
   displayName: nonEmpty,
   role: z.enum(['leader', 'member']),
   assistantSnapshot: assistantSnapshotSchema,

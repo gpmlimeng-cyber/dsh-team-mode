@@ -468,8 +468,24 @@ export interface AgentTeamRequestMap {
     payload: { id: string; value: UpdateAssistantInstanceInput }
     result: AssistantInstance
   }
-  'assistant.instance.archive': { payload: { id: string }; result: AssistantInstance }
-  'assistant.instance.restore': { payload: { id: string }; result: AssistantInstance }
+  /**
+   * Archive one Assistant. A live team that still links it refuses the call
+   * (`ASSISTANT_INSTANCE_TEAM_LINKED`); `force` archives anyway and marks the
+   * team-side link invalidated (`TeamMemberSlot.assistantInstanceArchivedAt`).
+   */
+  'assistant.instance.archive': {
+    payload: { id: string; force?: boolean }
+    result: AssistantInstance
+  }
+  /**
+   * Restore one archived Assistant. A link to an archived team refuses the call
+   * (`ASSISTANT_INSTANCE_TEAM_UNAVAILABLE`); `force` restores anyway and drops
+   * those links, so the Assistant comes back unlinked.
+   */
+  'assistant.instance.restore': {
+    payload: { id: string; force?: boolean }
+    result: AssistantInstance
+  }
   /** Persist the assistant-level pause marker; running turns stop server-side. */
   'assistant.instance.pause': { payload: { id: string }; result: AssistantInstance }
   'assistant.instance.resume': { payload: { id: string }; result: AssistantInstance }

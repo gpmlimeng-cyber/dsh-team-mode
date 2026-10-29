@@ -299,12 +299,18 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       return service.updateAssistantInstance(payload.id, payload.value as never)
     }
     case 'assistant.instance.archive': {
-      const payload = z.object({ id: z.string().trim().min(1).max(200) }).strict().parse(request.payload)
-      return service.archiveAssistantInstance(payload.id)
+      const payload = z.object({
+        id: z.string().trim().min(1).max(200),
+        force: z.boolean().optional(),
+      }).strict().parse(request.payload)
+      return service.archiveAssistantInstance(payload.id, { force: payload.force })
     }
     case 'assistant.instance.restore': {
-      const payload = z.object({ id: z.string().trim().min(1).max(200) }).strict().parse(request.payload)
-      return service.restoreAssistantInstance(payload.id)
+      const payload = z.object({
+        id: z.string().trim().min(1).max(200),
+        force: z.boolean().optional(),
+      }).strict().parse(request.payload)
+      return service.restoreAssistantInstance(payload.id, { force: payload.force })
     }
     case 'assistant.instance.pause': {
       const payload = z.object({ id: z.string().trim().min(1).max(200) }).strict().parse(request.payload)

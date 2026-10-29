@@ -361,7 +361,7 @@ describe('web transport authentication and upload contract', () => {
       ok: true,
       value: { id: 'instance-1', status: 'archived' },
     })
-    expect(service.archiveAssistantInstance).toHaveBeenCalledWith('instance-1')
+    expect(service.archiveAssistantInstance).toHaveBeenCalledWith('instance-1', { force: undefined })
 
     const ensured = await post('assistant.instance.ensure', { id: 'instance-1' })
     expect(ensured.status).toBe(200)
@@ -448,7 +448,7 @@ describe('web transport authentication and upload contract', () => {
     const restored = await post('assistant.instance.restore', { id: 'instance-1' })
     expect(restored.status).toBe(200)
     expect(JSON.parse(restored.body)).toMatchObject({ ok: true, value: { id: 'instance-1', status: 'active' } })
-    expect(service.restoreAssistantInstance).toHaveBeenCalledWith('instance-1')
+    expect(service.restoreAssistantInstance).toHaveBeenCalledWith('instance-1', { force: undefined })
 
     const paused = await post('assistant.instance.pause', { id: 'instance-1' })
     expect(JSON.parse(paused.body)).toMatchObject({ ok: true, value: { id: 'instance-1' } })

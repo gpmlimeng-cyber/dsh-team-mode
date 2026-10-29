@@ -2418,9 +2418,19 @@ describe('AgentTeamService', () => {
       members: [{ assistantId: assistant.id, role: 'leader', assistantInstanceId: instance.id }],
     })).rejects.toMatchObject({ code: 'ASSISTANT_IN_USE' })
 
-    // Archived instances cannot be linked, and a linked instance that is
-    // archived later degrades to an empty read instead of throwing.
-    await service.archiveAssistantInstance(instance.id)
+    // Archived instances cannot be linked, and a live link refuses the archive
+    // unless the caller forces it; forcing marks the team-side link invalidated
+    // instead of silently degrading the member's memory read.
+    await expect(service.archiveAssistantInstance(instance.id)).rejects.toMatchObject({
+      code: 'ASSISTANT_INSTANCE_TEAM_LINKED',
+      message: expect.stringContaining('Unlinked team'),
+    })
+    expect(store.getAssistantInstance(instance.id)?.status).not.toBe('archived')
+    expect(service.getTeam(team.id).members[slotId]?.assistantInstanceArchivedAt).toBeUndefined()
+    await service.archiveAssistantInstance(instance.id, { force: true })
+    const forcedMember = service.getTeam(team.id).members[slotId]
+    expect(forcedMember?.assistantInstanceId).toBe(instance.id)
+    expect(forcedMember?.assistantInstanceArchivedAt).toEqual(expect.any(String))
     await expect(service.addMember(team.id, {
       assistantId: assistant.id,
       assistantInstanceId: instance.id,
@@ -2429,6 +2439,10 @@ describe('AgentTeamService', () => {
       state: 'archived',
       entries: [],
     })
+    // Restoring revives the live link instead of leaving a stale marker behind.
+    await service.restoreAssistantInstance(instance.id)
+    expect(service.getTeam(team.id).members[slotId]?.assistantInstanceId).toBe(instance.id)
+    expect(service.getTeam(team.id).members[slotId]?.assistantInstanceArchivedAt).toBeUndefined()
 
     // A workspace mismatch is rejected explicitly; no owner field exists in
     // this repository, so the workspace pair is the enforceable scope.
@@ -2449,6 +2463,46 @@ describe('AgentTeamService', () => {
       assistantId: assistant.id,
       assistantInstanceId: other.id,
     })).rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_WORKSPACE_MISMATCH' })
+  })
+
+  it('refuses to restore an assistant whose linked team was archived, unless forced', async () => {
+    const { service, store } = createHarness()
+    const assistant = await service.createAssistant(assistantInput())
+    const instance = await service.createAssistantInstance({
+      workspaceId: 'workspace-1',
+      name: 'Archived with team',
+      provider: 'openai',
+      model: 'codex',
+      agentPresetId: 'default',
+      permissionPresetId: 'standard',
+    })
+    const team = await service.createTeamDraft({
+      name: 'Archived team',
+      workspaceId: 'workspace-1',
+      members: [{ assistantId: assistant.id, role: 'leader' }],
+    })
+    const slotId = team.leaderSlotId
+    await service.setMemberAssistantInstance(team.id, slotId, instance.id)
+    await service.setTeamArchived(team.id, true)
+
+    // An archived team cannot run, so it does not block the archive: the link
+    // stays and is marked invalidated on the team side.
+    expect((await service.archiveAssistantInstance(instance.id)).status).toBe('archived')
+    expect(service.getTeam(team.id).members[slotId]?.assistantInstanceArchivedAt)
+      .toEqual(expect.any(String))
+
+    // Restoring silently would hand back a member of a team that cannot run.
+    await expect(service.restoreAssistantInstance(instance.id)).rejects.toMatchObject({
+      code: 'ASSISTANT_INSTANCE_TEAM_UNAVAILABLE',
+      message: expect.stringContaining('Archived team'),
+    })
+    expect(store.getAssistantInstance(instance.id)?.status).toBe('archived')
+
+    // A forced restore comes back as an unlinked colleague: the dead link goes.
+    const restored = await service.restoreAssistantInstance(instance.id, { force: true })
+    expect(restored.status).not.toBe('archived')
+    expect(service.getTeam(team.id).members[slotId]?.assistantInstanceId).toBeUndefined()
+    expect(service.getTeam(team.id).members[slotId]?.assistantInstanceArchivedAt).toBeUndefined()
   })
 
   it('persists member assistant instance links across create, add, and clear', async () => {

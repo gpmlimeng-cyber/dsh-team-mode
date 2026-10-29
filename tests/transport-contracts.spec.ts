@@ -65,8 +65,12 @@ describe('Agent Team transport contracts', () => {
       value: UpdateAssistantInstanceInput
     }>()
     expectTypeOf<AgentTeamResult<'assistant.instance.update'>>().toEqualTypeOf<AssistantInstance>()
-    expectTypeOf<AgentTeamPayload<'assistant.instance.archive'>>().toEqualTypeOf<{ id: string }>()
+    expectTypeOf<AgentTeamPayload<'assistant.instance.archive'>>()
+      .toEqualTypeOf<{ id: string; force?: boolean }>()
     expectTypeOf<AgentTeamResult<'assistant.instance.archive'>>().toEqualTypeOf<AssistantInstance>()
+    expectTypeOf<AgentTeamPayload<'assistant.instance.restore'>>()
+      .toEqualTypeOf<{ id: string; force?: boolean }>()
+    expectTypeOf<AgentTeamResult<'assistant.instance.restore'>>().toEqualTypeOf<AssistantInstance>()
     expectTypeOf<AgentTeamPayload<'assistant.instance.ensure'>>().toEqualTypeOf<{ id: string }>()
     expectTypeOf<AgentTeamResult<'assistant.instance.ensure'>>().toEqualTypeOf<{
       instance: AssistantInstance

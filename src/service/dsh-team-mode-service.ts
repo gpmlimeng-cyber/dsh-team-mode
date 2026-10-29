@@ -1317,20 +1317,33 @@ export class AgentTeamService extends Service {
    * When the Assistant runtime is attached, active workers are cancelled and
    * the archived row is persisted while the assistant lock is still held, so
    * no concurrent worker creation can slip in after the stop pass.
+   *
+   * A live team that still links this instance blocks the archive: the member
+   * row would keep pointing at an archived assistant and its memory read would
+   * degrade to empty with no notice. `force` archives anyway and marks every
+   * team-side link invalidated, so the team can show what happened.
    */
-  async archiveAssistantInstance(id: string): Promise<AssistantInstance> {
+  async archiveAssistantInstance(
+    id: string,
+    options: { force?: boolean | undefined } = {},
+  ): Promise<AssistantInstance> {
     const current = requireAssistantInstance(this.store, id)
     if (current.status === 'archived') return current
     // The coordinator is the one visible "person" of the workspace; archiving it
     // would silently remove the pinned row, so the action is refused with the
     // step that makes it legal.
     assertNotCoordinator(current)
+    this.assertNoLiveTeamLink(current, options.force === true)
     if (this.assistantRuntime !== undefined) {
       await this.assistantRuntime.stopForArchive(id)
     }
     // Idempotent re-read: when the runtime already persisted inside its lock
     // this returns the stored row without a second write or publish.
-    return this.persistAssistantArchived(id)
+    const archived = await this.persistAssistantArchived(id)
+    // After the row is archived, not before: a link insert is rejected for an
+    // archived instance, so the link set can only shrink from here.
+    await this.markTeamLinksArchived(id)
+    return archived
   }
 
   /**
@@ -1363,10 +1376,31 @@ export class AgentTeamService extends Service {
    * Bring one archived instance back. This is a row write only: the main Session
    * log, thread Sessions, worker Sessions, the workspace and its files are all
    * left exactly where archive left them. A paused assistant stays paused.
+   *
+   * A link whose team is archived cannot work again, so restoring silently
+   * would hand back an assistant still shown as a member of a dead team. The
+   * restore is refused until the team is restored too, or forced: a forced
+   * restore drops those links, and the assistant comes back unlinked on
+   * purpose. A dissolved team deletes its member rows, so there is nothing left
+   * to detect for it.
    */
-  async restoreAssistantInstance(id: string): Promise<AssistantInstance> {
+  async restoreAssistantInstance(
+    id: string,
+    options: { force?: boolean | undefined } = {},
+  ): Promise<AssistantInstance> {
     const current = requireAssistantInstance(this.store, id)
     if (current.status !== 'archived') return current
+    const unusable = this.listAssistantInstanceLinks(id)
+      .filter(link => link.team.archivedAt !== undefined)
+    if (unusable.length > 0 && options.force !== true) {
+      const names = unusable.map(link => `'${link.team.name}' (${link.team.id})`).join(', ')
+      throw new AgentTeamError(
+        'ASSISTANT_INSTANCE_TEAM_UNAVAILABLE',
+        `Assistant instance '${id}' is still linked by team ${names}, which is archived. `
+          + 'Restore that team first, or restore with force to come back as an unlinked colleague.',
+        { instanceId: id, teamIds: unusable.map(link => link.team.id) },
+      )
+    }
     const now = new Date().toISOString()
     const next = await this.store.updateAssistantInstance(id, value => {
       const { archivedAt: _archivedAt, ...rest } = value
@@ -1380,6 +1414,9 @@ export class AgentTeamService extends Service {
       }
     })
     this.publish('assistant-instance', next.id, next.revision, 'assistant.instance.restored')
+    // Team side last: a restored live link loses its stale marker, and a forced
+    // restore drops the links of archived teams.
+    await this.settleTeamLinksAfterRestore(id, options.force === true)
     return next
   }
 
@@ -5179,6 +5216,117 @@ export class AgentTeamService extends Service {
   }
 
   /**
+   * Every stored member row that explicitly links this Assistant instance. The
+   * link lives on the team side only — the instance carries no back-pointer — so
+   * this scan is the one source of truth for "is it still in a team". Cheap on
+   * purpose: it runs on archive and restore, not on a hot path.
+   */
+  private listAssistantInstanceLinks(
+    assistantInstanceId: string,
+  ): Array<{ team: TeamAggregate; memberId: string }> {
+    const links: Array<{ team: TeamAggregate; memberId: string }> = []
+    for (const team of this.store.listTeams()) {
+      for (const [memberId, member] of Object.entries(team.members)) {
+        if (member.assistantInstanceId === assistantInstanceId) links.push({ team, memberId })
+      }
+    }
+    return links
+  }
+
+  /**
+   * Archive must not silently orphan a live team member: the link is what the
+   * member's prompt and memory read point at, so archiving under a running team
+   * would degrade that member to an empty projection with no notice. Refused
+   * with the team names and the ways out, in the same style as the link
+   * conflicts in {@link requireLinkableAssistantInstance}. An archived team
+   * never blocks: it cannot run, so its link is already dormant.
+   */
+  private assertNoLiveTeamLink(instance: AssistantInstance, force: boolean): void {
+    if (force) return
+    const live = this.listAssistantInstanceLinks(instance.id)
+      .filter(link => link.team.archivedAt === undefined)
+    if (live.length === 0) return
+    const names = live.map(link => `'${link.team.name}' (${link.team.id})`).join(', ')
+    throw new AgentTeamError(
+      'ASSISTANT_INSTANCE_TEAM_LINKED',
+      `Assistant instance '${instance.id}' is still linked by team ${names}. `
+        + 'Remove it from the team first, or archive that team, '
+        + 'or archive with force to keep the link as invalidated.',
+      { instanceId: instance.id, teamIds: live.map(link => link.team.id) },
+    )
+  }
+
+  /**
+   * Persist the archive on the team side: keep `assistantInstanceId` (the link
+   * is the fact a restore revives) and add `assistantInstanceArchivedAt` so the
+   * team can show "archived" instead of reading an empty memory projection.
+   * Runs after the instance row is archived and linking rejects an archived
+   * instance, so the link set can only shrink here; a link written concurrently
+   * is still caught by the scan. Per-team best effort, like every other
+   * cross-aggregate write: one unreachable team must not undo the archive.
+   */
+  private async markTeamLinksArchived(assistantInstanceId: string): Promise<void> {
+    const now = new Date().toISOString()
+    for (const { team, memberId } of this.listAssistantInstanceLinks(assistantInstanceId)) {
+      const pre = team.members[memberId]
+      if (pre === undefined || pre.assistantInstanceArchivedAt !== undefined) continue
+      const next = await this.store.updateTeam(team.id, stored => {
+        const member = stored.members[memberId]
+        if (member === undefined
+          || member.assistantInstanceId !== assistantInstanceId
+          || member.assistantInstanceArchivedAt !== undefined) return stored
+        return {
+          ...stored,
+          members: {
+            ...stored.members,
+            [memberId]: { ...member, assistantInstanceArchivedAt: now },
+          },
+          revision: stored.revision + 1,
+          updatedAt: now,
+        }
+      })
+      if (next.revision !== team.revision) {
+        this.publish('team', next.id, next.revision, 'team.member_assistant_archived')
+      }
+    }
+  }
+
+  /**
+   * Put the team side back in step with a restored instance. A live team link
+   * loses its stale marker — the link works again. With `dropArchivedTeamLinks`
+   * (a forced restore), a link to an archived team is dropped entirely: the user
+   * asked for an unlinked colleague, and a team that cannot run must not keep a
+   * link it can never satisfy.
+   */
+  private async settleTeamLinksAfterRestore(
+    assistantInstanceId: string,
+    dropArchivedTeamLinks: boolean,
+  ): Promise<void> {
+    const now = new Date().toISOString()
+    for (const { team, memberId } of this.listAssistantInstanceLinks(assistantInstanceId)) {
+      const drop = dropArchivedTeamLinks && team.archivedAt !== undefined
+      const pre = team.members[memberId]
+      if (!drop && pre?.assistantInstanceArchivedAt === undefined) continue
+      const next = await this.store.updateTeam(team.id, stored => {
+        const member = stored.members[memberId]
+        if (member === undefined || member.assistantInstanceId !== assistantInstanceId) return stored
+        return {
+          ...stored,
+          members: {
+            ...stored.members,
+            [memberId]: drop ? withAssistantInstanceId(member, null) : withoutStaleLinkMarker(member),
+          },
+          revision: stored.revision + 1,
+          updatedAt: now,
+        }
+      })
+      if (next.revision !== team.revision) {
+        this.publish('team', next.id, next.revision, 'team.member_assistant_restored')
+      }
+    }
+  }
+
+  /**
    * Validate one explicit member→Assistant instance link before it is stored.
    * The instance must exist, must not be archived, and must share the team's
    * workspace id and path. It must not already be linked by this team or by any
@@ -6341,13 +6489,23 @@ function linkScopeOf(team: TeamAggregate): AssistantInstanceLinkScope {
   }
 }
 
-/** Apply or clear the explicit link; `null` removes the field entirely. */
+/**
+ * Apply or clear the explicit link; `null` removes the field entirely. The
+ * stale-archive marker always goes with it: it describes the *previous* link,
+ * and a new link is never stale because linking rejects an archived instance.
+ */
 function withAssistantInstanceId(
   member: TeamMemberSlot,
   assistantInstanceId: string | null,
 ): TeamMemberSlot {
-  const { assistantInstanceId: _current, ...rest } = member
+  const { assistantInstanceId: _current, assistantInstanceArchivedAt: _stale, ...rest } = member
   return assistantInstanceId === null ? rest : { ...rest, assistantInstanceId }
+}
+
+/** Keep the link, drop the "linked instance is archived" marker. */
+function withoutStaleLinkMarker(member: TeamMemberSlot): TeamMemberSlot {
+  const { assistantInstanceArchivedAt: _stale, ...rest } = member
+  return rest
 }
 
 export function normalizeMemberDisplayName(value: string): string {
