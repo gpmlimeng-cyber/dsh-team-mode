@@ -525,24 +525,3 @@ describe('an assistant title covers its threads too', () => {
     expect(host).toContain('assistantOwningSession(instances, sessionId)')
   })
 })
-
-describe('header utilities seating', () => {
-  const source = readFileSync(new URL('../src/client/header-utilities.ts', import.meta.url), 'utf8')
-  const cssSource = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
-
-  it('tags the host nodes instead of moving them', () => {
-    // dsh-web-mobile's rule: the slot tree is the host's React; a plugin must not
-    // move nodes, only tag them and let CSS seat them.
-    expect(source).toContain("setAttribute(HEADER_ATTR, '')")
-    expect(source).toContain("setAttribute(UTILITIES_ATTR, '')")
-    expect(source).not.toContain('appendChild')
-    expect(source).not.toContain('insertBefore')
-  })
-
-  it('seats the cluster at the tab row edge and releases the tags', () => {
-    expect(cssSource).toContain('[data-dsh-team-header-utilities]')
-    expect(cssSource).toContain('inset-block-end: 0')
-    expect(source).toContain("removeAttribute(HEADER_ATTR)")
-    expect(source).toContain("removeAttribute(UTILITIES_ATTR)")
-  })
-})

@@ -16,7 +16,6 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam, teamLeaderSessionId } from './api.js'
 import { setTeamPanelOpen } from './store.js'
-import { seatHeaderUtilities } from './header-utilities.js'
 import { openAssistantDetail } from './assistant-settings-pane.js'
 import css from './AgentTeam.module.css'
 import { MemberAvatar } from './member-avatar.js'
