@@ -525,3 +525,21 @@ describe('an assistant title covers its threads too', () => {
     expect(host).toContain('assistantOwningSession(instances, sessionId)')
   })
 })
+
+describe('header utilities relocation', () => {
+  const source = readFileSync(new URL('../src/client/header-utilities.ts', import.meta.url), 'utf8')
+
+  it('wraps the host cluster before placing it on the tab row', () => {
+    // dsh-qol's rule: never append a host container straight into a host flex
+    // row; give it our wrapper and style that instead.
+    expect(source).toContain('document.createElement(\'span\')')
+    expect(source).toContain('wrapper.appendChild(cluster)')
+    expect(source).toContain('row.appendChild(wrapper)')
+    expect(source).toContain('margin-inline-start:auto')
+  })
+
+  it('puts the cluster back where it came from', () => {
+    expect(source).toContain('parent.insertBefore(cluster, next)')
+    expect(source).toContain('wrapper.remove()')
+  })
+})
