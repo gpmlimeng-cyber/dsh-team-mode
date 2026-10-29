@@ -5864,7 +5864,8 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
    title and appends the lineage slot after it. For a team Session the appended
    face-and-name IS the title, so the shipped one is hidden while ours is
    present. If the host ever renames that class, both appear — never nothing. */
-[class*='crumbSeg']:has(> [data-dsh-team-session-title]) > [class*='crumbCurrent'] {
+[class*='crumbSeg']:has(> [data-dsh-team-session-title]) > [class*='crumbCurrent'],
+[class*='crumbSeg']:has(> [data-dsh-assistant-session-title]) > [class*='crumbCurrent'] {
   display: none;
 }
 

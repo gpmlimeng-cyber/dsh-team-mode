@@ -452,3 +452,18 @@ describe('lineage title names the team', () => {
     expect(cssSource).toContain("crumbSeg")
   })
 })
+
+describe('single-assistant lineage title', () => {
+  const source = readFileSync(new URL('../src/client/assistant-session-title.tsx', import.meta.url), 'utf8')
+  const cssSource = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+
+  it('wears the assistant face and the same name style as a team title', () => {
+    expect(source).toContain('data-dsh-assistant-session-title')
+    expect(source).toContain('assistantShowsMascot')
+    expect(source).toContain('teamSessionTitleName')
+  })
+
+  it('hides the shipped crumb while the face title renders', () => {
+    expect(cssSource).toContain(":has(> [data-dsh-assistant-session-title])")
+  })
+})
