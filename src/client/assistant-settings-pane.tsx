@@ -16,7 +16,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import { callAgentTeam, subscribeAgentTeam } from './api.js'
+import { agentTeamErrorCode, callAgentTeam, subscribeAgentTeam } from './api.js'
 import { CapabilityList, savableNames, useCapabilityCatalog } from './assistant-capabilities.js'
 import {
   AssistantAvatarEditor,
@@ -391,6 +391,17 @@ export function AssistantSettingsPane({
   const [selectedSkills, setSelectedSkills] = useState<string[]>([...assistant.assistantSnapshot.skillAllowlist])
   const [selectedMcpServers, setSelectedMcpServers] = useState<string[]>([...assistant.assistantSnapshot.mcpServers])
   const [confirmArchive, setConfirmArchive] = useState(false)
+  /**
+   * Server wording for a lifecycle refusal that has an explicit second exit:
+   * archive with a live team link (`ASSISTANT_INSTANCE_TEAM_LINKED`) or restore
+   * against an archived team (`ASSISTANT_INSTANCE_TEAM_UNAVAILABLE`). Shown
+   * verbatim — the service owns the team names and the ways out, and a second
+   * copy here would drift the day that message changes.
+   */
+  const [teamConflict, setTeamConflict] = useState<{
+    kind: 'archive' | 'restore'
+    message: string
+  }>()
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [archiving, setArchiving] = useState(false)
@@ -478,6 +489,7 @@ export function AssistantSettingsPane({
     setSelectedSkills([...assistant.assistantSnapshot.skillAllowlist])
     setSelectedMcpServers([...assistant.assistantSnapshot.mcpServers])
     setConfirmArchive(false)
+    setTeamConflict(undefined)
     setSaving(false)
     setArchiving(false)
     setRestoring(false)
@@ -662,19 +674,36 @@ export function AssistantSettingsPane({
     }
   }
 
-  async function archive(): Promise<void> {
+  /**
+   * Archive, with the second exit the service asks for. A live team still
+   * linking this assistant refuses the call; the refusal is not an error box —
+   * it is a choice between "remove it from the team first" and "archive anyway,
+   * keep the link as invalidated" (`force`), so the server message is surfaced
+   * verbatim next to the force button.
+   */
+  async function archive(force = false): Promise<void> {
     if (busy) return
-    if (!confirmArchive) {
+    if (!force && !confirmArchive) {
       setConfirmArchive(true)
       setError(undefined)
+      setTeamConflict(undefined)
       return
     }
     setArchiving(true)
     setError(undefined)
     try {
-      await callAgentTeam('assistant.instance.archive', { id: assistant.id })
+      await callAgentTeam(
+        'assistant.instance.archive',
+        force ? { id: assistant.id, force: true } : { id: assistant.id },
+      )
+      setTeamConflict(undefined)
       await onSaved()
     } catch (cause) {
+      if (!force && agentTeamErrorCode(cause) === 'ASSISTANT_INSTANCE_TEAM_LINKED') {
+        setTeamConflict({ kind: 'archive', message: messageOf(cause) })
+        setConfirmArchive(false)
+        return
+      }
       setError(`归档失败：${messageOf(cause)}`)
     } finally {
       setArchiving(false)
@@ -699,15 +728,27 @@ export function AssistantSettingsPane({
     }
   }
 
-  /** Restore an archived assistant row; Sessions and the workspace stay untouched. */
-  async function restore(): Promise<void> {
+  /**
+   * Restore an archived assistant row; Sessions and the workspace stay
+   * untouched. A link whose team is archived refuses the call and offers the
+   * same second exit as archive: force, which clears the dead link.
+   */
+  async function restore(force = false): Promise<void> {
     if (busy) return
     setRestoring(true)
     setError(undefined)
     try {
-      await callAgentTeam('assistant.instance.restore', { id: assistant.id })
+      await callAgentTeam(
+        'assistant.instance.restore',
+        force ? { id: assistant.id, force: true } : { id: assistant.id },
+      )
+      setTeamConflict(undefined)
       await onSaved()
     } catch (cause) {
+      if (!force && agentTeamErrorCode(cause) === 'ASSISTANT_INSTANCE_TEAM_UNAVAILABLE') {
+        setTeamConflict({ kind: 'restore', message: messageOf(cause) })
+        return
+      }
       setError(`恢复失败：${messageOf(cause)}`)
     } finally {
       setRestoring(false)
@@ -1218,7 +1259,7 @@ export function AssistantSettingsPane({
                 label="模型"
                 hint={catalogLoading
                   ? '正在读取模型列表…'
-                  : modelControlHint.subtitle ?? provider}
+                  : `${modelControlHint.subtitle ?? provider} · 模型与推理强度只影响之后启动的会话；已打开的主会话沿用旧模型，重新打开后生效。`}
                 control={(
                   <ModelControl
                     provider={provider}
@@ -1395,8 +1436,8 @@ export function AssistantSettingsPane({
               </span>
               <span className={css.assistantSettingsArchiveHint}>
                 {assistant.status === 'archived'
-                  ? '恢复后该助手重新出现在「单聊」列表；主会话、线程与工作区文件都还在原处。'
-                  : '归档后该助手将从「单聊」列表移除，并停止正在运行的后台任务；主会话记录不会被删除。'}
+                  ? '恢复只恢复可用性：助手重新出现在「单聊」列表，主会话、线程与工作区文件都还在原处；归档时被取消的后台任务不会复活。'
+                  : '归档会立即停用该助手：从「单聊」列表移除、停止主会话与会话线程、取消正在运行的后台任务；记录、日志和工作区文件不会被删除。'}
               </span>
               {confirmArchive && assistant.status !== 'archived' && (
                 <span className={css.assistantSettingsArchiveWarning} role="alert">
@@ -1426,6 +1467,46 @@ export function AssistantSettingsPane({
                 </button>
               )}
           </div>
+          {teamConflict !== undefined && (
+            <div className={css.assistantSettingsArchive} data-dsh-assistant-team-conflict={teamConflict.kind}>
+              <div className={css.assistantSettingsArchiveCopy}>
+                <span className={css.assistantSettingsArchiveWarning} role="alert">
+                  {teamConflict.message}
+                </span>
+                <span className={css.assistantSettingsArchiveHint}>
+                  {teamConflict.kind === 'archive'
+                    ? '两条出口：先到团队页把该成员移除（或归档那个团队）后再归档；或者强制归档，团队侧的关联会被标记为已失效。'
+                    : '两条出口：先恢复那个团队后再恢复助手；或者强制恢复，助手以未关联身份回来，失效的关联会被清除。'}
+                </span>
+              </div>
+              <span className={css.assistantSettingsArchiveActions}>
+                <button
+                  type="button"
+                  className={css.dangerButton}
+                  disabled={busy}
+                  onClick={() => {
+                    setTeamConflict(undefined)
+                    setError(undefined)
+                  }}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className={`${css.dangerButton} ${css.confirmDangerButton}`}
+                  data-dsh-assistant-team-conflict-force
+                  disabled={busy}
+                  onClick={() => {
+                    void (teamConflict.kind === 'archive' ? archive(true) : restore(true))
+                  }}
+                >
+                  {archiving || restoring
+                    ? '处理中…'
+                    : teamConflict.kind === 'archive' ? '强制归档' : '强制恢复'}
+                </button>
+              </span>
+            </div>
+          )}
         </FoldGroup>
       )}
 

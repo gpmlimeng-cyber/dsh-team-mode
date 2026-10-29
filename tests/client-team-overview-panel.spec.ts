@@ -209,6 +209,29 @@ describe('TeamOverview summary and progress', () => {
     expect(view).toContain('暂无任务')
   })
 
+  it('marks a member whose linked assistant was archived instead of showing it healthy', () => {
+    const archivedLink = member('archived-helper', {
+      displayName: '小档',
+      assistantInstanceId: 'instance-old',
+      assistantInstanceArchivedAt: '2026-10-29T00:00:00.000Z',
+    })
+    const healthyLink = member('live-helper', {
+      displayName: '小活',
+      assistantInstanceId: 'instance-live',
+    })
+    const html = render({
+      team: team({ members: [leader, archivedLink, healthyLink] }),
+    })
+
+    expect(html).toContain('data-dsh-member-assistant-archived="archived-helper"')
+    expect(text(html)).toContain('已归档')
+    // The tooltip says what the badge means, so 已归档 is not read as the member
+    // itself being gone.
+    expect(html).toContain('关联的同事已归档')
+    // A healthy link and a never-linked member carry no badge at all.
+    expect(html.match(/data-dsh-member-assistant-archived=/g)?.length).toBe(1)
+  })
+
   it('shows explicit empty states for a team with no tasks or messages', () => {
     const html = render({ team: team({ members: [leader] }) })
     const view = text(html)

@@ -316,7 +316,7 @@ describe('today surface rendering', () => {
     expect(html).toContain('<details')
     expect(html).not.toContain('<details open')
     expect(text(html)).toContain('已归档')
-    expect(text(html)).toContain('仅查看，暂不支持恢复')
+    expect(text(html)).toContain('助手可在「单聊 → 已归档」恢复；团队暂不支持恢复。')
     expect(html).toContain('data-dsh-today-row="archived-team"')
     expect(html).toContain('data-dsh-today-row="archived-assistant"')
     expect(html).toContain('data-dsh-today-row="archived-thread"')

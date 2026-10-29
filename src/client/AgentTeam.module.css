@@ -4761,6 +4761,12 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   line-height: 17px;
 }
 
+.assistantSettingsArchiveActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .assistantSettingsArchiveConfirm {
   border-color: var(--dsw-alias-state-error-primary);
   background: var(--dsw-alias-interactive-bg-hover-danger);
@@ -9974,6 +9980,20 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   font-size: 9px;
   line-height: 14px;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overviewMemberArchived,
+.memberArchivedNote {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--dsw-alias-line-secondary);
+  border-radius: var(--dsw-radius-xs);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 15px;
   white-space: nowrap;
 }
 

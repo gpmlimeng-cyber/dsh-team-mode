@@ -155,6 +155,19 @@ export function isUnknownSessionError(cause: unknown): boolean {
 }
 
 /**
+ * The service error code carried by a rejected request, when the Host sent one.
+ *
+ * The plugin bundle cannot share the controller's error class, so the code is
+ * copied onto the thrown error by {@link requestAgentTeam}; callers switch on
+ * it to offer the service's own remedy (for example the archive `force` exit)
+ * instead of re-deriving it from message text.
+ */
+export function agentTeamErrorCode(cause: unknown): string | undefined {
+  const code = (cause as { code?: unknown } | null)?.code
+  return typeof code === 'string' ? code : undefined
+}
+
+/**
  * Whether the Host no longer holds the team (dissolved elsewhere, or a row left
  * over from before a reload). The Host raises `TEAM_NOT_FOUND` with
  * `Unknown team '<uuid>'`; both the code and that wording are recognised so a

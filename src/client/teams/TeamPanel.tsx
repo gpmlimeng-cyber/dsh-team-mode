@@ -38,6 +38,8 @@ import {
   goalStatusLabel,
   hasTeamGoals,
   memberStatusLabel,
+  MEMBER_ASSISTANT_ARCHIVED_HINT,
+  memberAssistantArchivedNote,
   memoryJournalActionLabel,
   memorySourceLabel,
   TASK_STATE_LABELS,
@@ -741,7 +743,9 @@ export function TeamCard({
           </span>
         </div>
         <div className={css.memberGrid}>
-          {members.map((member, index) => (
+          {members.map((member, index) => {
+            const archivedNote = memberAssistantArchivedNote(member)
+            return (
             <div key={member.id} className={`${css.memberTile} ${member.role === 'leader' ? css.memberTileLeader : ''}`}>
               <span className={css.memberTileAvatar}>{member.displayName.slice(0, 1).toUpperCase()}</span>
               <span className={css.memberTileCopy}>
@@ -780,6 +784,15 @@ export function TeamCard({
                   <span className={`${css.statusDot} ${member.lastRuntimeState === 'running' ? css.statusRunning : css.statusIdle}`} />
                   {memberStatusLabel(member.lastRuntimeState)}
                 </span>
+                {archivedNote !== undefined && (
+                  <span
+                    className={css.memberArchivedNote}
+                    title={MEMBER_ASSISTANT_ARCHIVED_HINT}
+                    data-dsh-member-assistant-archived={member.id}
+                  >
+                    {archivedNote}
+                  </span>
+                )}
               </span>
               <span className={css.memberTileTools}>
                 <button
@@ -881,7 +894,8 @@ export function TeamCard({
                 )}
               </span>
             </div>
-          ))}
+            )
+          })}
         </div>
       </section>
       {goalsPresent && (

@@ -1355,3 +1355,53 @@ describe('assistant detail relationship actions (P0.5)', () => {
     expect(pane).not.toContain('"/new"')
   })
 })
+
+describe('archive visibility and its second exit', () => {
+  const paneSource = readFileSync(
+    new URL('../src/client/assistant-settings-pane.tsx', import.meta.url),
+    'utf8',
+  )
+  const labelsSource = readFileSync(new URL('../src/client/labels.ts', import.meta.url), 'utf8')
+  const teamPanelSource = readFileSync(
+    new URL('../src/client/teams/TeamPanel.tsx', import.meta.url),
+    'utf8',
+  )
+  const teamOverviewSource = readFileSync(
+    new URL('../src/client/team-overview.tsx', import.meta.url),
+    'utf8',
+  )
+
+  it('turns a refused archive or restore into a choice, not an error box', () => {
+    // Both service codes are recognised and the force call is real.
+    expect(paneSource).toContain("agentTeamErrorCode(cause) === 'ASSISTANT_INSTANCE_TEAM_LINKED'")
+    expect(paneSource).toContain("agentTeamErrorCode(cause) === 'ASSISTANT_INSTANCE_TEAM_UNAVAILABLE'")
+    expect(paneSource).toContain('force: true')
+    expect(paneSource).toContain('data-dsh-assistant-team-conflict-force')
+    // The server owns the wording: its message is rendered verbatim.
+    expect(paneSource).toContain('{teamConflict.message}')
+    // Both ways out are named, and the forced one is a button.
+    expect(paneSource).toContain('先到团队页把该成员移除')
+    expect(paneSource).toContain('强制归档')
+    expect(paneSource).toContain('强制恢复')
+  })
+
+  it('says where a model or reasoning change takes effect, like the permission row', () => {
+    expect(paneSource).toContain('模型与推理强度只影响之后启动的会话；已打开的主会话沿用旧模型，重新打开后生效。')
+    expect(paneSource).toContain('权限只影响之后创建或恢复的会话；已打开的主会话保持原权限。')
+  })
+
+  it('marks an archived linked assistant on both team member surfaces', () => {
+    expect(teamPanelSource).toContain('data-dsh-member-assistant-archived')
+    expect(teamOverviewSource).toContain('data-dsh-member-assistant-archived')
+    expect(labelsSource).toContain('MEMBER_ASSISTANT_ARCHIVED_HINT')
+    expect(labelsSource).toContain("'已归档'")
+  })
+
+  it('documents where the archived assistant can be restored', () => {
+    const docs = readFileSync(new URL('../docs/assistant.md', import.meta.url), 'utf8')
+    expect(docs).not.toContain('归档没有恢复入口')
+    expect(docs).not.toContain('归档也没有恢复入口')
+    expect(docs).toContain('ASSISTANT_INSTANCE_TEAM_LINKED')
+    expect(docs).toContain('恢复只恢复可用性')
+  })
+})

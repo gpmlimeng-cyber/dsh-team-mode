@@ -627,7 +627,7 @@ export function TodaySurfacePanel({
                 <span className={css.count}>{model.archived.total}</span>
                 <span className={css.archiveHint}>只读</span>
               </summary>
-              <p className={css.archiveNote}>仅查看，暂不支持恢复</p>
+              <p className={css.archiveNote}>助手可在「单聊 → 已归档」恢复；团队暂不支持恢复。</p>
               {model.archived.teams.length > 0 && (
                 <div className={css.archiveGroup}>
                   <h4 className={css.archiveGroupTitle}>团队</h4>

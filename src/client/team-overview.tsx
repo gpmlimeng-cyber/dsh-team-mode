@@ -1,6 +1,8 @@
 import { useState, type CSSProperties } from 'react'
 import css from './AgentTeam.module.css'
 import {
+  MEMBER_ASSISTANT_ARCHIVED_HINT,
+  memberAssistantArchivedNote,
   TEAM_TASK_CREATE_HINT,
   taskCarriesVerdict,
   taskKindLabel,
@@ -310,6 +312,7 @@ function MemberRow({ team, member, tasks, selectedId, onSelectTask, onOpenSessio
   readonly onOpenSession: (sessionId: string) => void
 }): JSX.Element {
   const owned = tasks.filter(task => task.ownerSlotId === member.id).sort(byUpdatedDesc)
+  const archived = memberAssistantArchivedNote(member)
   return (
     <li className={css.overviewMember}>
       <div className={css.overviewMemberHead}>
@@ -328,6 +331,15 @@ function MemberRow({ team, member, tasks, selectedId, onSelectTask, onOpenSessio
             <span className={css.overviewModelBadge} title={member.assistantSnapshot.model}>
               {member.assistantSnapshot.model}
             </span>
+            {archived !== undefined && (
+              <span
+                className={css.overviewMemberArchived}
+                title={MEMBER_ASSISTANT_ARCHIVED_HINT}
+                data-dsh-member-assistant-archived={member.id}
+              >
+                {archived}
+              </span>
+            )}
           </span>
         </div>
         <span className={css.overviewMemberCount}>{owned.length}</span>

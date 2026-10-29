@@ -77,6 +77,23 @@ export function taskStatusLabel(status: string): string {
   return TASK_STATE_LABELS[status] ?? status
 }
 
+/**
+ * The badge for a member whose explicitly linked Assistant was archived, or
+ * `undefined` for a healthy row. Archive keeps the link and marks it stale
+ * (`TeamMemberSlot.assistantInstanceArchivedAt`) instead of dropping it, so the
+ * member itself still runs but its shared memory is gone: say "已归档" instead
+ * of showing a healthy teammate, or the team reads the silence as a bug.
+ */
+export function memberAssistantArchivedNote(
+  member: { assistantInstanceArchivedAt?: string | undefined },
+): string | undefined {
+  return member.assistantInstanceArchivedAt === undefined ? undefined : '已归档'
+}
+
+/** One explanation, shared by every surface that shows the badge. */
+export const MEMBER_ASSISTANT_ARCHIVED_HINT =
+  '关联的同事已归档：团队记忆不再注入。在同事设置里恢复后，这条关联会自动恢复。'
+
 /** Composer entry that opens the team mention picker; not a custom composer. */
 export const TEAM_MENTION_LABEL = '提及成员'
 
