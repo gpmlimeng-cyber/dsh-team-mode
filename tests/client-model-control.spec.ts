@@ -185,6 +185,47 @@ describe('modelControlTrigger', () => {
   })
 })
 
+describe('split rows for the detail page', () => {
+  it('leaves the model rows alone when only the model half is asked for', () => {
+    const options = modelControlOptions(MODELS, REASONING, 'model')
+    const selection = modelControlSelection('deepseek', 'flash', 'high', REASONING, 'model')
+    const trigger = modelControlTrigger(
+      'deepseek', 'flash', MODELS, REASONING, 'high', 'model',
+    )
+
+    expect(options.map(option => option.value)).toEqual([
+      modelControlModelRow('deepseek', 'flash'),
+      modelControlModelRow('deepseek', 'pro'),
+      modelControlModelRow('openai', 'codex'),
+    ])
+    expect(selection).toEqual([modelControlModelRow('deepseek', 'flash')])
+    expect(trigger).toEqual({ title: 'DeepSeek-Flash', subtitle: 'DeepSeek' })
+  })
+
+  it('leaves only the reasoning rows when the reasoning half is asked for', () => {
+    const options = modelControlOptions(MODELS, REASONING, 'reasoning')
+    const selection = modelControlSelection('deepseek', 'flash', 'high', REASONING, 'reasoning')
+    const trigger = modelControlTrigger(
+      'deepseek', 'flash', MODELS, REASONING, 'high', 'reasoning',
+    )
+
+    expect(options.map(option => option.value)).toEqual([
+      modelControlEffortRow(''),
+      modelControlEffortRow('high'),
+      modelControlEffortRow('medium'),
+    ])
+    expect(selection).toEqual([modelControlEffortRow('high')])
+    expect(trigger).toEqual({ title: 'High' })
+  })
+
+  it('shows the model default when the shown model has no levels', () => {
+    expect(modelControlOptions(MODELS, undefined, 'reasoning')).toEqual([])
+    expect(modelControlSelection('deepseek', 'flash', '', undefined, 'reasoning')).toEqual([])
+    expect(modelControlTrigger('deepseek', 'flash', MODELS, undefined, '', 'reasoning'))
+      .toEqual({ title: '模型默认' })
+  })
+})
+
 describe('ModelControl rendering', () => {
   it('renders one two-line trigger; the level lives in its second line', () => {
     const html = renderControl()
@@ -212,25 +253,28 @@ describe('ModelControl rendering', () => {
   })
 })
 
-describe('both call sites use the merged control', () => {
+describe('both call sites use the shared control', () => {
   const pane = source('assistant-settings-pane.tsx')
   const dialog = source('assistant-dialogs.tsx')
 
-  it('replaces the model and 思考模式 rows in the settings pane', () => {
-    expect((pane.match(/<ModelControl/g) ?? [])).toHaveLength(1)
+  it('splits the detail page into a model row and a reasoning row', () => {
+    // The reference page has 模型 and 推理 as separate rows.
+    expect((pane.match(/<ModelControl/g) ?? [])).toHaveLength(2)
+    expect(pane).toContain('label="模型"')
+    expect(pane).toContain('label="推理"')
+    expect(pane).toContain('section="model"')
+    expect(pane).toContain('section="reasoning"')
     expect(pane).not.toContain('label="思考模式"')
     expect(pane).not.toContain('ariaLabel="思考模式"')
-    // One row: the model control, with the same provider · level hint as its trigger.
+    // The model row keeps the provider · level hint its trigger shows.
     expect(pane).toContain('modelControlHint.subtitle')
-    // Searching for either half of the merged control reveals the row.
-    expect(pane).toContain("shows('模型', '思考模式', '推理强度')")
     // Saving still writes the same three fields.
-    expect(pane).toContain('value.provider = provider')
-    expect(pane).toContain('value.model = model')
+    expect(pane).toContain('value.provider = nextProvider')
+    expect(pane).toContain('value.model = nextModel')
     expect(pane).toContain('value.reasoningEffort = nextReasoningEffort')
   })
 
-  it('replaces the same two rows in the create dialog', () => {
+  it('keeps the merged control in the create dialog', () => {
     expect((dialog.match(/<ModelControl/g) ?? [])).toHaveLength(1)
     expect(dialog).not.toContain('label="思考模式"')
     expect(dialog).not.toContain('ariaLabel="思考模式"')

@@ -62,11 +62,8 @@ const {
 const {
   AssistantDetailBody,
   AssistantDetailPanel,
-  AssistantOverviewBlock,
   applyAssistantDetail,
-  ASSISTANT_SETTING_GROUPS,
   assistantDetailTarget,
-  visibleSettingGroups,
 } = await import('../src/client/assistant-settings-pane.js')
 type DetailSidebar = import('../src/client/assistant-settings-pane.js').DetailSidebar
 type AssistantAutomationEntry = import('../src/client/assistant-detail.js').AssistantAutomationEntry
@@ -115,50 +112,16 @@ function source(name: string): string {
   return readFileSync(new URL(`../src/client/${name}`, import.meta.url), 'utf8')
 }
 
+/** The settings-row labels in document order (the rows use shared primitives). */
+function rowLabels(html: string): string[] {
+  return [...html.matchAll(/class="[^"]*settingsRowLabel[^"]*">([^<]+)</g)]
+    .flatMap(match => (match[1] === undefined ? [] : [match[1].trim()]))
+}
+
 function renderPanel(value: AssistantInstanceView | undefined): string {
   return renderToStaticMarkup(createElement(AssistantDetailPanel, {
     ...(value === undefined ? {} : { instance: value }),
     expanded: true,
-  }))
-}
-
-function openedDetails(html: string): number {
-  return (html.match(/<details[^>]*\bopen\b/g) ?? []).length
-}
-
-/** The fold ids in document order, open or closed. */
-function foldIds(html: string): string[] {
-  return [...html.matchAll(/data-dsh-fold="([a-z]+)"/g)].flatMap(match => (
-    match[1] === undefined ? [] : [match[1]]
-  ))
-}
-
-/** The folds that render `<details open>`: a closed fold mounts no body. */
-function openFoldIds(html: string): string[] {
-  return [...html.matchAll(/<details[^>]*>/g)]
-    .flatMap(match => (match[0].includes(' open') ? [match[0]] : []))
-    .flatMap(tag => {
-      const id = /data-dsh-fold="([a-z]+)"/.exec(tag)?.[1]
-      return id === undefined ? [] : [id]
-    })
-}
-
-/** 概览 is the last, folded group; its body renders through this component. */
-function renderOverview(value: AssistantInstanceView): string {
-  return renderToStaticMarkup(createElement(AssistantOverviewBlock, {
-    assistant: value,
-    labels: {
-      template: 'template-1',
-      workspace: value.workspacePath,
-      permission: '工作区可写',
-    },
-    counts: {},
-    avatar: {
-      seed: value.id,
-      mascot: {},
-      avatar: value.assistantSnapshot.avatar ?? '',
-    },
-    onJump: () => undefined,
   }))
 }
 
@@ -194,234 +157,188 @@ describe('assistant detail sections', () => {
   })
 })
 
-describe('assistant settings pane', () => {
-  it('renders a search field and every accordion group', () => {
+describe('assistant detail continuous layout', () => {
+  it('is one continuous page: no folds, no search box and no save bar', () => {
     const html = renderPanel(instance())
     const view = text(html)
 
     expect(html).toContain('data-dsh-assistant-detail')
-    expect(html).toContain('aria-label="搜索设置"')
-    expect(html.match(/data-dsh-fold=/g)).toHaveLength(ASSISTANT_SETTING_GROUPS.length)
-    for (const group of ASSISTANT_SETTING_GROUPS) {
-      expect(view).toContain(group.title)
-    }
-    expect(view).toContain('保存')
+    expect(html).not.toContain('<details')
+    expect(html).not.toContain('data-dsh-fold')
+    expect(html).not.toContain('aria-label="搜索设置"')
+    expect(html).not.toContain('settingsSearch')
+    expect(html).not.toContain('settingsSaveBar')
+    // The one explicit save left on the page belongs to 指令.
+    expect(view).toContain('保存人设')
+    expect(html).not.toContain('>保存</button>')
   })
 
-  it('heads 身份 with the avatar, its name and subtitle behind one edit button', () => {
+  it('starts with the avatar over full-width 名称 / 称号 / 指令 fields', () => {
     const html = renderPanel(instance())
     const view = text(html)
 
     expect(html).toContain('data-dsh-assistant-avatar-hero')
-    // A 64px avatar, the name, and the existing group/status as the subtitle.
     expect(html).toMatch(/data-dsh-assistant-avatar-hero[\s\S]*?width:64px/)
     expect(view).toContain('小码')
     expect(view).toContain('前端 · 空闲')
-    // The edit affordance is a real, keyboard-focusable button.
     expect(html).toMatch(/<button[^>]*aria-label="编辑头像"[^>]*aria-expanded="false"/)
-    expect(html).not.toContain('disabled="" aria-label="编辑头像"')
-    // Clicking is what expands it: a fresh render mounts no panel at all.
     expect(html).not.toContain('data-dsh-avatar-editor')
-    // And there is no second avatar control left in 身份.
-    expect(view).not.toContain('选择图片')
-    expect(html).not.toContain('data-dsh-assistant-mascot')
+    // 一句话介绍 is not in the reference layout; the create dialog still has it.
+    expect(view).not.toContain('一句话介绍')
+
+    const hero = html.indexOf('data-dsh-assistant-avatar-hero')
+    const name = html.indexOf('aria-label="名称"')
+    const title = html.indexOf('aria-label="称号"')
+    const instructions = html.indexOf('data-dsh-assistant-section="instructions"')
+    expect(hero).toBeGreaterThan(-1)
+    expect(hero).toBeLessThan(name)
+    expect(name).toBeLessThan(title)
+    expect(title).toBeLessThan(instructions)
+
+    // 指令 keeps its own explicit save instead of riding the write-through.
+    expect(html).toContain('aria-label="人设说明"')
+    expect(html).toContain('保存人设')
+
+    // Full-width fields, not the dialog's label-left/control-right row.
+    const cssSource = readFileSync(
+      new URL('../src/client/AgentTeam.module.css', import.meta.url),
+      'utf8',
+    )
+    expect(cssSource).toContain('.assistantIdentityField .input {')
+    expect(cssSource.slice(cssSource.indexOf('.assistantIdentityField .input {')))
+      .toContain('width: 100%;')
   })
 
-  function instanceWith(patch: {
-    instructions?: string
-    skills?: string[]
-    mcp?: string[]
-  }): AssistantInstanceView {
-    const base = instance()
-    return {
-      ...base,
-      assistantSnapshot: {
-        ...base.assistantSnapshot,
-        instructions: patch.instructions ?? '',
-        skillAllowlist: patch.skills ?? [],
-        mcpServers: patch.mcp ?? [],
-      },
+  it('reads 核心 / 备用模型 / 已知 / 行为 / 规则 in the reference order', () => {
+    const html = renderPanel(instance())
+    const view = text(html)
+    const sectionAt = (id: string): number => html.indexOf(`data-dsh-assistant-section="${id}"`)
+
+    expect(sectionAt('identity')).toBeLessThan(sectionAt('instructions'))
+    expect(sectionAt('instructions')).toBeLessThan(sectionAt('core'))
+    expect(sectionAt('core')).toBeLessThan(sectionAt('fallback'))
+    expect(sectionAt('fallback')).toBeLessThan(sectionAt('known'))
+    expect(sectionAt('known')).toBeLessThan(sectionAt('behavior'))
+    expect(sectionAt('behavior')).toBeLessThan(sectionAt('rules'))
+
+    for (const heading of ['核心', '备用模型', '已知', '行为', '规则']) {
+      expect(view).toContain(heading)
     }
-  }
+    expect(view.indexOf('核心')).toBeLessThan(view.indexOf('备用模型'))
+    expect(view.indexOf('备用模型')).toBeLessThan(view.indexOf('已知'))
+    expect(view.indexOf('已知')).toBeLessThan(view.indexOf('行为'))
+    expect(view.indexOf('行为')).toBeLessThan(view.indexOf('规则'))
 
-  it('renders 概览 as the three-part checkup, not the old fact table', () => {
-    const html = renderOverview(instanceWith({}))
-    const view = text(html)
-
-    expect(html).toContain('data-dsh-assistant-overview')
-    expect(html).toContain('data-dsh-assistant-overview-todos')
-    expect(html).toContain('data-dsh-assistant-overview-who')
-    expect(html).toContain('data-dsh-assistant-overview-limits')
-
-    expect(view).toContain('待办清单')
-    expect(view).toContain('它是什么')
-    expect(view).toContain('能力边界')
-    expect(view).toContain('能做到')
-    // The three known gaps here: description, skills, MCP. Counts are not read
-    // in a static render, so 自动化 / 记忆 make no claim yet.
-    expect(html.match(/data-dsh-assistant-overview-todo=/g)).toHaveLength(3)
-    expect(view).toContain('写一段描述，让它知道自己是干什么的')
-    expect(view).toContain('还没有授予任何技能')
-    expect(view).toContain('还没有可用的 MCP 工具')
-    expect(view).not.toContain('没有自动化任务')
-    // Every row is a whole-row button with the jump arrow on the right.
-    expect((html.match(/→/g) ?? [])).toHaveLength(3)
-    // The description keeps two lines here; the full text stays in the title.
-    const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
-    const description = css.slice(css.indexOf('.assistantOverviewDescription {'))
-    expect(description.slice(0, description.indexOf('}'))).toContain('-webkit-line-clamp: 2')
-    // Who: the 24px avatar, the name, the missing-description jump and the meta.
-    expect(html).toContain('还没有描述')
-    expect(view).toContain('小码')
-    expect(view).toContain('模板：template-1')
-    expect(view).toContain('Workspace：/tmp/workspace-1')
-    expect(view).toContain('权限：工作区可写')
-    // Limits: the real workspace sentence, and no invented negative.
-    expect(view).toContain('运行在「/tmp/workspace-1」工作区，权限：工作区可写')
-    expect(html).not.toContain('data-dsh-assistant-overview-unable')
-
-    // The old read-only duplicate is gone from the settings page.
-    expect(view).not.toContain('创建时间')
-    expect(html).not.toContain('data-dsh-assistant-settings-status')
-    expect(html).not.toContain('data-dsh-assistant-settings-coordinator')
-  })
-
-  it('always gives a non-empty description a 读全部 text action into 身份', () => {
-    const html = renderOverview(instanceWith({ instructions: '第一行\n第二行\n第三行' }))
-
-    // The clamped two-line excerpt is followed by a real text button.
-    expect(html).toContain('assistantOverviewDescription')
-    expect(html).toContain('data-dsh-assistant-overview-read-all')
-    expect(html).toContain('>读全部<')
-    expect(html).toMatch(/<button[^>]*data-dsh-assistant-overview-read-all/)
-
+    // 核心: the model and reasoning rows, split from the merged control.
+    const rows = rowLabels(html)
+    expect(rows).toEqual([
+      '模型', '推理', '备用模型', 'MCP', '文件', '数据表', '发布助手', '权限', '通知',
+    ])
     const pane = source('assistant-settings-pane.tsx')
-    const readAll = pane.slice(
-      pane.indexOf('data-dsh-assistant-overview-read-all'),
-      pane.indexOf('</button>', pane.indexOf('data-dsh-assistant-overview-read-all')),
-    )
-    // It jumps to the group that owns the description, and it is a text action,
-    // not an icon.
-    expect(readAll).toContain("onJump('identity')")
-    expect(readAll).not.toContain('<svg')
+    expect((pane.match(/<ModelControl/g) ?? [])).toHaveLength(2)
+    expect(pane).toContain('section="model"')
+    expect(pane).toContain('section="reasoning"')
 
-    // The empty branch keeps its own entry; the read-all only appears with text.
-    const empty = renderOverview(instanceWith({}))
-    expect(empty).toContain('还没有描述')
-    expect(empty).not.toContain('data-dsh-assistant-overview-read-all')
+    // 已知 / 行为 rows exist over the real editors.
+    for (const section of ['memory', 'skills', 'automations', 'usage', 'history']) {
+      expect(html).toContain(`data-dsh-assistant-block="${section}"`)
+    }
+    expect(view).toContain('记忆')
+    expect(view).toContain('技能')
+    expect(view).toContain('文件')
+    expect(view).toContain('数据表')
+    expect(view).toContain('自动化任务')
+    expect(view).toContain('用量')
+    expect(view).toContain('发布助手')
+    expect(view).toContain('权限')
+    expect(view).toContain('通知')
+    expect(view).toContain('高级')
   })
 
-  it('drops the checklist entirely once nothing is missing', () => {
-    const html = renderOverview(instanceWith({
-      instructions: '写代码',
-      skills: ['research'],
-      mcp: ['files'],
-    }))
-    const view = text(html)
-
-    // No empty shell, no completion badge: just the other two sections.
-    expect(html).not.toContain('data-dsh-assistant-overview-todos')
-    expect(view).not.toContain('待办清单')
-    expect(html).toContain('data-dsh-assistant-overview-who')
-    expect(view).toContain('写代码')
-    expect(view).toContain('可以使用 1 个技能（research）')
-    expect(view).toContain('可以调用 1 个 MCP 工具')
-  })
-
-  it('jumps inside the pane: opens the target group and scrolls to it', () => {
-    const pane = source('assistant-settings-pane.tsx')
-
-    // The targets map onto the new page: identity is its own fold, and the
-    // other three are sub-blocks of 工作.
-    expect(pane).toContain('const OVERVIEW_TARGET_GROUP')
-    expect(pane).toContain("identity: { group: 'identity' }")
-    expect(pane).toContain("capabilities: { group: 'work', section: 'skills' }")
-    expect(pane).toContain("memory: { group: 'work', section: 'memory' }")
-    expect(pane).toContain("automations: { group: 'work', section: 'automations' }")
-    expect(pane).toContain('querySelector(selector)')
-    expect(pane).toContain(".scrollIntoView({ block: 'start' })")
-    expect(pane).toContain('setOpenGroups(current => ({ ...current, [destination.group]: true }))')
-    // A search hides non-matching groups, so the jump clears it first.
-    expect(pane).toContain("setQuery('')")
-    // 概览 is read-only: the block maps the pure results and calls nothing that writes.
-    const overviewBlock = pane.slice(
-      pane.indexOf('export function AssistantOverviewBlock'),
-      pane.indexOf('export function AssistantSettingsPane'),
-    )
-    expect(overviewBlock).toContain('onJump')
-    expect(overviewBlock).not.toContain('callAgentTeam')
-    expect(overviewBlock).not.toContain('setAvatarDraft')
-    expect(overviewBlock).not.toContain('<Button')
-  })
-
-  it('matches 概览 by its own sections without stealing the other groups’ words', () => {
-    expect(visibleSettingGroups('待办')).toEqual(['overview'])
-    expect(visibleSettingGroups('能力边界')).toEqual(['overview'])
-    // 技能 / MCP / 自动化 / 记忆 are all edited inside 工作 now.
-    expect(visibleSettingGroups('技能')).toEqual(['work'])
-    expect(visibleSettingGroups('自动化')).toEqual(['work'])
-    expect(visibleSettingGroups('记忆')).toEqual(['work'])
-  })
-
-  it('lays the page out as 现在 / 身份 / 大脑 / 工作 / 规则 with 概览 last', () => {
+  it('renders 备用模型/数据表/发布助手/通知 as disabled 暂不支持 rows', () => {
     const html = renderPanel(instance())
 
-    expect(foldIds(html)).toEqual(['now', 'identity', 'brain', 'work', 'rules', 'overview'])
-    expect(ASSISTANT_SETTING_GROUPS.map(group => group.title))
-      .toEqual(['现在', '身份', '大脑', '工作', '规则', '概览'])
-    // 现在 answers from its summary and 概览 closes the page: both stay folded,
-    // so neither body is mounted. 规则 is folded because 归档 is destructive.
-    expect(openFoldIds(html)).toEqual(['identity', 'brain', 'work'])
-    expect(openedDetails(html)).toBe(3)
+    for (const label of ['备用模型', '数据表', '发布助手', '通知']) {
+      const marker = `data-dsh-assistant-unsupported="${label}"`
+      expect(html).toContain(marker)
+      const control = html.slice(html.indexOf(marker))
+      expect(control.slice(0, control.indexOf('</span>'))).toContain('暂不支持')
+      expect(html).toContain('aria-disabled="true"')
+    }
+    expect((html.match(/data-dsh-assistant-unsupported=/g) ?? [])).toHaveLength(4)
+  })
+
+  it('removes 现在 and 概览 from this page', () => {
+    const html = renderPanel(instance())
+    const view = text(html)
+
+    expect(view).not.toContain('现在')
+    expect(view).not.toContain('概览')
     expect(html).not.toContain('data-dsh-assistant-now')
     expect(html).not.toContain('data-dsh-assistant-overview')
-    expect(html).not.toContain('data-dsh-assistant-rules-advanced')
+    const pane = source('assistant-settings-pane.tsx')
+    expect(pane).not.toContain('AssistantNowBlock')
+    expect(pane).not.toContain('AssistantOverviewBlock')
   })
 
-  it('shows 已知 and 行为 inside 工作 over the editors it already had', () => {
+  it('writes each row through on blur/debounce and reports inline', () => {
+    const pane = source('assistant-settings-pane.tsx')
+
+    // Text identity fields commit on blur.
+    expect(pane).toContain('onBlur={() => { void commitName() }}')
+    expect(pane).toContain('onBlur={() => { void commitTitle() }}')
+    // The avatar writes its settled draft through a debounce.
+    expect(pane).toContain('window.setTimeout(() => { void commitAvatar() }, 600)')
+    // Selects and capability toggles write on change.
+    expect(pane).toContain('onChange={next => { void commitPermission(next) }}')
+    expect(pane).toContain("commitCapabilities('skills', next)")
+    expect(pane).toContain("commitCapabilities('mcpServers', next)")
+    // One shared write path, with inline saving/saved/error feedback.
+    expect(pane).toContain("await callAgentTeam('assistant.instance.update'")
+    expect(pane).toContain("setFeedback({ key, kind: 'saved' })")
+    expect(pane).toContain('data-dsh-assistant-save-status="saved"')
+    expect(pane).toContain('data-dsh-assistant-save-status="error"')
+    // No staged identity save bar and no multi-field save.
+    expect(pane).not.toContain('settingsSaveBar')
+    expect(pane).not.toContain('function save()')
+    expect(pane).not.toContain('const value: UpdateAssistantInstanceInput = { name: displayName }')
+    // 指令 keeps its own save.
+    expect(pane).toContain('<PersonaSection')
+  })
+
+  it('keeps the preserved editors and lifecycle actions', () => {
     const html = renderPanel(instance())
     const view = text(html)
 
-    expect(view).toContain('已知')
-    expect(view).toContain('行为')
-    for (const section of [
-      'knows', 'memory', 'skills', 'workspace',
-      'does', 'automations', 'usage', 'history',
-    ]) {
-      expect(html).toContain(`data-dsh-work-section="${section}"`)
-    }
-    // The real blocks are mounted, not placeholder rows.
     expect(html).toContain('aria-label="助手持久记忆"')
     expect(html).toContain('选择助手可使用的 Skills')
     expect(html).toContain('选择助手可使用的 MCP Server')
     expect(html).toContain('data-dsh-usage-section')
     expect(html).toContain('data-dsh-assistant-detail-section="history"')
-    // The workspace row is a read-only fact, not a second file browser.
-    expect(view).toContain('工作区')
     expect(view).toContain('/tmp/workspace-1')
+    expect(html).toContain('data-dsh-assistant-rules-action="compact"')
+    expect(html).toContain('data-dsh-assistant-rules-action="relationship"')
+    expect(view).toContain('暂停运行')
+    expect(view).toContain('归档助手')
   })
 
-  it('keeps permission and 高级 (compact / new relationship / archive) in 规则', () => {
-    const pane = source('assistant-settings-pane.tsx')
-    const rules = pane.slice(pane.indexOf("isVisible('rules')"), pane.indexOf('dataKind="overview"'))
+  it('lifts the mobile fullscreen rightbar above the header, clear of the notch', () => {
+    const cssSource = readFileSync(
+      new URL('../src/client/AgentTeam.module.css', import.meta.url),
+      'utf8',
+    )
+    const marker = '@media (max-width: 767px)'
+    const at = cssSource.indexOf(marker)
+    expect(at).toBeGreaterThan(-1)
+    const block = cssSource.slice(at)
 
-    expect(rules).toContain('label="权限预设"')
-    expect(rules).toContain('data-dsh-assistant-rules-action="compact"')
-    expect(rules).toContain('data-dsh-assistant-rules-action="relationship"')
-    expect(rules).toContain('暂停运行')
-    expect(rules).toContain('归档助手')
-    expect(rules).toContain('恢复助手')
-    // 高级 owns the two relationship calls; the now block keeps its own buttons.
-    expect(rules).toContain('void compactMainSession()')
-    expect(rules).toContain('onClick={startNewRelationship}')
-  })
-
-  it('does not stub the nightly rows this plugin cannot save', () => {
-    const pane = source('assistant-settings-pane.tsx')
-
-    for (const absent of ['备用模型', '数据表', '发布助手', '通知', 'folders', 'browser']) {
-      expect(pane).not.toContain(absent)
-    }
+    // The host's fullscreen panel is the native rightbar, not a plugin overlay.
+    expect(block).toContain("[data-sidebar-right-panel='fullscreen']")
+    expect(block).toContain('z-index: 60;')
+    expect(block).toContain('padding-top: calc(8px + env(safe-area-inset-top, 0px));')
+    // Narrow-screen only, so desktop stacking is untouched.
+    expect(cssSource.lastIndexOf('z-index: 60;')).toBeGreaterThan(at)
+    expect(cssSource.slice(0, at)).not.toContain('z-index: 60;')
   })
 
   it('shows the empty instruction when no helper was opened', () => {
@@ -430,7 +347,7 @@ describe('assistant settings pane', () => {
 
     expect(view).toBe('从左侧选择一个助手')
     expect(html).toContain('data-dsh-assistant-detail-empty')
-    expect(html).not.toContain('data-dsh-fold')
+    expect(html).not.toContain('data-dsh-assistant-section')
   })
 
   it('mounts in the host seat with the identity the open action injected', () => {
@@ -444,30 +361,6 @@ describe('assistant settings pane', () => {
     // but it is the pane — not the "currently selected" list row.
     expect(html).toContain('data-expanded="false"')
     expect(html).toMatch(/正在加载助手|从左侧选择一个助手/)
-  })
-})
-
-describe('settings search', () => {
-  it('keeps every group for a blank query', () => {
-    expect(visibleSettingGroups('')).toHaveLength(ASSISTANT_SETTING_GROUPS.length)
-  })
-
-  it('narrows to the matching group by title or keyword', () => {
-    expect(visibleSettingGroups('模型')).toEqual(['brain'])
-    expect(visibleSettingGroups('技能')).toEqual(['work'])
-    expect(visibleSettingGroups('显示名称')).toEqual(['identity'])
-    // The mascot/animation controls moved out of 身份与形象 into the avatar
-    // editor at the page header, so the old word no longer names a group.
-    expect(visibleSettingGroups('吉祥物')).toEqual([])
-    expect(visibleSettingGroups('归档')).toEqual(['rules'])
-  })
-
-  it('is empty when nothing matches, so the pane can say so', () => {
-    expect(visibleSettingGroups('没有这个设置')).toEqual([])
-  })
-
-  it('matches case-insensitively and ignores surrounding spaces', () => {
-    expect(visibleSettingGroups('  MCP ')).toEqual(['work'])
   })
 })
 

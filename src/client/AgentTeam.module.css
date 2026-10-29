@@ -12370,105 +12370,8 @@ textarea.sidebarGroupBriefInput {
   white-space: nowrap;
 }
 
-/* ── 现在: the pane's first answer ─────────────────────────────────────────
-   Under the hero, above 概览. A quiet card, not a second settings form: three
-   read-only lines and the three actions that leave it. */
-.assistantNow {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex: none;
-  margin: 0 0 6px;
-  padding: 10px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-lg);
-  background: var(--dsw-alias-bg-layer-1);
-  min-width: 0;
-}
-
-.assistantNowHead {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.assistantNowTitle {
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
-}
-
-.assistantNowStatus {
-  flex: none;
-  margin-left: auto;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
-  font-weight: 500;
-  line-height: 18px;
-}
-
-.assistantNowStatus[data-dsh-assistant-now-status='needs_input'] {
-  color: var(--dsw-alias-state-warn-primary);
-}
-
-.assistantNowStatus[data-dsh-assistant-now-status='running'] {
-  color: var(--dsw-alias-state-success-primary);
-}
-
-.assistantNowStatus[data-dsh-assistant-now-status='starting'] {
-  color: var(--dsw-alias-state-business-primary);
-}
-
-.assistantNowStatus[data-dsh-assistant-now-status='error'] {
-  color: var(--dsw-alias-state-error-primary);
-}
-
-.assistantNowLine {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  min-width: 0;
-}
-
-.assistantNowLabel {
-  flex: none;
-  width: 32px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 18px;
-}
-
-.assistantNowValue {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--dsw-alias-label-primary);
-  font-size: 12px;
-  line-height: 18px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.assistantNowMeta {
-  flex: none;
-  max-width: 45%;
-  overflow: hidden;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.assistantNowActions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding-top: 2px;
-}
-
-.assistantNowAction {
+/* 高级: the compact / new-relationship actions under 规则. */
+.assistantSettingsAction {
   padding: 3px 8px;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: var(--dsw-radius-md);
@@ -12480,16 +12383,16 @@ textarea.sidebarGroupBriefInput {
   cursor: pointer;
 }
 
-.assistantNowAction:hover:not(:disabled) {
+.assistantSettingsAction:hover:not(:disabled) {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.assistantNowAction:disabled {
+.assistantSettingsAction:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.assistantNowAction:focus-visible {
+.assistantSettingsAction:focus-visible {
   outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-brand-primary));
   outline-offset: 1px;
 }
@@ -12698,68 +12601,91 @@ textarea.sidebarGroupBriefInput {
   line-height: 18px;
 }
 
-/* 设置 pane: one search field over every group, one sticky save bar. */
-.settingsSearch {
+/* The continuous settings page: identity fields over the 核心 / 备用模型 / 已知 /
+   行为 / 规则 blocks. No fold, no search, no save bar — one scroll. */
+.assistantSettingsSection {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-  height: 32px;
-  padding: 0 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-tertiary);
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
 }
 
-.settingsSearch input {
-  flex: 1 1 auto;
-  min-width: 0;
-  border: 0;
-  background: transparent;
+.assistantSettingsSection + .assistantSettingsSection {
+  margin-top: 8px;
+}
+
+.assistantSettingsSectionTitle {
+  margin: 0;
   color: var(--dsw-alias-label-primary);
-  font: inherit;
-  outline: none;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 20px;
 }
 
-.settingsSaveBar {
-  position: sticky;
-  bottom: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-  padding: 8px 0 2px;
-  border-top: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-1);
-}
-
-.settingsSaveHint {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 16px;
-}
-
-/* 工作: nightly's two subheads — 已知 (what it knows) and 行为 (what it does) —
-   over the existing editors. The fold group is already the container, so these
-   are headings and spacing only, never a nested card. */
-.assistantWorkGroup {
+.assistantSettingsBlock {
   display: flex;
   flex-direction: column;
   gap: 8px;
   min-width: 0;
 }
 
-.assistantWorkTitle {
-  margin: 0;
+.assistantSettingsBlockTitle {
   color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   font-weight: 500;
   line-height: 18px;
 }
 
+/* Identity: full-width labelled fields, not the dialog's label/control row. */
+.assistantIdentityField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.assistantIdentityLabel {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.assistantIdentityField .input {
+  width: 100%;
+}
+
+.assistantIdentityCounter {
+  align-self: flex-end;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* Write-through feedback lives on the row that wrote, never in a save bar. */
+.assistantSaveStatus {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.assistantSaveStatusError {
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+  line-height: 17px;
+}
+
+.assistantUnsupportedValue {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* 已知 / 行为: the nightly subheads over the existing editors. */
 .assistantWorkHint {
   color: var(--dsw-alias-label-tertiary);
   font-size: 11px;
@@ -12780,170 +12706,6 @@ textarea.sidebarGroupBriefInput {
   gap: 8px;
   margin-top: 4px;
   min-width: 0;
-}
-
-/* 概览: a read-only checkup — what is missing, what it is, where its limits are.
-   No card fill: the fold group is already the container. */
-.assistantOverview {
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  min-width: 0;
-}
-
-.assistantOverviewSection {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.assistantOverviewTitle {
-  margin: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
-}
-
-.assistantOverviewTodos {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.assistantOverviewTodo {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  box-sizing: border-box;
-  width: 100%;
-  min-height: 48px;
-  margin: 0 -8px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--dsw-radius-md);
-  background: none;
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 13px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.assistantOverviewTodo:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.assistantOverviewTodo:focus-visible {
-  outline: 2px solid var(--dsw-focus-ring-color, var(--dsw-alias-brand-primary));
-  outline-offset: -2px;
-}
-
-.assistantOverviewTodoText {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.assistantOverviewArrow {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 13px;
-}
-
-.assistantOverviewWho {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.assistantOverviewWhoName {
-  overflow: hidden;
-  color: var(--dsw-alias-label-primary);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 20px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.assistantOverviewDescription {
-  display: -webkit-box;
-  overflow: hidden;
-  /* The stored description is two lines here; the full text stays in the title. */
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  margin: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  line-height: 18px;
-  white-space: pre-line;
-}
-
-.assistantOverviewDescriptionEmpty {
-  align-self: flex-start;
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--dsw-alias-label-tertiary);
-  font: inherit;
-  font-size: 12px;
-  line-height: 18px;
-  cursor: pointer;
-}
-
-.assistantOverviewDescriptionEmpty:hover {
-  color: var(--dsw-alias-label-primary);
-  text-decoration: underline;
-}
-
-.assistantOverviewMeta {
-  margin: 0;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 17px;
-  overflow-wrap: anywhere;
-}
-
-.assistantOverviewListTitle {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 17px;
-}
-
-.assistantOverviewList {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.assistantOverviewList li {
-  position: relative;
-  padding-left: 10px;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.assistantOverviewList li::before {
-  content: '·';
-  position: absolute;
-  left: 0;
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.assistantOverviewNothing {
-  margin: 0;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 12px;
-  line-height: 18px;
 }
 
 .assistantDetailEmpty {
@@ -13431,6 +13193,20 @@ textarea.sidebarGroupBriefInput {
   justify-content: flex-start;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+/* Narrow screens: the host turns the right pane into an overlay fullscreen.
+   Lift it over the app header, and keep the page clear of the notch. Host
+   menus (z-index 70) and modal overlays (1000+) still sit above it, and the
+   rule is inside the same 767px breakpoint the host uses before 768px. */
+@media (max-width: 767px) {
+  :global([data-sidebar-right-panel='fullscreen']) {
+    z-index: 60;
+  }
+
+  .assistantDetail {
+    padding-top: calc(8px + env(safe-area-inset-top, 0px));
+  }
 }
 
 /* 用量: a read-only rollup from the Host's own Session projections. No card, no

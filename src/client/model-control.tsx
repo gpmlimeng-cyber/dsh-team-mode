@@ -14,6 +14,9 @@ export interface ModelControlModel {
   description?: string | undefined
 }
 
+/** Which half of the merged picker one control renders. */
+export type ModelControlSection = 'both' | 'model' | 'reasoning'
+
 /** What one menu pick changes, so the two row kinds stay distinguishable. */
 export interface ModelControlPatch {
   provider?: string
@@ -89,14 +92,17 @@ export function modelControlReasoning(
 export function modelControlOptions(
   models: readonly ModelControlModel[],
   reasoning: ModelControlReasoning | undefined,
+  section: ModelControlSection = 'both',
 ): SelectControlOption[] {
-  const rows: SelectControlOption[] = models.map(model => ({
-    value: modelControlModelRow(model.providerId, model.modelId),
-    label: model.label,
-    group: model.providerName,
-    ...(model.description === undefined ? {} : { description: model.description }),
-  }))
-  if (reasoning === undefined) return rows
+  const rows: SelectControlOption[] = section === 'reasoning'
+    ? []
+    : models.map(model => ({
+      value: modelControlModelRow(model.providerId, model.modelId),
+      label: model.label,
+      group: model.providerName,
+      ...(model.description === undefined ? {} : { description: model.description }),
+    }))
+  if (reasoning === undefined || section === 'model') return rows
   return [
     ...rows,
     {
@@ -122,10 +128,13 @@ export function modelControlSelection(
   model: string,
   reasoningEffort: string,
   reasoning: ModelControlReasoning | undefined,
+  section: ModelControlSection = 'both',
 ): string[] {
   const selected: string[] = []
-  if (provider !== '' && model !== '') selected.push(modelControlModelRow(provider, model))
-  if (reasoning !== undefined) {
+  if (section !== 'reasoning' && provider !== '' && model !== '') {
+    selected.push(modelControlModelRow(provider, model))
+  }
+  if (section !== 'model' && reasoning !== undefined) {
     const picked = reasoning.levels.some(level => level.id === reasoningEffort) ? reasoningEffort : ''
     selected.push(modelControlEffortRow(picked))
   }
@@ -143,6 +152,7 @@ export function modelControlTrigger(
   models: readonly ModelControlModel[],
   reasoning: ModelControlReasoning | undefined,
   reasoningEffort = '',
+  section: ModelControlSection = 'both',
 ): SelectControlTrigger {
   const row = models.find(candidate => (
     candidate.providerId === provider && candidate.modelId === model
@@ -155,6 +165,15 @@ export function modelControlTrigger(
   const level = picked === undefined
     ? reasoning?.defaultLevel ?? reasoning?.defaultLabel
     : reasoning?.levels.find(candidate => candidate.id === picked)?.label ?? picked
+  if (section === 'model') {
+    return {
+      title,
+      ...(providerName === '' ? {} : { subtitle: providerName }),
+    }
+  }
+  if (section === 'reasoning') {
+    return { title: level ?? '模型默认' }
+  }
   const subtitle = providerName === ''
     ? level
     : level === undefined ? providerName : `${providerName} · ${level}`
@@ -165,10 +184,11 @@ export function modelControlTrigger(
 }
 
 /**
- * 模型 and 思考模式 in one control, built on the shared `SelectControl`: the
- * trigger names the model over its provider and level, and one menu carries the
- * provider-grouped models plus the shown model's levels. Nothing here fetches;
- * the caller passes the catalog rows and its `useModelCapabilities` value.
+ * 模型 and 思考模式 on the shared `SelectControl`. `section='both'` keeps the
+ * original merged menu (create dialog); `section='model'` and
+ * `section='reasoning'` split it into the detail page's two rows. Nothing here
+ * fetches; the caller passes the catalog rows and its `useModelCapabilities`
+ * value.
  */
 export function ModelControl({
   provider,
@@ -177,6 +197,7 @@ export function ModelControl({
   models,
   capabilities,
   disabled = false,
+  section = 'both',
   ariaLabel = '模型与思考模式',
   onChange,
 }: {
@@ -187,12 +208,18 @@ export function ModelControl({
   models: readonly ModelControlModel[]
   capabilities: ModelCapabilitiesView | undefined
   disabled?: boolean
+  /** Render only the model rows, only the reasoning rows, or the merged menu. */
+  section?: ModelControlSection
   ariaLabel?: string
   onChange: (patch: ModelControlPatch) => void
 }): JSX.Element {
   const reasoning = modelControlReasoning(capabilities)
-  const trigger = modelControlTrigger(provider, model, models, reasoning, reasoningEffort)
-  const selected = modelControlSelection(provider, model, reasoningEffort, reasoning)
+  const trigger = modelControlTrigger(
+    provider, model, models, reasoning, reasoningEffort, section,
+  )
+  const selected = modelControlSelection(
+    provider, model, reasoningEffort, reasoning, section,
+  )
   return (
     <SelectControl
       ariaLabel={trigger.subtitle === undefined
@@ -200,7 +227,7 @@ export function ModelControl({
         : `${ariaLabel}：${trigger.title}，${trigger.subtitle}`}
       value=""
       selectedIds={selected}
-      options={modelControlOptions(models, reasoning)}
+      options={modelControlOptions(models, reasoning, section)}
       triggerLines={trigger}
       title={provider === '' || model === '' ? undefined : `${provider} / ${model}`}
       disabled={disabled}

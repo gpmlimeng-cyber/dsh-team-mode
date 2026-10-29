@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
-import type { AssistantMemory, AssistantSession, MemoryEntry } from '../src/domain/types.js'
+import type { AssistantMemory, MemoryEntry } from '../src/domain/types.js'
 import type { AssistantCreateDraft } from '../src/client/assistant-form.js'
 import type { AssistantCreateBodyProps, AssistantCreateFooterProps } from '../src/client/assistant-dialogs.js'
 import type { AssistantInstanceView } from '../src/transport/contracts.js'
@@ -91,13 +91,7 @@ const {
   memoryWriteFailure,
 } = await import('../src/client/assistant-memory-panel.js')
 const { AssistantCreateBody, AssistantCreateFooter } = await import('../src/client/assistant-dialogs.js')
-const {
-  ASSISTANT_SETTING_GROUPS,
-  AssistantNowBlock,
-  AssistantOverviewMemoryRow,
-  visibleSettingGroups,
-} = await import('../src/client/assistant-settings-pane.js')
-const { assistantNow } = await import('../src/client/assistant-instances.js')
+const { AssistantDetailPanel } = await import('../src/client/assistant-settings-pane.js')
 const {
   UsageSection,
   assistantUsageScope,
@@ -148,94 +142,11 @@ function plainText(html: string): string {
   return html.replace(/<[^>]*>/g, '')
 }
 
-describe('assistant 概览 memory count row (M1)', () => {
-  function row(count: number, onManage: () => void = () => undefined): string {
-    return renderToStaticMarkup(createElement(AssistantOverviewMemoryRow, { count, onManage }))
-  }
-
-  it('is one line: 记忆 · N 条 · 管理 →', () => {
-    const html = row(12)
-
-    expect(plainText(html)).toBe('记忆 · 12 条 · 管理 →')
-    // One real button carrying the count — not a link, not a menu, not a row
-    // that writes anything by itself.
-    expect(html).toMatch(/<button[^>]*type="button"[^>]*data-dsh-memory-count="12"/)
-    expect(html).not.toContain('<input')
-  })
-
-  it('says 还没有记录 instead of 0 when it remembers nothing', () => {
-    expect(assistantMemoryCountLine(0)).toBe('记忆 · 还没有记录')
-    expect(plainText(row(0))).toBe('记忆 · 还没有记录')
-    expect(plainText(row(0))).not.toContain('0')
-    // A single entry is already a count, never the empty sentence.
-    expect(assistantMemoryCountLine(1)).toBe('记忆 · 1 条 · 管理 →')
-  })
-
-  it('hands the click to the pane: the row itself owns no navigation', () => {
-    const onManage = vi.fn()
-    const element = AssistantOverviewMemoryRow({ count: 3, onManage }) as {
-      props: { onClick: () => void }
-    }
-
-    element.props.onClick()
-    expect(onManage).toHaveBeenCalledTimes(1)
-  })
-})
-
-describe('assistant memory count row wiring', () => {
-  const pane = readFileSync(
-    new URL('../src/client/assistant-settings-pane.tsx', import.meta.url),
-    'utf8',
-  )
+describe('assistant memory panel wiring', () => {
   const memoryPanel = readFileSync(
     new URL('../src/client/assistant-memory-panel.tsx', import.meta.url),
     'utf8',
   )
-
-  it('takes N from the assistant.memory.get read the pane already makes', () => {
-    expect(pane).toContain("callAgentTeam('assistant.memory.get'")
-    // The assistant-scoped entries that read answered with — the same rows the
-    // 记忆 block lists — not a second endpoint and not a stored counter.
-    expect(pane).toContain(
-      'const entries = view.active.length + view.proposed.length + view.historyTotal',
-    )
-    expect(pane).toContain('memoryCount: memoryEntryCount.count')
-    // The count is tagged with the instance it was read for, so switching
-    // helpers can never show the previous assistant's number.
-    expect(pane).toContain('setMemoryEntryCount({ assistantId: assistant.id, count: entries })')
-    expect(pane).toContain('memoryEntryCount?.assistantId === assistant.id')
-    // The block's one memory read also carries the persisted auto-capture
-    // switch, so the pane passes no extra state path down to it.
-    expect(pane).toContain('<AssistantMemorySection assistantId={assistant.id} />')
-  })
-
-  it('renders the row in 概览, where the jump to 记忆 already lives', () => {
-    const overview = pane.slice(
-      pane.indexOf('export function AssistantOverviewBlock'),
-      pane.indexOf('export function AssistantSettingsPane'),
-    )
-
-    expect(overview).toContain('<AssistantOverviewMemoryRow')
-    expect(overview).toContain("onJump('memory')")
-    // The jump is the overview mechanism, not a new one: the pane owns exactly
-    // one jump handler and the row borrows it.
-    expect((pane.match(/const jumpToOverviewTarget/g) ?? [])).toHaveLength(1)
-    expect(pane).toContain('onJump={jumpToOverviewTarget}')
-  })
-
-  it('re-reads after a write inside the 记忆 block instead of going stale', () => {
-    // The block keeps its own document; every successful write announces it so
-    // the count row's one read runs again.
-    expect(memoryPanel).toContain("export const ASSISTANT_MEMORY_CHANGED_EVENT")
-    // Entry writes (add/edit and archive share one announce tail), legacy text,
-    // undo, ask-or-change, 全部忽略, the two adoption paths (采纳 and 全部采纳),
-    // and the focus/visibility re-read a capture write cannot otherwise reach.
-    expect((memoryPanel.match(/announceMemoryChange\(assistantId\)/g) ?? [])).toHaveLength(8)
-    expect(pane).toContain('window.addEventListener(ASSISTANT_MEMORY_CHANGED_EVENT, onChanged)')
-    expect(pane).toContain('if (detail?.assistantId === assistant.id) setMemoryReadNonce')
-    // The read effect is keyed by the nonce, so an event is a fresh read.
-    expect(pane).toContain('[assistant.id, overviewSessionKey, memoryReadNonce]')
-  })
 
   it('renders the default-off auto-capture switch and a batch ignore', () => {
     expect(memoryPanel).toContain('自动记录')
@@ -251,10 +162,9 @@ describe('assistant memory count row wiring', () => {
     expect(memoryPanel).toContain('expectedRevision: expected')
   })
 
-  it('re-reads the block and the count row when the window becomes visible again', () => {
+  it('re-reads the block when the window becomes visible again', () => {
     // An auto-capture write happens with no pane action, so the pane gets the
-    // one signal it has: focus / visibilitychange. The announce is what reaches
-    // the count row, which lives outside the block.
+    // one signal it has: focus / visibilitychange.
     expect(memoryPanel).toContain("window.addEventListener('focus', refresh)")
     expect(memoryPanel).toContain("window.addEventListener('visibilitychange', refresh)")
     expect(memoryPanel).toContain("document.visibilityState === 'hidden'")
@@ -266,73 +176,6 @@ describe('assistant memory count row wiring', () => {
     // leave earlier proposals stored, so a failure must re-read to show them.
     expect(memoryPanel).toContain('export function memoryAskFailure')
     expect(memoryPanel).toContain('return { message: memoryError(cause), reload: true }')
-  })
-})
-
-describe('assistant memory proposal adoption', () => {
-  const memoryPanel = readFileSync(
-    new URL('../src/client/assistant-memory-panel.tsx', import.meta.url),
-    'utf8',
-  )
-
-  it('adopts a proposal by flipping exactly that entry to active', () => {
-    // The same entry with the same body the user was shown: adoption invents no
-    // field and rewrites no text.
-    expect(memoryAcceptanceInput(entry())).toEqual({
-      id: 'mem-1',
-      title: 'Tone',
-      body: 'Be terse.',
-      visibility: 'private',
-      status: 'active',
-    })
-    // A keyed decision keeps its key, so adoption does not drop the handle the
-    // runtime dedupes proposals on.
-    expect(memoryAcceptanceInput({ ...entry(), key: 'tone' })).toMatchObject({
-      key: 'tone',
-      status: 'active',
-    })
-  })
-
-  it('keeps a proposal and reloads when the revision moved under it', () => {
-    const conflict = Object.assign(new Error('conflict'), { code: 'MEMORY_REVISION_CONFLICT' })
-    expect(memoryWriteFailure(conflict)).toEqual({
-      message: '记忆已被其他操作更新，已重新加载最新版本，请重试。',
-      reload: true,
-    })
-    // Any other failure is reported as it is; the proposal is still not dropped.
-    const broken = Object.assign(new Error('写入失败'), { code: 'INTERNAL_ERROR' })
-    expect(memoryWriteFailure(broken)).toEqual({ message: '写入失败', reload: false })
-  })
-
-  it('offers 采纳 per proposal and 全部采纳 beside 全部忽略', () => {
-    expect(memoryPanel).toContain('全部采纳')
-    expect(memoryPanel).toContain('全部忽略')
-    expect(memoryPanel).toContain("acceptingProposals ? '采纳中…' : '全部采纳'")
-    // One 采纳 action per proposal card, keyed by the entry it adopts.
-    expect(memoryPanel).toContain('data-dsh-memory-accept={entry.id}')
-    expect(memoryPanel).toContain('void acceptEntry(entry)')
-    expect(memoryPanel).toContain('void acceptProposals()')
-  })
-
-  it('writes active through the same revision-fenced entry write, then announces and reloads', () => {
-    // No second write path: one endpoint, one expectedRevision fence per write.
-    expect(memoryPanel).toContain("callAgentTeam('assistant.memory.entry.write'")
-    expect(memoryPanel).toContain('entry: memoryAcceptanceInput(entry)')
-    expect(memoryPanel).toContain('await acceptProposalWrite(entry, revision)')
-    // 全部采纳 chains the revision each write returned, so a concurrent edit
-    // stops the batch instead of adopting a stale body.
-    expect(memoryPanel).toContain(
-      'expected = (await acceptProposalWrite(entry, expected)).revision',
-    )
-    const accept = memoryPanel.slice(
-      memoryPanel.indexOf('async function acceptEntry'),
-      memoryPanel.indexOf('async function acceptProposals'),
-    )
-    expect(accept).toContain('announceMemoryChange(assistantId)')
-    expect(accept).toContain('await load()')
-    expect(accept).toContain('if (failure.reload) void load()')
-    // Adoption never archives: a proposal is not handled by deleting it.
-    expect(accept).not.toContain("status: 'archived'")
   })
 })
 
@@ -950,12 +793,10 @@ describe('assistant 用量 wiring', () => {
   )
   const usage = readFileSync(new URL('../src/client/usage.ts', import.meta.url), 'utf8')
 
-  it('keeps 用量 inside 工作 as the nightly 行为 row it is', () => {
-    // The nightly page has no 用量 group of its own; it is a 工作 row.
-    expect(ASSISTANT_SETTING_GROUPS.map(group => group.id))
-      .toEqual(['now', 'identity', 'brain', 'work', 'rules', 'overview'])
-    expect(visibleSettingGroups('缓存')).toEqual(['work'])
-    expect(pane).toContain('data-dsh-work-section="usage"')
+  it('keeps 用量 inside 行为 as the reference row it is', () => {
+    // The nightly page has no 用量 group of its own; it is a 行为 block.
+    expect(pane).toContain('data-dsh-assistant-section="behavior"')
+    expect(pane).toContain('data-dsh-assistant-block="usage"')
     expect(pane).toContain('scope={assistantUsageScope(assistant, taskUsage.tasks)}')
     // Names the source instead of implying this plugin keeps a ledger.
     expect(pane).toContain('只读 · 来自宿主会话投影')
@@ -1117,20 +958,23 @@ describe('assistant identity lines', () => {
       .toEqual({ title: '数据', blurb: '报表' })
   })
 
-  it('edits the same two lines in the settings pane and clears them on save', () => {
+  it('edits 名称 and 称号 on the detail page, writing through on blur', () => {
     const settings = readFileSync(
       new URL('../src/client/assistant-settings-pane.tsx', import.meta.url),
       'utf8',
     )
-    // Same two rows as the create dialog, staged on the one 保存 bar.
-    expect(settings).toContain('aria-label="职能"')
-    expect(settings).toContain('aria-label="一句话介绍"')
+    // The reference page calls the second line 称号 and has no 一句话介绍 row.
+    expect(settings).toContain('aria-label="名称"')
+    expect(settings).toContain('aria-label="称号"')
     expect(settings).toContain('data-dsh-assistant-title-count')
-    expect(settings).toContain('data-dsh-assistant-blurb-count')
-    expect(settings).toContain('assistantIdentityUpdate(snapshot')
-    expect(settings).toContain('value.title = identityPatch.title')
-    expect(settings).toContain('value.blurb = identityPatch.blurb')
-    expect(settings).toContain('assistantIdentityError({ title, blurb })')
+    expect(settings).not.toContain('aria-label="一句话介绍"')
+    expect(settings).not.toContain('data-dsh-assistant-blurb-count')
+    // Each field writes its own patch on blur; nothing is staged.
+    expect(settings).toContain('onBlur={() => { void commitName() }}')
+    expect(settings).toContain('onBlur={() => { void commitTitle() }}')
+    expect(settings).toContain("await write('name', { name: displayName })")
+    expect(settings).toContain("await write('title', { title: nextTitle })")
+    expect(settings).not.toContain('settingsSaveBar')
   })
 
   it('shows 职能 and 一句话介绍 on the detail only when the snapshot carries them', () => {
@@ -1149,153 +993,27 @@ describe('assistant identity lines', () => {
   })
 })
 
-const NOW_AT = Date.parse('2026-01-01T01:00:00.000Z')
-
-function nowInstance(overrides: Partial<AssistantInstanceView> = {}): AssistantInstanceView {
-  return {
-    schemaVersion: 1,
-    id: 'paper',
-    templateId: 'template-paper',
-    assistantSnapshot: {
-      assistantId: 'template-paper',
-      revision: 1,
-      name: 'Paper Bot',
-      instructions: '',
-      provider: 'deepseek',
-      model: 'deepseek-chat',
-      agentPresetId: 'default',
-      permissionPresetId: 'workspace-write',
-      skillAllowlist: [],
-      mcpServers: [],
-      prompts: [],
-    },
-    workspaceId: 'workspace-1',
-    workspacePath: '/tmp/workspace-1',
-    status: 'idle',
-    pinned: false,
-    revision: 1,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    ...overrides,
-  }
-}
-
-function nowTask(
-  status: AssistantSession['status'],
-  id = `task-${status}`,
-  overrides: Partial<AssistantSession> = {},
-): AssistantSession {
-  return {
-    schemaVersion: 1,
-    id,
-    assistantId: 'paper',
-    sessionId: `session-${id}`,
-    role: 'task',
-    title: `task ${id}`,
-    brief: '',
-    parentSessionId: 'session-main',
-    status,
-    createdAt: '2026-01-01T00:00:00.000Z',
-    updatedAt: '2026-01-01T00:00:00.000Z',
-    ...overrides,
-  }
-}
-
-describe('assistant detail 现在 block', () => {
+describe('assistant detail status line', () => {
   const pane = readFileSync(
     new URL('../src/client/assistant-settings-pane.tsx', import.meta.url),
     'utf8',
   )
 
-  function block(
-    instance: AssistantInstanceView,
-    tasks: AssistantSession[] = [],
-  ): string {
-    return renderToStaticMarkup(createElement(AssistantNowBlock, {
-      now: assistantNow(instance, tasks),
-      at: NOW_AT,
-      onOpenChat: () => {},
-      onOpenTask: () => {},
-      onCompact: () => {},
-      onNewRelationship: () => {},
-      onAllSettings: () => {},
-    }))
-  }
-
-  it('answers status, current task, recent preview and three actions before the settings', () => {
-    const instance = nowInstance({
-      mainSessionId: 'session-main',
-      preview: {
-        role: 'assistant',
-        text: '先读接口，再改一轮。',
-        time: NOW_AT - 30 * 60_000,
-      },
-    })
-    const html = block(instance, [nowTask('running', 'task-run', { title: '整理本周资料' })])
-    const plain = plainText(html)
-
-    expect(plain).toContain('现在')
-    expect(plain).toContain('思考中')
-    expect(plain).toContain('整理本周资料')
-    expect(plain).toContain('助手：先读接口，再改一轮。')
-    expect(plain).toContain('30分钟')
-    expect(plain).toContain('打开会话')
-    expect(plain).toContain('查看')
-    expect(plain).toContain('全部设置')
-    expect(html).toContain('data-dsh-assistant-now-status="running"')
-    // 现在 is the page's first fold; 身份 (and its avatar hero) comes after it.
-    expect(pane.indexOf('<AssistantNowBlock')).toBeLessThan(pane.indexOf("isVisible('identity')"))
-    expect(pane.indexOf("isVisible('now')")).toBeLessThan(pane.indexOf("isVisible('identity')"))
-  })
-
-  it('names a needs_input task 处理 and never prints the stale 活跃 lifecycle', () => {
-    const instance = nowInstance({ mainSessionId: 'session-main' })
-    const html = block(instance, [
-      nowTask('queued', 'task-queue'),
-      nowTask('needs_input', 'task-pending', { title: '确认发布范围' }),
-    ])
-    const plain = plainText(html)
-
-    expect(plain).toContain('待你处理')
-    expect(plain).toContain('确认发布范围')
-    expect(plain).toContain('处理')
-    // The old hero word came from the never-cleared lifecycle status.
-    expect(plain).not.toContain('活跃')
-    expect(pane).not.toContain("active: '活跃'")
-    expect(pane).toContain('assistantNow(assistant, taskUsage.tasks)')
+  it('keeps the live task status in the hero subtitle without a 现在 block', () => {
+    // The one status read stays: it feeds the identity subtitle instead of a
+    // separate folded block.
+    expect(pane).toContain('const now = assistantNow(assistant, taskUsage.tasks)')
     expect(pane).toContain('now.statusText')
+    expect(pane).not.toContain('AssistantNowBlock')
+    expect(pane).not.toContain('data-dsh-assistant-now')
   })
 
-  it('falls back to the main session when no task is active, and disables 查看', () => {
-    const html = block(nowInstance({ mainSessionId: 'session-main' }))
-    const plain = plainText(html)
-
-    expect(plain).toContain('主会话')
-    expect(plain).toContain('没有进行中的任务')
-    expect(plain).toContain('还没有最近的消息')
-    expect(html).toMatch(/data-dsh-assistant-now-action="task"[^>]*disabled/)
-  })
-
-  it('wires 打开会话 through the canonical ensure door, 处理/查看 through task.open, and 全部设置 locally', () => {
-    // The one canonical door owns ensure + naming + pin; the pane never calls
-    // ensure itself and never opens a raw stored session id.
-    expect(pane).toContain('openAssistantMainSession(assistant.id, sessionId => {')
-    expect(pane).toContain('openAssistantSession(sessionId)')
-    expect(pane).not.toContain("callAgentTeam('assistant.instance.ensure'")
-    expect(pane).toContain("callAgentTeam('assistant.task.open', { taskId: task.taskId })")
-    expect(pane).toContain('onOpenChat={() => { void openChat() }}')
-    expect(pane).toContain('onOpenTask={() => { void openCurrentTask() }}')
-    expect(pane).toContain('onAllSettings={showAllSettings}')
-    expect(pane).toContain('function showAllSettings')
-    expect(pane).toContain('setOpenGroups(allOpen)')
-  })
-
-  it('keeps the task read live on Host events so status and current never go stale', () => {
-    expect(pane).toContain("callAgentTeam('assistant.task.list', { assistantId: assistant.id })")
-    expect(pane).toContain('const unsubscribe = subscribeAgentTeam(read, () => {}, read)')
-    // The same live list feeds 用量 and the 现在 summary.
-    expect(pane).toContain('scope={assistantUsageScope(assistant, taskUsage.tasks)}')
-    expect(pane).toContain('assistantNow(assistant, taskUsage.tasks)')
+  it('drops the folds, search and staged save bar the reference lacks', () => {
+    expect(pane).not.toContain('FoldGroup')
+    expect(pane).not.toContain('settingsSearch')
+    expect(pane).not.toContain('settingsSaveBar')
+    expect(pane).not.toContain('AssistantOverviewBlock')
+    expect(pane).not.toContain('function save()')
   })
 })
 
@@ -1307,24 +1025,12 @@ describe('assistant detail relationship actions (P0.5)', () => {
   const store = readFileSync(new URL('../src/client/store.ts', import.meta.url), 'utf8')
   const entry = readFileSync(new URL('../src/client/index.tsx', import.meta.url), 'utf8')
 
-  function renderBlock(): string {
-    return renderToStaticMarkup(createElement(AssistantNowBlock, {
-      now: assistantNow(nowInstance({ mainSessionId: 'session-main' }), []),
-      at: NOW_AT,
-      onOpenChat: () => {},
-      onOpenTask: () => {},
-      onCompact: () => {},
-      onNewRelationship: () => {},
-      onAllSettings: () => {},
-    }))
-  }
-
   it('offers the native compact action and the explicit new-relationship action', () => {
-    const plain = plainText(renderBlock())
-    expect(plain).toContain('压缩上下文')
-    expect(plain).toContain('开始新关系')
-    expect(renderBlock()).toContain('data-dsh-assistant-now-action="compact"')
-    expect(renderBlock()).toContain('data-dsh-assistant-now-action="relationship"')
+    // They live under 高级 inside 规则, not in a removed 现在 block.
+    expect(pane).toContain('data-dsh-assistant-rules-action="compact"')
+    expect(pane).toContain('data-dsh-assistant-rules-action="relationship"')
+    expect(pane).toContain('压缩上下文')
+    expect(pane).toContain('开始新关系')
   })
 
   it('runs /compact through the installed host Session face, never a second compactor', () => {
@@ -1348,7 +1054,7 @@ describe('assistant detail relationship actions (P0.5)', () => {
     expect(pane).toContain('<AssistantCheckpointDialog')
     expect(pane).toContain('function startNewRelationship')
     const start = pane.indexOf('function startNewRelationship')
-    const end = pane.indexOf('function showAllSettings')
+    const end = pane.indexOf('const displayName', start)
     const body = pane.slice(start, end)
     expect(body).toContain('setCheckpointOpen(true)')
     expect(body).not.toContain('assistant.instance.archive')
