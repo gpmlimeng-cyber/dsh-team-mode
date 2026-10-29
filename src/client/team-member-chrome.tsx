@@ -16,13 +16,13 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam, teamLeaderSessionId } from './api.js'
 import { setTeamPanelOpen } from './store.js'
+import { placeHeaderUtilities } from './header-utilities.js'
 import { openAssistantDetail } from './assistant-settings-pane.js'
 import css from './AgentTeam.module.css'
 import { MemberAvatar } from './member-avatar.js'
 import {
   SessionPresetMeta,
   agentPresetLabel,
-  hideNativePresetLabels,
   knownPresetNames,
   useAgentCatalog,
 } from './agent-preset-label.js'
@@ -497,13 +497,13 @@ export function TeamSessionSwitcher({
   // native header label is read-only chrome. While BOT shows the same name in
   // our panel, hide that span by its exact text inside the Session-header slot
   // (never a hashed class); no match means nothing happens.
-  // Hiding is not conditional on the panel being switchable: even a team whose
-  // only conversation is the main one should not keep the read-only preset label
-  // between its title and its topics.
+  // The shipped preset label, subagent picker and job chip belong on the tab
+  // row's right edge; the host offers no slot for that, so they are moved whole
+  // and put back when this Session or the surface ends.
   useEffect(() => {
-    if (team === undefined || presetLabel === undefined || presetNames.length === 0) return
-    return hideNativePresetLabels(presetNames)
-  }, [team, presetLabel, presetNames])
+    if (team === undefined) return
+    return placeHeaderUtilities()
+  }, [team])
 
   useEffect(() => {
     if (!open) return

@@ -144,8 +144,14 @@ describe('the native label hide: text match only, header scope only', () => {
 
   it('is fail-open: no names means the effect installs nothing', () => {
     expect(label).toContain('names.length === 0)')
-    expect(chrome).toContain('presetLabel === undefined || presetNames.length === 0')
-    expect(chrome).toContain('return hideNativePresetLabels(presetNames)')
+  })
+
+  it('hands the shipped utilities to the tab row instead of hiding them', () => {
+    // The preset label stays readable: it moves with the subagent picker and the
+    // job chip, which the host offers no slot to reposition.
+    const header = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
+    expect(header).toContain('return placeHeaderUtilities()')
+    expect(header).not.toContain('hideNativePresetLabels(presetNames)')
   })
 
   it('puts the meta row under the create row in the same panel', () => {
