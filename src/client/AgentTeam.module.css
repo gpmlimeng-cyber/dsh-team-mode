@@ -5861,29 +5861,15 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
 }
 
 /* The shipped crumb is not a replaceable slot: it always renders the Session
-   title and appends the lineage slot after it. For a team Session the appended
-   face-and-name IS the title, so the shipped one is hidden while ours is
-   present. If the host ever renames that class, both appear — never nothing. */
-[class*='crumbSeg']:has(> [data-dsh-team-session-title]) > [class*='crumbCurrent'],
-[class*='crumbSeg']:has(> [data-dsh-assistant-session-title]) > [class*='crumbCurrent'] {
+   title and appends the lineage slot after it. Our face-and-name IS the title,
+   so the shipped text is hidden whenever ours is present — descendant match,
+   because the slot may wrap its content. If the host renames the class, both
+   appear; never neither. */
+[class*='crumbSeg']:has([data-dsh-team-session-title]) > [class*='crumbCurrent'],
+[class*='crumbSeg']:has([data-dsh-assistant-session-title]) > [class*='crumbCurrent'],
+[class*='crumbSeg']:has([data-dsh-team-session-title]) > [class*='crumbSep'],
+[class*='crumbSeg']:has([data-dsh-assistant-session-title]) > [class*='crumbSep'] {
   display: none;
-}
-
-/* The title is the way into details, so it must look pressable, not like text. */
-.teamSessionTitleButton {
-  padding: 0 6px;
-  margin-inline-start: -6px;
-  border: none;
-  border-radius: var(--dsw-radius-sm);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.teamSessionTitleButton:hover,
-.teamSessionTitleButton:focus-visible {
-  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .teamSessionTitleName {
