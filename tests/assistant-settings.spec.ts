@@ -852,7 +852,6 @@ describe('assistant 用量 wiring', () => {
   })
 })
 
-const { assistantDetailSections } = await import('../src/client/assistant-detail.js')
 const {
   ASSISTANT_BLURB_MAX_CHARS,
   ASSISTANT_TITLE_MAX_CHARS,
@@ -861,37 +860,6 @@ const {
   assistantIdentityError,
   assistantIdentityUpdate,
 } = await import('../src/client/assistant-form.js')
-
-function identityInstance(overrides: Partial<AssistantInstanceView> = {}): AssistantInstanceView {
-  return {
-    schemaVersion: 1,
-    id: 'assistant-1',
-    templateId: 'template-1',
-    assistantSnapshot: {
-      assistantId: 'template-1',
-      revision: 1,
-      name: '小码',
-      title: '后端工程师',
-      blurb: '把需求变成可上线的接口。',
-      instructions: '',
-      provider: 'deepseek',
-      model: 'deepseek-reasoner',
-      agentPresetId: 'default',
-      permissionPresetId: 'workspace-write',
-      skillAllowlist: [],
-      mcpServers: [],
-      prompts: [],
-    },
-    workspaceId: 'workspace-1',
-    workspacePath: '/tmp/workspace-1',
-    status: 'idle',
-    pinned: false,
-    revision: 1,
-    createdAt: NOW,
-    updatedAt: NOW,
-    ...overrides,
-  }
-}
 
 describe('assistant identity lines', () => {
   it('collects 职能 and 一句话介绍 in the create dialog with their counters', () => {
@@ -972,25 +940,13 @@ describe('assistant identity lines', () => {
     // Each field writes its own patch on blur; nothing is staged.
     expect(settings).toContain('onBlur={() => { void commitName() }}')
     expect(settings).toContain('onBlur={() => { void commitTitle() }}')
-    expect(settings).toContain("await write('name', { name: displayName })")
-    expect(settings).toContain("await write('title', { title: nextTitle })")
+    expect(settings).toContain('assistantNamePatch(assistant, name)')
+    expect(settings).toContain('assistantTitlePatch(assistant, title)')
+    expect(settings).toContain("await write('name', patch)")
+    expect(settings).toContain("await write('title', patch)")
     expect(settings).not.toContain('settingsSaveBar')
   })
 
-  it('shows 职能 and 一句话介绍 on the detail only when the snapshot carries them', () => {
-    const identity = assistantDetailSections(identityInstance())
-      .find(section => section.id === 'identity')
-    expect(identity?.facts).toContainEqual({ label: '职能', value: '后端工程师' })
-    expect(identity?.facts).toContainEqual({ label: '一句话介绍', value: '把需求变成可上线的接口。' })
-
-    const plainSnapshot = { ...identityInstance().assistantSnapshot }
-    delete plainSnapshot.title
-    delete plainSnapshot.blurb
-    const plain = identityInstance({ assistantSnapshot: plainSnapshot })
-    const facts = assistantDetailSections(plain).find(section => section.id === 'identity')?.facts ?? []
-    expect(facts.map(fact => fact.label)).toEqual(['名称', '头像'])
-    expect(facts.some(fact => fact.label === '职能' || fact.label === '一句话介绍')).toBe(false)
-  })
 })
 
 describe('assistant detail status line', () => {

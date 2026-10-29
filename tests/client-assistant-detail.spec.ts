@@ -55,7 +55,6 @@ const {
   HistoryPanel,
   PersonaPanel,
   assistantBoundSessionCount,
-  assistantDetailSections,
   assistantHistoryRows,
 } = await import('../src/client/assistant-detail.js')
 
@@ -63,7 +62,12 @@ const {
   AssistantDetailBody,
   AssistantDetailPanel,
   applyAssistantDetail,
+  assistantAvatarPatch,
   assistantDetailTarget,
+  assistantNamePatch,
+  assistantPatchQueue,
+  assistantTitlePatch,
+  createPatchQueue,
 } = await import('../src/client/assistant-settings-pane.js')
 type DetailSidebar = import('../src/client/assistant-settings-pane.js').DetailSidebar
 type AssistantAutomationEntry = import('../src/client/assistant-detail.js').AssistantAutomationEntry
@@ -125,31 +129,7 @@ function renderPanel(value: AssistantInstanceView | undefined): string {
   }))
 }
 
-describe('assistant detail sections', () => {
-  it('reads the four blocks out of one list row and nothing else', () => {
-    const sections = assistantDetailSections(instance())
-
-    expect(sections.map(section => section.id)).toEqual([
-      'overview',
-      'identity',
-      'model',
-      'permission',
-    ])
-    expect(sections.map(section => section.title)).toEqual(['概览', '身份', '模型', '权限'])
-    expect(sections[0]?.facts).toEqual([
-      { label: '名称', value: '小码' },
-      { label: '状态', value: '空闲' },
-      { label: '所属分组', value: '前端' },
-      { label: '绑定会话数', value: '3' },
-    ])
-    expect(sections[2]?.facts).toEqual([
-      { label: 'Provider', value: 'deepseek' },
-      { label: 'Model', value: 'deepseek-reasoner' },
-      { label: '推理强度', value: 'high' },
-    ])
-    expect(sections[3]?.facts).toEqual([{ label: '权限预设', value: '工作区可写' }])
-  })
-
+describe('assistant detail helpers', () => {
   it('counts the main session plus visible threads only', () => {
     expect(assistantBoundSessionCount(instance())).toBe(3)
     expect(assistantBoundSessionCount({ threadSessionIds: ['a'] })).toBe(1)
@@ -281,6 +261,95 @@ describe('assistant detail continuous layout', () => {
     expect(pane).not.toContain('AssistantOverviewBlock')
   })
 
+  it('turns a blur into one single-field patch, never the whole snapshot', () => {
+    expect(assistantNamePatch(instance(), '小码')).toBeUndefined()
+    expect(assistantNamePatch(instance(), '  ')).toBeUndefined()
+    expect(assistantNamePatch(instance(), ' 新名字 ')).toEqual({ name: '新名字' })
+    expect(assistantTitlePatch(instance(), '')).toBeUndefined()
+    expect(assistantTitlePatch(instance(), ' 后端工程师 ')).toEqual({ title: '后端工程师' })
+
+    const withMascot = instance({ mascot: { seed: 'assistant-1' } })
+    const draft = {
+      seed: 'assistant-1',
+      mascot: {},
+      avatar: 'data:image/png;base64,AAAA',
+    }
+    expect(assistantAvatarPatch(withMascot, draft)).toBeUndefined()
+    const avatar = assistantAvatarPatch(withMascot, { ...draft, avatar: 'data:image/png;base64,BBBB' })
+    expect(avatar).toEqual({ avatar: 'data:image/png;base64,BBBB' })
+    expect(avatar).not.toHaveProperty('name')
+  })
+
+  it('serializes a text write and the avatar debounce so both fields land', async () => {
+    let stored: Record<string, unknown> = { name: '旧名', avatar: 'old' }
+    let active = 0
+    let maxActive = 0
+    // The service reads the whole snapshot, then writes it verbatim. A parallel
+    // second write would overwrite the first with its stale copy — this fake
+    // reproduces that shape so the test fails if the queue ever unlinks.
+    const queue = createPatchQueue(async patch => {
+      const current = { ...stored }
+      active += 1
+      maxActive = Math.max(maxActive, active)
+      await new Promise(resolve => setTimeout(resolve, 5))
+      stored = { ...current, ...patch }
+      active -= 1
+    })
+
+    // The avatar debounce fires while the name blur write is still running:
+    // both go through the same queue and both fields survive.
+    const name = queue.enqueue({ name: '新名' })
+    await new Promise(resolve => setTimeout(resolve, 1))
+    const avatar = queue.enqueue({ avatar: 'data:image/png;base64,BBBB' })
+    await Promise.all([name, avatar])
+
+    expect(maxActive).toBe(1)
+    expect(stored).toEqual({ name: '新名', avatar: 'data:image/png;base64,BBBB' })
+  })
+
+  it('keeps the queue usable after a failed write, so a retry can still land', async () => {
+    const sent: Array<Record<string, unknown>> = []
+    const queue = createPatchQueue(async patch => {
+      sent.push(patch)
+      if (sent.length === 1) throw new Error('offline')
+    })
+
+    await expect(queue.enqueue({ name: '新名' })).rejects.toThrow('offline')
+    await queue.enqueue({ avatar: 'data:image/png;base64,BBBB' })
+    expect(sent).toEqual([{ name: '新名' }, { avatar: 'data:image/png;base64,BBBB' }])
+    await expect(queue.idle()).resolves.toBeUndefined()
+  })
+
+  it('shares one write queue across pane remounts for the same assistant', async () => {
+    const first = assistantPatchQueue('shared-assistant', async () => {})
+    const second = assistantPatchQueue('shared-assistant', async () => {})
+    expect(second).toBe(first)
+    await first.idle()
+  })
+
+  it('routes 保存人设 through the same queue as field writes', async () => {
+    const sent: Array<Record<string, unknown>> = []
+    const queue = createPatchQueue(async patch => { sent.push(patch) })
+
+    await Promise.all([
+      queue.enqueue({ name: '新名' }),
+      queue.enqueue({ instructions: '新指令' }),
+    ])
+    expect(sent).toEqual([{ name: '新名' }, { instructions: '新指令' }])
+
+    // Secondary guard: the pane hands the persona save the same sender, and
+    // gates both directions of the overlap.
+    const pane = source('assistant-settings-pane.tsx')
+    const personaStart = pane.indexOf('<PersonaSection')
+    const persona = pane.slice(personaStart, pane.indexOf('/>', personaStart))
+    expect(persona).toContain('write={value => send(value)}')
+    expect(persona).toContain('onSavingChange={setPersonaSaving}')
+    expect(persona).toContain('disabled={busy}')
+    const detail = source('assistant-detail.tsx')
+    expect(detail).toContain('void write({ instructions: draft }).then(')
+    expect(detail).toContain('disabled={!dirty || saving || disabled}')
+  })
+
   it('writes each row through on blur/debounce and reports inline', () => {
     const pane = source('assistant-settings-pane.tsx')
 
@@ -288,14 +357,23 @@ describe('assistant detail continuous layout', () => {
     expect(pane).toContain('onBlur={() => { void commitName() }}')
     expect(pane).toContain('onBlur={() => { void commitTitle() }}')
     // The avatar writes its settled draft through a debounce.
-    expect(pane).toContain('window.setTimeout(() => { void commitAvatar() }, 600)')
+    expect(pane).toContain('const timer = window.setTimeout(() => {')
+    expect(pane).toContain('void commitAvatar()')
+    expect(pane).toContain('}, 600)')
     // Selects and capability toggles write on change.
     expect(pane).toContain('onChange={next => { void commitPermission(next) }}')
     expect(pane).toContain("commitCapabilities('skills', next)")
     expect(pane).toContain("commitCapabilities('mcpServers', next)")
-    // One shared write path, with inline saving/saved/error feedback.
+    // One shared per-assistant queue, with inline saving/saved/error feedback.
     expect(pane).toContain("await callAgentTeam('assistant.instance.update'")
+    expect(pane).toContain('assistantPatchQueue(assistant.id')
+    expect(pane).toContain('const run = tail.then(() => send(patch), () => send(patch))')
+    expect(pane).not.toContain('if (savingKey !== undefined) return false')
+    expect(pane).toContain('flushAvatarRef.current()')
+    expect(pane).toContain('mounted.current = false')
+    expect(pane).toContain('if (!saved) avatarDirty.current = true')
     expect(pane).toContain("setFeedback({ key, kind: 'saved' })")
+    expect(pane).toContain("setFeedback({ key, kind: 'error', message: failure })")
     expect(pane).toContain('data-dsh-assistant-save-status="saved"')
     expect(pane).toContain('data-dsh-assistant-save-status="error"')
     // No staged identity save bar and no multi-field save.
@@ -339,6 +417,19 @@ describe('assistant detail continuous layout', () => {
     // Narrow-screen only, so desktop stacking is untouched.
     expect(cssSource.lastIndexOf('z-index: 60;')).toBeGreaterThan(at)
     expect(cssSource.slice(0, at)).not.toContain('z-index: 60;')
+  })
+
+  it('keeps a lifecycle error and lets compaction block the lifecycle actions', () => {
+    const pane = source('assistant-settings-pane.tsx')
+    const start = pane.indexOf('async function write(')
+    const writeBody = pane.slice(start, pane.indexOf('/** 名称 writes', start))
+    // A field write clears only its own row feedback, never the page error.
+    expect(writeBody).not.toContain('setError(')
+    expect(writeBody).toContain('current.key === key')
+
+    // Compaction joins busy, so pause/archive/restore cannot overlap it.
+    expect(pane).toMatch(/const busy = [\s\S]{0,200}compacting/)
+    expect(pane).toContain('disabled={busy || compacting}')
   })
 
   it('shows the empty instruction when no helper was opened', () => {

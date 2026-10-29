@@ -11,28 +11,10 @@ import {
   IconSlidersTwoOutlineRegular,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam } from './api.js'
-import { assistantAvatarSource, assistantInstanceName, assistantInstanceTitle } from './assistant-instances.js'
-import {
-  assistantInstanceStatusLabel,
-  PERMISSION_LABELS,
-} from './labels.js'
 import { openAssistantMainSession, openAssistantSession } from './store.js'
 import css from './AgentTeam.module.css'
+import type { UpdateAssistantInstanceInput } from '../domain/types.js'
 import type { AssistantInstanceView } from '../transport/contracts.js'
-
-/** The four read-only blocks, all read from one `assistant.instance.list` row. */
-export type AssistantDetailFactSectionId = 'overview' | 'identity' | 'model' | 'permission'
-
-export interface AssistantDetailFact {
-  label: string
-  value: string
-}
-
-export interface AssistantDetailSection {
-  id: AssistantDetailFactSectionId
-  title: string
-  facts: AssistantDetailFact[]
-}
 
 /**
  * Sessions the row can open: the main Session plus every visible thread. Retired
@@ -42,65 +24,6 @@ export function assistantBoundSessionCount(
   instance: Pick<AssistantInstanceView, 'mainSessionId' | 'threadSessionIds'>,
 ): number {
   return (instance.mainSessionId === undefined ? 0 : 1) + (instance.threadSessionIds?.length ?? 0)
-}
-
-/**
- * The four read-only blocks of the panel, as plain data.
- *
- * Everything here is a field of one `assistant.instance.list` row — no second
- * read, no model-catalog lookup, no inferred copy. Keeping it pure is what lets
- * a test pin the panel's content without a DOM or a fetch.
- */
-export function assistantDetailSections(instance: AssistantInstanceView): AssistantDetailSection[] {
-  const snapshot = instance.assistantSnapshot
-  const title = assistantInstanceTitle(instance)
-  const blurb = snapshot.blurb?.trim() ?? ''
-  return [
-    {
-      id: 'overview',
-      title: '概览',
-      facts: [
-        { label: '名称', value: assistantInstanceName(instance) },
-        { label: '状态', value: assistantInstanceStatusLabel(instance.status) },
-        { label: '所属分组', value: instance.group ?? '未分组' },
-        { label: '绑定会话数', value: String(assistantBoundSessionCount(instance)) },
-      ],
-    },
-    {
-      id: 'identity',
-      title: '身份',
-      facts: [
-        { label: '名称', value: assistantInstanceName(instance) },
-        // Both lines are optional in storage, so the fact only exists once the
-        // Assistant actually carries one — no empty row promising a 职能.
-        ...(title === undefined ? [] : [{ label: '职能', value: title }]),
-        ...(blurb === '' ? [] : [{ label: '一句话介绍', value: blurb }]),
-        {
-          label: '头像',
-          value: assistantAvatarSource(instance) === undefined ? '首字头像' : '自定义头像',
-        },
-      ],
-    },
-    {
-      id: 'model',
-      title: '模型',
-      facts: [
-        { label: 'Provider', value: snapshot.provider },
-        { label: 'Model', value: snapshot.model },
-        { label: '推理强度', value: snapshot.reasoningEffort ?? '模型默认' },
-      ],
-    },
-    {
-      id: 'permission',
-      title: '权限',
-      facts: [
-        {
-          label: '权限预设',
-          value: PERMISSION_LABELS[snapshot.permissionPresetId] ?? snapshot.permissionPresetId,
-        },
-      ],
-    },
-  ]
 }
 
 export type AssistantHistoryKind = 'main' | 'thread'
@@ -132,23 +55,6 @@ export function assistantHistoryRows(
   return rows
 }
 
-export function AssistantDetailFacts({
-  section,
-}: {
-  section: AssistantDetailSection
-}): JSX.Element {
-  return (
-    <dl className={css.assistantDetailFacts} data-dsh-assistant-detail-section={section.id}>
-      {section.facts.map(fact => (
-        <div key={fact.label} className={css.assistantDetailFact}>
-          <dt className={css.assistantDetailFactLabel}>{fact.label}</dt>
-          <dd className={css.assistantDetailFactValue}>{fact.value}</dd>
-        </div>
-      ))}
-    </dl>
-  )
-}
-
 function DetailError({ message }: { message: string }): JSX.Element {
   return <p className={css.assistantDetailError} role="alert">{message}</p>
 }
@@ -168,6 +74,7 @@ export function PersonaPanel({
   saving,
   error,
   saved,
+  disabled = false,
   onChange,
   onSave,
   onReset,
@@ -177,6 +84,8 @@ export function PersonaPanel({
   saving: boolean
   error?: string | undefined
   saved?: boolean | undefined
+  /** The pane has another write in flight; do not start a second one. */
+  disabled?: boolean | undefined
   onChange: (value: string) => void
   onSave: () => void
   onReset: () => void
@@ -191,6 +100,7 @@ export function PersonaPanel({
           aria-label="人设说明"
           value={draft}
           rows={5}
+          disabled={disabled}
           placeholder="还没有人设：写下这个助手该怎么做事"
           onChange={event => { onChange(event.target.value) }}
         />
@@ -200,7 +110,7 @@ export function PersonaPanel({
           type="button"
           size="sm"
           variant="primary"
-          disabled={!dirty || saving}
+          disabled={!dirty || saving || disabled}
           onClick={onSave}
         >
           {saving ? '保存中…' : '保存人设'}
@@ -209,7 +119,7 @@ export function PersonaPanel({
           type="button"
           size="sm"
           variant="ghost"
-          disabled={!dirty || saving}
+          disabled={!dirty || saving || disabled}
           onClick={onReset}
         >
           撤销修改
@@ -228,9 +138,20 @@ export function PersonaPanel({
 export function PersonaSection({
   instance,
   onSaved,
+  write,
+  disabled = false,
+  onSavingChange,
 }: {
   instance: AssistantInstanceView
   onSaved?: (() => void) | undefined
+  /**
+   * The pane's per-assistant serializer: the same queue every field write
+   * joins, so 保存人设 can never overlap a whole-snapshot field update.
+   * Resolves to the failure message, or undefined after it landed.
+   */
+  write?: ((value: UpdateAssistantInstanceInput) => Promise<string | undefined>) | undefined
+  disabled?: boolean | undefined
+  onSavingChange?: ((saving: boolean) => void) | undefined
 }): JSX.Element {
   const instructions = instance.assistantSnapshot.instructions
   const [draft, setDraft] = useState(instructions)
@@ -244,24 +165,36 @@ export function PersonaSection({
     setError(undefined)
   }, [instance.id, instructions])
 
+  const finish = (failure: string | undefined): void => {
+    setSaving(false)
+    onSavingChange?.(false)
+    if (failure === undefined) {
+      setSaved(true)
+      onSaved?.()
+      return
+    }
+    setError(failure)
+  }
+
   const save = (): void => {
-    if (saving) return
+    if (saving || disabled) return
     setSaving(true)
+    onSavingChange?.(true)
     setError(undefined)
     setSaved(false)
+    if (write !== undefined) {
+      void write({ instructions: draft }).then(
+        finish,
+        cause => { finish(detailErrorMessage('人设保存失败', cause)) },
+      )
+      return
+    }
     void callAgentTeam('assistant.instance.update', {
       id: instance.id,
       value: { instructions: draft },
     }).then(
-      () => {
-        setSaving(false)
-        setSaved(true)
-        onSaved?.()
-      },
-      cause => {
-        setSaving(false)
-        setError(detailErrorMessage('人设保存失败', cause))
-      },
+      () => { finish(undefined) },
+      cause => { finish(detailErrorMessage('人设保存失败', cause)) },
     )
   }
 
@@ -270,6 +203,7 @@ export function PersonaSection({
       instructions={instructions}
       draft={draft}
       saving={saving}
+      disabled={disabled}
       {...(error === undefined ? {} : { error })}
       {...(saved ? { saved } : {})}
       onChange={value => { setDraft(value); setSaved(false) }}

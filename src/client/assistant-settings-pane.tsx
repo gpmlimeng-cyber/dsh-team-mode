@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   IconEditOutlineRegular,
   IconProjectAddOutlineRegular,
@@ -114,6 +114,91 @@ function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause)
 }
 
+/** A per-assistant queue: each whole-snapshot patch waits for the previous one. */
+export interface AssistantPatchQueue {
+  enqueue(patch: UpdateAssistantInstanceInput): Promise<void>
+  /** Resolves after every write queued so far has settled. */
+  idle(): Promise<void>
+}
+
+/**
+ * Serialize writes for one assistant. Reading the tail at call time is what
+ * makes this immune to a stale render: an avatar debounce captured before a
+ * blur write still queues behind it instead of firing a second overlapping
+ * `assistant.instance.update` (which would replace the earlier field).
+ */
+export function createPatchQueue(
+  send: (patch: UpdateAssistantInstanceInput) => Promise<void>,
+): AssistantPatchQueue {
+  let tail: Promise<void> = Promise.resolve()
+  return {
+    enqueue(patch) {
+      const run = tail.then(() => send(patch), () => send(patch))
+      tail = run.then(() => undefined, () => undefined)
+      return run
+    },
+    idle: () => tail,
+  }
+}
+
+const assistantQueues = new Map<string, AssistantPatchQueue>()
+
+/**
+ * The one queue for an assistant, shared across pane remounts. A pending write
+ * from a closed pane therefore still finishes before the reopened pane's first
+ * write, instead of two whole-snapshot updates racing for the same row.
+ */
+export function assistantPatchQueue(
+  assistantId: string,
+  send: (patch: UpdateAssistantInstanceInput) => Promise<void>,
+): AssistantPatchQueue {
+  const existing = assistantQueues.get(assistantId)
+  if (existing !== undefined) return existing
+  const queue = createPatchQueue(send)
+  assistantQueues.set(assistantId, queue)
+  return queue
+}
+
+/** A blur on 名称 writes one field; an empty or unchanged name writes nothing. */
+export function assistantNamePatch(
+  assistant: AssistantInstanceView,
+  avatarDraft: string,
+): { name: string } | undefined {
+  const name = avatarDraft.trim()
+  if (name === '' || name === assistantInstanceName(assistant)) return undefined
+  return { name }
+}
+
+/** A blur on 称号 writes one field; an emptied line travels as '' to clear it. */
+export function assistantTitlePatch(
+  assistant: AssistantInstanceView,
+  draft: string,
+): { title: string } | undefined {
+  const title = draft.trim()
+  if (title === (assistant.assistantSnapshot.title ?? '')) return undefined
+  return { title }
+}
+
+/** The avatar draft's diff against the stored snapshot, or undefined if clean. */
+export function assistantAvatarPatch(
+  assistant: AssistantInstanceView,
+  avatarDraft: AvatarDraft,
+): UpdateAssistantInstanceInput | undefined {
+  const snapshot = assistant.assistantSnapshot
+  const value: UpdateAssistantInstanceInput = {}
+  if (avatarDraft.avatar !== (snapshot.avatar ?? '')) value.avatar = avatarDraft.avatar
+  const nextMascot = {
+    seed: avatarDraft.seed.trim() === '' ? assistant.id : avatarDraft.seed.trim(),
+    ...(avatarDraft.mascot.shapeVariant === undefined ? {} : { shape: avatarDraft.mascot.shapeVariant }),
+    ...(avatarDraft.mascot.eyesVariant === undefined ? {} : { eyes: avatarDraft.mascot.eyesVariant }),
+    ...(avatarDraft.mascot.spacingVariant === undefined ? {} : { spacing: avatarDraft.mascot.spacingVariant }),
+    ...(avatarDraft.mascot.bodyColor === undefined ? {} : { color: avatarDraft.mascot.bodyColor }),
+    ...(avatarDraft.mascot.bodyColorFill === 'radial' ? { fill: 'radial' as const } : {}),
+  }
+  if (JSON.stringify(nextMascot) !== JSON.stringify(assistant.mascot)) value.mascot = nextMascot
+  return Object.keys(value).length === 0 ? undefined : value
+}
+
 export function AssistantSettingsPane({
   assistant,
   expanded,
@@ -153,9 +238,10 @@ export function AssistantSettingsPane({
     kind: 'archive' | 'restore'
     message: string
   }>()
-  // One write at a time; the key says which row is in flight and owns the
-  // inline 保存中…/已保存/失败 line. There is no bottom save bar.
-  const [savingKey, setSavingKey] = useState<string>()
+  // Every row's write joins one per-assistant queue; these keys only drive the
+  // inline 保存中…/已保存/失败 lines. There is no bottom save bar.
+  const [savingKeys, setSavingKeys] = useState<string[]>([])
+  const [personaSaving, setPersonaSaving] = useState(false)
   const [feedback, setFeedback] = useState<{
     key: string
     kind: 'saved' | 'error'
@@ -180,8 +266,17 @@ export function AssistantSettingsPane({
   // Only a user edit marks the draft dirty; the initial/reset draft must never
   // write back just because the pane mounted.
   const avatarDirty = useRef(false)
+  const mounted = useRef(true)
+  const avatarDraftRef = useRef(avatarDraft)
+  avatarDraftRef.current = avatarDraft
+  // One queue per mounted pane (and therefore one per assistant: the pane is
+  // keyed by instance id). Every write below joins it.
+  const queue = useMemo(() => assistantPatchQueue(assistant.id, async value => {
+    await callAgentTeam('assistant.instance.update', { id: assistant.id, value })
+  }), [assistant.id])
 
-  const busy = savingKey !== undefined || archiving || restoring || pausing
+  const busy = savingKeys.length > 0 || personaSaving
+    || archiving || restoring || pausing || compacting
   const modelCapabilities = useModelCapabilities(provider, model)
   // The hero subtitle still names the live task status, so opening a helper
   // remains a status read even without a 现在 block.
@@ -236,7 +331,8 @@ export function AssistantSettingsPane({
     setSelectedMcpServers([...assistant.assistantSnapshot.mcpServers])
     setConfirmArchive(false)
     setTeamConflict(undefined)
-    setSavingKey(undefined)
+    setSavingKeys([])
+    setPersonaSaving(false)
     setFeedback(undefined)
     setArchiving(false)
     setRestoring(false)
@@ -277,40 +373,83 @@ export function AssistantSettingsPane({
   // firing one update per pointer move; closing the editor does not discard it.
   useEffect(() => {
     if (!avatarDirty.current) return undefined
-    const timer = window.setTimeout(() => { void commitAvatar() }, 600)
+    const timer = window.setTimeout(() => {
+      if (!avatarDirty.current) return
+      avatarDirty.current = false
+      void commitAvatar()
+    }, 600)
     return () => { window.clearTimeout(timer) }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one write per settled draft
   }, [avatarDraft])
 
-  const closeAvatarEditor = useCallback((): void => { setAvatarEditing(false) }, [])
+  // A switch remounts this pane (key=instance.id) and unmount clears the
+  // debounce, so the old instance flushes its pending draft through its own
+  // queue before it goes away; a close flush also covers the editor case.
+  const flushAvatarRef = useRef<() => void>(() => {})
+  flushAvatarRef.current = () => {
+    if (!avatarDirty.current) return
+    avatarDirty.current = false
+    const value = assistantAvatarPatch(assistant, avatarDraftRef.current)
+    if (value !== undefined) void queue.enqueue(value).catch(() => {})
+  }
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      flushAvatarRef.current()
+    }
+  }, [assistant.id])
+
+  const closeAvatarEditor = useCallback((): void => {
+    setAvatarEditing(false)
+    flushAvatarRef.current()
+  }, [])
 
   /** Stage one avatar edit; the debounce above owns writing it. */
   function stageAvatar(update: (draft: AvatarDraft) => AvatarDraft): void {
     avatarDirty.current = true
     setAvatarDraft(update)
-    setFeedback(undefined)
+    setFeedback(current => (current?.key === 'avatar' ? undefined : current))
+  }
+
+  /** Queue one patch; resolves to the failure message, or undefined on success. */
+  async function send(value: UpdateAssistantInstanceInput): Promise<string | undefined> {
+    try {
+      await queue.enqueue(value)
+      return undefined
+    } catch (cause) {
+      return `保存失败：${messageOf(cause)}`
+    }
   }
 
   /**
    * The one write-through path: one field's patch travels alone, and its row
-   * owns the inline status. Never a staged multi-field save.
+   * owns the inline status. Writes queue behind each other per assistant, so a
+   * debounced avatar patch and a blur patch can never race the whole-snapshot
+   * update; a patch is deferred, never dropped, when another write is in
+   * flight. Only the lifecycle error is left alone: a field save must not erase
+   * an archive/pause refusal.
    */
   async function write(key: string, value: UpdateAssistantInstanceInput): Promise<boolean> {
-    if (savingKey !== undefined) return false
-    setSavingKey(key)
-    setFeedback(undefined)
-    setError(undefined)
-    try {
-      await callAgentTeam('assistant.instance.update', { id: assistant.id, value })
-      setFeedback({ key, kind: 'saved' })
-      await onSaved()
-      return true
-    } catch (cause) {
-      setFeedback({ key, kind: 'error', message: `保存失败：${messageOf(cause)}` })
-      return false
-    } finally {
-      setSavingKey(undefined)
+    setSavingKeys(keys => (keys.includes(key) ? keys : [...keys, key]))
+    setFeedback(current => (
+      current !== undefined && current.key === key ? undefined : current
+    ))
+    const failure = await send(value)
+    if (mounted.current) {
+      if (failure === undefined) {
+        setFeedback({ key, kind: 'saved' })
+        try {
+          await onSaved()
+        } catch {
+          // The write landed; a refresh failure is not a write failure.
+        }
+      } else {
+        setFeedback({ key, kind: 'error', message: failure })
+      }
+      setSavingKeys(keys => keys.filter(candidate => candidate !== key))
     }
+    return failure === undefined
   }
 
   /** 名称 writes on blur; an empty name is refused inline, never sent. */
@@ -320,8 +459,9 @@ export function AssistantSettingsPane({
       setFeedback({ key: 'name', kind: 'error', message: '名称不能为空' })
       return
     }
-    if (displayName === assistantInstanceName(assistant)) return
-    if (await write('name', { name: displayName })) setName(displayName)
+    const patch = assistantNamePatch(assistant, name)
+    if (patch === undefined) return
+    if (await write('name', patch)) setName(displayName)
   }
 
   /** 称号 writes on blur; an emptied line travels as '' to clear it. */
@@ -335,31 +475,25 @@ export function AssistantSettingsPane({
       })
       return
     }
-    if (nextTitle === (assistant.assistantSnapshot.title ?? '')) return
-    if (await write('title', { title: nextTitle })) setTitle(nextTitle)
+    const patch = assistantTitlePatch(assistant, title)
+    if (patch === undefined) return
+    if (await write('title', patch)) setTitle(nextTitle)
   }
 
   /** The avatar draft, written after the debounce settles. */
   async function commitAvatar(): Promise<void> {
-    const snapshot = assistant.assistantSnapshot
     const avatarError = assistantAvatarDataUrlError(avatarDraft.avatar)
     if (avatarError !== undefined) {
       setFeedback({ key: 'avatar', kind: 'error', message: avatarError })
       return
     }
-    const value: UpdateAssistantInstanceInput = {}
-    if (avatarDraft.avatar !== (snapshot.avatar ?? '')) value.avatar = avatarDraft.avatar
-    const nextMascot = {
-      seed: avatarDraft.seed.trim() === '' ? assistant.id : avatarDraft.seed.trim(),
-      ...(avatarDraft.mascot.shapeVariant === undefined ? {} : { shape: avatarDraft.mascot.shapeVariant }),
-      ...(avatarDraft.mascot.eyesVariant === undefined ? {} : { eyes: avatarDraft.mascot.eyesVariant }),
-      ...(avatarDraft.mascot.spacingVariant === undefined ? {} : { spacing: avatarDraft.mascot.spacingVariant }),
-      ...(avatarDraft.mascot.bodyColor === undefined ? {} : { color: avatarDraft.mascot.bodyColor }),
-      ...(avatarDraft.mascot.bodyColorFill === 'radial' ? { fill: 'radial' as const } : {}),
-    }
-    if (JSON.stringify(nextMascot) !== JSON.stringify(assistant.mascot)) value.mascot = nextMascot
-    if (Object.keys(value).length === 0) return
+    const value = assistantAvatarPatch(assistant, avatarDraft)
+    if (value === undefined) return
     const saved = await write('avatar', value)
+    // A failed avatar keeps the draft dirty, so the next close/unmount retries
+    // the same patch rather than silently forgetting it.
+    if (!saved) avatarDirty.current = true
+    if (!mounted.current) return
     setMascotMotion(saved ? 'success' : 'failure')
     setMascotMotionKey(key => key + 1)
   }
@@ -641,7 +775,7 @@ export function AssistantSettingsPane({
 
   /** Inline write-through status for one row: saving, saved, or the failure. */
   function status(key: string): JSX.Element | undefined {
-    if (savingKey === key) {
+    if (savingKeys.includes(key)) {
       return (
         <span className={css.assistantSaveStatus} data-dsh-assistant-save-status="saving" role="status">
           保存中…
@@ -791,7 +925,13 @@ export function AssistantSettingsPane({
         aria-label="指令"
       >
         <h3 className={css.assistantSettingsSectionTitle}>指令</h3>
-        <PersonaSection instance={assistant} onSaved={() => { void onSaved() }} />
+        <PersonaSection
+          instance={assistant}
+          onSaved={() => { void onSaved() }}
+          write={value => send(value)}
+          disabled={busy}
+          onSavingChange={setPersonaSaving}
+        />
       </section>
 
       <section

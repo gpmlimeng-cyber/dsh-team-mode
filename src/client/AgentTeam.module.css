@@ -12254,7 +12254,8 @@ textarea.sidebarGroupBriefInput {
 
 /* ── Assistant detail (native right pane) ─────────────────────────────────
    The pane's width, position and close control belong to the host's frame;
-   this only styles its content. Four collapsible fact blocks, read-only. */
+   this only styles its content: one continuous 核心 / 已知 / 行为 / 规则
+   settings page with a top identity block, no folds, search or save bar. */
 .assistantDetail {
   display: flex;
   flex-direction: column;
