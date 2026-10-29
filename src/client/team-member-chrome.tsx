@@ -275,8 +275,10 @@ export function threadMenuModel(team: TeamView, thread: SwitcherThreadRow): Thre
     { id: 'stop', label: '暂停', disabled: paused || thread.archived === true },
     { id: 'resume', label: '恢复', disabled: !paused || thread.archived === true },
     { id: 'archive', label: '归档', disabled: thread.archived === true },
-    // Restore acts on a retired thread. The panel lists active threads only, so
-    // this row stays visible-but-disabled instead of quietly disappearing.
+    // Restore acts on a retired thread, and this panel lists active threads
+    // only — so the row stays visible-but-disabled instead of quietly
+    // disappearing. The archived-thread view that enables it ships with the
+    // visibility batch (批四).
     { id: 'restore', label: '恢复归档', disabled: thread.archived !== true },
   ]
   return { currentOwnerSlotId: thread.ownerSlotId, items }
