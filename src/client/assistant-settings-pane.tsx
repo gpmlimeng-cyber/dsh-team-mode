@@ -989,15 +989,23 @@ export function AssistantSettingsPane({
             <span className={css.assistantAvatarBadge} aria-hidden="true">
               <IconEditOutlineRegular size={12} />
             </span>
-            {isCoordinatorInstance(assistant) && (
-              <span className={css.assistantAvatarCrown} data-dsh-assistant-avatar-crown aria-hidden="true">
-                <LeaderMark size={11} />
-              </span>
-            )}
           </button>
         </div>
         <div className={css.assistantAvatarWho}>
-          <span className={css.assistantAvatarName}>{displayName}</span>
+          <span className={css.assistantAvatarNameRow}>
+            <span className={css.assistantAvatarName}>{displayName}</span>
+            {isCoordinatorInstance(assistant) && (
+              <span
+                className={css.assistantAvatarCrownChip}
+                data-dsh-assistant-avatar-crown
+                role="img"
+                aria-label="总协调"
+                title="总协调"
+              >
+                <LeaderMark size={11} />
+              </span>
+            )}
+          </span>
           <span className={css.assistantAvatarSub}>{avatarSubtitle}</span>
         </div>
         {avatarEditing && (

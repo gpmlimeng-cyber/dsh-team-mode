@@ -3755,24 +3755,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   flex: none;
 }
 
-/* Coordinator crown: a small disc on the avatar's corner, so the assistant in
-   charge is recognisable without reading a label. */
-.sidebarAssistantCrownBadge {
-  position: absolute;
-  inset-block-end: -2px;
-  inset-inline-end: -2px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 1px solid var(--dsw-alias-bg-layer-1);
-  background: var(--dsw-alias-state-warn-primary);
-  color: var(--dsw-alias-bg-layer-1);
-  box-sizing: border-box;
-  pointer-events: none;
-}
 
 /* One shape language for every sidebar identity: the assistant avatar is the
    same rounded square as the team mark. Both use a percentage radius so the
@@ -12142,23 +12124,26 @@ textarea.sidebarGroupBriefInput {
   outline-offset: 2px;
 }
 
-/* Coordinator crown on the settings hero: the 64px avatar has room, so the disc
-   is larger than the sidebar one and sits opposite the edit pencil. */
-.assistantAvatarCrown {
-  position: absolute;
-  inset-block-end: -4px;
-  inset-inline-start: -4px;
+/* The hero marks the coordinator beside the name: a chip never covers the
+   mascot, and it reads as a role rather than an avatar decoration. */
+.assistantAvatarNameRow {
   display: inline-flex;
   align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.assistantAvatarCrownChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  width: 16px;
+  height: 16px;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 1.5px solid var(--dsw-alias-bg-layer-1);
-  background: var(--dsw-alias-state-warn-primary);
-  color: var(--dsw-alias-bg-layer-1);
-  box-sizing: border-box;
-  pointer-events: none;
+  border-radius: 8px;
+  background: var(--dsw-alias-state-warn-surface);
+  color: var(--dsw-alias-state-warn-primary);
 }
 
 .assistantAvatarBadge {
