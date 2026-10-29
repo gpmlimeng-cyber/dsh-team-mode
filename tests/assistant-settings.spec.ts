@@ -199,7 +199,7 @@ describe('assistant memory count row wiring', () => {
     expect(pane).toContain(
       'const entries = view.active.length + view.proposed.length + view.historyTotal',
     )
-    expect(pane).toContain('count={memoryEntryCount.count}')
+    expect(pane).toContain('memoryCount: memoryEntryCount.count')
     // The count is tagged with the instance it was read for, so switching
     // helpers can never show the previous assistant's number.
     expect(pane).toContain('setMemoryEntryCount({ assistantId: assistant.id, count: entries })')
@@ -211,15 +211,16 @@ describe('assistant memory count row wiring', () => {
 
   it('renders the row in 概览, where the jump to 记忆 already lives', () => {
     const overview = pane.slice(
-      pane.indexOf('data-dsh-assistant-overview'),
-      pane.indexOf("isVisible('identity')"),
+      pane.indexOf('export function AssistantOverviewBlock'),
+      pane.indexOf('export function AssistantSettingsPane'),
     )
 
     expect(overview).toContain('<AssistantOverviewMemoryRow')
-    expect(overview).toContain("jumpToOverviewTarget('memory')")
+    expect(overview).toContain("onJump('memory')")
     // The jump is the overview mechanism, not a new one: the pane owns exactly
     // one jump handler and the row borrows it.
     expect((pane.match(/const jumpToOverviewTarget/g) ?? [])).toHaveLength(1)
+    expect(pane).toContain('onJump={jumpToOverviewTarget}')
   })
 
   it('re-reads after a write inside the 记忆 block instead of going stale', () => {
@@ -949,11 +950,12 @@ describe('assistant 用量 wiring', () => {
   )
   const usage = readFileSync(new URL('../src/client/usage.ts', import.meta.url), 'utf8')
 
-  it('adds 用量 as its own accordion group on the existing settings surface', () => {
-    const group = ASSISTANT_SETTING_GROUPS.find(entry => entry.id === 'usage')
-    expect(group?.title).toBe('用量')
-    expect(visibleSettingGroups('缓存')).toEqual(['usage'])
-    expect(pane).toContain('dataKind="usage"')
+  it('keeps 用量 inside 工作 as the nightly 行为 row it is', () => {
+    // The nightly page has no 用量 group of its own; it is a 工作 row.
+    expect(ASSISTANT_SETTING_GROUPS.map(group => group.id))
+      .toEqual(['now', 'identity', 'brain', 'work', 'rules', 'overview'])
+    expect(visibleSettingGroups('缓存')).toEqual(['work'])
+    expect(pane).toContain('data-dsh-work-section="usage"')
     expect(pane).toContain('scope={assistantUsageScope(assistant, taskUsage.tasks)}')
     // Names the source instead of implying this plugin keeps a ledger.
     expect(pane).toContain('只读 · 来自宿主会话投影')
@@ -1241,9 +1243,9 @@ describe('assistant detail 现在 block', () => {
     expect(plain).toContain('查看')
     expect(plain).toContain('全部设置')
     expect(html).toContain('data-dsh-assistant-now-status="running"')
-    // Situated above 概览, below the hero: the block is the first body element
-    // after the avatar hero markup.
-    expect(pane.indexOf('<AssistantNowBlock')).toBeLessThan(pane.indexOf("isVisible('overview')"))
+    // 现在 is the page's first fold; 身份 (and its avatar hero) comes after it.
+    expect(pane.indexOf('<AssistantNowBlock')).toBeLessThan(pane.indexOf("isVisible('identity')"))
+    expect(pane.indexOf("isVisible('now')")).toBeLessThan(pane.indexOf("isVisible('identity')"))
   })
 
   it('names a needs_input task 处理 and never prints the stale 活跃 lifecycle', () => {

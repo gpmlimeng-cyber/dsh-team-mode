@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   Button,
-  IconArchiveOutlineRegular,
   IconClockOutlineRegular,
-  IconDatabaseOutlineRegular,
   IconEditOutlineRegular,
   IconFlatListOutlineRegular,
   IconInfoOutlineRegular,
@@ -51,7 +49,8 @@ import {
   assistantOverviewTodos,
   assistantOverviewWho,
   type AssistantOverviewCounts,
-  type AssistantOverviewTodo,
+  type AssistantOverviewLabels,
+  type AssistantOverviewTarget,
 } from './assistant-overview.js'
 import { PERMISSION_LABELS, assistantMemoryView } from './labels.js'
 import { MemberAvatar } from './member-avatar.js'
@@ -140,15 +139,12 @@ function createAssistantDetailTarget(): AssistantDetailTarget {
 export const assistantDetailTarget = createAssistantDetailTarget()
 
 export type AssistantSettingGroupId =
-  | 'overview'
+  | 'now'
   | 'identity'
-  | 'model'
-  | 'usage'
-  | 'capabilities'
-  | 'memory'
-  | 'automations'
-  | 'archive'
-  | 'history'
+  | 'brain'
+  | 'work'
+  | 'rules'
+  | 'overview'
 
 export interface AssistantSettingGroup {
   id: AssistantSettingGroupId
@@ -158,20 +154,19 @@ export interface AssistantSettingGroup {
 }
 
 /**
- * The accordion, in the order the settings screenshot shows. 自动化 is kept as
- * its own group because dropping it would drop the Host's scheduled tasks from
- * the pane; everything else follows the screenshot.
+ * The accordion in the order nightly OpenBot's assistant page reads: 现在 is
+ * the status read, 身份 / 大脑 / 工作 / 规则 are its four blocks, and 概览 closes
+ * the page as a checkup of the same data. 工作 keeps the two subheads the
+ * nightly page shows — 已知 (what it knows) and 行为 (what it does) — because
+ * that is where memory, skills, workspace, automations, usage and history live.
  */
 export const ASSISTANT_SETTING_GROUPS: readonly AssistantSettingGroup[] = [
+  { id: 'now', title: '现在', keywords: '现在 状态 当前 最近 打开会话 压缩上下文 开始新关系' },
+  { id: 'identity', title: '身份', keywords: '身份 形象 头像 显示名称 名称 职能 一句话介绍 介绍 人设 说明 描述' },
+  { id: 'brain', title: '大脑', keywords: '大脑 核心 模型 provider model 思考模式 推理强度' },
+  { id: 'work', title: '工作', keywords: '工作 已知 行为 记忆 技能 skills mcp 工具 server 工作区 workspace 自动化 定时 任务 提醒 用量 token 令牌 缓存 命中 轮数 上下文 会话 历史 主会话 附加' },
+  { id: 'rules', title: '规则', keywords: '规则 权限 权限预设 高级 归档 删除 暂停 恢复 压缩 新关系' },
   { id: 'overview', title: '概览', keywords: '概览 待办 待办清单 它是什么 能力边界 描述 模板 workspace 权限' },
-  { id: 'identity', title: '身份与形象', keywords: '身份 形象 头像 显示名称 名称 职能 一句话介绍 介绍 人设 说明' },
-  { id: 'model', title: '模型与权限', keywords: '模型 provider model 思考模式 推理强度 权限预设 权限' },
-  { id: 'usage', title: '用量', keywords: '用量 token 令牌 缓存 命中 轮数 上下文 会话' },
-  { id: 'capabilities', title: '技能与MCP', keywords: '技能 skills mcp 工具 server' },
-  { id: 'memory', title: '记忆', keywords: '记忆 条目 旧版 变更 日志 待确认' },
-  { id: 'automations', title: '自动化', keywords: '自动化 定时 任务 提醒' },
-  { id: 'archive', title: '归档', keywords: '归档 删除' },
-  { id: 'history', title: '会话历史', keywords: '会话 历史 主会话 附加 归档会话' },
 ]
 
 /** One search token matches a title or keyword list, case-insensitively. */
@@ -192,17 +187,26 @@ export function visibleSettingGroups(
 }
 
 const GROUP_ICONS: Record<AssistantSettingGroupId, JSX.Element> = {
-  overview: <IconInfoOutlineRegular size={14} />,
+  now: <IconClockOutlineRegular size={14} />,
   identity: <IconPersonalizationOutlineRegular size={14} />,
-  model: <IconSlidersTwoOutlineRegular size={14} />,
-  // 用量 is the same kind of read-only fact sheet as 概览, so it reuses that
-  // icon: a new icon export would force every partial primitives mock to grow.
-  usage: <IconInfoOutlineRegular size={14} />,
-  capabilities: <IconSparkleRegular size={14} />,
-  memory: <IconDatabaseOutlineRegular size={14} />,
-  automations: <IconClockOutlineRegular size={14} />,
-  archive: <IconArchiveOutlineRegular size={14} />,
-  history: <IconFlatListOutlineRegular size={14} />,
+  brain: <IconSlidersTwoOutlineRegular size={14} />,
+  work: <IconFlatListOutlineRegular size={14} />,
+  rules: <IconShieldOutlineRegular size={14} />,
+  overview: <IconInfoOutlineRegular size={14} />,
+}
+
+/**
+ * Where a 概览 todo lands: its fold, plus the 工作 sub-block when the thing it
+ * fixes lives inside 工作. `section` is the `data-dsh-work-section` value.
+ */
+const OVERVIEW_TARGET_GROUP: Record<AssistantOverviewTarget, {
+  group: AssistantSettingGroupId
+  section?: string
+}> = {
+  identity: { group: 'identity' },
+  capabilities: { group: 'work', section: 'skills' },
+  memory: { group: 'work', section: 'memory' },
+  automations: { group: 'work', section: 'automations' },
 }
 
 function messageOf(cause: unknown): string {
@@ -354,6 +358,155 @@ export function AssistantNowBlock({
 }
 
 /**
+ * 概览: the closing checkup of the page — what is missing, what this assistant
+ * is, and where its limits really are. It only maps three derived results and
+ * writes nothing. It is a component because 概览 is the last, folded group, and
+ * a closed fold must not mount its body.
+ */
+export function AssistantOverviewBlock({
+  assistant,
+  memoryCount,
+  labels,
+  counts,
+  avatar,
+  onJump,
+}: {
+  assistant: AssistantInstanceView
+  /** The count the pane read for this instance; omitted until that read answered. */
+  memoryCount?: number | undefined
+  labels: AssistantOverviewLabels
+  counts: AssistantOverviewCounts
+  avatar: AvatarDraft
+  onJump: (target: AssistantOverviewTarget) => void
+}): JSX.Element {
+  const todos = assistantOverviewTodos(assistant, counts)
+  const who = assistantOverviewWho(assistant, labels)
+  const limits = assistantOverviewLimits(assistant, { ...counts, ...labels })
+  return (
+    <div className={css.assistantOverview} data-dsh-assistant-overview>
+      {/* M1: the memory count and its one-step way in. It appears only
+          once the read answered — an unread count makes no claim. */}
+      {memoryCount !== undefined && (
+        <AssistantOverviewMemoryRow
+          count={memoryCount}
+          onManage={() => { onJump('memory') }}
+        />
+      )}
+      {/* A checklist, not a score: nothing is rendered once nothing is missing. */}
+      {todos.length > 0 && (
+        <section
+          className={css.assistantOverviewSection}
+          aria-label="待办清单"
+          data-dsh-assistant-overview-todos
+        >
+          <span className={css.assistantOverviewTitle}>待办清单</span>
+          <ul className={css.assistantOverviewTodos}>
+            {todos.map(todo => (
+              <li key={todo.id}>
+                <button
+                  type="button"
+                  className={css.assistantOverviewTodo}
+                  data-dsh-assistant-overview-todo={todo.id}
+                  onClick={() => { onJump(todo.target) }}
+                >
+                  <span className={css.assistantOverviewTodoText}>{todo.text}</span>
+                  <span className={css.assistantOverviewArrow} aria-hidden="true">→</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section
+        className={css.assistantOverviewSection}
+        aria-label="它是什么"
+        data-dsh-assistant-overview-who
+      >
+        <span className={css.assistantOverviewTitle}>它是什么</span>
+        <div className={css.assistantOverviewWho}>
+          {avatar.avatar === ''
+            ? (
+              <Mascot
+                seed={avatar.seed}
+                options={avatar.mascot}
+                size={24}
+                avatarShape="rounded"
+                motion="idle"
+              />
+            )
+            : <MemberAvatar name={who.name} avatar={avatar.avatar} size={24} />}
+          <span className={css.assistantOverviewWhoName}>{who.name}</span>
+        </div>
+        {who.description === ''
+          ? (
+            <button
+              type="button"
+              className={css.assistantOverviewDescriptionEmpty}
+              data-dsh-assistant-overview-description
+              onClick={() => { onJump('identity') }}
+            >
+              还没有描述
+            </button>
+          )
+          : (
+            <>
+              <p
+                className={css.assistantOverviewDescription}
+                title={who.description}
+                data-dsh-assistant-overview-description
+              >
+                {who.description}
+              </p>
+              {/* The clamp hides the rest of the text; this text action is
+                  the keyboard and touch way into 身份 (a title is
+                  neither focusable nor reachable on touch). It shares the
+                  empty-description placeholder's text-button look and is
+                  always shown for a non-empty description: measuring
+                  scrollHeight in a narrow clamped column is not reliable. */}
+              <button
+                type="button"
+                className={css.assistantOverviewDescriptionEmpty}
+                data-dsh-assistant-overview-read-all
+                onClick={() => { onJump('identity') }}
+              >
+                读全部
+              </button>
+            </>
+          )}
+        <p className={css.assistantOverviewMeta}>{who.meta.join(' · ')}</p>
+      </section>
+
+      <section
+        className={css.assistantOverviewSection}
+        aria-label="能力边界"
+        data-dsh-assistant-overview-limits
+      >
+        <span className={css.assistantOverviewTitle}>能力边界</span>
+        {limits.capable.length === 0
+          ? <p className={css.assistantOverviewNothing}>还没有授予任何能力</p>
+          : (
+            <>
+              <span className={css.assistantOverviewListTitle}>能做到</span>
+              <ul className={css.assistantOverviewList} data-dsh-assistant-overview-capable>
+                {limits.capable.map(line => <li key={line}>{line}</li>)}
+              </ul>
+            </>
+          )}
+        {limits.unable.length > 0 && (
+          <>
+            <span className={css.assistantOverviewListTitle}>不会做</span>
+            <ul className={css.assistantOverviewList} data-dsh-assistant-overview-unable>
+              {limits.unable.map(line => <li key={line}>{line}</li>)}
+            </ul>
+          </>
+        )}
+      </section>
+    </div>
+  )
+}
+
+/**
  * One assistant's settings, as an accordion: a search field over every group,
  * the groups themselves, and one sticky save bar. There is deliberately no
  * modal and no second copy of the fields — this *is* 助手设置.
@@ -368,8 +521,13 @@ export function AssistantSettingsPane({
   onSaved: () => Promise<void> | void
 }): JSX.Element {
   const [query, setQuery] = useState('')
+  // 现在 answers at a glance from its summary, so it starts folded; 身份 / 大脑 /
+  // 工作 are the page's working blocks. 规则 sits behind a fold because 归档 is
+  // destructive, and 概览 closes the page as a checkup.
   const [openGroups, setOpenGroups] = useState<Partial<Record<AssistantSettingGroupId, boolean>>>({
-    overview: true,
+    identity: true,
+    brain: true,
+    work: true,
   })
   const [name, setName] = useState(assistantInstanceName(assistant))
   // The optional identity lines: staged here and written by the one 保存 bar,
@@ -847,14 +1005,14 @@ export function AssistantSettingsPane({
     setCheckpointOpen(true)
   }
 
-  /** 全部设置: clear the search, open every group, and start at 概览. */
+  /** 全部设置: clear the search, open every group, and start at the top. */
   function showAllSettings(): void {
     setQuery('')
     const allOpen: Partial<Record<AssistantSettingGroupId, boolean>> = {}
     for (const group of ASSISTANT_SETTING_GROUPS) allOpen[group.id] = true
     setOpenGroups(allOpen)
     requestAnimationFrame(() => {
-      paneRef.current?.querySelector('[data-dsh-fold="overview"]')?.scrollIntoView({ block: 'start' })
+      paneRef.current?.querySelector('[data-dsh-fold="now"]')?.scrollIntoView({ block: 'start' })
     })
   }
 
@@ -920,16 +1078,23 @@ export function AssistantSettingsPane({
     workspace: workspaceLabel,
     permission: permissionLabel,
   }
-  const overviewTodos: AssistantOverviewTodo[] = assistantOverviewTodos(assistant, overviewCounts)
-  const overviewWho = assistantOverviewWho(assistant, overviewLabels)
-  const overviewLimits = assistantOverviewLimits(assistant, { ...overviewCounts, ...overviewLabels })
-  const jumpToOverviewTarget = (target: AssistantOverviewTodo['target']): void => {
+  /**
+   * 概览's todos name the block that fixes them. Nightly keeps 记忆 / 技能 /
+   * 自动化 inside 工作, so a jump opens 工作 and scrolls to that one sub-block;
+   * the identity todo has its own group.
+   */
+  const jumpToOverviewTarget = (target: AssistantOverviewTarget): void => {
     // Searching hides every group the query does not match; clearing it is what
     // keeps the target the user just asked for reachable.
     setQuery('')
-    setOpenGroups(current => ({ ...current, [target]: true }))
+    const destination = OVERVIEW_TARGET_GROUP[target]
+    setOpenGroups(current => ({ ...current, [destination.group]: true }))
     requestAnimationFrame(() => {
-      paneRef.current?.querySelector(`[data-dsh-fold="${target}"]`)?.scrollIntoView({ block: 'start' })
+      const fold = `[data-dsh-fold="${destination.group}"]`
+      const selector = destination.section === undefined
+        ? fold
+        : `${fold} [data-dsh-work-section="${destination.section}"]`
+      paneRef.current?.querySelector(selector)?.scrollIntoView({ block: 'start' })
     })
   }
   // The subtitle names what the assistant is: its group, role and task-derived
@@ -962,73 +1127,6 @@ export function AssistantSettingsPane({
       data-expanded={expanded}
       ref={paneRef}
     >
-      {/* Only the avatar shows; the pencil at its corner floats the editor. */}
-      <div className={css.assistantAvatarHero} data-dsh-assistant-avatar-hero>
-        <div className={css.assistantAvatarAnchor}>
-          <button
-            type="button"
-            className={css.assistantAvatarTrigger}
-            data-dsh-avatar-trigger
-            aria-label="编辑头像"
-            aria-expanded={avatarEditing}
-            aria-controls={avatarEditing ? AVATAR_EDITOR_ID : undefined}
-            onClick={() => { setAvatarEditing(open => !open) }}
-          >
-            {avatarDraft.avatar === ''
-              ? (
-                <Mascot
-                  seed={avatarDraft.seed}
-                  options={avatarDraft.mascot}
-                  size={64}
-                  avatarShape="rounded"
-                  motion={mascotMotion}
-                  motionKey={mascotMotionKey}
-                />
-              )
-              : <MemberAvatar name={displayName} avatar={avatarDraft.avatar} size={64} />}
-            <span className={css.assistantAvatarBadge} aria-hidden="true">
-              <IconEditOutlineRegular size={12} />
-            </span>
-          </button>
-        </div>
-        <div className={css.assistantAvatarWho}>
-          <span className={css.assistantAvatarNameRow}>
-            <span className={css.assistantAvatarName}>{displayName}</span>
-            {isCoordinatorInstance(assistant) && (
-              <span
-                className={css.assistantAvatarCrownChip}
-                data-dsh-assistant-avatar-crown
-                role="img"
-                aria-label="总协调"
-                title="总协调"
-              >
-                <LeaderMark size={11} />
-              </span>
-            )}
-          </span>
-          <span className={css.assistantAvatarSub}>{avatarSubtitle}</span>
-        </div>
-        {avatarEditing && (
-          <AssistantAvatarEditor
-            draft={avatarDraft}
-            disabled={busy}
-            onDraftChange={stageAvatar}
-            onReset={() => { stageAvatar(() => avatarDraftReset(assistant.id)) }}
-            onClose={closeAvatarEditor}
-          />
-        )}
-      </div>
-      <AssistantNowBlock
-        now={now}
-        at={Date.now()}
-        busy={busy || openingChat || openingTask}
-        compactBusy={compacting}
-        onOpenChat={() => { void openChat() }}
-        onOpenTask={() => { void openCurrentTask() }}
-        onCompact={() => { void compactMainSession() }}
-        onNewRelationship={startNewRelationship}
-        onAllSettings={showAllSettings}
-      />
       <label className={css.settingsSearch}>
         <IconSearchOutlineRegular size={14} />
         <input
@@ -1050,145 +1148,95 @@ export function AssistantSettingsPane({
         </p>
       )}
 
-      {isVisible('overview') && (
+      {/* 现在 first, folded: its summary line already carries the live status,
+          and the body is the same read the pane has always opened with. */}
+      {isVisible('now') && (
         <FoldGroup
-          icon={GROUP_ICONS.overview}
-          title="概览"
-          open={isOpen('overview')}
-          onToggle={open => { toggle('overview', open) }}
-          dataKind="overview"
+          icon={GROUP_ICONS.now}
+          title="现在"
+          hint={now.statusText}
+          open={isOpen('now')}
+          onToggle={open => { toggle('now', open) }}
+          dataKind="now"
         >
-          <div className={css.assistantOverview} data-dsh-assistant-overview>
-            {/* M1: the memory count and its one-step way in. It appears only
-                once the read answered — an unread count makes no claim. */}
-            {memoryEntryCount?.assistantId === assistant.id && (
-              <AssistantOverviewMemoryRow
-                count={memoryEntryCount.count}
-                onManage={() => { jumpToOverviewTarget('memory') }}
-              />
-            )}
-            {/* A checklist, not a score: nothing is rendered once nothing is missing. */}
-            {overviewTodos.length > 0 && (
-              <section
-                className={css.assistantOverviewSection}
-                aria-label="待办清单"
-                data-dsh-assistant-overview-todos
-              >
-                <span className={css.assistantOverviewTitle}>待办清单</span>
-                <ul className={css.assistantOverviewTodos}>
-                  {overviewTodos.map(todo => (
-                    <li key={todo.id}>
-                      <button
-                        type="button"
-                        className={css.assistantOverviewTodo}
-                        data-dsh-assistant-overview-todo={todo.id}
-                        onClick={() => { jumpToOverviewTarget(todo.target) }}
-                      >
-                        <span className={css.assistantOverviewTodoText}>{todo.text}</span>
-                        <span className={css.assistantOverviewArrow} aria-hidden="true">→</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-
-            <section
-              className={css.assistantOverviewSection}
-              aria-label="它是什么"
-              data-dsh-assistant-overview-who
-            >
-              <span className={css.assistantOverviewTitle}>它是什么</span>
-              <div className={css.assistantOverviewWho}>
-                {avatarDraft.avatar === ''
-                  ? (
-                    <Mascot
-                      seed={avatarDraft.seed}
-                      options={avatarDraft.mascot}
-                      size={24}
-                      avatarShape="rounded"
-                      motion="idle"
-                    />
-                  )
-                  : <MemberAvatar name={overviewWho.name} avatar={avatarDraft.avatar} size={24} />}
-                <span className={css.assistantOverviewWhoName}>{overviewWho.name}</span>
-              </div>
-              {overviewWho.description === ''
-                ? (
-                  <button
-                    type="button"
-                    className={css.assistantOverviewDescriptionEmpty}
-                    data-dsh-assistant-overview-description
-                    onClick={() => { jumpToOverviewTarget('identity') }}
-                  >
-                    还没有描述
-                  </button>
-                )
-                : (
-                  <>
-                    <p
-                      className={css.assistantOverviewDescription}
-                      title={overviewWho.description}
-                      data-dsh-assistant-overview-description
-                    >
-                      {overviewWho.description}
-                    </p>
-                    {/* The clamp hides the rest of the text; this text action is
-                        the keyboard and touch way into 身份与形象 (a title is
-                        neither focusable nor reachable on touch). It shares the
-                        empty-description placeholder's text-button look and is
-                        always shown for a non-empty description: measuring
-                        scrollHeight in a narrow clamped column is not reliable. */}
-                    <button
-                      type="button"
-                      className={css.assistantOverviewDescriptionEmpty}
-                      data-dsh-assistant-overview-read-all
-                      onClick={() => { jumpToOverviewTarget('identity') }}
-                    >
-                      读全部
-                    </button>
-                  </>
-                )}
-              <p className={css.assistantOverviewMeta}>{overviewWho.meta.join(' · ')}</p>
-            </section>
-
-            <section
-              className={css.assistantOverviewSection}
-              aria-label="能力边界"
-              data-dsh-assistant-overview-limits
-            >
-              <span className={css.assistantOverviewTitle}>能力边界</span>
-              {overviewLimits.capable.length === 0
-                ? <p className={css.assistantOverviewNothing}>还没有授予任何能力</p>
-                : (
-                  <>
-                    <span className={css.assistantOverviewListTitle}>能做到</span>
-                    <ul className={css.assistantOverviewList} data-dsh-assistant-overview-capable>
-                      {overviewLimits.capable.map(line => <li key={line}>{line}</li>)}
-                    </ul>
-                  </>
-                )}
-              {overviewLimits.unable.length > 0 && (
-                <>
-                  <span className={css.assistantOverviewListTitle}>不会做</span>
-                  <ul className={css.assistantOverviewList} data-dsh-assistant-overview-unable>
-                    {overviewLimits.unable.map(line => <li key={line}>{line}</li>)}
-                  </ul>
-                </>
-              )}
-            </section>
-          </div>
+          <AssistantNowBlock
+            now={now}
+            at={Date.now()}
+            busy={busy || openingChat || openingTask}
+            compactBusy={compacting}
+            onOpenChat={() => { void openChat() }}
+            onOpenTask={() => { void openCurrentTask() }}
+            onCompact={() => { void compactMainSession() }}
+            onNewRelationship={startNewRelationship}
+            onAllSettings={showAllSettings}
+          />
         </FoldGroup>
       )}
 
       {isVisible('identity') && (
         <FoldGroup
           icon={GROUP_ICONS.identity}
-          title="身份与形象"
+          title="身份"
           open={isOpen('identity')}
           onToggle={open => { toggle('identity', open) }}
           dataKind="identity"
         >
+          {/* Only the avatar shows; the pencil at its corner floats the editor. */}
+          <div className={css.assistantAvatarHero} data-dsh-assistant-avatar-hero>
+            <div className={css.assistantAvatarAnchor}>
+              <button
+                type="button"
+                className={css.assistantAvatarTrigger}
+                data-dsh-avatar-trigger
+                aria-label="编辑头像"
+                aria-expanded={avatarEditing}
+                aria-controls={avatarEditing ? AVATAR_EDITOR_ID : undefined}
+                onClick={() => { setAvatarEditing(open => !open) }}
+              >
+                {avatarDraft.avatar === ''
+                  ? (
+                    <Mascot
+                      seed={avatarDraft.seed}
+                      options={avatarDraft.mascot}
+                      size={64}
+                      avatarShape="rounded"
+                      motion={mascotMotion}
+                      motionKey={mascotMotionKey}
+                    />
+                  )
+                  : <MemberAvatar name={displayName} avatar={avatarDraft.avatar} size={64} />}
+                <span className={css.assistantAvatarBadge} aria-hidden="true">
+                  <IconEditOutlineRegular size={12} />
+                </span>
+              </button>
+            </div>
+            <div className={css.assistantAvatarWho}>
+              <span className={css.assistantAvatarNameRow}>
+                <span className={css.assistantAvatarName}>{displayName}</span>
+                {isCoordinatorInstance(assistant) && (
+                  <span
+                    className={css.assistantAvatarCrownChip}
+                    data-dsh-assistant-avatar-crown
+                    role="img"
+                    aria-label="总协调"
+                    title="总协调"
+                  >
+                    <LeaderMark size={11} />
+                  </span>
+                )}
+              </span>
+              <span className={css.assistantAvatarSub}>{avatarSubtitle}</span>
+            </div>
+            {avatarEditing && (
+              <AssistantAvatarEditor
+                draft={avatarDraft}
+                disabled={busy}
+                onDraftChange={stageAvatar}
+                onReset={() => { stageAvatar(() => avatarDraftReset(assistant.id)) }}
+                onClose={closeAvatarEditor}
+              />
+            )}
+          </div>
           <SettingsRows>
             {shows('显示名称') && (
               <SettingsRow
@@ -1258,13 +1306,13 @@ export function AssistantSettingsPane({
         </FoldGroup>
       )}
 
-      {isVisible('model') && (
+      {isVisible('brain') && (
         <FoldGroup
-          icon={GROUP_ICONS.model}
-          title="模型与权限"
-          open={isOpen('model')}
-          onToggle={open => { toggle('model', open) }}
-          dataKind="model"
+          icon={GROUP_ICONS.brain}
+          title="大脑"
+          open={isOpen('brain')}
+          onToggle={open => { toggle('brain', open) }}
+          dataKind="brain"
         >
           <SettingsRows>
             {/* One merged row: a search for 模型 or 思考模式 must both show it. */}
@@ -1293,6 +1341,129 @@ export function AssistantSettingsPane({
                 )}
               />
             )}
+          </SettingsRows>
+          {modelCapabilities.error !== undefined && (
+            <div className={css.inlineError} role="alert">
+              读取模型能力失败：{modelCapabilities.error}
+            </div>
+          )}
+        </FoldGroup>
+      )}
+
+      {isVisible('work') && (
+        <FoldGroup
+          icon={GROUP_ICONS.work}
+          title="工作"
+          open={isOpen('work')}
+          onToggle={open => { toggle('work', open) }}
+          dataKind="work"
+        >
+          {/* 已知: what it remembers and can use. Nightly puts memory, skills and
+              files under this one heading; here the editors themselves are the
+              rows, so nothing is a second copy of 概览. */}
+          <section
+            className={css.assistantWorkGroup}
+            data-dsh-work-section="knows"
+            aria-label="已知"
+          >
+            <span className={css.assistantWorkTitle}>已知</span>
+            <div className={css.assistantWorkGroup} data-dsh-work-section="memory">
+              <span className={css.assistantWorkTitle}>记忆</span>
+              <AssistantMemorySection assistantId={assistant.id} />
+            </div>
+            <div className={css.assistantWorkGroup} data-dsh-work-section="skills">
+              <span className={css.assistantWorkTitle}>
+                {`技能 · 已选 ${selectedSkills.length + selectedMcpServers.length} 项`}
+              </span>
+              <CapabilityList
+                ariaLabel="选择助手可使用的 Skills"
+                icon={<IconSparkleRegular size={14} />}
+                emptyText="该 Agent Preset 没有可用的 Skill。"
+                missingDetail="该 Agent Preset 不再提供这个 Skill，保存时不会带上"
+                selected={selectedSkills}
+                options={capabilities.skills}
+                loading={capabilities.loading}
+                error={capabilities.error}
+                disabled={busy}
+                query={query}
+                onChange={next => {
+                  setSelectedSkills(next)
+                  setError(undefined)
+                  setSaved(false)
+                }}
+              />
+              <strong className={css.settingsRowLabel}>MCP</strong>
+              <CapabilityList
+                ariaLabel="选择助手可使用的 MCP Server"
+                icon={<IconProjectAddOutlineRegular size={14} />}
+                emptyText="该 Agent Preset 没有可用的 MCP Server。"
+                missingDetail="该 Agent Preset 不再提供这个 MCP Server，保存时不会带上"
+                selected={selectedMcpServers}
+                options={capabilities.mcpServers}
+                loading={capabilities.loading}
+                error={capabilities.error}
+                disabled={busy}
+                query={query}
+                onChange={next => {
+                  setSelectedMcpServers(next)
+                  setError(undefined)
+                  setSaved(false)
+                }}
+              />
+            </div>
+            <div className={css.assistantWorkGroup} data-dsh-work-section="workspace">
+              <SettingsRows>
+                <SettingsRow
+                  label="工作区"
+                  hint="只读；这个助手的文件读写都发生在该工作区里。"
+                  control={(
+                    <span className={css.assistantWorkValue} title={assistant.workspacePath}>
+                      {workspaceLabel}
+                    </span>
+                  )}
+                />
+              </SettingsRows>
+            </div>
+          </section>
+
+          {/* 行为: what it does on its own, what it has spent, and what it did. */}
+          <section
+            className={css.assistantWorkGroup}
+            data-dsh-work-section="does"
+            aria-label="行为"
+          >
+            <span className={css.assistantWorkTitle}>行为</span>
+            <div className={css.assistantWorkGroup} data-dsh-work-section="automations">
+              <span className={css.assistantWorkTitle}>自动化</span>
+              <AutomationSection instance={assistant} />
+            </div>
+            <div className={css.assistantWorkGroup} data-dsh-work-section="usage">
+              <span className={css.assistantWorkTitle}>用量</span>
+              <span className={css.assistantWorkHint}>只读 · 来自宿主会话投影</span>
+              <UsageSection
+                scope={assistantUsageScope(assistant, taskUsage.tasks)}
+                {...(taskUsage.failed
+                  ? { excludeNote: '任务会话暂无法读取，合计不含任务会话' }
+                  : {})}
+              />
+            </div>
+            <div className={css.assistantWorkGroup} data-dsh-work-section="history">
+              <span className={css.assistantWorkTitle}>会话历史</span>
+              <HistorySection instance={assistant} onChanged={() => { void onSaved() }} />
+            </div>
+          </section>
+        </FoldGroup>
+      )}
+
+      {isVisible('rules') && (
+        <FoldGroup
+          icon={GROUP_ICONS.rules}
+          title="规则"
+          open={isOpen('rules')}
+          onToggle={open => { toggle('rules', open) }}
+          dataKind="rules"
+        >
+          <SettingsRows>
             {shows('权限预设') && (
               <SettingsRow
                 label="权限预设"
@@ -1313,114 +1484,34 @@ export function AssistantSettingsPane({
               />
             )}
           </SettingsRows>
-          {modelCapabilities.error !== undefined && (
-            <div className={css.inlineError} role="alert">
-              读取模型能力失败：{modelCapabilities.error}
+          {/* 高级: the relationship operations. The same two calls the 现在 block
+              offers as context actions, kept next to 归档 so every irreversible
+              move lives on one surface; 归档 itself follows below. */}
+          <div className={css.assistantRulesAdvanced} data-dsh-assistant-rules-advanced>
+            <span className={css.assistantWorkTitle}>高级</span>
+            <div className={css.assistantDetailActions}>
+              <button
+                type="button"
+                className={css.assistantNowAction}
+                data-dsh-assistant-rules-action="compact"
+                disabled={busy || compacting}
+                title="在主会话里执行原生 /compact；忙碌或不可用时宿主的拒绝会显示在上方"
+                onClick={() => { void compactMainSession() }}
+              >
+                {compacting ? '压缩中…' : '压缩上下文'}
+              </button>
+              <button
+                type="button"
+                className={css.assistantNowAction}
+                data-dsh-assistant-rules-action="relationship"
+                disabled={busy}
+                title="用检查点交接开始一个新关系；旧主会话保留，不归档"
+                onClick={startNewRelationship}
+              >
+                开始新关系
+              </button>
             </div>
-          )}
-        </FoldGroup>
-      )}
-
-      {isVisible('usage') && (
-        <FoldGroup
-          icon={GROUP_ICONS.usage}
-          title="用量"
-          hint="只读 · 来自宿主会话投影"
-          open={isOpen('usage')}
-          onToggle={open => { toggle('usage', open) }}
-          dataKind="usage"
-        >
-          <UsageSection
-            scope={assistantUsageScope(assistant, taskUsage.tasks)}
-            {...(taskUsage.failed
-              ? { excludeNote: '任务会话暂无法读取，合计不含任务会话' }
-              : {})}
-          />
-        </FoldGroup>
-      )}
-
-      {isVisible('capabilities') && (
-        <FoldGroup
-          icon={GROUP_ICONS.capabilities}
-          title="技能与MCP"
-          meta={`已选 ${selectedSkills.length + selectedMcpServers.length} 项`}
-          open={isOpen('capabilities')}
-          onToggle={open => { toggle('capabilities', open) }}
-          dataKind="capabilities"
-        >
-          <div className={css.assistantDetailBody}>
-            <strong className={css.settingsRowLabel}>技能</strong>
-            <CapabilityList
-              ariaLabel="选择助手可使用的 Skills"
-              icon={<IconSparkleRegular size={14} />}
-              emptyText="该 Agent Preset 没有可用的 Skill。"
-              missingDetail="该 Agent Preset 不再提供这个 Skill，保存时不会带上"
-              selected={selectedSkills}
-              options={capabilities.skills}
-              loading={capabilities.loading}
-              error={capabilities.error}
-              disabled={busy}
-              query={query}
-              onChange={next => {
-                setSelectedSkills(next)
-                setError(undefined)
-                setSaved(false)
-              }}
-            />
-            <strong className={css.settingsRowLabel}>MCP</strong>
-            <CapabilityList
-              ariaLabel="选择助手可使用的 MCP Server"
-              icon={<IconProjectAddOutlineRegular size={14} />}
-              emptyText="该 Agent Preset 没有可用的 MCP Server。"
-              missingDetail="该 Agent Preset 不再提供这个 MCP Server，保存时不会带上"
-              selected={selectedMcpServers}
-              options={capabilities.mcpServers}
-              loading={capabilities.loading}
-              error={capabilities.error}
-              disabled={busy}
-              query={query}
-              onChange={next => {
-                setSelectedMcpServers(next)
-                setError(undefined)
-                setSaved(false)
-              }}
-            />
           </div>
-        </FoldGroup>
-      )}
-
-      {isVisible('memory') && (
-        <FoldGroup
-          icon={GROUP_ICONS.memory}
-          title="记忆"
-          open={isOpen('memory')}
-          onToggle={open => { toggle('memory', open) }}
-          dataKind="memory"
-        >
-          <AssistantMemorySection assistantId={assistant.id} />
-        </FoldGroup>
-      )}
-
-      {isVisible('automations') && (
-        <FoldGroup
-          icon={GROUP_ICONS.automations}
-          title="自动化"
-          open={isOpen('automations')}
-          onToggle={open => { toggle('automations', open) }}
-          dataKind="automations"
-        >
-          <AutomationSection instance={assistant} />
-        </FoldGroup>
-      )}
-
-      {isVisible('archive') && (
-        <FoldGroup
-          icon={GROUP_ICONS.archive}
-          title="归档"
-          open={isOpen('archive')}
-          onToggle={open => { toggle('archive', open) }}
-          dataKind="archive"
-        >
           {assistant.status !== 'archived' && (
             <div className={css.assistantSettingsArchive}>
               <div className={css.assistantSettingsArchiveCopy}>
@@ -1524,15 +1615,25 @@ export function AssistantSettingsPane({
         </FoldGroup>
       )}
 
-      {isVisible('history') && (
+
+      {isVisible('overview') && (
         <FoldGroup
-          icon={GROUP_ICONS.history}
-          title="会话历史"
-          open={isOpen('history')}
-          onToggle={open => { toggle('history', open) }}
-          dataKind="history"
+          icon={GROUP_ICONS.overview}
+          title="概览"
+          open={isOpen('overview')}
+          onToggle={open => { toggle('overview', open) }}
+          dataKind="overview"
         >
-          <HistorySection instance={assistant} onChanged={() => { void onSaved() }} />
+          <AssistantOverviewBlock
+            assistant={assistant}
+            {...(memoryEntryCount?.assistantId === assistant.id
+              ? { memoryCount: memoryEntryCount.count }
+              : {})}
+            labels={overviewLabels}
+            counts={overviewCounts}
+            avatar={avatarDraft}
+            onJump={jumpToOverviewTarget}
+          />
         </FoldGroup>
       )}
 
@@ -1547,6 +1648,7 @@ export function AssistantSettingsPane({
           {saving ? '保存中…' : '保存'}
         </Button>
       </div>
+
       {/* The one new-relationship path: the existing checkpoint handoff. It
           retires the old main Session into the history list and binds a fresh
           one; this pane never archives the main Session. */}

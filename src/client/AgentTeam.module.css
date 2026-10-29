@@ -12742,6 +12742,46 @@ textarea.sidebarGroupBriefInput {
   line-height: 16px;
 }
 
+/* 工作: nightly's two subheads — 已知 (what it knows) and 行为 (what it does) —
+   over the existing editors. The fold group is already the container, so these
+   are headings and spacing only, never a nested card. */
+.assistantWorkGroup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.assistantWorkTitle {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 18px;
+}
+
+.assistantWorkHint {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 17px;
+}
+
+.assistantWorkValue {
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+/* 规则: the 高级 heading groups the relationship operations; 归档 keeps its own
+   rule below, which is what separates it from these two. */
+.assistantRulesAdvanced {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  min-width: 0;
+}
+
 /* 概览: a read-only checkup — what is missing, what it is, where its limits are.
    No card fill: the fold group is already the container. */
 .assistantOverview {
