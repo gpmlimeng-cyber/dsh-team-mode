@@ -21,16 +21,17 @@ interface Placement {
   next: Node | null
 }
 
-function containsHint(node: Element): boolean {
+function containsHint(node: Element, hints: readonly string[]): boolean {
   const text = (node.textContent ?? '').trim()
   if (text === '') return false
-  return UTILITY_HINTS.some(hint => text.includes(hint))
+  return hints.some(hint => text.includes(hint))
 }
 
 /** The smallest ancestor holding every utility the header currently shows. */
-export function utilitiesCluster(scope: ParentNode): HTMLElement | null {
+export function utilitiesCluster(scope: ParentNode, extra: readonly string[] = []): HTMLElement | null {
+  const hints = [...UTILITY_HINTS, ...extra].filter(hint => hint.trim() !== '')
   const holders = [...scope.querySelectorAll<HTMLElement>('*')]
-    .filter(node => node.children.length > 0 && containsHint(node))
+    .filter(node => node.children.length > 0 && containsHint(node, hints))
   if (holders.length === 0) return null
   let candidate: HTMLElement | null = holders[0] ?? null
   for (const holder of holders.slice(1)) {
@@ -50,7 +51,7 @@ export function viewTabRow(scope: ParentNode): HTMLElement | null {
   return list?.parentElement ?? null
 }
 
-export function placeHeaderUtilities(): () => void {
+export function placeHeaderUtilities(extraLabels: readonly string[] = []): () => void {
   if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => {}
   let placement: Placement | undefined
   let frame: number | undefined
@@ -69,10 +70,13 @@ export function placeHeaderUtilities(): () => void {
   const apply = (): void => {
     frame = undefined
     if (disposed) return
-    const scope = document.querySelector<HTMLElement>('[data-slot="conversation.session.header"]')
-    if (scope === null) { restore(); return }
-    const row = viewTabRow(scope)
-    const cluster = utilitiesCluster(scope)
+    // The slot attribute is the precise scope; a host that renames it still has
+    // exactly one view-tab row and one utility cluster on screen, so the whole
+    // body is the fallback rather than hiding nothing.
+    const precise = document.querySelector<HTMLElement>('[data-slot="conversation.session.header"]')
+    const scope: ParentNode = precise ?? document.body
+    const row = viewTabRow(scope) ?? viewTabRow(document.body)
+    const cluster = utilitiesCluster(scope, extraLabels)
     if (row === null || cluster === null || cluster.contains(row)) { restore(); return }
     if (placement?.cluster === cluster && placement.wrapper.parentElement === row) return
     restore()
