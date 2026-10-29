@@ -301,6 +301,32 @@ function threadControlIcon(id: ThreadControlId): JSX.Element {
 
 /** Session-header switch: jump between a team's members and its threads.
  *  Renders only on a Session owned by a team; a bare Session shows nothing. */
+/** At most three topics fit beside the title; the rest live in the panel. */
+export interface SessionTabRow {
+  sessionId: string
+  title: string
+  current: boolean
+}
+
+export function sessionTabRows(
+  team: TeamView,
+  sessionId: string,
+  limit = 3,
+): SessionTabRow[] {
+  const rows = Object.values(team.threads ?? {})
+    .sort((left: TeamThread, right: TeamThread) => right.updatedAt - left.updatedAt || left.id.localeCompare(right.id))
+    .map(thread => ({
+      sessionId: thread.sessionId,
+      title: thread.title,
+      current: thread.sessionId === sessionId,
+    }))
+    .sort((left, right) => Number(right.current) - Number(left.current))
+  const current = rows.find(row => row.current)
+  const rest = rows.filter(row => !row.current)
+  const picked = current === undefined ? rest : [current, ...rest]
+  return picked.slice(0, limit)
+}
+
 export function TeamSessionSwitcher({
   sessionId,
   openSession,
@@ -517,6 +543,31 @@ export function TeamSessionSwitcher({
       onMouseEnter={cancelHoverClose}
       onMouseLeave={scheduleHoverClose}
     >
+      <span className={css.teamSessionTabs} data-dsh-team-session-tabs>
+        {sessionTabRows(team, sessionId).map(tab => (
+          <button
+            key={tab.sessionId}
+            type="button"
+            className={`${css.teamSessionTab} ${tab.current ? css.teamSessionTabCurrent : ''}`}
+            aria-current={tab.current ? 'page' : undefined}
+            title={tab.title}
+            data-dsh-team-session-tab={tab.sessionId}
+            onClick={() => { goTo(tab.sessionId) }}
+          >
+            {tab.title}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={css.teamSessionTabAdd}
+          aria-label="新建话题"
+          title="新建话题"
+          data-dsh-team-session-add
+          onClick={() => { void createThread(team) }}
+        >
+          <IconPlusOutlineRegular size={12} />
+        </button>
+      </span>
       <Menu
         open={open}
         onClose={close}
@@ -550,7 +601,6 @@ export function TeamSessionSwitcher({
             onBlur={() => { skipFocusOpen.current = false; pointerFocus.current = false }}
             onClick={() => { pointerFocus.current = false; toggle() }}
           >
-            <span className={css.teamSessionTriggerName}>{model.currentName}</span>
             <IconChevronDownOutlineRegular size={12} className={css.teamSessionTriggerChevron} />
           </button>
         )}

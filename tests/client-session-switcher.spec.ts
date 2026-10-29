@@ -190,8 +190,10 @@ describe('the header trigger and panel', () => {
     expect(chrome).toContain('aria-expanded={open}')
     expect(chrome).toContain('aria-haspopup="menu"')
     expect(chrome).toContain('data-dsh-team-session-switcher')
-    // The trigger is the name plus a caret, not a framed pill next to a ＋.
-    expect(chrome).toContain('<span className={css.teamSessionTriggerName}>{model.currentName}</span>')
+    // The current topic is a chip; the trigger is only the caret that opens the
+    // full list, so the name never appears twice in the header.
+    expect(chrome).toContain('data-dsh-team-session-tabs')
+    expect(chrome).toContain('data-dsh-team-session-tab={tab.sessionId}')
     expect(chrome).toContain('<IconChevronDownOutlineRegular size={12}')
     expect(block('.teamSessionTrigger')).toContain('border: none')
     expect(block('.teamSessionTrigger')).toContain('background: transparent')
@@ -213,7 +215,7 @@ describe('the header trigger and panel', () => {
     const search = chrome.indexOf('className={css.teamSessionSearch}')
     const members = chrome.indexOf('aria-label="成员"')
     const threads = chrome.indexOf('aria-label="团队会话"')
-    const create = chrome.indexOf('void createThread(team)')
+    const create = chrome.indexOf('void createThread(team)', chrome.indexOf('aria-label="团队会话"'))
     expect(search).toBeGreaterThan(-1)
     expect(members).toBeGreaterThan(search)
     expect(threads).toBeGreaterThan(members)
@@ -395,5 +397,38 @@ describe('the thread ⋯ menu', () => {
     expect(chromeSource).toContain('subscribeAgentTeam')
     expect(chromeSource).not.toContain('setThreads')
     expect(chromeSource).not.toContain('setMembers')
+  })
+})
+
+describe('topic tabs in the header', () => {
+  const chromeSource = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
+  const cssSource = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+
+  it('caps the strip at three topics with the current one first', async () => {
+    const { sessionTabRows } = await import('../src/client/team-member-chrome.js')
+    const team = {
+      id: 't',
+      name: 'T',
+      leaderSlotId: 'm1',
+      members: {},
+      threads: {
+        a: { id: 'a', title: 'A', sessionId: 's-a', updatedAt: 1 },
+        b: { id: 'b', title: 'B', sessionId: 's-b', updatedAt: 9 },
+        c: { id: 'c', title: 'C', sessionId: 's-c', updatedAt: 5 },
+        d: { id: 'd', title: 'D', sessionId: 's-d', updatedAt: 3 },
+      },
+    } as never
+    const rows = sessionTabRows(team, 's-c')
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toMatchObject({ sessionId: 's-c', current: true })
+    // Newest of the rest comes next, and the current topic never repeats.
+    expect(rows.slice(1).map(row => row.sessionId)).toEqual(['s-b', 's-d'])
+  })
+
+  it('keeps the add button and the panel caret beside the strip', () => {
+    expect(chromeSource).toContain('data-dsh-team-session-add')
+    expect(chromeSource).toContain('aria-label="新建话题"')
+    expect(cssSource).toContain('.teamSessionTabAdd')
+    expect(cssSource).toContain('.teamSessionTabCurrent')
   })
 })

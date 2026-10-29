@@ -5851,6 +5851,67 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   max-width: 100%;
 }
 
+/* Topic tabs beside the title: chips, not tabs — the shipped view tabs
+   (对话 / 轨迹) sit right under them and must not read as the same control. */
+.teamSessionTabs {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.teamSessionTab {
+  box-sizing: border-box;
+  max-width: 88px;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 20px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.teamSessionTab:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.teamSessionTabCurrent {
+  border-color: var(--dsw-alias-border-l3);
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+}
+
+.teamSessionTabAdd {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  cursor: pointer;
+}
+
+.teamSessionTabAdd:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
 .teamSessionTrigger {
   display: inline-flex;
   align-items: center;
