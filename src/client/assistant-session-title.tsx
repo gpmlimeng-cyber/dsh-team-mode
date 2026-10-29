@@ -6,9 +6,6 @@ import {
 } from './assistant-instances.js'
 import css from './AgentTeam.module.css'
 import type { AssistantInstance } from '../domain/types.js'
-import { Mascot } from './mascot-view.js'
-import { MemberAvatar } from './member-avatar.js'
-import { assistantShowsMascot, mascotOptionsFor } from './mascot.js'
 
 /** Shared read of every instance, refreshed by the plugin's change stream. */
 function useAssistantInstances(): AssistantInstance[] {
@@ -50,35 +47,6 @@ export function assistantLineageTitle(
   if (instance === undefined) return undefined
   const label = assistantInstanceLabel(instance)
   return displayTitle === label ? undefined : label
-}
-
-export function AssistantSessionTitle({
-  lineageSessionId,
-  displayTitle,
-}: {
-  lineageSessionId?: string
-  displayTitle?: string
-}): JSX.Element | null {
-  const instances = useAssistantInstances()
-  const instance = assistantInstanceForSession(instances, lineageSessionId)
-  const label = assistantLineageTitle(instance, displayTitle)
-  if (label === undefined || instance === undefined) return null
-  return (
-    <span className={css.teamSessionTitle} data-dsh-assistant-session-title title={label}>
-      <span className={css.teamSessionTitleFace}>
-        {assistantShowsMascot(instance)
-          ? <Mascot {...mascotOptionsFor(instance)} size={16} avatarShape="rounded" animated={false} />
-          : (
-            <MemberAvatar
-              name={label}
-              avatar={instance.assistantSnapshot.avatar}
-              size={16}
-            />
-          )}
-      </span>
-      <span className={css.teamSessionTitleName}>{label}</span>
-    </span>
-  )
 }
 
 /**

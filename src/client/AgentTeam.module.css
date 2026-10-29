@@ -5869,6 +5869,23 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   display: none;
 }
 
+/* The title is the way into details, so it must look pressable, not like text. */
+.teamSessionTitleButton {
+  padding: 0 6px;
+  margin-inline-start: -6px;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.teamSessionTitleButton:hover,
+.teamSessionTitleButton:focus-visible {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
 .teamSessionTitleName {
   min-width: 0;
   overflow: hidden;

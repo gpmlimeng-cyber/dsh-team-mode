@@ -7,6 +7,18 @@ import type { TeamView } from '../src/transport/contracts.js'
 // The switcher imports the whole primitive set; this node test only checks the
 // plugin's own grouping/navigation and the source wiring, so every primitive is
 // a stub (the Menu renders its anchor and, while open, its content).
+// The switcher imports the face renderers and the settings opener; both pull the
+// primitive icon set, which this spec replaces with its own stub below.
+vi.mock('../src/client/mascot-view.js', () => ({
+  Mascot: (props: { seed?: string }) => createElement('span', { 'data-mascot': props.seed ?? '' }),
+}))
+vi.mock('../src/client/member-avatar.js', () => ({
+  MemberAvatar: (props: { name?: string }) => createElement('span', { 'data-avatar': props.name ?? '' }),
+}))
+vi.mock('../src/client/assistant-settings-pane.js', () => ({
+  openAssistantDetail: () => {},
+}))
+
 vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
   const Stub = (props: { children?: unknown }): unknown => createElement('span', null, props?.children as never)
   const api: Record<string, unknown> = {
@@ -21,9 +33,11 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     'IconArchiveOutlineRegular', 'IconCheckOutlineRegular', 'IconChevronDownOutlineRegular',
     'IconEditOutlineRegular', 'IconEllipsisOutlineRegular', 'IconPauseOutlineRegular',
     'IconPlayOutlineRegular', 'IconPlusOutlineRegular', 'IconSearchOutlineRegular',
-    'IconUnarchiveOutlineRegular', 'IconUsersOutlineRegular',
+    'IconUnarchiveOutlineRegular', 'IconUsersOutlineRegular', 'IconInfoOutlineRegular',
+    'IconChevronsUpDownOutlineRegular',
   ]) api[name] = Stub
-  return api
+  // Any further primitive the component tree reaches for is a stub too.
+  return new Proxy(api, { get: (target, key) => (key in target ? target[key as string] : Stub) })
 })
 
 const {
@@ -454,7 +468,8 @@ describe('lineage title names the team', () => {
 })
 
 describe('single-assistant lineage title', () => {
-  const source = readFileSync(new URL('../src/client/assistant-session-title.tsx', import.meta.url), 'utf8')
+  // The component lives beside the team one so both share the face renderer.
+  const source = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
   const cssSource = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
 
   it('wears the assistant face and the same name style as a team title', () => {
@@ -465,5 +480,16 @@ describe('single-assistant lineage title', () => {
 
   it('hides the shipped crumb while the face title renders', () => {
     expect(cssSource).toContain(":has(> [data-dsh-assistant-session-title])")
+  })
+})
+
+describe('title opens details', () => {
+  const source = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
+
+  it('is a button that opens the matching details surface', () => {
+    expect(source).toContain('openAssistantDetail(instance.id)')
+    expect(source).toContain('setTeamPanelOpen(true)')
+    expect(source).toContain('aria-label={`查看 ${label} 的详情`}')
+    expect(source).toContain('aria-label={`查看 ${team.name} 的详情`}')
   })
 })

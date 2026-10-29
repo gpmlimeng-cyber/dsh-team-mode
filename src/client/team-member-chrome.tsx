@@ -15,6 +15,9 @@ import {
   type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam, teamLeaderSessionId } from './api.js'
+import { setTeamPanelOpen } from './store.js'
+import { openAssistantDetail } from './assistant-settings-pane.js'
+import { assistantLineageTitle } from './assistant-session-title.js'
 import css from './AgentTeam.module.css'
 import { MemberAvatar } from './member-avatar.js'
 import {
@@ -25,6 +28,7 @@ import {
   useAgentCatalog,
 } from './agent-preset-label.js'
 import type { AssistantInstanceView, TeamView } from '../transport/contracts.js'
+import type { AssistantInstance } from '../domain/types.js'
 import { Mascot } from './mascot-view.js'
 import { teamAvatarStack } from './team-avatar.js'
 import { assistantShowsMascot, mascotOptionsFor } from './mascot.js'
@@ -337,6 +341,60 @@ export function sessionTabRows(
  * Replaces the crumb: an assistant's Session names that assistant, a team's own
  * Session stacks its members' faces and then the team name.
  */
+/** Shared read of every instance, refreshed by the plugin's change stream. */
+function useAssistantInstances(): AssistantInstance[] {
+  const [instances, setInstances] = useState<AssistantInstance[]>([])
+  useEffect(() => {
+    let live = true
+    const load = async (): Promise<void> => {
+      try {
+        const value = await callAgentTeam('assistant.instance.list')
+        if (live) setInstances(value.items)
+      } catch {
+        // Keep the previous set; the stream retries on the next snapshot.
+      }
+    }
+    void load()
+    const unsubscribe = subscribeAgentTeam(() => { void load() }, () => {}, () => { void load() })
+    return () => {
+      live = false
+      unsubscribe()
+    }
+  }, [])
+  return instances
+}
+
+/** The single-assistant title: the same face-and-name button as a team's. */
+export function AssistantSessionTitle({
+  lineageSessionId,
+  displayTitle,
+}: {
+  lineageSessionId?: string
+  displayTitle?: string
+}): JSX.Element | null {
+  const instances = useAssistantInstances()
+  const instance = assistantInstanceForSession(instances, lineageSessionId)
+  const label = assistantLineageTitle(instance, displayTitle)
+  if (label === undefined || instance === undefined) return null
+  return (
+    <button
+      type="button"
+      className={`${css.teamSessionTitle} ${css.teamSessionTitleButton}`}
+      data-dsh-assistant-session-title
+      title={`${label} · 查看详情`}
+      aria-label={`查看 ${label} 的详情`}
+      onClick={() => { openAssistantDetail(instance.id) }}
+    >
+      <span className={css.teamSessionTitleFace}>
+        {assistantShowsMascot(instance)
+          ? <Mascot {...mascotOptionsFor(instance)} size={16} avatarShape="rounded" animated={false} />
+          : <MemberAvatar name={label} avatar={instance.assistantSnapshot.avatar} size={16} />}
+      </span>
+      <span className={css.teamSessionTitleName}>{label}</span>
+    </button>
+  )
+}
+
 export function TeamSessionTitle({ lineageSessionId }: { lineageSessionId?: string }): JSX.Element | null {
   const team = useTeamForSession(lineageSessionId)
   if (team === undefined || lineageSessionId === undefined) return null
@@ -347,7 +405,14 @@ export function TeamSessionTitle({ lineageSessionId }: { lineageSessionId?: stri
   // image when there is one, so the header cannot drift from the list.
   const faces = teamAvatarStack(team.members).faces.slice(0, 3)
   return (
-    <span className={css.teamSessionTitle} data-dsh-team-session-title title={team.name}>
+    <button
+      type="button"
+      className={`${css.teamSessionTitle} ${css.teamSessionTitleButton}`}
+      data-dsh-team-session-title
+      title={`${team.name} · 查看详情`}
+      aria-label={`查看 ${team.name} 的详情`}
+      onClick={() => { setTeamPanelOpen(true) }}
+    >
       {faces.length > 0 && (
         <span className={css.teamSessionTitleFaces} aria-hidden="true">
           {faces.map(face => (
@@ -360,7 +425,7 @@ export function TeamSessionTitle({ lineageSessionId }: { lineageSessionId?: stri
         </span>
       )}
       <span className={css.teamSessionTitleName}>{team.name}</span>
-    </span>
+    </button>
   )
 }
 
