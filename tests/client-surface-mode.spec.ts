@@ -101,7 +101,9 @@ describe('sidebar surface switch', () => {
     // One trigger naming the current surface; the shipped Menu lists both.
     expect(sidebar).toContain('aria-haspopup="menu"')
     expect(sidebar).toContain('selectedId={mode}')
-    expect(sidebar).toContain('surfaceSwitchDot')
+    expect(sidebar).toContain('surfaceSwitchMark')
+    expect(sidebar).toContain('FishLogo')
+    expect(sidebar).toContain('stewardMark')
     expect(sidebar).toContain('IconChevronsUpDownOutlineRegular')
     const switchAt = sidebar.indexOf('<SurfaceModeSwitch')
     const gateAt = sidebar.indexOf("{mode === 'team' && (")
