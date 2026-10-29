@@ -5,9 +5,14 @@ import {
   IconChevronDownOutlineRegular,
   IconEditOutlineRegular,
   IconEllipsisOutlineRegular,
+  IconPauseOutlineRegular,
+  IconPlayOutlineRegular,
   IconPlusOutlineRegular,
   IconSearchOutlineRegular,
+  IconUnarchiveOutlineRegular,
+  IconUsersOutlineRegular,
   Menu,
+  type MenuEntry,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import { callAgentTeam, subscribeAgentTeam, teamLeaderSessionId } from './api.js'
 import css from './AgentTeam.module.css'
@@ -77,6 +82,23 @@ function sortedMembers(team: TeamView): TeamMember[] {
   })
 }
 
+/**
+ * A thread's owner as the UI shows it. The explicit `ownerSlotId` wins; a
+ * thread stored before ownership existed (or one whose owner left the team)
+ * falls back to the Leader, so the row is never blank.
+ */
+function threadOwnerOf(team: TeamView, thread: TeamThread): Pick<SwitcherThreadRow, 'ownerSlotId' | 'ownerName' | 'ownerLeader' | 'ownerAvatar'> {
+  const explicit = thread.ownerSlotId === undefined ? undefined : team.members[thread.ownerSlotId]
+  const member = explicit ?? team.members[team.leaderSlotId]
+  const ownerSlotId = member?.id ?? thread.ownerSlotId ?? team.leaderSlotId
+  return {
+    ownerSlotId,
+    ownerName: member?.displayName ?? ownerSlotId,
+    ownerLeader: member === undefined ? true : member.role === 'leader',
+    ...(member?.assistantSnapshot.avatar === undefined ? {} : { ownerAvatar: member.assistantSnapshot.avatar }),
+  }
+}
+
 function keepChatView(sessionId: string): void {
   try {
     const key = `dsh.conversation.${sessionId}`
@@ -114,6 +136,48 @@ export interface SwitcherThreadRow {
   title: string
   updatedAt: number
   current: boolean
+  /**
+   * The thread's resolved owner: an explicit `ownerSlotId`, else the team
+   * Leader. Reads fall back here because threads stored before ownership
+   * existed carry no field; a row never shows a blank owner.
+   */
+  ownerSlotId: string
+  ownerName: string
+  ownerLeader: boolean
+  /** The owner's avatar, when that member carries one. */
+  ownerAvatar?: string
+  /** Present when paused; presence is the state (there is no separate boolean). */
+  pausedAt?: number
+  /** True only for a retired thread; the panel lists active threads today. */
+  archived?: boolean
+}
+
+/** One member offered by the thread's second-level 设置负责人 menu. */
+export interface ThreadOwnerOption {
+  slotId: string
+  name: string
+  leader: boolean
+  /** The person currently responsible for the thread. */
+  current: boolean
+  avatar?: string
+}
+
+/** The thread controls, in menu order. `restore` acts on a retired thread. */
+export type ThreadControlId = 'rename' | 'assign' | 'stop' | 'resume' | 'archive' | 'restore'
+
+export interface ThreadMenuItem {
+  id: ThreadControlId
+  label: string
+  /** Unavailable rows stay listed but disabled — hiding them reads as "no such feature". */
+  disabled: boolean
+  /** Set on `assign`: the second-level member list. */
+  submenu?: ThreadOwnerOption[]
+}
+
+export interface ThreadMenuModel {
+  /** The resolved owner, so the second-level list can check exactly one row. */
+  currentOwnerSlotId: string
+  items: ThreadMenuItem[]
 }
 
 export interface SessionSwitcherModel {
@@ -171,6 +235,8 @@ export function sessionSwitcherModel(
       title: thread.title,
       updatedAt: thread.updatedAt,
       current: thread.sessionId === sessionId,
+      ...threadOwnerOf(team, thread),
+      ...(thread.pausedAt === undefined ? {} : { pausedAt: thread.pausedAt }),
     }))
     .filter(thread => matches(thread.title))
     .sort((left, right) => Number(right.current) - Number(left.current))
@@ -185,6 +251,49 @@ export function sessionSwitcherModel(
     threads,
     switchable: targets.some(target => target !== sessionId),
     ...(agentPresetId === undefined ? {} : { agentPresetId }),
+  }
+}
+
+/**
+ * The ⋯ menu for one thread row, as plain data so the six controls and their
+ * disabled states are testable without a browser. Every control is always
+ * listed; the ones that cannot act on this thread are disabled, because a
+ * hidden row reads as "this feature does not exist".
+ */
+export function threadMenuModel(team: TeamView, thread: SwitcherThreadRow): ThreadMenuModel {
+  const paused = thread.pausedAt !== undefined
+  const owners: ThreadOwnerOption[] = sortedMembers(team).map(member => ({
+    slotId: member.id,
+    name: member.displayName,
+    leader: member.role === 'leader',
+    current: member.id === thread.ownerSlotId,
+    ...(member.assistantSnapshot.avatar === undefined ? {} : { avatar: member.assistantSnapshot.avatar }),
+  }))
+  const items: ThreadMenuItem[] = [
+    { id: 'rename', label: '重命名', disabled: false },
+    { id: 'assign', label: '设置负责人', disabled: owners.length === 0, submenu: owners },
+    { id: 'stop', label: '暂停', disabled: paused || thread.archived === true },
+    { id: 'resume', label: '恢复', disabled: !paused || thread.archived === true },
+    { id: 'archive', label: '归档', disabled: thread.archived === true },
+    // Restore acts on a retired thread. The panel lists active threads only, so
+    // this row stays visible-but-disabled instead of quietly disappearing.
+    { id: 'restore', label: '恢复归档', disabled: thread.archived !== true },
+  ]
+  return { currentOwnerSlotId: thread.ownerSlotId, items }
+}
+
+/**
+ * One leading icon per thread control. Built at render (not module scope) so a
+ * test that stubs the primitive set never constructs an unstubbed icon.
+ */
+function threadControlIcon(id: ThreadControlId): JSX.Element {
+  switch (id) {
+    case 'rename': return <IconEditOutlineRegular size={14} />
+    case 'assign': return <IconUsersOutlineRegular size={14} />
+    case 'stop': return <IconPauseOutlineRegular size={14} />
+    case 'resume': return <IconPlayOutlineRegular size={14} />
+    case 'archive': return <IconArchiveOutlineRegular size={14} />
+    case 'restore': return <IconUnarchiveOutlineRegular size={14} />
   }
 }
 
@@ -311,6 +420,80 @@ export function TeamSessionSwitcher({
       // A refused archive leaves the thread in place.
     }
   }
+
+  const assignThread = async (threadId: string, slotId: string): Promise<void> => {
+    setThreadMenu(undefined)
+    try {
+      await callAgentTeam('team.thread.assign', { id: team.id, threadId, slotId })
+    } catch {
+      // A refused owner (THREAD_OWNER_UNKNOWN) leaves the stored owner in place.
+    }
+  }
+
+  /** Pause/resume only move the marker; the row keeps opening its history. */
+  const stopThread = async (threadId: string): Promise<void> => {
+    setThreadMenu(undefined)
+    try {
+      await callAgentTeam('team.thread.stop', { id: team.id, threadId })
+    } catch {
+      // A refused stop leaves the thread running.
+    }
+  }
+
+  const resumeThread = async (threadId: string): Promise<void> => {
+    setThreadMenu(undefined)
+    try {
+      await callAgentTeam('team.thread.resume', { id: team.id, threadId })
+    } catch {
+      // A refused resume leaves the pause marker in place.
+    }
+  }
+
+  const restoreThread = async (threadId: string): Promise<void> => {
+    setThreadMenu(undefined)
+    try {
+      await callAgentTeam('team.thread.restore', { id: team.id, threadId })
+    } catch {
+      // A refused restore leaves the thread retired.
+    }
+  }
+
+  /**
+   * Menu rows for one thread: availability comes from `threadMenuModel`, so the
+   * tested data model owns the six controls and only icons/labels live here.
+   */
+  const threadMenuEntries = (thread: SwitcherThreadRow): MenuEntry[] =>
+    threadMenuModel(team, thread).items.map(item => ({
+      id: item.id,
+      label: item.label,
+      disabled: item.disabled,
+      icon: threadControlIcon(item.id),
+      ...(item.submenu === undefined
+        ? {}
+        : {
+          submenu: item.submenu.map(owner => ({
+            id: `owner:${owner.slotId}`,
+            icon: <MemberAvatar name={owner.name} avatar={owner.avatar} size={16} />,
+            label: (
+              <span className={css.teamSessionOwnerOption}>
+                <span className={css.teamSessionOwnerOptionName}>{owner.name}</span>
+                {owner.leader && (
+                  <span className={css.teamSessionOwnerCrown} title="队长" aria-label="队长">
+                    <LeaderMark size={10} />
+                  </span>
+                )}
+                {owner.current && (
+                  <IconCheckOutlineRegular
+                    size={12}
+                    className={css.teamSessionOwnerOptionCheck}
+                    aria-label="当前负责人"
+                  />
+                )}
+              </span>
+            ),
+          })),
+        }),
+    }))
 
   const createThread = async (teamView: TeamView): Promise<void> => {
     close()
@@ -445,7 +628,21 @@ export function TeamSessionSwitcher({
                         className={css.teamSessionRow}
                         onClick={() => { goTo(thread.sessionId) }}
                       >
+                        {thread.pausedAt !== undefined && (
+                          <span
+                            className={css.teamSessionPausedDot}
+                            title="已暂停"
+                            aria-label="已暂停"
+                          />
+                        )}
                         <span className={css.teamSessionRowName}>{thread.title}</span>
+                        <span
+                          className={css.teamSessionOwner}
+                          title={`负责人：${thread.ownerName}`}
+                          aria-label={`负责人：${thread.ownerName}`}
+                        >
+                          <span className={css.teamSessionOwnerName}>{thread.ownerName}</span>
+                        </span>
                         <span className={css.teamSessionTime}>{relativeTime(thread.updatedAt)}</span>
                         {thread.current && (
                           <IconCheckOutlineRegular size={14} className={css.teamSessionCheck} aria-label="当前会话" />
@@ -457,16 +654,21 @@ export function TeamSessionSwitcher({
                           portal
                           align="end"
                           dense
-                          items={[
-                            { id: 'rename', label: '重命名', icon: <IconEditOutlineRegular size={14} /> },
-                            { id: 'archive', label: '归档', icon: <IconArchiveOutlineRegular size={14} /> },
-                          ]}
+                          items={threadMenuEntries(thread)}
                           onSelect={id => {
                             if (id === 'rename') {
                               setThreadMenu(undefined)
                               setRenaming({ id: thread.id, title: thread.title })
                             } else if (id === 'archive') {
                               void archiveThread(thread.id)
+                            } else if (id === 'stop') {
+                              void stopThread(thread.id)
+                            } else if (id === 'resume') {
+                              void resumeThread(thread.id)
+                            } else if (id === 'restore') {
+                              void restoreThread(thread.id)
+                            } else if (id.startsWith('owner:')) {
+                              void assignThread(thread.id, id.slice('owner:'.length))
                             }
                           }}
                           onClose={() => { setThreadMenu(undefined) }}

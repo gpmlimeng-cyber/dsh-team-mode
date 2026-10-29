@@ -5960,6 +5960,60 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   color: var(--dsw-alias-state-business-primary);
 }
 
+/* Thread owner, right of the title and left of the time. Never blank: the
+   model resolves a missing owner (pre-ownership record, or a member who left)
+   to the Leader before the row renders. */
+.teamSessionOwner {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  max-width: 72px;
+  overflow: hidden;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.teamSessionOwnerName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Paused thread: a quiet dot before the title. It is a marker, not a control —
+   the row still opens the conversation's history. */
+.teamSessionPausedDot {
+  flex: none;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-quaternary);
+}
+
+/* Second-level 设置负责人 rows: name, Leader crown, current-owner check. */
+.teamSessionOwnerOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.teamSessionOwnerOptionName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teamSessionOwnerCrown {
+  display: inline-flex;
+  flex: none;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.teamSessionOwnerOptionCheck {
+  flex: none;
+  color: var(--dsw-alias-state-business-primary);
+}
+
 .teamSessionEmpty {
   padding: 8px;
   color: var(--dsw-alias-label-quaternary);

@@ -18,7 +18,10 @@ vi.mock('@deepseek-ai/dsh-client-ui-primitives', () => {
     ),
   }
   for (const name of [
-    'IconCheckOutlineRegular', 'IconChevronDownOutlineRegular', 'IconPlusOutlineRegular', 'IconSearchOutlineRegular',
+    'IconArchiveOutlineRegular', 'IconCheckOutlineRegular', 'IconChevronDownOutlineRegular',
+    'IconEditOutlineRegular', 'IconEllipsisOutlineRegular', 'IconPauseOutlineRegular',
+    'IconPlayOutlineRegular', 'IconPlusOutlineRegular', 'IconSearchOutlineRegular',
+    'IconUnarchiveOutlineRegular', 'IconUsersOutlineRegular',
   ]) api[name] = Stub
   return api
 })
@@ -27,7 +30,9 @@ const {
   TeamSessionSwitcher,
   sessionSwitcherModel,
   teamOwningSession,
+  threadMenuModel,
 } = await import('../src/client/team-member-chrome.js')
+import type { SwitcherThreadRow, ThreadControlId } from '../src/client/team-member-chrome.js'
 
 const ISO = '2026-01-01T00:00:00.000Z'
 
@@ -270,5 +275,125 @@ describe('session row actions', () => {
     expect(cssSource).toContain('.teamSessionRowWrap:hover .teamSessionRowActions')
     expect(cssSource).toContain(".teamSessionRowWrap:has([aria-expanded='true']) .teamSessionRowActions")
     expect(cssSource).toContain('.teamSessionRename')
+  })
+})
+
+describe('the thread row shows its owner and its pause marker', () => {
+  it('resolves the explicit owner and falls back to the Leader, never blank', () => {
+    const model = sessionSwitcherModel(team({
+      threads: {
+        owned: thread('owned', '负责线程', 200, { ownerSlotId: 'helper' }),
+        legacy: thread('legacy', '旧线程', 100),
+      },
+    }), 'session-helper')
+
+    const owned = model.threads.find(row => row.id === 'owned')
+    const legacy = model.threads.find(row => row.id === 'legacy')
+    expect(owned?.ownerSlotId).toBe('helper')
+    expect(owned?.ownerName).toBe('小助手')
+    expect(owned?.ownerLeader).toBe(false)
+    // A thread stored before ownership existed reads as the Leader's, not blank.
+    expect(legacy?.ownerSlotId).toBe('leader')
+    expect(legacy?.ownerName).toBe('领队')
+    expect(legacy?.ownerLeader).toBe(true)
+    expect(model.threads.every(row => row.ownerName.trim() !== '')).toBe(true)
+  })
+
+  it('falls back to the Leader when the stored owner is no longer a member', () => {
+    const model = sessionSwitcherModel(team({
+      threads: { ghost: thread('ghost', '失效负责人', 100, { ownerSlotId: 'gone' }) },
+    }), 'session-leader')
+    expect(model.threads[0]?.ownerSlotId).toBe('leader')
+    expect(model.threads[0]?.ownerName).toBe('领队')
+  })
+
+  it('carries pausedAt onto the row and leaves the Session id alone', () => {
+    const model = sessionSwitcherModel(team({
+      threads: { paused: thread('paused', '暂停线程', 100, { pausedAt: 1_700_000_000_000 }) },
+    }), 'session-helper')
+    expect(model.threads[0]?.pausedAt).toBe(1_700_000_000_000)
+    expect(model.threads[0]?.sessionId).toBe('session-paused')
+  })
+})
+
+describe('the thread ⋯ menu', () => {
+  const row = (overrides: Partial<SwitcherThreadRow> = {}): SwitcherThreadRow => ({
+    id: 'thread-1',
+    sessionId: 'session-thread-1',
+    title: '讨论',
+    updatedAt: 100,
+    current: false,
+    ownerSlotId: 'leader',
+    ownerName: '领队',
+    ownerLeader: true,
+    ...overrides,
+  })
+  const disabledIds = (model: ReturnType<typeof threadMenuModel>): ThreadControlId[] =>
+    model.items.filter(item => item.disabled).map(item => item.id)
+
+  it('always lists the six controls in order and disables the inapplicable ones', () => {
+    const running = threadMenuModel(team(), row())
+    expect(running.items.map(item => item.id))
+      .toEqual(['rename', 'assign', 'stop', 'resume', 'archive', 'restore'])
+    expect(running.items.map(item => item.label))
+      .toEqual(['重命名', '设置负责人', '暂停', '恢复', '归档', '恢复归档'])
+    // Running: only resume and restore cannot act; nothing is hidden.
+    expect(disabledIds(running)).toEqual(['resume', 'restore'])
+    // Paused flips stop/resume and changes nothing else.
+    expect(disabledIds(threadMenuModel(team(), row({ pausedAt: 9 })))).toEqual(['stop', 'restore'])
+    // A retired row is the only state restore can act on.
+    expect(disabledIds(threadMenuModel(team(), row({ archived: true }))))
+      .toEqual(['stop', 'resume', 'archive'])
+  })
+
+  it('lists every member as a possible owner, Leader first, checking the resolved one', () => {
+    const model = threadMenuModel(team(), row({ ownerSlotId: 'helper', ownerName: '小助手' }))
+    const assign = model.items.find(item => item.id === 'assign')
+    expect(assign?.disabled).toBe(false)
+    expect(assign?.submenu?.map(owner => owner.name)).toEqual(['领队', '小助手'])
+    expect(assign?.submenu?.map(owner => owner.leader)).toEqual([true, false])
+    expect(assign?.submenu?.filter(owner => owner.current).map(owner => owner.slotId)).toEqual(['helper'])
+    expect(model.currentOwnerSlotId).toBe('helper')
+    // A legacy row checks the Leader: the submenu always has exactly one check.
+    const legacy = threadMenuModel(team(), row())
+    const legacyOwners = legacy.items.find(item => item.id === 'assign')?.submenu ?? []
+    expect(legacyOwners.filter(owner => owner.current).map(owner => owner.slotId)).toEqual(['leader'])
+  })
+
+  it('draws the owner marker right of the title and a pause marker inside the row', () => {
+    const chromeSource = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
+    const cssSource = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+    // Owner name sits before the relative time (the row's right side).
+    const owner = chromeSource.indexOf('css.teamSessionOwner}')
+    const time = chromeSource.indexOf('css.teamSessionTime}')
+    expect(owner).toBeGreaterThan(-1)
+    expect(time).toBeGreaterThan(owner)
+    expect(chromeSource).toContain('aria-label={`负责人：${thread.ownerName}`}')
+    // Paused is a marker, not a gate: the same row still navigates to history.
+    expect(chromeSource).toContain('{thread.pausedAt !== undefined && (')
+    expect(chromeSource).toContain('onClick={() => { goTo(thread.sessionId) }}')
+    expect(chromeSource).toContain('css.teamSessionPausedDot')
+    expect(chromeSource).toContain('已暂停')
+    expect(cssSource).toContain('.teamSessionOwner')
+    expect(cssSource).toContain('.teamSessionPausedDot')
+    // The second-level owner list is the member list: avatar + name, Leader
+    // crowned, the current owner checked.
+    expect(chromeSource).toContain('submenu: item.submenu.map(owner => (')
+    expect(chromeSource).toContain('<MemberAvatar name={owner.name}')
+    expect(chromeSource).toContain("aria-label=\"当前负责人\"")
+    expect(chromeSource).toContain("aria-label=\"队长\"")
+  })
+
+  it('calls the four thread-control transports and refreshes via subscribe', () => {
+    const chromeSource = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
+    for (const method of ['team.thread.assign', 'team.thread.stop', 'team.thread.resume', 'team.thread.restore']) {
+      expect(chromeSource).toContain(`callAgentTeam('${method}'`)
+    }
+    expect(chromeSource).toContain("id.startsWith('owner:')")
+    expect(chromeSource).toContain('threadMenuEntries(thread)')
+    // No local thread array is patched: every write reloads the team view.
+    expect(chromeSource).toContain('subscribeAgentTeam')
+    expect(chromeSource).not.toContain('setThreads')
+    expect(chromeSource).not.toContain('setMembers')
   })
 })
