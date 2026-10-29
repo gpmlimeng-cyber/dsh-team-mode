@@ -1924,7 +1924,7 @@ export function SidebarPortal({
   return (
     <>
       {modeRowHost !== undefined && createPortal(
-        <>
+        <span className={css.surfaceModeRow} data-surface-mode={mode}>
           {/* The switch lives in the window chrome band, not in the row's flow:
               DSH keeps every shipped control where it was. */}
           <span className={css.surfaceSwitchChrome}>
@@ -2063,7 +2063,7 @@ export function SidebarPortal({
           >
             <IconPanelLeftOutlineRegular size={16} />
           </button>
-        </>,
+        </span>,
         modeRowHost,
       )}
       <AssistantLibraryDialog open={libraryOpen} onClose={() => { setLibraryOpen(false) }} />
