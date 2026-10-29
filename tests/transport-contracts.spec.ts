@@ -214,6 +214,21 @@ describe('Agent Team transport contracts', () => {
     expectTypeOf<AgentTeamResult<'team.thread.archive'>>().toEqualTypeOf<TeamView>()
   })
 
+  it('maps the four thread controls onto the latest team', () => {
+    for (const method of ['team.thread.assign', 'team.thread.stop', 'team.thread.resume', 'team.thread.restore'] as const) {
+      expect(AGENT_TEAM_METHODS).toContain(method)
+      expectTypeOf<AgentTeamResult<typeof method>>().toEqualTypeOf<TeamView>()
+    }
+    expectTypeOf<AgentTeamPayload<'team.thread.assign'>>()
+      .toEqualTypeOf<{ id: string; threadId: string; slotId: string }>()
+    expectTypeOf<AgentTeamPayload<'team.thread.stop'>>()
+      .toEqualTypeOf<{ id: string; threadId: string }>()
+    expectTypeOf<AgentTeamPayload<'team.thread.resume'>>()
+      .toEqualTypeOf<{ id: string; threadId: string }>()
+    expectTypeOf<AgentTeamPayload<'team.thread.restore'>>()
+      .toEqualTypeOf<{ id: string; threadId: string }>()
+  })
+
   it('maps the sidebar group list as one read and four ordered-list writes', () => {
     expect(AGENT_TEAM_METHODS).toContain('sidebar.groups.list')
     expect(AGENT_TEAM_METHODS).toContain('sidebar.groups.create')
@@ -438,12 +453,20 @@ describe('team.thread wire shape', () => {
     const createTeamThread = vi.fn(async () => team(2))
     const renameThread = vi.fn(async () => team(3))
     const archiveThread = vi.fn(async () => team(4))
+    const assignThread = vi.fn(async () => team(5))
+    const stopThread = vi.fn(async () => team(6))
+    const resumeThread = vi.fn(async () => team(7))
+    const restoreThread = vi.fn(async () => team(8))
     const service = {
       subscribe: () => () => {},
       createThread,
       createTeamThread,
       renameThread,
       archiveThread,
+      assignThread,
+      stopThread,
+      resumeThread,
+      restoreThread,
     } as unknown as AgentTeamService
     registerWebTransport(
       ctx,
@@ -487,6 +510,43 @@ describe('team.thread wire shape', () => {
       payload: { id: 'team-1', threadId: 'thread-1' },
     })), fenced)
     expect(archiveThread).toHaveBeenLastCalledWith('team-1', 'thread-1', { expectedRevision: 3 })
+
+    const assigned = await post('team.thread.assign', {
+      id: 'team-1',
+      threadId: 'thread-1',
+      slotId: 'engineer',
+    })
+    expect(assigned.status).toBe(200)
+    expect(assigned.body.value.revision).toBe(5)
+    expect(assignThread).toHaveBeenCalledWith('team-1', 'thread-1', 'engineer', {})
+
+    for (const [method, threadWrite, revision] of [
+      ['team.thread.stop', stopThread, 6],
+      ['team.thread.resume', resumeThread, 7],
+      ['team.thread.restore', restoreThread, 8],
+    ] as const) {
+      const reply = await post(method, { id: 'team-1', threadId: 'thread-1' })
+      expect(reply.status).toBe(200)
+      expect(reply.body.value.revision).toBe(revision)
+      expect(threadWrite).toHaveBeenCalledWith('team-1', 'thread-1', {})
+    }
+
+    // Blank ids and fields the contract does not carry never reach the service.
+    for (const [method, payload] of [
+      ['team.thread.assign', { id: '', threadId: 'thread-1', slotId: 'engineer' }],
+      ['team.thread.assign', { id: 'team-1', threadId: 'thread-1', slotId: '  ' }],
+      ['team.thread.stop', { id: 'team-1', threadId: 'thread-1', extra: true }],
+      ['team.thread.resume', { id: ' ', threadId: 'thread-1' }],
+      ['team.thread.restore', { id: 'team-1', threadId: '' }],
+    ] as const) {
+      const rejected = await post(method, payload)
+      expect(rejected.status).toBe(400)
+      expect(rejected.body).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+    }
+    expect(assignThread).toHaveBeenCalledTimes(1)
+    expect(stopThread).toHaveBeenCalledTimes(1)
+    expect(resumeThread).toHaveBeenCalledTimes(1)
+    expect(restoreThread).toHaveBeenCalledTimes(1)
   })
 })
 describe('assistant.coordinator wire shape', () => {

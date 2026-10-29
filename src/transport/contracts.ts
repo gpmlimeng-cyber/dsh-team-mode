@@ -138,6 +138,10 @@ export const AGENT_TEAM_METHODS = [
   'team.thread.create',
   'team.thread.rename',
   'team.thread.archive',
+  'team.thread.assign',
+  'team.thread.stop',
+  'team.thread.resume',
+  'team.thread.restore',
   'team.workbench.get',
   'team.member.stop',
   'team.member.contextReset',
@@ -698,6 +702,20 @@ export interface AgentTeamRequestMap {
   'team.thread.rename': { payload: { id: string; threadId: string; title: string }; result: TeamView }
   /** Move one thread off the active list; its Session is retained, not deleted. */
   'team.thread.archive': { payload: { id: string; threadId: string }; result: TeamView }
+  /**
+   * Set the thread's single owner. `slotId` must name a team member; the
+   * service's `THREAD_OWNER_UNKNOWN` rejection travels through unchanged.
+   */
+  'team.thread.assign': {
+    payload: { id: string; threadId: string; slotId: string }
+    result: TeamView
+  }
+  /** Pause one thread; only `pausedAt` changes and its Session is untouched. */
+  'team.thread.stop': { payload: { id: string; threadId: string }; result: TeamView }
+  /** Clear the pause marker; the Session is the same one the stop left alone. */
+  'team.thread.resume': { payload: { id: string; threadId: string }; result: TeamView }
+  /** Pull one archived thread back onto the active list, `createdAt` intact. */
+  'team.thread.restore': { payload: { id: string; threadId: string }; result: TeamView }
   'team.member.stop': { payload: { teamId: string; slotId: string }; result: { accepted: boolean } }
   'team.member.contextReset': {
     payload: { teamId: string; slotId: string }

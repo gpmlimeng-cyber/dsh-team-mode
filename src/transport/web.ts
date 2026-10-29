@@ -659,6 +659,31 @@ async function dispatch(service: AgentTeamService, request: AgentTeamRequest): P
       }).strict().parse(request.payload)
       return service.archiveThread(payload.id, payload.threadId, options)
     }
+    case 'team.thread.assign': {
+      const payload = z.object({
+        id: z.string().trim().min(1).max(200),
+        threadId: z.string().trim().min(1).max(200),
+        // Membership is checked in the service, which owns the member set and
+        // answers with THREAD_OWNER_UNKNOWN; the transport only refuses blanks.
+        slotId: z.string().trim().min(1),
+      }).strict().parse(request.payload)
+      return service.assignThread(payload.id, payload.threadId, payload.slotId, options)
+    }
+    case 'team.thread.stop':
+    case 'team.thread.resume':
+    case 'team.thread.restore': {
+      const payload = z.object({
+        id: z.string().trim().min(1).max(200),
+        threadId: z.string().trim().min(1).max(200),
+      }).strict().parse(request.payload)
+      if (request.method === 'team.thread.stop') {
+        return service.stopThread(payload.id, payload.threadId, options)
+      }
+      if (request.method === 'team.thread.resume') {
+        return service.resumeThread(payload.id, payload.threadId, options)
+      }
+      return service.restoreThread(payload.id, payload.threadId, options)
+    }
     case 'team.member.stop': {
       const payload = z.object({ teamId: z.string().min(1), slotId: z.string().min(1) }).strict().parse(request.payload)
       await service.stopMember(payload.teamId, payload.slotId)

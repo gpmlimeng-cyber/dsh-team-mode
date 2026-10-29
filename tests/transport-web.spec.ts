@@ -219,6 +219,25 @@ function harness(overrides: {
       id: teamId,
       archivedThreadId: threadId,
     })),
+    assignThread: vi.fn(async (teamId: string, threadId: string, slotId: string) => {
+      // The service owns membership; this fake stands in for that rejection.
+      if (slotId === 'ghost') {
+        throw new AgentTeamError('THREAD_OWNER_UNKNOWN', "Unknown thread owner 'ghost': not a member")
+      }
+      return { id: teamId, threads: { [threadId]: { id: threadId, ownerSlotId: slotId } } }
+    }),
+    stopThread: vi.fn(async (teamId: string, threadId: string) => ({
+      id: teamId,
+      threads: { [threadId]: { id: threadId, pausedAt: 1_700_000_000_000 } },
+    })),
+    resumeThread: vi.fn(async (teamId: string, threadId: string) => ({
+      id: teamId,
+      threads: { [threadId]: { id: threadId } },
+    })),
+    restoreThread: vi.fn(async (teamId: string, threadId: string) => ({
+      id: teamId,
+      threads: { [threadId]: { id: threadId } },
+    })),
   } as unknown as AgentTeamService
   const transport = registerWebTransport(
     ctx,
@@ -982,6 +1001,84 @@ describe('web transport authentication and upload contract', () => {
     expect(blank.status).toBe(400)
     expect(JSON.parse(blank.body)).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
     expect(service.renameThread).toHaveBeenCalledTimes(1)
+  })
+
+  it('dispatches the four thread controls and passes the owner error through unchanged', async () => {
+    const { call, service } = harness()
+    const post = (method: string, payload: unknown, expectedRevision?: number) => call(AGENT_TEAM_API_PATH, request({
+      headers: authed({ 'content-type': 'application/json' }),
+      body: JSON.stringify({
+        requestId: method,
+        method,
+        payload,
+        ...(expectedRevision === undefined ? {} : { expectedRevision }),
+      }),
+    }))
+
+    const assigned = await post('team.thread.assign', {
+      id: 'team-1',
+      threadId: 'thread-1',
+      slotId: 'engineer',
+    })
+    expect(assigned.status).toBe(200)
+    expect(JSON.parse(assigned.body)).toMatchObject({
+      ok: true,
+      value: { id: 'team-1', threads: { 'thread-1': { ownerSlotId: 'engineer' } } },
+    })
+    expect(service.assignThread).toHaveBeenCalledWith('team-1', 'thread-1', 'engineer', {})
+
+    // The revision fence rides on the request, not inside the payload.
+    const fenced = await post('team.thread.assign', { id: 'team-1', threadId: 'thread-1', slotId: 'leader' }, 9)
+    expect(fenced.status).toBe(200)
+    expect(service.assignThread).toHaveBeenLastCalledWith(
+      'team-1',
+      'thread-1',
+      'leader',
+      { expectedRevision: 9 },
+    )
+
+    const stopped = await post('team.thread.stop', { id: 'team-1', threadId: 'thread-1' })
+    expect(stopped.status).toBe(200)
+    expect(JSON.parse(stopped.body)).toMatchObject({
+      ok: true,
+      value: { threads: { 'thread-1': { pausedAt: 1_700_000_000_000 } } },
+    })
+    expect(service.stopThread).toHaveBeenCalledWith('team-1', 'thread-1', {})
+
+    const resumed = await post('team.thread.resume', { id: 'team-1', threadId: 'thread-1' })
+    expect(resumed.status).toBe(200)
+    expect(service.resumeThread).toHaveBeenCalledWith('team-1', 'thread-1', {})
+
+    const restored = await post('team.thread.restore', { id: 'team-1', threadId: 'thread-1' })
+    expect(restored.status).toBe(200)
+    expect(service.restoreThread).toHaveBeenCalledWith('team-1', 'thread-1', {})
+
+    // An owner the service refuses keeps its code and wording at the wire.
+    const ghost = await post('team.thread.assign', { id: 'team-1', threadId: 'thread-1', slotId: 'ghost' })
+    expect(ghost.status).toBe(400)
+    expect(JSON.parse(ghost.body)).toEqual({
+      requestId: 'team.thread.assign',
+      ok: false,
+      error: { code: 'THREAD_OWNER_UNKNOWN', message: "Unknown thread owner 'ghost': not a member" },
+    })
+
+    // Blank ids and extra fields are refused before dispatch, never reaching the service.
+    for (const [method, payload] of [
+      ['team.thread.assign', { id: '', threadId: 'thread-1', slotId: 'engineer' }],
+      ['team.thread.assign', { id: 'team-1', threadId: 'thread-1', slotId: '  ' }],
+      ['team.thread.assign', { id: 'team-1', threadId: 'thread-1', slotId: 'engineer', extra: true }],
+      ['team.thread.stop', { id: 'team-1', threadId: '' }],
+      ['team.thread.resume', { id: ' ', threadId: 'thread-1' }],
+      ['team.thread.restore', { id: 'team-1', threadId: 'thread-1', extra: true }],
+    ] as const) {
+      const rejected = await post(method, payload)
+      expect(rejected.status).toBe(400)
+      expect(JSON.parse(rejected.body)).toMatchObject({ ok: false, error: { code: 'INVALID_REQUEST' } })
+    }
+    expect(service.assignThread).toHaveBeenCalledTimes(3)
+    expect(service.stopThread).toHaveBeenCalledTimes(1)
+    expect(service.resumeThread).toHaveBeenCalledTimes(1)
+    expect(service.restoreThread).toHaveBeenCalledTimes(1)
   })
 
   it('returns a typed error for an unknown method', async () => {
