@@ -433,33 +433,22 @@ describe('topic tabs in the header', () => {
   })
 })
 
-describe('lineage title names who is speaking', () => {
+describe('lineage title names the team', () => {
   const chromeSource = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
   const cssSource = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
 
-  it('stacks the team faces for a team Session and one face for a member Session', () => {
-    expect(chromeSource).toContain('isTeamLevelSession')
-    expect(chromeSource).toContain('teamSessionTitleFaces')
-    expect(chromeSource).toContain('teamSessionOwner')
-    expect(cssSource).toContain('.teamSessionTitleFaces > * + *')
+  it('names the team for every Session of that team', () => {
+    // Which thread or member is open never changes the title: the header answers
+    // "which team am I in".
+    expect(chromeSource).toContain('data-dsh-team-session-title')
+    expect(chromeSource).toContain('{team.name}')
+    expect(chromeSource).not.toContain('export function teamSessionOwner')
+    expect(chromeSource).not.toContain('export function isTeamLevelSession')
   })
 
-  it('treats a thread Session as its speaker, never as the team', () => {
-    const body = chromeSource.slice(
-      chromeSource.indexOf('export function isTeamLevelSession'),
-      chromeSource.indexOf('export function TeamSessionTitle('),
-    )
-    expect(body).toContain('threadOwns')
-    expect(body).toContain('return !memberOwns && !threadOwns')
-  })
-
-  it('wears the same face and name the sidebar uses', () => {
-    expect(chromeSource).toContain('assistantShowsMascot')
-    expect(chromeSource).toContain('assistantInstanceForSession')
-    expect(chromeSource).toContain('assistantInstanceName')
-  })
-
-  it('caps the stack at three faces', () => {
+  it('stacks up to three faces before the name, and hides the shipped crumb', () => {
     expect(chromeSource).toContain('sortedMembers(team).slice(0, 3)')
+    expect(cssSource).toContain('.teamSessionTitleFaces > * + *')
+    expect(cssSource).toContain("crumbSeg")
   })
 })

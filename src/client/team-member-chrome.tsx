@@ -330,39 +330,7 @@ export function sessionTabRows(
   return picked.slice(0, limit)
 }
 
-/** The assistant currently in charge of the open Session, avatar included. */
-export function teamSessionOwner(
-  team: TeamView,
-  sessionId: string,
-): { name: string, avatar?: string } | undefined {
-  const member = Object.values(team.members).find(candidate => candidate.sessionId === sessionId)
-  if (member !== undefined) {
-    const snapshot = member.assistantSnapshot
-    return {
-      name: member.displayName,
-      ...(snapshot.avatar === undefined ? {} : { avatar: snapshot.avatar }),
-    }
-  }
-  const thread = Object.values(team.threads ?? {}).find(candidate => candidate.sessionId === sessionId)
-  if (thread === undefined) return undefined
-  const speaker = team.members[thread.speakerSlotId ?? team.leaderSlotId]
-  if (speaker === undefined) return { name: thread.title }
-  const snapshot = speaker.assistantSnapshot
-  return {
-    name: speaker.displayName,
-    ...(snapshot.avatar === undefined ? {} : { avatar: snapshot.avatar }),
-  }
-}
 
-/**
- * True only for the team's own conversation. A member Session and a thread
- * Session both name someone, so neither is team level.
- */
-export function isTeamLevelSession(team: TeamView, sessionId: string): boolean {
-  const memberOwns = Object.values(team.members).some(member => member.sessionId === sessionId)
-  const threadOwns = Object.values(team.threads ?? {}).some(thread => thread.sessionId === sessionId)
-  return !memberOwns && !threadOwns
-}
 
 /**
  * Replaces the crumb: an assistant's Session names that assistant, a team's own
@@ -373,45 +341,25 @@ export function TeamSessionTitle({ lineageSessionId }: { lineageSessionId?: stri
   const instances = useAssistantInstancesForTeam()
   if (team === undefined || lineageSessionId === undefined) return null
 
-  // The sidebar never draws a raw snapshot name: it prefers the instance, so the
-  // header must resolve the same way or the two read as different assistants.
-  const instance = assistantInstanceForSession(instances, lineageSessionId)
-  const nameOf = (memberName: string): string =>
-    instance === undefined ? memberName : assistantInstanceName(instance)
-
-  if (isTeamLevelSession(team, lineageSessionId)) {
-    const faces = sortedMembers(team).slice(0, 3)
-    return (
-      <span className={css.teamSessionTitle} data-dsh-team-session-title title={team.name}>
-        {faces.length > 0 && (
-          <span className={css.teamSessionTitleFaces} aria-hidden="true">
-            {faces.map(member => (
-              <span key={member.id} className={css.teamSessionTitleFace}>
-                <SessionFace
-                  instance={instances.find(item => item.id === member.assistantInstanceId)}
-                  name={member.displayName}
-                  avatar={member.assistantSnapshot.avatar}
-                />
-              </span>
-            ))}
-          </span>
-        )}
-        <span className={css.teamSessionTitleName}>{team.name}</span>
-      </span>
-    )
-  }
-
-  const owner = teamSessionOwner(team, lineageSessionId)
-  if (owner === undefined) return null
-  // A member Session names that member; a thread Session names its speaker.
-  const speaker = Object.values(team.members).find(member => member.sessionId === lineageSessionId)
-  const speakerInstance = speaker === undefined
-    ? instance
-    : instances.find(item => item.id === speaker.assistantInstanceId)
+  // The header answers "which team am I in", not "which thread": every Session
+  // of a team names the team, so switching members never changes the title.
+  const faces = sortedMembers(team).slice(0, 3)
   return (
-    <span className={css.teamSessionTitle} data-dsh-team-session-title title={nameOf(owner.name)}>
-      <SessionFace instance={speakerInstance} name={nameOf(owner.name)} avatar={owner.avatar} />
-      <span className={css.teamSessionTitleName}>{nameOf(owner.name)}</span>
+    <span className={css.teamSessionTitle} data-dsh-team-session-title title={team.name}>
+      {faces.length > 0 && (
+        <span className={css.teamSessionTitleFaces} aria-hidden="true">
+          {faces.map(member => (
+            <span key={member.id} className={css.teamSessionTitleFace}>
+              <SessionFace
+                instance={instances.find(item => item.id === member.assistantInstanceId)}
+                name={member.displayName}
+                avatar={member.assistantSnapshot.avatar}
+              />
+            </span>
+          ))}
+        </span>
+      )}
+      <span className={css.teamSessionTitleName}>{team.name}</span>
     </span>
   )
 }
