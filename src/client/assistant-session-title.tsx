@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { callAgentTeam, subscribeAgentTeam } from './api.js'
 import {
-  assistantInstanceForSession,
   assistantInstanceLabel,
+  assistantOwningSession,
 } from './assistant-instances.js'
 import css from './AgentTeam.module.css'
 import type { AssistantInstance } from '../domain/types.js'
@@ -63,7 +63,8 @@ export function AssistantSessionTitleHost({
   registerTitle: () => (() => void) | void
 }): null {
   const instances = useAssistantInstances()
-  const active = assistantInstanceForSession(instances, sessionId) !== undefined
+  // Thread Sessions belong to the same Assistant, so they get the same title.
+  const active = assistantOwningSession(instances, sessionId) !== undefined
   const registerRef = useRef(registerTitle)
   registerRef.current = registerTitle
 

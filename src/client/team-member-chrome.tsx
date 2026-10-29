@@ -32,7 +32,7 @@ import type { AssistantInstance } from '../domain/types.js'
 import { Mascot } from './mascot-view.js'
 import { teamAvatarStack } from './team-avatar.js'
 import { assistantShowsMascot, mascotOptionsFor } from './mascot.js'
-import { assistantInstanceForSession, assistantInstanceName } from './assistant-instances.js'
+import { assistantInstanceName, assistantOwningSession } from './assistant-instances.js'
 
 type TeamMember = TeamView['members'][string]
 type TeamThread = NonNullable<TeamView['threads']>[string]
@@ -373,7 +373,7 @@ export function AssistantSessionTitle({
   displayTitle?: string
 }): JSX.Element | null {
   const instances = useAssistantInstances()
-  const instance = assistantInstanceForSession(instances, lineageSessionId)
+  const instance = assistantOwningSession(instances, lineageSessionId)
   const label = assistantLineageTitle(instance, displayTitle)
   if (label === undefined || instance === undefined) return null
   return (

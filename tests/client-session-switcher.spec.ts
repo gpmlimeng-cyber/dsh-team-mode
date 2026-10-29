@@ -507,3 +507,19 @@ describe('the title reads as text', () => {
     expect(cssSource).toContain('.teamSessionTitleButton:hover')
   })
 })
+
+describe('an assistant title covers its threads too', () => {
+  const chrome = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
+  const host = readFileSync(new URL('../src/client/assistant-session-title.tsx', import.meta.url), 'utf8')
+  const instances = readFileSync(new URL('../src/client/assistant-instances.ts', import.meta.url), 'utf8')
+
+  it('resolves the owning instance from the main or a thread Session', () => {
+    expect(instances).toContain('export function assistantOwningSession')
+    expect(instances).toContain('(item.threadSessionIds ?? []).includes(sessionId)')
+    expect(chrome).toContain('assistantOwningSession(instances, lineageSessionId)')
+  })
+
+  it('registers the title for a thread Session as well', () => {
+    expect(host).toContain('assistantOwningSession(instances, sessionId)')
+  })
+})

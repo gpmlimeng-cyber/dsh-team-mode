@@ -186,6 +186,20 @@ export function assistantInstanceForSession(
 }
 
 /**
+ * The Assistant that owns this Session, main or thread. A thread Session still
+ * belongs to the Assistant whose face the header should wear, so the header
+ * never falls back to the raw session title.
+ */
+export function assistantOwningSession(
+  instances: readonly AssistantInstance[],
+  sessionId: string | undefined,
+): AssistantInstance | undefined {
+  if (sessionId === undefined || sessionId === '') return undefined
+  return instances.find(item => item.status !== 'archived'
+    && (item.mainSessionId === sessionId || (item.threadSessionIds ?? []).includes(sessionId)))
+}
+
+/**
  * Workspace ids owned by one isolated Assistant each. The native sidebar draws
  * a row per registered workspace; a private registration is an implementation
  * detail of its Assistant (its directory still opens through that Assistant),
