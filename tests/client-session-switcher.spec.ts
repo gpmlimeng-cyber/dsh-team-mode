@@ -479,7 +479,7 @@ describe('single-assistant lineage title', () => {
   })
 
   it('hides the shipped crumb while the face title renders', () => {
-    expect(cssSource).toContain(":has(> [data-dsh-assistant-session-title])")
+    expect(cssSource).toContain(":has([data-dsh-assistant-session-title])")
   })
 })
 
