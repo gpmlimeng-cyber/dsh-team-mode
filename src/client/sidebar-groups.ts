@@ -206,13 +206,13 @@ export function sidebarGroupBriefUsage(brief: string): string {
 }
 
 /**
- * Why a typed brief cannot be saved, or undefined when it can. Mirrors the
+ * Why a typed 分区公告 cannot be saved, or undefined when it can. Mirrors the
  * Host's rule: too-long text is refused, never silently truncated, so the
  * counter turns red and the save button stays disabled before the round trip.
  */
 export function sidebarGroupBriefError(brief: string): string | undefined {
   if (brief.length <= SIDEBAR_GROUP_BRIEF_MAX_CHARS) return undefined
-  return `简报最多 ${SIDEBAR_GROUP_BRIEF_MAX_CHARS} 个字符，请删减 ${brief.length - SIDEBAR_GROUP_BRIEF_MAX_CHARS} 个字符`
+  return `分区公告最多 ${SIDEBAR_GROUP_BRIEF_MAX_CHARS} 个字符，请删减 ${brief.length - SIDEBAR_GROUP_BRIEF_MAX_CHARS} 个字符`
 }
 
 /**

@@ -275,12 +275,9 @@ describe('sidebarGroupBriefError', () => {
   })
 })
 
-describe('group brief editor source contract', () => {
+describe('分区公告 editor source contract (shared with the team scope)', () => {
   const ui = readFileSync(new URL('../src/client/sidebar-group-ui.tsx', import.meta.url), 'utf8')
-  const dialog = ui.slice(
-    ui.indexOf('function GroupBriefDialog'),
-    ui.indexOf('function GroupNameDialog'),
-  )
+  const editor = readFileSync(new URL('../src/client/announcement-dialog.tsx', import.meta.url), 'utf8')
   const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
   const briefCss = css.slice(
     css.indexOf('.sidebarGroupBriefForm'),
@@ -288,31 +285,47 @@ describe('group brief editor source contract', () => {
   )
 
   it('opens from the existing group ⋯ menu as one more Menu row', () => {
-    expect(ui).toContain("{ id: 'brief', label: '编辑分组简报'")
+    expect(ui).toContain("{ id: 'brief', label: '分区公告'")
+    expect(ui).toContain('<AnnouncementDialog scope="group" name={dialog.name} onClose={onClose} />')
+    expect(ui).not.toContain('function GroupBriefDialog')
+  })
+
+  it('is the one editor the team card opens too, switched by the scope prop', () => {
+    expect(editor).toContain("export type AnnouncementScope = 'team' | 'group'")
+    expect(editor).toContain("scope: 'group'; name: string; onClose: () => void")
+    expect(editor).toContain("callAgentTeam('team.announcement.set'")
+    expect(editor).toContain("callAgentTeam('sidebar.groups.brief.set'")
+    const teamPanel = readFileSync(
+      new URL('../src/client/teams/TeamPanel.tsx', import.meta.url),
+      'utf8',
+    )
+    expect(teamPanel).toContain('scope="team"')
   })
 
   it('loads one brief on open and writes only through the user-only transport', () => {
-    expect(dialog).toContain("callAgentTeam('sidebar.groups.briefs')")
-    expect(dialog).toContain("callAgentTeam('sidebar.groups.brief.set', { name, brief: value })")
-    // The sidebar keeps reading names only; this dialog never reads that list.
-    expect(dialog).not.toContain("'sidebar.groups.list'")
+    expect(editor).toContain("callAgentTeam('sidebar.groups.briefs')")
+    expect(editor).toContain("callAgentTeam('sidebar.groups.brief.set', {")
+    // The sidebar keeps reading names only; this editor never reads that list.
+    expect(editor).not.toContain("'sidebar.groups.list'")
   })
 
   it('shows the textarea, the counter, the 24 KB limit and the three states', () => {
-    expect(dialog).toContain('<textarea')
-    expect(dialog).toContain('sidebarGroupBriefUsage(value)')
-    expect(dialog).toContain('SIDEBAR_GROUP_BRIEF_MAX_CHARS')
-    expect(dialog).toContain('还没有简报')
-    expect(dialog).toContain('已保存')
-    expect(dialog).toContain('role="alert"')
-    expect(dialog).toContain('role="status"')
-    expect(dialog).toContain('overLimit')
+    expect(editor).toContain('<textarea')
+    expect(editor).toContain('announcementUsage(props.scope, value)')
+    expect(editor).toContain('SIDEBAR_GROUP_BRIEF_MAX_CHARS')
+    expect(editor).toContain('还没有公告')
+    expect(editor).toContain('已保存')
+    expect(editor).toContain('role="alert"')
+    expect(editor).toContain('role="status"')
+    expect(editor).toContain('overLimit')
   })
 
   it('stays on the native modal and text control, with no body host', () => {
-    expect(dialog).toContain('<AnimatedModal')
+    expect(editor).toContain('<AnimatedModal')
     expect(ui).not.toContain('document.body')
     expect(ui).not.toContain('createPortal')
+    expect(editor).not.toContain('document.body')
+    expect(editor).not.toContain('createPortal')
     expect(briefCss.length).toBeGreaterThan(0)
     expect(briefCss).not.toContain('position: fixed')
     expect(briefCss).not.toContain('z-index')

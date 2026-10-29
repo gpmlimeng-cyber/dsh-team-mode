@@ -8376,8 +8376,8 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 /* 团队公告 — the user-authored standing notice. It renders only when the team
    has one; the read-only text keeps the author's line breaks, and the editor
-   is the native modal in TeamPanel (the existing memoryForm and group-brief
-   field styles), so no control or overlay is added here. */
+   is the shared announcement dialog (the group-brief field styles below), so
+   no control or overlay is added here. */
 .teamAnnouncementSection {
   display: flex;
   flex-direction: column;
@@ -8397,9 +8397,6 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-
-/* The team page shows the same section above its member tabs; the padding
-   matches the tabs' so the notice lines up with the conversation pane. */
 
 .teamMemorySection {
   display: flex;
@@ -11726,9 +11723,10 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   gap: 8px;
 }
 
-/* ── Group brief editor ───────────────────────────────────────────────────
-   One text field and its counter; the counter turns red past the Host's cap
-   instead of silently truncating, and the saved/empty notes sit under it. */
+/* ── 公告 editor ──────────────────────────────────────────────────────────
+   One text field and its counter for both scopes (团队公告 2,000 /
+   分区公告 24,576); the counter turns red past the Host's cap instead of
+   silently truncating, and the saved/empty notes sit under it. */
 .sidebarGroupBriefForm {
   display: flex;
   flex-direction: column;

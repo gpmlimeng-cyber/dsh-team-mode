@@ -38,16 +38,23 @@ import { TEAM_ANNOUNCEMENT_MAX_CHARS } from '../src/domain/schemas.js'
 import type { AssistantView, CatalogView, TeamView } from '../src/transport/contracts.js'
 import { callAgentTeam, invalidateTeamListSnapshot } from '../src/client/api.js'
 import {
-  TeamAnnouncementDialog,
   TeamAnnouncementSection,
   TeamForm,
-  TEAM_ANNOUNCEMENT_UI_LIMIT,
-  teamAnnouncementError,
-  teamAnnouncementUsage,
   teamTemplateBrief,
   teamTemplatePrefill,
   templateRoleRenames,
 } from '../src/client/teams/TeamPanel.js'
+import {
+  AnnouncementDialog,
+  TEAM_ANNOUNCEMENT_UI_LIMIT,
+  announcementDirty,
+  announcementError,
+  announcementUsage,
+  teamAnnouncementError,
+  teamAnnouncementText,
+  teamAnnouncementUsage,
+} from '../src/client/announcement-dialog.js'
+import { SIDEBAR_GROUP_BRIEF_MAX_CHARS } from '../src/client/sidebar-groups.js'
 import { TEAM_TEMPLATES } from '../src/client/team-templates.js'
 import { teamMentionInsertion, teamMentionText } from '../src/client/labels.js'
 import {
@@ -1714,9 +1721,13 @@ describe('team usage repair-round edges', () => {
   })
 })
 
-describe('团队公告 · team detail', () => {
+describe('公告 · one editor, team and 分区 scopes', () => {
   const teamPanel = readFileSync(
     new URL('../src/client/teams/TeamPanel.tsx', import.meta.url),
+    'utf8',
+  )
+  const editor = readFileSync(
+    new URL('../src/client/announcement-dialog.tsx', import.meta.url),
     'utf8',
   )
   const styles = readFileSync(
@@ -1745,32 +1756,39 @@ describe('团队公告 · team detail', () => {
     }
   })
 
-  it('opens the native editor with the stored text and no revision fence', () => {
-    const html = renderToStaticMarkup(createElement(TeamAnnouncementDialog, {
+  it('opens the team scope with the stored text and no revision fence', () => {
+    const html = renderToStaticMarkup(createElement(AnnouncementDialog, {
+      scope: 'team',
       team: team({ announcement: '提交前跑 npm run check。' }),
       onClose: () => {},
       onChanged: async () => {},
     }))
+    expect(html).toContain('团队公告')
     expect(html).toContain('data-dsh-team-announcement-input')
     expect(html).toContain('提交前跑 npm run check。')
     expect(html).toContain(teamAnnouncementUsage('提交前跑 npm run check。'))
     expect(html).toContain('保存公告')
     expect(html).toContain('清除公告')
     // Only the user transport writes; a revision fence would be a second guard
-    // the group-brief precedent does not have.
-    expect(teamPanel).toContain("callAgentTeam('team.announcement.set', { teamId: team.id, announcement })")
+    // the 分区 precedent does not have.
+    expect(editor).toContain("callAgentTeam('team.announcement.set', { teamId, announcement })")
     // After the write the aggregate reload finishes before the dialog closes, so
     // the next member turn reads the new text.
-    const callAt = teamPanel.indexOf("callAgentTeam('team.announcement.set'")
+    const callAt = editor.indexOf("callAgentTeam('team.announcement.set'")
     expect(callAt).toBeGreaterThan(-1)
-    expect(teamPanel.indexOf('await onChanged()', callAt)).toBeGreaterThan(callAt)
-    expect(teamPanel.indexOf('onClose()', callAt)).toBeGreaterThan(teamPanel.indexOf('await onChanged()', callAt))
+    const reloadAt = editor.indexOf('await onTeamChanged?.()', callAt)
+    expect(reloadAt).toBeGreaterThan(callAt)
+    expect(editor.indexOf('onClose()', reloadAt)).toBeGreaterThan(reloadAt)
     // Clear is the same route with blank text; the service drops the field.
-    expect(teamPanel).toContain("void write('')")
+    expect(editor).toContain("void writeTeamAnnouncement('')")
+    // TeamCard opens the same editor with the team scope.
+    expect(teamPanel).toContain('<AnnouncementDialog')
+    expect(teamPanel).toContain('scope="team"')
   })
 
   it('offers clear only when there is something to clear', () => {
-    const empty = renderToStaticMarkup(createElement(TeamAnnouncementDialog, {
+    const empty = renderToStaticMarkup(createElement(AnnouncementDialog, {
+      scope: 'team',
       team: team(),
       onClose: () => {},
       onChanged: async () => {},
@@ -1779,14 +1797,47 @@ describe('团队公告 · team detail', () => {
     expect(empty).not.toMatch(/<button[^>]*>清除公告<\/button>/)
   })
 
-  it('mirrors the Host cap locally and refuses instead of truncating', () => {
+  it('switches caps per scope instead of borrowing one number', () => {
     // The client repeats the number to stay Zod-free; this pin keeps the two
     // copies from drifting apart.
     expect(TEAM_ANNOUNCEMENT_UI_LIMIT).toBe(TEAM_ANNOUNCEMENT_MAX_CHARS)
-    expect(teamAnnouncementUsage('公告')).toBe(`2 / ${TEAM_ANNOUNCEMENT_MAX_CHARS}`)
-    expect(teamAnnouncementError('x'.repeat(TEAM_ANNOUNCEMENT_MAX_CHARS))).toBeUndefined()
-    expect(teamAnnouncementError('x'.repeat(TEAM_ANNOUNCEMENT_MAX_CHARS + 3)))
+    expect(TEAM_ANNOUNCEMENT_UI_LIMIT).toBe(2_000)
+    expect(announcementUsage('team', '公告')).toBe(`2 / ${TEAM_ANNOUNCEMENT_MAX_CHARS}`)
+    expect(announcementUsage('group', '公告')).toBe(`2 / ${SIDEBAR_GROUP_BRIEF_MAX_CHARS}`)
+    expect(announcementError('team', 'x'.repeat(TEAM_ANNOUNCEMENT_MAX_CHARS))).toBeUndefined()
+    expect(announcementError('team', 'x'.repeat(TEAM_ANNOUNCEMENT_MAX_CHARS + 3)))
       .toBe(`公告最多 ${TEAM_ANNOUNCEMENT_MAX_CHARS} 个字符，请删减 3 个字符`)
+    // The 分区 scope keeps the Host's 24 KB brief cap; neither cap leaks.
+    expect(SIDEBAR_GROUP_BRIEF_MAX_CHARS).toBe(24_576)
+    expect(announcementError('group', 'x'.repeat(SIDEBAR_GROUP_BRIEF_MAX_CHARS))).toBeUndefined()
+    expect(announcementError('group', 'x'.repeat(SIDEBAR_GROUP_BRIEF_MAX_CHARS + 1))).toBeDefined()
+  })
+
+  it('keeps the blank semantics apart: team trims and deletes, 分区 stores verbatim', () => {
+    expect(teamAnnouncementText('   ')).toBe('')
+    expect(teamAnnouncementText('  冻结  ')).toBe('冻结')
+    // Whitespace-only edits are not dirty for the team, but they are for a
+    // brief, which stores the exact text (empty string, never undefined).
+    expect(announcementDirty('team', '  ', '')).toBe(false)
+    expect(announcementDirty('team', ' 冻结 ', '冻结')).toBe(false)
+    expect(announcementDirty('group', '', '')).toBe(false)
+    expect(announcementDirty('group', '  ', '')).toBe(true)
+    expect(announcementDirty('group', '冻结 ', '冻结')).toBe(true)
+  })
+
+  it('opens the 分区 scope for a group with no team', () => {
+    const html = renderToStaticMarkup(createElement(AnnouncementDialog, {
+      scope: 'group',
+      name: '工作',
+      onClose: () => {},
+    }))
+    expect(html).toContain('正在读取分区公告…')
+    expect(html).not.toContain('data-dsh-team-announcement-input')
+    // The scope label and the group-only props: no team is required to open it.
+    expect(editor).toContain('`「${name}」的分区公告`')
+    expect(editor).toContain("scope: 'group'; name: string; onClose: () => void")
+    expect(editor).toContain("callAgentTeam('sidebar.groups.briefs')")
+    expect(editor).toContain("callAgentTeam('sidebar.groups.brief.set', {")
   })
 
   it('wires the user entry point into the team card header and no agent tool', () => {

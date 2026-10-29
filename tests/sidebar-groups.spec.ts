@@ -455,8 +455,12 @@ describe('Sidebar groups', () => {
   })
 
   it('labels the brief cap as characters, not bytes', () => {
-    const ui = readFileSync(new URL('../src/client/sidebar-group-ui.tsx', import.meta.url), 'utf8')
-    expect(ui).toContain("SIDEBAR_GROUP_BRIEF_MAX_CHARS.toLocaleString('en-US')")
-    expect(ui).toContain('个字符（约 24 KB）')
+    // The 分区公告 editor is the shared announcement dialog now.
+    const editor = readFileSync(
+      new URL('../src/client/announcement-dialog.tsx', import.meta.url),
+      'utf8',
+    )
+    expect(editor).toContain("SIDEBAR_GROUP_BRIEF_MAX_CHARS.toLocaleString('en-US')")
+    expect(editor).toContain('个字符（约 24 KB）')
   })
 })
