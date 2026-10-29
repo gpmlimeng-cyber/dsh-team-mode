@@ -5940,10 +5940,13 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
 .teamSessionTabs {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
+  /* The shipped header puts a wide gap between the title and its actions; the
+     topics belong to the name, so they sit right against it. */
+  margin-inline-start: -8px;
 }
 
 .teamSessionTab {
