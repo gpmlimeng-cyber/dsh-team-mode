@@ -3755,6 +3755,25 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   flex: none;
 }
 
+/* Coordinator crown: a small disc on the avatar's corner, so the assistant in
+   charge is recognisable without reading a label. */
+.sidebarAssistantCrownBadge {
+  position: absolute;
+  inset-block-end: -2px;
+  inset-inline-end: -2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--dsw-alias-bg-layer-1);
+  background: var(--dsw-alias-state-warn-primary);
+  color: var(--dsw-alias-bg-layer-1);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
 /* One shape language for every sidebar identity: the assistant avatar is the
    same rounded square as the team mark. Both use a percentage radius so the
    corner stays the same at any size (both rows are 36px). */

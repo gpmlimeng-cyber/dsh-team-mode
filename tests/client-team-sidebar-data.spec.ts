@@ -1887,3 +1887,22 @@ describe('team builder lists coworker instances', () => {
     expect(panel).toContain('个助手在独立工作区，不能加入团队')
   })
 })
+
+describe('coordinator crown', () => {
+  const source = readFileSync(new URL('../src/client/assistant-sidebar.tsx', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+
+  it('marks the coordinator on its avatar, not with a second text label', () => {
+    expect(source).toContain('data-dsh-assistant-crown')
+    expect(source).toContain('isCoordinatorInstance(instance)')
+    expect(styles).toContain('.sidebarAssistantCrownBadge')
+  })
+
+  it('keeps the badge out of the click target', () => {
+    const start = styles.indexOf('.sidebarAssistantCrownBadge {')
+    expect(start).toBeGreaterThan(-1)
+    const crown = styles.slice(start, styles.indexOf('}', start))
+    expect(crown).toContain('pointer-events: none')
+    expect(crown).toContain('position: absolute')
+  })
+})

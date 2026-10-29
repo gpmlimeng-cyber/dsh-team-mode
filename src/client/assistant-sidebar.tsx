@@ -809,6 +809,13 @@ export function AssistantSidebarSection({
                     size={SIDEBAR_ASSISTANT_AVATAR_SIZE}
                     className={css.sidebarAssistantAvatarShape ?? ''}
                   />}
+              {/* The coordinator wears its crown on the avatar, the way the
+                  reference app marks the assistant in charge. */}
+              {isCoordinatorInstance(instance) && (
+                <span className={css.sidebarAssistantCrownBadge} data-dsh-assistant-crown aria-hidden="true">
+                  <LeaderMark size={8} />
+                </span>
+              )}
               {state !== 'none' && (
                 <span
                   className={`${css.sidebarAssistantDot} ${dotClass} ${state === 'needs_input' ? css.sidebarAssistantWaitingBadge : ''}`}
