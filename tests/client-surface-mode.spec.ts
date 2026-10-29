@@ -277,8 +277,9 @@ describe('surface switch styling', () => {
     expect(row).toContain('padding: 8px 0 8px 4px')
     expect(row).toContain('flex: none')
     expect(row).not.toContain('position')
-    // The shipped row yields its slot only while the column is wide.
-    expect(styles).toContain("[data-dsh-team-root]:not([class*='_collapsed']) [class*='_logoRow']")
+    // The shipped row yields its slot only on the simple surface, only while wide.
+    expect(styles).toContain("[class*='_logoRow']")
+    expect(styles).toContain("data-surface-mode='team'")
     expect(styles).toContain("[data-dsh-team-root][class*='_collapsed'] .sidebarModeRowHost")
     // The action group keeps to the right edge, before the collapse control.
     expect(styles).toMatch(/\.sidebarModeRowHost \.brandActions\s*\{[^}]*margin-left: auto/)

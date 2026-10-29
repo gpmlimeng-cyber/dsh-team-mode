@@ -985,7 +985,8 @@ describe('sidebar structure', () => {
   it('stacks the mode row, the coordinator and both lists in one column', () => {
     // The row takes the shipped brand row's slot: same column, normal flow.
     expect(sidebar).toContain('root.insertBefore(element, logoRow)')
-    expect(css).toContain("[data-dsh-team-root]:not([class*='_collapsed']) [class*='_logoRow']")
+    // Only the simple surface replaces the shipped brand row; DSH keeps it.
+    expect(css).toContain("[class*='_logoRow']")
     // 群聊 is a child of the assistant section, which draws the coordinator row
     // above its children: DOM, tab and AT order are 总协调 → 群聊 → 单聊.
     expect(sidebar).toMatch(/<AssistantSidebarSection[\s\S]{0,240}<SidebarTeamSection/)

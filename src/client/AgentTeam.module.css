@@ -2879,7 +2879,9 @@ textarea.input {
 
 /* The shipped row yields its slot while the column is wide; the rail keeps it,
    and the mode row hides itself there instead. */
-[data-dsh-team-root]:not([class*='_collapsed']) [class*='_logoRow'] {
+/* DSH keeps the shipped brand row exactly as it ships; only the simple surface
+   replaces it, because that surface has no brand row at all. */
+[data-dsh-team-root]:not([class*='_collapsed']):has(.surfaceModeRow[data-surface-mode='team']) [class*='_logoRow'] {
   display: none;
 }
 
@@ -2922,12 +2924,19 @@ textarea.input {
   display: contents;
 }
 
-.sidebarModeRowHost:has(> .surfaceModeRow[data-surface-mode='team']) {
+.sidebarModeRowHost:has(> .surfaceModeRow) {
   height: 0;
   min-height: 0;
   margin: 0;
   padding: 0;
   overflow: visible;
+}
+
+/* DSH shows the shipped brand row and its own controls: our trio and collapse
+   button would duplicate them, so they are dropped rather than restyled. */
+.surfaceModeRow[data-surface-mode='native'] .brandActions,
+.surfaceModeRow[data-surface-mode='native'] [data-dsh-team-mode-collapse] {
+  display: none;
 }
 
 .surfaceModeRow[data-surface-mode='team'] .brandActions {

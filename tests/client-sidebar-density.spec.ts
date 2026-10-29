@@ -81,8 +81,11 @@ describe('sidebar vertical density', () => {
 })
 
 describe('hidden native nodes leave no placeholder', () => {
-  it('hides the shipped brand row only while the column is wide', () => {
-    const wide = rule("[data-dsh-team-root]:not([class*='_collapsed']) [class*='_logoRow']")
+  it('hides the shipped brand row only on the simple surface', () => {
+    // DSH keeps the shipped row: only BOT replaces it, and only while wide.
+    const wide = rule(
+      "[data-dsh-team-root]:not([class*='_collapsed']):has(.surfaceModeRow[data-surface-mode='team']) [class*='_logoRow']",
+    )
     expect(wide).toContain('display: none')
   })
 
