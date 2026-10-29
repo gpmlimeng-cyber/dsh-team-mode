@@ -5865,6 +5865,11 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
    so the shipped text is hidden whenever ours is present — descendant match,
    because the slot may wrap its content. If the host renames the class, both
    appear; never neither. */
+/* Anything the shipped crumb paints in this segment that is not our title: the
+   current crumb, a link crumb or a separator. Scoped to a segment that already
+   holds our title, so no other Session loses its header. */
+[class*='crumbSeg']:has([data-dsh-team-session-title]) > [class*='crumb']:not([data-dsh-team-session-title]),
+[class*='crumbSeg']:has([data-dsh-assistant-session-title]) > [class*='crumb']:not([data-dsh-assistant-session-title]),
 [class*='crumbSeg']:has([data-dsh-team-session-title]) > [class*='crumbCurrent'],
 [class*='crumbSeg']:has([data-dsh-assistant-session-title]) > [class*='crumbCurrent'],
 [class*='crumbSeg']:has([data-dsh-team-session-title]) > [class*='crumbSep'],
