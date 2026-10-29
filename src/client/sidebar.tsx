@@ -16,6 +16,7 @@ import {
   IconUserOutlineRegular,
   IconUsersOutlineRegular,
   IconEllipsisOutlineRegular,
+  FishLogo,
   IconPanelLeftOutlineRegular,
   IconPinFillRegular,
   IconPinOutlineRegular,
@@ -52,6 +53,7 @@ import { MemberAvatar } from './member-avatar.js'
 import { readTodayAttentionCount, requestToday } from './today-surface.js'
 import { Mascot } from './mascot-view.js'
 import { assistantShowsMascot, mascotMotionForStatus, mascotOptionsFor } from './mascot.js'
+import type { MascotOptions } from './mascot.js'
 import {
   openAssistantMainSession,
   openCreateTeamDialog,
@@ -230,6 +232,30 @@ async function startStewardSession(open: (sessionId: string) => void): Promise<v
  * Whether a coordinator instance exists, so the ＋ menu can say "not yet"
  * instead of offering a row that would do nothing.
  */
+/** The surface switch wears the coordinator's own face on the BOT side. */
+function useStewardMark(): { seed: string, options: MascotOptions } | undefined {
+  const [mark, setMark] = useState<{ seed: string, options: MascotOptions }>()
+  useEffect(() => {
+    let live = true
+    const load = (): void => {
+      void callAgentTeam('assistant.instance.list')
+        .then(value => {
+          if (!live) return
+          const steward = coordinatorAssistant(value.items)
+          setMark(steward === undefined ? undefined : mascotOptionsFor(steward))
+        })
+        .catch(() => { if (live) setMark(undefined) })
+    }
+    load()
+    const unsubscribe = subscribeAgentTeam(load, () => {}, load)
+    return () => {
+      live = false
+      unsubscribe()
+    }
+  }, [])
+  return mark
+}
+
 function useStewardAvailable(): boolean {
   const [available, setAvailable] = useState(false)
   useEffect(() => {
@@ -309,9 +335,11 @@ export function brandCreateItems(hasSteward: boolean, chats: readonly BrandChatE
 function SurfaceModeSwitch({
   mode,
   onChange,
+  stewardMark,
 }: {
   mode: SurfaceMode
   onChange: (mode: SurfaceMode) => void
+  stewardMark?: { seed: string, options: MascotOptions } | undefined
 }): JSX.Element {
   const [open, setOpen] = useState(false)
   const options = [
@@ -351,7 +379,13 @@ function SurfaceModeSwitch({
           data-dsh-surface-mode={mode}
           onClick={() => { setOpen(value => !value) }}
         >
-          <span className={css.surfaceSwitchDot} aria-hidden="true" data-mode={mode} />
+          <span className={css.surfaceSwitchMark} aria-hidden="true">
+            {mode === 'team'
+              ? (stewardMark === undefined
+                  ? <Mascot seed="team-mode" size={16} avatarShape="rounded" animated={false} />
+                  : <Mascot seed={stewardMark.seed} options={stewardMark.options} size={16} avatarShape="rounded" animated={false} />)
+              : <FishLogo size={16} />}
+          </span>
           <span className={css.surfaceSwitchLabel}>{current.label}</span>
           <IconChevronsUpDownOutlineRegular size={12} className={css.brandModeCaret} />
         </button>
@@ -1353,6 +1387,7 @@ export function SidebarPortal({
   const [searchOpen, setSearchOpen] = useState(false)
   const [createMenuOpen, setCreateMenuOpen] = useState(false)
   const stewardAvailable = useStewardAvailable()
+  const stewardMark = useStewardMark()
   const chats = useAssistantChats()
   const [libraryOpen, setLibraryOpen] = useState(false)
   const [newChatAnchor, setNewChatAnchor] = useState<HTMLElement | null>(null)
@@ -1928,7 +1963,7 @@ export function SidebarPortal({
           {/* The switch lives in the window chrome band, not in the row's flow:
               DSH keeps every shipped control where it was. */}
           <span className={css.surfaceSwitchChrome}>
-            <SurfaceModeSwitch mode={mode} onChange={switchMode} />
+            <SurfaceModeSwitch mode={mode} onChange={switchMode} stewardMark={stewardMark} />
           </span>
           {searchOpen ? (
             <div className={css.sidebarTeamSearch}>

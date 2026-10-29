@@ -2984,16 +2984,21 @@ textarea.input {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.surfaceSwitchDot {
-  width: 14px;
-  height: 14px;
+/* Real marks instead of a coloured dot: the shipped fish for DSH, the
+   coordinator's own mascot for BOT. */
+.surfaceSwitchMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
   flex: none;
-  border-radius: 50%;
-  background: radial-gradient(circle at 34% 30%, #9be15d, #2f9e44 62%, #1b6b2f);
+  color: var(--dsw-alias-label-primary);
 }
 
-.surfaceSwitchDot[data-mode='native'] {
-  background: radial-gradient(circle at 34% 30%, #8ecbff, #3f77c9 62%, #234a86);
+.surfaceSwitchMark > svg,
+.surfaceSwitchMark > span {
+  display: block;
 }
 
 .surfaceSwitchLabel {
