@@ -5851,6 +5851,42 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   max-width: 100%;
 }
 
+/* The lineage title names who is speaking: one member's face, or the team's
+   stacked faces, always followed by the name. */
+.teamSessionTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.teamSessionTitleName {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px;
+  font-weight: 510;
+  line-height: 20px;
+}
+
+.teamSessionTitleFaces {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.teamSessionTitleFace {
+  box-sizing: content-box;
+  border-radius: 50%;
+  outline: 1.5px solid var(--dsw-alias-bg-layer-1);
+}
+
+.teamSessionTitleFaces > * + * {
+  margin-inline-start: -5px;
+}
+
 /* Topic tabs beside the title: chips, not tabs — the shipped view tabs
    (对话 / 轨迹) sit right under them and must not read as the same control. */
 .teamSessionTabs {

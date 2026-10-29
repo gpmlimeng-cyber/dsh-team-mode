@@ -327,6 +327,95 @@ export function sessionTabRows(
   return picked.slice(0, limit)
 }
 
+/** The assistant currently in charge of the open Session, avatar included. */
+export function teamSessionOwner(
+  team: TeamView,
+  sessionId: string,
+): { name: string, avatar?: string } | undefined {
+  const member = Object.values(team.members).find(candidate => candidate.sessionId === sessionId)
+  if (member !== undefined) {
+    const snapshot = member.assistantSnapshot
+    return {
+      name: member.displayName,
+      ...(snapshot.avatar === undefined ? {} : { avatar: snapshot.avatar }),
+    }
+  }
+  const thread = Object.values(team.threads ?? {}).find(candidate => candidate.sessionId === sessionId)
+  if (thread === undefined) return undefined
+  const speaker = team.members[thread.speakerSlotId ?? team.leaderSlotId]
+  if (speaker === undefined) return { name: thread.title }
+  const snapshot = speaker.assistantSnapshot
+  return {
+    name: speaker.displayName,
+    ...(snapshot.avatar === undefined ? {} : { avatar: snapshot.avatar }),
+  }
+}
+
+/** True for the team's own conversation, false for one member's Session. */
+export function isTeamLevelSession(team: TeamView, sessionId: string): boolean {
+  return !Object.values(team.members).some(member => member.sessionId === sessionId)
+}
+
+/**
+ * Replaces the crumb: an assistant's Session names that assistant, a team's own
+ * Session stacks its members' faces and then the team name.
+ */
+export function TeamSessionTitle({ lineageSessionId }: { lineageSessionId?: string }): JSX.Element | null {
+  const team = useTeamForSession(lineageSessionId)
+  if (team === undefined || lineageSessionId === undefined) return null
+  if (isTeamLevelSession(team, lineageSessionId)) {
+    const faces = sortedMembers(team).slice(0, 3)
+    return (
+      <span className={css.teamSessionTitle} data-dsh-team-session-title title={team.name}>
+        {faces.length > 0 && (
+          <span className={css.teamSessionTitleFaces} aria-hidden="true">
+            {faces.map(member => (
+              <MemberAvatar
+                key={member.id}
+                name={member.displayName}
+                avatar={member.assistantSnapshot.avatar}
+                size={16}
+                className={css.teamSessionTitleFace ?? ''}
+              />
+            ))}
+          </span>
+        )}
+        <span className={css.teamSessionTitleName}>{team.name}</span>
+      </span>
+    )
+  }
+  const owner = teamSessionOwner(team, lineageSessionId)
+  if (owner === undefined) return null
+  return (
+    <span className={css.teamSessionTitle} data-dsh-team-session-title title={owner.name}>
+      <MemberAvatar name={owner.name} avatar={owner.avatar} size={16} />
+      <span className={css.teamSessionTitleName}>{owner.name}</span>
+    </span>
+  )
+}
+
+/** Mounted for every Session; registers the lineage title only for a team one. */
+export function TeamSessionTitleHost({
+  sessionId,
+  registerTitle,
+}: {
+  sessionId?: string
+  registerTitle: () => (() => void) | void
+}): null {
+  const team = useTeamForSession(sessionId)
+  const active = team !== undefined && sessionId !== undefined
+  const registerRef = useRef(registerTitle)
+  registerRef.current = registerTitle
+  useEffect(() => {
+    if (!active) return
+    const dispose = registerRef.current()
+    return () => {
+      if (typeof dispose === 'function') dispose()
+    }
+  }, [active])
+  return null
+}
+
 export function TeamSessionSwitcher({
   sessionId,
   openSession,

@@ -43,6 +43,7 @@ import { installAssistantSessionOpener } from './store.js'
 import { installAssistantSessionOps } from './store.js'
 import { SessionRowHider } from './session-row-hider.js'
 import { AssistantSessionTitle, AssistantSessionTitleHost } from './assistant-session-title.js'
+import { TeamSessionTitle, TeamSessionTitleHost } from './team-member-chrome.js'
 import { TeamModeDialogs } from './team-dialogs.js'
 import { TeamParallelHost, TeamMentionAction, TeamParallelView } from './team-parallel.js'
 import { TeamTriggerEnhancer } from './team-trigger-enhancer.js'
@@ -526,6 +527,24 @@ export function apply(ctx: AgentTeamClientContext): void {
     label: '助手会话标题',
     inject: () => ({ registerTitle: registerAssistantTitle }),
   }, AssistantSessionTitleHost as never))
+
+  // The team's own Session names the assistant in charge (or the team's faces),
+  // which outranks the assistant-only lineage title registered above.
+  const registerTeamTitle = (): (() => void) | void => slotApi.inject(
+    'conversation.session.header.lineage',
+    () => slotApi.register({
+      name: 'conversation.session.header.lineage',
+      priority: -20,
+      label: '团队会话标题',
+    }, TeamSessionTitle as never),
+  )
+  slotApi.inject('conversation.session.header.utilities', () => slotApi.register({
+    name: 'conversation.session.header.utilities',
+    id: 'dsh-team-mode-team-title',
+    order: 96,
+    label: '团队会话标题',
+    inject: () => ({ registerTitle: registerTeamTitle }),
+  }, TeamSessionTitleHost as never))
 
   slotApi.inject('conversation.session.header.actions', () => slotApi.register({
     name: 'conversation.session.header.actions',

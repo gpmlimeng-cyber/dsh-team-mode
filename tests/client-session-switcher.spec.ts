@@ -432,3 +432,19 @@ describe('topic tabs in the header', () => {
     expect(cssSource).toContain('.teamSessionTabCurrent')
   })
 })
+
+describe('lineage title names who is speaking', () => {
+  const chromeSource = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
+  const cssSource = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+
+  it('stacks the team faces for a team Session and one face for a member Session', () => {
+    expect(chromeSource).toContain('isTeamLevelSession')
+    expect(chromeSource).toContain('teamSessionTitleFaces')
+    expect(chromeSource).toContain('teamSessionOwner')
+    expect(cssSource).toContain('.teamSessionTitleFaces > * + *')
+  })
+
+  it('caps the stack at three faces', () => {
+    expect(chromeSource).toContain('sortedMembers(team).slice(0, 3)')
+  })
+})
