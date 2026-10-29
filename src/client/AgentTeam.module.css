@@ -5900,6 +5900,14 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   outline: none;
 }
 
+/* The only hover cue: the name underlines, the row never gains a fill. */
+.teamSessionTitleButton:hover .teamSessionTitleName,
+.teamSessionTitleButton:focus-visible .teamSessionTitleName {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
 .teamSessionTitleName {
   min-width: 0;
   overflow: hidden;
