@@ -5920,10 +5920,16 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   flex: none;
 }
 
+/* The face carries no plate of its own: the mascot draws its own silhouette, and
+   the only background in this title is the hover wash on the button. */
 .teamSessionTitleFace {
   box-sizing: content-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 50%;
-  outline: 1.5px solid var(--dsw-alias-bg-layer-1);
+  background: transparent;
+  outline: none;
 }
 
 .teamSessionTitleFaces > * + * {
