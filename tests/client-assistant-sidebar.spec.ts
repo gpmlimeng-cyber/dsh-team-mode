@@ -825,7 +825,6 @@ describe('permanent coworker chat: one canonical door', () => {
     'utf8',
   )
   const sidebar = readFileSync(new URL('../src/client/sidebar.tsx', import.meta.url), 'utf8')
-  const overview = readFileSync(new URL('../src/client/global-overview.tsx', import.meta.url), 'utf8')
 
   it('marks only a first bind with the plugin pin, never the host session pin', () => {
     expect(shouldPinAssistantMainSession({ pinned: false }, false)).toBe(true)
@@ -854,8 +853,6 @@ describe('permanent coworker chat: one canonical door', () => {
     // Picker menu + 新对话 list, fed by the read row's mainSessionId.
     expect(sidebar).toContain('mainSessionId: item.mainSessionId')
     expect(sidebar).toContain('openAssistantMainSession(chat.id, open,')
-    // Global overview workbench.
-    expect(overview).toContain('openAssistantMainSession(item.id, sessionId => { onOpenAssistant(sessionId) }')
     // The door itself always ensures first, then names/marks, then opens.
     expect(store).toContain("callAgentTeam('assistant.instance.ensure'")
     expect(store).toContain('open(session.sessionId)')
@@ -863,7 +860,6 @@ describe('permanent coworker chat: one canonical door', () => {
 
   it('surfaces ownership conflicts inline instead of opening a half-bound chat', () => {
     expect(assistantSidebar).toContain('setError(cause instanceof Error ? cause.message')
-    expect(overview).toContain('setActionError(`打开助手失败：${messageOf(cause)}`)')
     expect(sidebar).toContain('reportNavigationError(`打开助手失败：')
     expect(sidebar).toContain('reportNavigationError(`打开管家会话失败：')
     // A failed ensure is reported before any navigation; no raw fallback open.

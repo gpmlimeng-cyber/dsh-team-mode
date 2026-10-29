@@ -11,16 +11,6 @@ import { isTeamExecuting } from './team-status.js'
  */
 export type AttentionCategory = 'approval' | 'assistant_input' | 'blocked' | 'error' | 'unread'
 
-/** Which subset of the overview rows a filter shows. */
-export type GlobalFilter =
-  | 'all'
-  | 'attention'
-  | 'running'
-  | 'blocked'
-  | 'error'
-  | 'unread'
-  | 'idle'
-
 export interface GlobalTeamItem {
   kind: 'team'
   id: string
@@ -78,15 +68,14 @@ export interface GlobalCounts {
 }
 
 export interface GlobalOverviewModel {
+  /**
+   * The projected entities the counts are derived from. The overview no longer
+   * renders them — the sidebar and 今天 own the lists — so they stay here as
+   * facts, not as a second surface.
+   */
   teams: GlobalTeamItem[]
   assistants: GlobalAssistantItem[]
   counts: GlobalCounts
-  /**
-   * Items needing the user, most pending work first. Only decisions live here:
-   * blocked/error/unread are states and filters, so "waiting on a dependency"
-   * never poses as "waiting for a button press".
-   */
-  attention: GlobalOverviewItem[]
 }
 
 export interface GlobalOverviewInput {
@@ -210,15 +199,6 @@ function isIdle(item: GlobalOverviewItem): boolean {
   return !item.running && !(item.kind === 'team' && item.starting) && item.categories.length === 0
 }
 
-function attentionWeight(item: GlobalOverviewItem): number {
-  return item.kind === 'team' ? item.approval : item.needsInput
-}
-
-/** Teams lead the attention list when pending work and recency are equal. */
-function kindOrder(item: GlobalOverviewItem): number {
-  return item.kind === 'team' ? 0 : 1
-}
-
 /**
  * Read-only projection of every non-archived team and assistant. Counts are
  * distinct entities per state, never interactions: an item can be active and
@@ -238,13 +218,6 @@ export function globalOverviewModel(input: GlobalOverviewInput): GlobalOverviewM
     }))
 
   const items = [...teamEntries.map(entry => entry.item), ...assistantEntries.map(entry => entry.item)]
-  const attention = [...teamEntries, ...assistantEntries]
-    .filter(entry => isAttention(entry.item))
-    .sort((left, right) => attentionWeight(right.item) - attentionWeight(left.item)
-      || right.updatedAt - left.updatedAt
-      || kindOrder(left.item) - kindOrder(right.item)
-      || left.item.id.localeCompare(right.item.id))
-    .map(entry => entry.item)
 
   return {
     teams: teamEntries.map(entry => entry.item),
@@ -259,34 +232,5 @@ export function globalOverviewModel(input: GlobalOverviewInput): GlobalOverviewM
       unread: items.filter(item => hasCategory(item, 'unread')).length,
       idle: items.filter(isIdle).length,
     },
-    attention,
-  }
-}
-
-const FILTER_KEEP: Readonly<Record<GlobalFilter, (item: GlobalOverviewItem) => boolean>> = {
-  all: () => true,
-  attention: isAttention,
-  running: item => item.running,
-  blocked: item => hasCategory(item, 'blocked'),
-  error: item => hasCategory(item, 'error'),
-  unread: item => hasCategory(item, 'unread'),
-  idle: isIdle,
-}
-
-/**
- * Narrow the rows shown. Counts and the attention list describe the whole
- * workspace and are returned untouched, so a filter can never invent or hide a
- * number — or a pending approval — in the summary above it.
- */
-export function filterGlobalOverview(
-  model: GlobalOverviewModel,
-  filter: GlobalFilter,
-): GlobalOverviewModel {
-  const keep = FILTER_KEEP[filter]
-  return {
-    teams: model.teams.filter(keep),
-    assistants: model.assistants.filter(keep),
-    counts: model.counts,
-    attention: model.attention,
   }
 }

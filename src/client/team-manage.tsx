@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
-import { navigationErrorMessage, openSessionInCatalog, teamLeaderSessionId } from './api.js'
+import { navigationErrorMessage, openSessionInCatalog } from './api.js'
 import { reportNavigationError } from './store.js'
 import { TeamCard } from './teams/TeamPanel.js'
 import { GlobalOverview } from './global-overview.js'
+import { requestToday } from './today-surface.js'
 import { useAgentTeamData, type WorkspaceChoice } from './components.js'
 import css from './TeamManage.module.css'
 import type { TeamView } from '../transport/contracts.js'
@@ -57,16 +58,6 @@ export function TeamManageView({
       cause => { reportNavigationError(navigationErrorMessage(cause)) },
     )
   }
-  const openTeam = (teamId: string): void => {
-    const target = teams.find(entry => entry.id === teamId)
-    const sessionId = target === undefined ? undefined : teamLeaderSessionId(target)
-    if (sessionId === undefined) {
-      reportNavigationError('无法打开该团队：还没有可用的 Leader 会话')
-      return
-    }
-    openSession(sessionId)
-  }
-
   return (
     <div className={css.page}>
       <details className={css.overviewDisclosure}>
@@ -76,8 +67,7 @@ export function TeamManageView({
             teams={teams}
             teamsLoading={teamsLoading}
             {...(teamsError === undefined ? {} : { teamsError })}
-            onOpenTeam={openTeam}
-            onOpenAssistant={openSession}
+            onOpenToday={requestToday}
           />
         </div>
       </details>

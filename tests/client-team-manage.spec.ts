@@ -31,6 +31,10 @@ vi.mock('../src/client/teams/TeamPanel.js', () => ({
   TeamCard: () => createElement('div', { 'data-team-card': 'stub' }),
 }))
 
+// The 今天 entry point is the real one user-side; this node test only needs the
+// wiring, not the primitives it renders with.
+vi.mock('../src/client/today-surface.js', () => ({ requestToday: () => undefined }))
+
 const { TEAM_MANAGE_VIEW_ID, TeamManageView } = await import('../src/client/team-manage.js')
 const { GlobalOverviewPanel } = await import('../src/client/global-overview.js')
 
@@ -119,7 +123,7 @@ describe('TeamManageView overview states', () => {
     expect(html).toContain('data-team-card="stub"')
   })
 
-  it('keeps the cached team overview rows when only the assistant list fails', () => {
+  it('keeps the last known facts when only the assistant list fails', () => {
     // The other half of the documented difference: Assistant rows survive a
     // failed refresh and the message is shown inline above them.
     const staleTask = {
@@ -139,9 +143,8 @@ describe('TeamManageView overview states', () => {
       teams: state.data.teams,
       instances: [],
       tasks: [staleTask],
-      filter: 'all',
       error: '助手数据连接已断开，正在重连',
-      onOpenTeam: () => undefined,
+      onOpenToday: () => undefined,
     }))
 
     expect(html).toContain('role="alert"')
@@ -154,7 +157,7 @@ describe('TeamManageView overview states', () => {
     const docs = readFileSync(new URL('../docs/team-management.md', import.meta.url), 'utf8')
 
     expect(docs).toContain('团队列表失败会整块替换总览')
-    expect(docs).toContain('助手列表失败则保留上一次成功加载的行')
+    expect(docs).toContain('助手列表失败则保留上一次成功加载的数字')
   })
 
   it('renders nothing when the Session does not belong to a team', () => {
@@ -166,6 +169,7 @@ describe('TeamManageView overview states', () => {
 
     expect(source).toContain('teamsLoading={teamsLoading}')
     expect(source).toContain('{...(teamsError === undefined ? {} : { teamsError })}')
+    expect(source).toContain('onOpenToday={requestToday}')
     expect(source).not.toContain('callAgentTeam')
     expect(TEAM_MANAGE_VIEW_ID).toBe('team-manage')
   })

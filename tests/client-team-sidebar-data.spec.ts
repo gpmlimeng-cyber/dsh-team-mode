@@ -418,11 +418,10 @@ describe('startup is not idle on any surface', () => {
     expect(overview.counts.idle).toBe(0)
   })
 
-  it('keeps a starting team out of the idle filter and the decision list', () => {
+  it('keeps a starting team out of idle and out of the attention count', () => {
     const overview = globalOverviewModel({ teams: [startingTeam], instances: [], tasks: [] })
 
     expect(overview.teams[0]?.categories).toEqual([])
-    expect(overview.attention).toEqual([])
     expect(overview.counts.idle).toBe(0)
     expect(overview.counts.attention).toBe(0)
   })

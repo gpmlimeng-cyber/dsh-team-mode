@@ -35,6 +35,10 @@ vi.mock('../src/client/components.js', () => ({
   useAgentTeamData: () => liveState.current,
 }))
 
+// TeamManageView wires its overview entry to the 今天 page; that module imports
+// the shipped primitives, so keep it inert for this node test.
+vi.mock('../src/client/today-surface.js', () => ({ requestToday: () => undefined }))
+
 // The shipped primitives package expects browser peers (clsx) that this node
 // test does not install; the live view assertions target the Goal UI, which
 // uses plain <button>/<section> elements, so stub the primitives.

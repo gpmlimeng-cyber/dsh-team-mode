@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { globalOverviewModel, filterGlobalOverview } from '../src/client/global-overview-data.js'
+import { globalOverviewModel } from '../src/client/global-overview-data.js'
 import type { AssistantSession, TeamMemberSlot, TeamTask } from '../src/domain/types.js'
 import type { AssistantInstanceView, TeamView } from '../src/transport/contracts.js'
 
@@ -147,17 +147,12 @@ function ids(entries: ReadonlyArray<{ id: string }>): string[] {
   return entries.map(entry => entry.id)
 }
 
-function tag(item: { kind: 'team' | 'assistant'; id: string }): string {
-  return `${item.kind}:${item.id}`
-}
-
 describe('globalOverviewModel', () => {
   it('returns zero counts and empty lists for empty input, with no undefined', () => {
     const model = globalOverviewModel({ teams: [], instances: [], tasks: [] })
 
     expect(model.teams).toEqual([])
     expect(model.assistants).toEqual([])
-    expect(model.attention).toEqual([])
     expect(model.counts).toEqual({
       teams: 0,
       assistants: 0,
@@ -325,7 +320,7 @@ describe('globalOverviewModel', () => {
     expect(model.counts.idle).toBe(2)
   })
 
-  it('puts only waiting approvals and needs-input tasks in attention', () => {
+  it('counts only waiting approvals and needs-input tasks as attention', () => {
     const blocked = team({
       id: 'blocked-team',
       tasks: [
@@ -358,113 +353,14 @@ describe('globalOverviewModel', () => {
       ],
     })
 
-    expect(model.attention.map(tag)).toEqual(['team:waiting-team', 'assistant:needs'])
     expect(model.counts.attention).toBe(2)
+    // The category, not the entity: blocked/error/unread states stay out.
+    expect(model.teams[1]?.categories).toContain('approval')
+    expect(model.teams[0]?.categories).not.toContain('approval')
+    expect(model.assistants[0]?.categories).toContain('assistant_input')
     expect(model.counts.blocked).toBe(1)
     // A team waiting for approval still counts as executing on the board.
     expect(model.counts.running).toBe(3)
-  })
-
-  it('sorts attention by pending work, then by most recent update', () => {
-    const model = globalOverviewModel({
-      teams: [
-        team({
-          id: 'team-low',
-          updatedAt: '2026-01-01T02:00:00.000Z',
-          members: [member('leader', { role: 'leader', lastRuntimeState: 'waiting_approval' })],
-        }),
-        team({
-          id: 'team-high',
-          updatedAt: '2026-01-01T01:00:00.000Z',
-          members: [
-            member('leader', { role: 'leader', lastRuntimeState: 'waiting_approval' }),
-            member('worker', { lastRuntimeState: 'waiting_approval' }),
-          ],
-        }),
-      ],
-      instances: [
-        instance({ id: 'assistant-new', updatedAt: '2026-01-01T03:00:00.000Z' }),
-        instance({ id: 'assistant-old', updatedAt: '2026-01-01T00:00:00.000Z' }),
-      ],
-      tasks: [
-        assistantTask('new', 'needs_input', { assistantId: 'assistant-new' }),
-        assistantTask('old', 'needs_input', { assistantId: 'assistant-old' }),
-      ],
-    })
-
-    expect(model.attention.map(tag)).toEqual([
-      'team:team-high',
-      'assistant:assistant-new',
-      'team:team-low',
-      'assistant:assistant-old',
-    ])
-  })
-
-  it('filters rows without touching the global counts or attention list', () => {
-    const model = globalOverviewModel({
-      teams: [
-        team({
-          id: 'team-run',
-          members: [
-            member('leader', { role: 'leader', lastRuntimeState: 'running' }),
-            member('approver', { lastRuntimeState: 'waiting_approval' }),
-          ],
-          tasks: [
-            task('t0', 'pending'),
-            task('t1', 'assigned', { dependencyIds: ['t0'] }),
-          ],
-        }),
-        team({
-          id: 'team-blocked',
-          tasks: [
-            task('b0', 'assigned'),
-            task('b1', 'pending', { dependencyIds: ['b0'] }),
-          ],
-        }),
-        team({ id: 'team-idle' }),
-      ],
-      instances: [
-        instance({ id: 'assistant-run', status: 'active' }),
-        instance({ id: 'assistant-needs' }),
-        instance({ id: 'assistant-idle' }),
-      ],
-      tasks: [assistantTask('n1', 'needs_input', { assistantId: 'assistant-needs' })],
-    })
-
-    expect(model.counts).toEqual({
-      teams: 3,
-      assistants: 3,
-      running: 2,
-      attention: 2,
-      blocked: 2,
-      error: 0,
-      unread: 0,
-      idle: 2,
-    })
-
-    const all = filterGlobalOverview(model, 'all')
-    expect(ids(all.teams)).toEqual(['team-run', 'team-blocked', 'team-idle'])
-    expect(ids(all.assistants)).toEqual(['assistant-run', 'assistant-needs', 'assistant-idle'])
-
-    const attention = filterGlobalOverview(model, 'attention')
-    expect(ids(attention.teams)).toEqual(['team-run'])
-    expect(ids(attention.assistants)).toEqual(['assistant-needs'])
-    expect(attention.teams.length + attention.assistants.length).toBe(model.counts.attention)
-
-    const running = filterGlobalOverview(model, 'running')
-    expect(ids(running.teams)).toEqual(['team-run'])
-    expect(ids(running.assistants)).toEqual(['assistant-run'])
-    expect(running.teams.length + running.assistants.length).toBe(model.counts.running)
-
-    const idle = filterGlobalOverview(model, 'idle')
-    expect(ids(idle.teams)).toEqual(['team-idle'])
-    expect(ids(idle.assistants)).toEqual(['assistant-idle'])
-    expect(idle.teams.length + idle.assistants.length).toBe(model.counts.idle)
-
-    for (const filtered of [all, attention, running, idle]) {
-      expect(filtered.counts).toEqual(model.counts)
-      expect(filtered.attention).toEqual(model.attention)
-    }
   })
 
   it('excludes archived teams, instances, and tasks', () => {
@@ -492,7 +388,7 @@ describe('globalOverviewModel', () => {
     expect(model.assistants[0]).toMatchObject({ tasks: 1, needsInput: 1 })
     expect(model.counts.teams).toBe(1)
     expect(model.counts.assistants).toBe(1)
-    expect(model.attention.map(tag)).toEqual(['assistant:assistant-live'])
+    expect(model.counts.attention).toBe(1)
   })
 
   it('never throws for an assistant without a main session', () => {
@@ -516,7 +412,7 @@ describe('globalOverviewModel', () => {
 
 const PREVIEW_AT = Date.parse(ISO)
 
-describe('globalOverviewModel · attention categories', () => {
+describe('globalOverviewModel · categories and counts', () => {
   it('lists one row per entity carrying every category it holds', () => {
     const busy = team({
       id: 'team-busy',
@@ -530,12 +426,11 @@ describe('globalOverviewModel · attention categories', () => {
     const model = globalOverviewModel({ teams: [busy], instances: [], tasks: [] })
 
     expect(model.teams[0]?.categories).toEqual(['approval', 'blocked', 'error'])
-    expect(model.attention.map(tag)).toEqual(['team:team-busy'])
     // One entity, three facts: each count is the entity, never the interaction.
     expect(model.counts).toMatchObject({ attention: 1, blocked: 1, error: 1, idle: 0 })
   })
 
-  it('keeps states out of the decision list', () => {
+  it('keeps states out of the attention count', () => {
     const model = globalOverviewModel({
       teams: [
         team({ id: 'blocked', tasks: [task('dep', 'running'), task('held', 'assigned', { dependencyIds: ['dep'] })] }),
@@ -547,7 +442,6 @@ describe('globalOverviewModel · attention categories', () => {
       tasks: [],
     })
 
-    expect(model.attention).toEqual([])
     expect(model.counts).toMatchObject({ attention: 0, blocked: 1, error: 4, idle: 0 })
     expect(model.teams.map(item => item.error)).toEqual([false, true, true, true])
     expect(model.assistants[0]?.categories).toEqual(['error'])
@@ -560,8 +454,8 @@ describe('globalOverviewModel · attention categories', () => {
       tasks: [],
     })
     expect(model.counts).toMatchObject({ assistants: 2, error: 1, idle: 1 })
-    expect(filterGlobalOverview(model, 'idle').assistants.map(item => item.id)).toEqual(['fine'])
-    expect(filterGlobalOverview(model, 'error').assistants.map(item => item.id)).toEqual(['broken'])
+    expect(model.assistants[0]?.categories).toEqual(['error'])
+    expect(model.assistants[1]?.categories).toEqual([])
   })
 
   it('marks an assistant unread only when the preview is newer than the read mark', () => {
@@ -588,30 +482,6 @@ describe('globalOverviewModel · attention categories', () => {
       tasks: [assistantTask('n1', 'needs_input', { assistantId: 'needs' })],
     })
     expect(model.counts.attention).toBe(2)
-    expect(new Set(model.attention.map(tag)).size).toBe(model.attention.length)
-  })
-
-  it('filters blocked, error, and unread rows without touching attention or counts', () => {
-    const preview = { role: 'assistant' as const, text: '新消息', time: PREVIEW_AT }
-    const model = globalOverviewModel({
-      teams: [
-        team({ id: 'held', tasks: [task('dep', 'running'), task('down', 'pending', { dependencyIds: ['dep'] })] }),
-        team({ id: 'approve', members: [member('a', { lastRuntimeState: 'waiting_approval' })] }),
-        team({ id: 'broken', state: 'error' }),
-      ],
-      instances: [instance({ id: 'unread', preview })],
-      tasks: [],
-      readState: { unread: 0 },
-    })
-
-    expect(filterGlobalOverview(model, 'blocked').teams.map(item => item.id)).toEqual(['held'])
-    expect(filterGlobalOverview(model, 'error').teams.map(item => item.id)).toEqual(['broken'])
-    expect(filterGlobalOverview(model, 'unread').assistants.map(item => item.id)).toEqual(['unread'])
-    expect(filterGlobalOverview(model, 'blocked').attention.map(tag)).toEqual(['team:approve'])
-    for (const filter of ['blocked', 'error', 'unread', 'attention', 'running', 'idle', 'all'] as const) {
-      expect(filterGlobalOverview(model, filter).counts).toEqual(model.counts)
-      expect(filterGlobalOverview(model, filter).attention).toEqual(model.attention)
-    }
   })
 
   it('keeps archived entities out of every category', () => {
@@ -638,7 +508,6 @@ describe('startup is activity, never idle', () => {
     expect(model.counts.idle).toBe(1)
     // Starting is not executing yet: the activity count stays about execution.
     expect(model.counts.running).toBe(0)
-    expect(filterGlobalOverview(model, 'idle').teams.map(item => item.id)).toEqual(['really-idle'])
   })
 
   it('never turns startup into a decision', () => {
@@ -651,7 +520,6 @@ describe('startup is activity, never idle', () => {
       tasks: [],
     })
 
-    expect(model.attention).toEqual([])
     expect(model.teams[0]?.categories).toEqual([])
     expect(model.teams[1]?.categories).toEqual([])
     expect(model.counts).toMatchObject({ attention: 0, error: 0, blocked: 0, idle: 0 })

@@ -10767,7 +10767,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   }
 }
 
-/* Read-only global overview on the workbench default page. */
+/* Read-only global overview facts on the team manage detail page. */
 .globalOverview {
   display: flex;
   flex-direction: column;
@@ -10832,217 +10832,25 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   font-variant-numeric: tabular-nums;
 }
 
-.globalOverviewAttention {
+.globalOverviewNeeds {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--dsw-alias-state-business-tertiary, var(--dsw-alias-border-l2));
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-1);
-}
-
-.globalOverviewSectionTitle {
-  display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  justify-content: space-between;
   gap: 8px;
-  min-width: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
-}
-
-.globalOverviewSectionMeta {
-  flex: none;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  line-height: 16px;
-  white-space: nowrap;
-}
-
-.globalOverviewAttentionList,
-.globalOverviewRows {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
   min-width: 0;
   margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.globalOverviewAttentionRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  width: 100%;
-  min-width: 0;
-  padding: 5px 6px;
-  border: 1px solid transparent;
-  border-radius: var(--dsw-radius-md);
-  background: transparent;
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  font-size: 12px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.globalOverviewAttentionRow:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.globalOverviewAttentionRow:disabled {
-  color: var(--dsw-alias-label-tertiary);
-  cursor: default;
-}
-
-.globalOverviewAttentionName {
-  flex: 1 1 8rem;
-  min-width: 0;
-  overflow-wrap: anywhere;
+  color: var(--dsw-alias-label-secondary);
   font-size: 12px;
   line-height: 18px;
 }
 
-.globalOverviewAttentionMeta {
-  flex: none;
-  color: var(--dsw-alias-state-business-primary);
-  font-size: 10px;
-  line-height: 16px;
-  white-space: nowrap;
-}
-
-.globalOverviewAttentionRow:disabled .globalOverviewAttentionMeta {
-  color: var(--dsw-alias-label-tertiary);
-}
-
-.globalOverviewFilters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  min-width: 0;
-}
-
-.globalOverviewFilter {
-  flex: none;
-  height: 26px;
-  padding: 0 10px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-secondary);
-  font: inherit;
-  font-size: 11px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.globalOverviewFilter:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
+.globalOverviewNeedsCount {
   color: var(--dsw-alias-label-primary);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
-.globalOverviewFilter[aria-pressed='true'] {
-  border-color: var(--dsw-alias-border-l2);
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-primary);
-}
-
-.globalOverviewColumns {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 12px;
-  min-width: 0;
-}
-
-.globalOverviewColumn {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.globalOverviewRow {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.globalOverviewRow:hover:not(:disabled) {
-  background: var(--dsw-alias-interactive-bg-hover);
-}
-
-.globalOverviewRow:disabled {
-  cursor: default;
-}
-
-.globalOverviewRowMain {
-  display: flex;
-  flex: 1 1 12rem;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.globalOverviewRowName {
-  overflow-wrap: anywhere;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
-}
-
-.globalOverviewRowMeta {
-  overflow-wrap: anywhere;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 10px;
-  line-height: 15px;
-}
-
-.globalOverviewRowState {
-  flex: none;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 10px;
-  line-height: 15px;
-  white-space: nowrap;
-}
-
-.globalOverviewEmpty {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  line-height: 16px;
-  overflow-wrap: anywhere;
-}
-
-.globalOverviewFilterEmpty {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
-}
-
-.globalOverviewClearButton {
+.globalOverviewNeedsAction {
   flex: none;
   height: 24px;
   padding: 0 10px;
@@ -11051,11 +10859,11 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-secondary);
   font: inherit;
-  font-size: 10px;
+  font-size: 11px;
   cursor: pointer;
 }
 
-.globalOverviewClearButton:hover {
+.globalOverviewNeedsAction:hover {
   background: var(--dsw-alias-interactive-bg-hover);
   color: var(--dsw-alias-label-primary);
 }
@@ -11073,38 +10881,14 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   overflow-wrap: anywhere;
 }
 
-.globalOverviewFilter:focus-visible,
-.globalOverviewAttentionRow:focus-visible,
-.globalOverviewRow:focus-visible,
-.globalOverviewClearButton:focus-visible {
+.globalOverviewNeedsAction:focus-visible {
   outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
   outline-offset: 2px;
-}
-
-@media (min-width: 900px) {
-  .globalOverviewColumns {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
-  }
 }
 
 @media (max-width: 420px) {
   .globalOverview {
     padding: 10px;
-  }
-
-  .globalOverviewRow,
-  .globalOverviewAttentionRow {
-    align-items: flex-start;
-  }
-
-  .globalOverviewRowMain,
-  .globalOverviewAttentionName {
-    flex-basis: 100%;
-  }
-
-  .globalOverviewRowState {
-    white-space: normal;
   }
 
   .globalOverviewCount {

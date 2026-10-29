@@ -2,8 +2,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { GlobalOverviewPanel, openAssistantSession } from '../src/client/global-overview.js'
-import type { GlobalFilter } from '../src/client/global-overview-data.js'
+import { GlobalOverviewPanel } from '../src/client/global-overview.js'
 import type { AssistantSession, TeamMemberSlot, TeamTask } from '../src/domain/types.js'
 import type { AssistantInstanceView, TeamView } from '../src/transport/contracts.js'
 
@@ -55,7 +54,6 @@ function task(id: string, status: TeamTask['status'], overrides: Partial<TeamTas
 function team(overrides: {
   id?: string
   name?: string
-  leaderSlotId?: string
   members?: TeamMemberSlot[]
   tasks?: TeamTask[]
   archivedAt?: string
@@ -68,7 +66,7 @@ function team(overrides: {
     name: overrides.name ?? `团队 ${id}`,
     workspaceId: `workspace-${id}`,
     workspacePath: `/tmp/${id}`,
-    leaderSlotId: overrides.leaderSlotId ?? 'leader',
+    leaderSlotId: 'leader',
     state: overrides.state ?? 'active',
     directMemberChat: false,
     members: Object.fromEntries((overrides.members ?? [member('leader', { role: 'leader' })]).map(entry => [entry.id, entry])),
@@ -86,11 +84,7 @@ function team(overrides: {
 function instance(overrides: {
   id?: string
   name?: string
-  model?: string
   status?: AssistantInstanceView['status']
-  mainSessionId?: string
-  archivedAt?: string
-  preview?: AssistantInstanceView['preview']
 } = {}): AssistantInstanceView {
   const id = overrides.id ?? 'assistant-1'
   return {
@@ -102,7 +96,7 @@ function instance(overrides: {
       name: overrides.name ?? id,
       instructions: '',
       provider: 'deepseek',
-      model: overrides.model ?? 'deepseek-chat',
+      model: 'deepseek-chat',
       agentPresetId: 'default',
       permissionPresetId: 'default',
       skillAllowlist: [],
@@ -116,9 +110,6 @@ function instance(overrides: {
     revision: 1,
     createdAt: ISO,
     updatedAt: ISO,
-    ...(overrides.preview === undefined ? {} : { preview: overrides.preview }),
-    ...(overrides.mainSessionId === undefined ? {} : { mainSessionId: overrides.mainSessionId }),
-    ...(overrides.archivedAt === undefined ? {} : { archivedAt: overrides.archivedAt }),
   }
 }
 
@@ -147,29 +138,23 @@ function render(options: {
   teams?: TeamView[]
   instances?: AssistantInstanceView[]
   tasks?: AssistantSession[]
-  filter?: GlobalFilter
   loading?: boolean
   error?: string
   teamsLoading?: boolean
   teamsError?: string
   readState?: Readonly<Record<string, number>>
-  onFilterChange?: (filter: GlobalFilter) => void
-  onOpenTeam?: (teamId: string) => void
-  onOpenAssistant?: (sessionId: string) => void
+  onOpenToday?: () => void
 } = {}): string {
   return renderToStaticMarkup(createElement(GlobalOverviewPanel, {
     teams: options.teams ?? [],
     instances: options.instances ?? [],
     tasks: options.tasks ?? [],
-    filter: options.filter ?? 'all',
     loading: options.loading ?? false,
     ...(options.error === undefined ? {} : { error: options.error }),
     ...(options.teamsLoading === undefined ? {} : { teamsLoading: options.teamsLoading }),
     ...(options.teamsError === undefined ? {} : { teamsError: options.teamsError }),
     ...(options.readState === undefined ? {} : { readState: options.readState }),
-    ...(options.onFilterChange === undefined ? {} : { onFilterChange: options.onFilterChange }),
-    onOpenTeam: options.onOpenTeam ?? (() => undefined),
-    ...(options.onOpenAssistant === undefined ? {} : { onOpenAssistant: options.onOpenAssistant }),
+    onOpenToday: options.onOpenToday ?? (() => undefined),
   }))
 }
 
@@ -196,15 +181,11 @@ function cssRule(css: string, className: string): string {
   return css.match(new RegExp(`\\.${className} \\{([^}]*)\\}`))?.[1] ?? ''
 }
 
-function buttonTag(html: string, attribute: string, id: string): string {
-  return html.match(new RegExp(`<button[^>]*${attribute}="${id}"[^>]*>`))?.[0] ?? ''
-}
-
 const runningTeam = team({
   id: 'team-run',
   name: '研发团队',
   members: [
-    member('leader', { role: 'leader', displayName: '阿Leader', lastRuntimeState: 'running' }),
+    member('leader', { role: 'leader', lastRuntimeState: 'running' }),
     member('approver', { lastRuntimeState: 'waiting_approval' }),
   ],
   tasks: [
@@ -221,15 +202,9 @@ const blockedTeam = team({
   ],
 })
 const idleTeam = team({ id: 'team-idle', name: '空闲团队' })
-const activeAssistant = instance({
-  id: 'assistant-run',
-  name: '论文助手',
-  model: 'deepseek-reasoner',
-  status: 'active',
-  mainSessionId: 'session-main',
-})
-const needsAssistant = instance({ id: 'assistant-needs', name: '待输入助手' })
-const idleAssistant = instance({ id: 'assistant-idle', name: '空闲助手' })
+const activeAssistant = instance({ id: 'assistant-run', status: 'active' })
+const needsAssistant = instance({ id: 'assistant-needs' })
+const idleAssistant = instance({ id: 'assistant-idle' })
 const activeTask = assistantTask('x1', 'running', { assistantId: 'assistant-run' })
 const needsTask = assistantTask('y1', 'needs_input', { assistantId: 'assistant-needs' })
 
@@ -239,10 +214,11 @@ const populated = {
   tasks: [activeTask, needsTask],
 }
 
-describe('GlobalOverview summary and attention', () => {
-  it('renders the workspace totals from the real team and assistant data', () => {
+describe('GlobalOverview facts', () => {
+  it('renders header counts, six summary numbers and one 今天 entry', () => {
     const html = render(populated)
     const summary = text(region(html, 'summary'))
+    const needs = text(region(html, 'needs-you'))
 
     expect(text(html)).toContain('3 个团队 · 3 个助手')
     expect(summary).toContain('2 有活动')
@@ -251,180 +227,61 @@ describe('GlobalOverview summary and attention', () => {
     expect(summary).toContain('0 异常')
     expect(summary).toContain('0 未读')
     expect(summary).toContain('2 空闲')
+    expect(needs).toContain('2 项需要你')
+    expect(needs).toContain('打开今天')
     expect(html).not.toContain('undefined')
   })
 
-  it('shows needs-attention before the filters and filters never move it', () => {
-    const html = render({ ...populated, filter: 'running' })
-    const attention = text(region(html, 'attention'))
-
-    expect(attention).toContain('需要你')
-    expect(attention).toContain('研发团队')
-    expect(attention).toContain('1 个待审批')
-    expect(attention).toContain('待输入助手')
-    expect(attention).toContain('1 个待输入')
-    expect(attention).toContain('1 个待输入 · 未创建主会话')
-    expect(html.indexOf('data-overview-region="attention"')).toBeLessThan(
-      html.indexOf('data-overview-region="filters"'),
-    )
-    expect(html.indexOf('data-attention-team-id="team-run"')).toBeLessThan(
-      html.indexOf('data-attention-assistant-id="assistant-needs"'),
-    )
-  })
-
-  it('renders team and assistant rows with their models and live state', () => {
+  it('does not repeat the sidebar or 今天 lists, and has no filters', () => {
     const html = render(populated)
-    const teams = text(region(html, 'teams'))
-    const assistants = text(region(html, 'assistants'))
 
-    expect(teams).toContain('研发团队')
-    expect(teams).toContain('Leader 阿Leader · 2 名成员')
-    expect(teams).toContain('有活动 · 1 个待审批 · 1 个等待前置')
-    expect(teams).toContain('阻塞团队')
-    expect(teams).toContain('1 个等待前置')
-    expect(assistants).toContain('论文助手')
-    expect(assistants).toContain('deepseek-reasoner · 1 个任务')
-    expect(assistants).toContain('待输入助手')
-    expect(assistants).toContain('1 个待输入')
-  })
-})
-
-describe('GlobalOverview navigation', () => {
-  it('opens teams and routes every assistant row through the canonical ensure door', () => {
-    const html = render({ ...populated, onOpenAssistant: () => undefined })
-
-    expect(text(region(html, 'teams'))).toContain('研发团队')
-    expect(text(region(html, 'assistants'))).toContain('未创建主会话')
-
-    const withMain = buttonTag(html, 'data-assistant-id', 'assistant-run')
-    const withoutMain = buttonTag(html, 'data-assistant-id', 'assistant-needs')
-    expect(withMain).not.toContain('disabled')
-    // A row without a main session is not a dead control: the click
-    // materializes the canonical chat through assistant.instance.ensure first.
-    expect(withoutMain).not.toContain('disabled')
-    expect(withoutMain).toContain('未创建主会话')
-    expect(buttonTag(html, 'data-team-id', 'team-run')).not.toContain('disabled')
-
-    // Only the absence of a host navigation face disables an assistant row.
-    const noHandler = render(populated)
-    const noHandlerRow = buttonTag(noHandler, 'data-assistant-id', 'assistant-run')
-    expect(noHandlerRow).toContain('disabled')
-    expect(noHandlerRow).toContain('当前工作台无法跳转')
-    expect(buttonTag(noHandler, 'data-assistant-id', 'assistant-needs')).toContain('disabled')
-
-    const attentionRow = buttonTag(html, 'data-attention-assistant-id', 'assistant-needs')
-    expect(attentionRow).not.toContain('disabled')
-    expect(attentionRow).toContain('未创建主会话')
+    expect(html).not.toContain('data-team-id=')
+    expect(html).not.toContain('data-assistant-id=')
+    expect(html).not.toContain('data-attention-')
+    for (const gone of ['teams', 'assistants', 'attention', 'filters', 'filter-empty']) {
+      expect(html).not.toContain(`data-overview-region="${gone}"`)
+    }
+    // Entity names belong to the surfaces that own the rows.
+    expect(text(html)).not.toContain('研发团队')
+    expect(text(html)).not.toContain('阻塞团队')
+    expect(text(html)).not.toContain('论文助手')
+    // No filter chips and no second call to action.
+    for (const label of ['全部', '需要你</button>', '有活动</button>', '空闲</button>']) {
+      expect(html).not.toContain(label)
+    }
+    expect(html.match(/打开今天/g) ?? []).toHaveLength(1)
   })
 
-  it('closes the workbench before opening an assistant main session', () => {
-    const calls: string[] = []
-    openAssistantSession(
-      'session-main',
-      () => { calls.push('close-workbench') },
-      sessionId => { calls.push(`open:${sessionId}`) },
-    )
+  it('wires 打开今天 through onOpenToday into the 今天 page', () => {
+    const overview = source('global-overview.tsx')
+    const manage = source('team-manage.tsx')
+    const today = source('today-surface.tsx')
 
-    expect(calls).toEqual(['close-workbench', 'open:session-main'])
+    expect(overview).toContain('onClick={onOpenToday}')
+    expect(manage).toContain('onOpenToday={requestToday}')
+    expect(today).toContain("window.dispatchEvent(new CustomEvent(OPEN_TODAY_EVENT))")
+    expect(manage).not.toContain('onOpenTeam=')
+    expect(manage).not.toContain('onOpenAssistant=')
   })
 
-  it('uses only the existing list calls here and delegates the canonical ensure to the store', () => {
+  it('uses only the existing list calls here and has no filter projection', () => {
     const overview = source('global-overview.tsx')
     const methods = [...overview.matchAll(/callAgentTeam\('([^']+)'/g)].map(match => match[1]).sort()
 
     expect(methods).toEqual(['assistant.instance.list', 'assistant.task.list'])
-    // The ensure/naming/pin door lives in store.ts, not in this surface.
-    expect(overview).toContain('openAssistantMainSession(item.id, sessionId => { onOpenAssistant(sessionId) }')
+    expect(overview).not.toContain('filterGlobalOverview')
+    expect(overview).not.toContain('openAssistantSession')
     expect(overview).not.toContain('team.interaction.respond')
     expect(overview).not.toContain('批量')
-    expect(overview).toContain('onClick={() => { onOpenTeam(item.id) }}')
-    expect(overview).toContain('onOpenAssistant(sessionId)')
-  })
-
-  it('does not register the removed full-screen workbench overlay', () => {
-    const entry = source('index.tsx')
-
-    expect(entry).not.toContain("id: 'dsh-team-mode-workbench'")
-    expect(entry).not.toContain('<AgentTeamOverlay pickWorkspace={pickWorkspace} openSession={openSession} />')
-
-  })
-
-  it('does not ship the removed workbench id in the built client bundle', () => {
-    const bundleUrl = new URL('../lib/client.js', import.meta.url)
-    expect(existsSync(bundleUrl), 'lib/client.js is missing: run npm run build first').toBe(true)
-    const bundle = readFileSync(bundleUrl, 'utf8')
-
-    expect(bundle).not.toContain('dsh-team-mode-workbench')
-  })
-
-  it('deletes the dead workbench page and keeps GlobalOverview on the live team manage view', () => {
-    const panel = source('teams/TeamPanel.tsx')
-
-    // The old all-teams page and its workbench are gone; the Session panel is
-    // the only team page, so no dead copy may keep the old overview wiring.
-    expect(panel).not.toContain('export function TeamPanel(')
-    expect(panel).not.toContain('function TeamWorkbench(')
-    expect(panel).not.toContain('GlobalOverview')
-    expect(panel).not.toContain('openAssistantSession')
-    expect(panel).not.toContain('css.workbenchAnnouncement')
-
-    // GlobalOverview still renders exactly once, from the team manage view.
-    const manage = source('team-manage.tsx')
-    expect(manage).toContain('<GlobalOverview')
-    expect(manage).toContain('onOpenTeam={openTeam}')
-    expect(manage).toContain('onOpenAssistant={openSession}')
-    expect(source('index.tsx')).toContain('<TeamMainAgentPanel')
   })
 })
 
-describe('GlobalOverview filters', () => {
-  it('filters rows while leaving every summary count untouched', () => {
-    const all = render(populated)
-    const expected = text(region(all, 'summary'))
-
-    const attention = render({ ...populated, filter: 'attention' })
-    expect(text(region(attention, 'teams'))).toContain('研发团队')
-    expect(region(attention, 'teams')).not.toContain('team-blocked')
-    expect(text(region(attention, 'assistants'))).toContain('待输入助手')
-    expect(region(attention, 'assistants')).not.toContain('assistant-run')
-    expect(text(region(attention, 'summary'))).toBe(expected)
-
-    const running = render({ ...populated, filter: 'running' })
-    expect(region(running, 'teams')).toContain('team-run')
-    expect(region(running, 'teams')).not.toContain('team-idle')
-    expect(region(running, 'assistants')).toContain('assistant-run')
-    expect(text(region(running, 'summary'))).toBe(expected)
-
-    const idle = render({ ...populated, filter: 'idle' })
-    expect(region(idle, 'teams')).toContain('team-idle')
-    expect(region(idle, 'teams')).not.toContain('team-blocked')
-    expect(region(idle, 'assistants')).toContain('assistant-idle')
-    expect(text(region(idle, 'summary'))).toBe(expected)
-
-    for (const html of [attention, running, idle]) {
-      expect(text(html)).toContain('3 个团队 · 3 个助手')
-    }
-  })
-
-  it('shows an explicit empty filter state instead of fake rows or counts', () => {
-    const html = render({
-      teams: [idleTeam],
-      instances: [idleAssistant],
-      filter: 'attention',
-      onFilterChange: () => undefined,
-    })
-
-    expect(text(html)).toContain('当前筛选下没有团队或助手')
-    expect(region(html, 'filter-empty')).toContain('查看全部')
-    expect(html).not.toContain('data-overview-region="teams"')
-    expect(text(region(html, 'summary'))).toContain('0 有活动')
-    expect(text(region(html, 'summary'))).toContain('2 空闲')
-  })
-
+describe('GlobalOverview states', () => {
   it('renders explicit empty, loading and error states', () => {
     const empty = text(render())
     expect(empty).toContain('0 个团队 · 0 个助手')
-    expect(empty).toContain('还没有团队或助手，先创建成员模板或团队。')
+    expect(empty).toContain('0 需要你')
+    expect(empty).toContain('0 项需要你')
 
     const loading = text(render({ loading: true }))
     expect(loading).toContain('正在加载助手和任务…')
@@ -457,142 +314,26 @@ describe('GlobalOverview filters', () => {
     expect(text(failed)).not.toContain('个团队')
     expect(text(failed)).not.toContain('0 有活动')
   })
-})
 
-describe('GlobalOverview attention center', () => {
-  const blockedApprovalTeam = team({
-    id: 'team-approve',
-    name: '审批团队',
-    members: [member('leader', { role: 'leader', lastRuntimeState: 'waiting_approval' })],
-    tasks: [task('dep', 'running'), task('held', 'pending', { dependencyIds: ['dep'] })],
-  })
-  const errorTeam = team({ id: 'team-error', name: '异常团队', state: 'error' })
-  const failedAssistant = instance({ id: 'assistant-failed', name: '异常助手', status: 'error' })
-  const unreadAssistant = instance({
-    id: 'assistant-unread',
-    name: '未读助手',
-    preview: { role: 'assistant', text: '结果已生成', time: Date.parse(ISO) },
-  })
+  it('keeps an explicit inline error while the last known numbers stay', () => {
+    const html = render({ ...populated, error: '助手数据连接已断开，正在重连' })
 
-  it('renders one row per entity and lists the state categories it holds as words', () => {
-    const html = render({
-      teams: [blockedApprovalTeam],
-      instances: [],
-      tasks: [],
-    })
-    const attention = region(html, 'attention')
-
-    expect(attention).toContain('data-attention-team-id="team-approve"')
-    expect(attention.match(/data-attention-team-id=/g)?.length).toBe(1)
-    expect(html).toContain('data-attention-categories="approval,blocked"')
-    expect(text(attention)).toContain('1 个待审批')
-    expect(text(attention)).toContain('等待前置')
-    expect(text(attention)).not.toContain('个等待前置')
-  })
-
-  it('keeps states out of the decision list and counts them as entities', () => {
-    const html = render({
-      teams: [blockedTeam, errorTeam],
-      instances: [failedAssistant, unreadAssistant],
-      tasks: [],
-      readState: { 'assistant-unread': 0 },
-    })
-    const attention = text(region(html, 'attention'))
-    const summary = text(region(html, 'summary'))
-
-    expect(attention).toContain('当前没有需要你处理的事项')
-    expect(attention).not.toContain('异常团队')
-    expect(attention).not.toContain('异常助手')
-    expect(attention).not.toContain('未读助手')
-    expect(summary).toContain('1 等待前置')
-    expect(summary).toContain('2 异常')
-    expect(summary).toContain('1 未读')
-    expect(summary).toContain('0 需要你')
-  })
-
-  it('renders a failed assistant as 异常 instead of 空闲', () => {
-    const html = render({ teams: [], instances: [failedAssistant], tasks: [] })
-    const assistants = text(region(html, 'assistants'))
-
-    expect(assistants).toContain('异常助手')
-    expect(assistants).toContain('异常')
-    expect(assistants).not.toContain('空闲')
-    expect(text(region(html, 'summary'))).not.toContain('1 空闲')
-  })
-
-  it('narrows rows with the state filters and marks the active one', () => {
-    const html = render({
-      teams: [blockedTeam, errorTeam],
-      instances: [failedAssistant, unreadAssistant],
-      tasks: [],
-      filter: 'error',
-      readState: { 'assistant-unread': 0 },
-      onFilterChange: () => undefined,
-    })
-
-    for (const label of ['全部', '需要你', '有活动', '等待前置', '异常', '未读', '空闲']) {
-      expect(html).toContain(`>${label}</button>`)
-    }
-    expect(html).toMatch(/aria-pressed="true"[^>]*>异常<\/button>/)
-    expect(text(region(html, 'teams'))).toContain('异常团队')
-    expect(text(region(html, 'teams'))).not.toContain('阻塞团队')
-    expect(text(region(html, 'assistants'))).toContain('异常助手')
-    expect(text(region(html, 'assistants'))).not.toContain('未读助手')
-  })
-
-  it('never hides a pending approval behind a state filter', () => {
-    for (const filter of ['blocked', 'error', 'unread', 'running', 'idle', 'attention', 'all'] as const) {
-      const html = render({ ...populated, filter })
-      const attention = text(region(html, 'attention'))
-      expect(attention).toContain('研发团队')
-      expect(attention).toContain('待输入助手')
-      expect(attention).toContain('1 个待审批')
-      expect(attention).toContain('1 个待输入')
-    }
-  })
-
-  it('explains the activity count so it cannot be read as the member count', () => {
-    const html = render(populated)
-    expect(html).toMatch(/data-count="running"[^>]*title="有活动[^"]*审批[^"]*"/)
-    expect(html).toMatch(/data-count="attention"[^>]*title="需要你[^"]*"/)
-  })
-})
-
-describe('GlobalOverview startup', () => {
-  const startingTeam = team({ id: 'team-starting', name: '启动团队', state: 'starting' })
-  const wakingMemberTeam = team({
-    id: 'team-waking',
-    name: '唤醒团队',
-    members: [member('waker', { lastRuntimeState: 'starting' })],
-  })
-
-  it('shows 启动中 and never 空闲 for a starting team or a waking member', () => {
-    for (const fixture of [startingTeam, wakingMemberTeam]) {
-      const html = render({ teams: [fixture], instances: [], tasks: [] })
-      expect(text(region(html, 'teams'))).toContain('启动中')
-      expect(text(region(html, 'teams'))).not.toContain('空闲')
-    }
-    expect(text(region(render({ teams: [startingTeam], instances: [], tasks: [] }), 'summary')))
-      .toContain('0 空闲')
-  })
-
-  it('drops a starting team from the idle filter instead of listing it there', () => {
-    const html = render({ teams: [startingTeam], instances: [], tasks: [], filter: 'idle' })
-
-    expect(region(html, 'filter-empty')).toContain('当前筛选下没有团队或助手')
-    expect(html).not.toContain('data-team-id="team-starting"')
+    expect(html).toContain('role="alert"')
+    expect(text(html)).toContain('助手数据连接已断开，正在重连')
+    expect(text(html)).toContain('3 个团队 · 3 个助手')
+    expect(html).toContain('data-overview-region="summary"')
   })
 })
 
 describe('GlobalOverview layout contract', () => {
-  it('keeps counts and rows readable at 320px without clipping', () => {
+  it('keeps the facts readable at 320px without list or filter CSS', () => {
     const moduleCss = source('AgentTeam.module.css')
     const root = cssRule(moduleCss, 'globalOverview')
     const stats = cssRule(moduleCss, 'globalOverviewStats')
     const stat = cssRule(moduleCss, 'globalOverviewStat')
     const count = cssRule(moduleCss, 'globalOverviewCount')
-    const filters = cssRule(moduleCss, 'globalOverviewFilters')
-    const row = cssRule(moduleCss, 'globalOverviewRow')
+    const needs = cssRule(moduleCss, 'globalOverviewNeeds')
+    const action = cssRule(moduleCss, 'globalOverviewNeedsAction')
     const globalCss = moduleCss.slice(
       moduleCss.indexOf('Read-only global overview'),
       moduleCss.indexOf('/* Team mark:'),
@@ -603,14 +344,56 @@ describe('GlobalOverview layout contract', () => {
     expect(stats).toContain('flex-wrap: wrap')
     expect(stat).toContain('white-space: nowrap')
     expect(count).toContain('white-space: nowrap')
-    expect(filters).toContain('flex-wrap: wrap')
-    expect(row).toContain('flex-wrap: wrap')
-    expect(row).toContain('min-width: 0')
+    expect(needs).toContain('flex-wrap: wrap')
+    expect(action).toContain('cursor: pointer')
     expect(globalCss).not.toContain('overflow: hidden')
     expect(narrow).toContain('.globalOverviewCount {')
     expect(narrow).toContain('white-space: normal')
-    expect(narrow).toContain('flex: 0 1 auto')
-    expect(narrow).toContain('min-width: 0')
     expect(count).toContain('font-variant-numeric: tabular-nums')
+    // The removed lists and filters left no CSS behind.
+    for (const gone of [
+      'globalOverviewRow ',
+      'globalOverviewRows',
+      'globalOverviewColumns',
+      'globalOverviewAttention',
+      'globalOverviewFilters',
+      'globalOverviewFilter ',
+      'globalOverviewFilterEmpty',
+      'globalOverviewClearButton',
+    ]) {
+      expect(moduleCss).not.toContain(`.${gone}`)
+    }
+  })
+})
+
+describe('removed workbench surfaces', () => {
+  it('does not register the removed full-screen workbench overlay', () => {
+    const entry = source('index.tsx')
+
+    expect(entry).not.toContain("id: 'dsh-team-mode-workbench'")
+    expect(entry).not.toContain('<AgentTeamOverlay pickWorkspace={pickWorkspace} openSession={openSession} />')
+  })
+
+  it('does not ship the removed workbench id in the built client bundle', () => {
+    const bundleUrl = new URL('../lib/client.js', import.meta.url)
+    expect(existsSync(bundleUrl), 'lib/client.js is missing: run npm run build first').toBe(true)
+    const bundle = readFileSync(bundleUrl, 'utf8')
+
+    expect(bundle).not.toContain('dsh-team-mode-workbench')
+    expect(bundle).not.toContain('globalOverviewAttention')
+  })
+
+  it('deletes the dead workbench page and keeps GlobalOverview on the live team manage view', () => {
+    const panel = source('teams/TeamPanel.tsx')
+
+    expect(panel).not.toContain('export function TeamPanel(')
+    expect(panel).not.toContain('function TeamWorkbench(')
+    expect(panel).not.toContain('GlobalOverview')
+    expect(panel).not.toContain('openAssistantSession')
+
+    const manage = source('team-manage.tsx')
+    expect(manage).toContain('<GlobalOverview')
+    expect(manage).toContain('onOpenToday={requestToday}')
+    expect(source('index.tsx')).toContain('<TeamMainAgentPanel')
   })
 })
