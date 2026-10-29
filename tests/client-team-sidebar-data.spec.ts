@@ -1883,6 +1883,6 @@ describe('team builder lists coworker instances', () => {
   it('keeps isolated and archived coworkers out, and says why', () => {
     expect(panel).toContain("instance.status !== 'archived' && instance.workspaceIsolated !== true")
     expect(panel).toContain('data-dsh-team-pick-isolated')
-    expect(panel).toContain('个同事在独立工作区，不能加入团队')
+    expect(panel).toContain('个助手在独立工作区，不能加入团队')
   })
 })

@@ -2374,7 +2374,7 @@ export function TeamForm({
           <div className={css.assistantPickList}>
             {filteredCoworkers.length > 0 && (
               <>
-                <div className={css.builderSectionHeading}><strong>同事</strong></div>
+                <div className={css.builderSectionHeading}><strong>助手</strong></div>
                 {filteredCoworkers.map(instance => (
                   <button
                     key={instance.id}
@@ -2397,7 +2397,7 @@ export function TeamForm({
             )}
             {hiddenCoworkers > 0 && (
               <div className={css.assistantEmpty} role="status" data-dsh-team-pick-isolated={hiddenCoworkers}>
-                <span>{hiddenCoworkers} 个同事在独立工作区，不能加入团队。</span>
+                <span>{hiddenCoworkers} 个助手在独立工作区，不能加入团队。</span>
               </div>
             )}
             {filteredAssistants.length > 0 && (

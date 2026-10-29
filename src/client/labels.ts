@@ -92,7 +92,7 @@ export function memberAssistantArchivedNote(
 
 /** One explanation, shared by every surface that shows the badge. */
 export const MEMBER_ASSISTANT_ARCHIVED_HINT =
-  '关联的同事已归档：团队记忆不再注入。在同事设置里恢复后，这条关联会自动恢复。'
+  '关联的助手已归档：团队记忆不再注入。在助手设置里恢复后，这条关联会自动恢复。'
 
 /** Composer entry that opens the team mention picker; not a custom composer. */
 export const TEAM_MENTION_LABEL = '提及成员'

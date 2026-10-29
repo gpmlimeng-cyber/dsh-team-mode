@@ -174,7 +174,7 @@ describe('M1 assistant lifecycle end to end', () => {
     const trace: string[] = []
     const step = (line: string): void => { trace.push(line) }
 
-    // 1. Two 同事, both isolated: their workspaces must be different directories
+    // 1. Two 助手, both isolated: their workspaces must be different directories
     //    under the base checkout, each materialised for real.
     const first = await service.createAssistantInstance({
       workspaceId: BASE_WORKSPACE_ID,

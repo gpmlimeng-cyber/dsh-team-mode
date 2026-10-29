@@ -227,7 +227,7 @@ describe('TeamOverview summary and progress', () => {
     expect(text(html)).toContain('已归档')
     // The tooltip says what the badge means, so 已归档 is not read as the member
     // itself being gone.
-    expect(html).toContain('关联的同事已归档')
+    expect(html).toContain('关联的助手已归档')
     // A healthy link and a never-linked member carry no badge at all.
     expect(html.match(/data-dsh-member-assistant-archived=/g)?.length).toBe(1)
   })

@@ -63,8 +63,8 @@ export interface TodayRunning {
 }
 
 /**
- * 等你确认的行按「同一个团队 / 同一个同事」归组：团队事项按 teamId，助手
- * 事项按 assistantId。组按最长等待倒序，最久没被处理的同事永远在最上面。
+ * 等你确认的行按「同一个团队 / 同一个助手」归组：团队事项按 teamId，助手
+ * 事项按 assistantId。组按最长等待倒序，最久没被处理的助手永远在最上面。
  */
 export interface TodayWaitingGroup {
   /** teamId for a team group, assistantId for a coworker group. */
@@ -117,7 +117,7 @@ export interface TodayArchive {
 export interface TodayModel {
   greeting: string
   waiting: TodayWaiting[]
-  /** `waiting` folded per team/同事; the block renders these, not the flat list. */
+  /** `waiting` folded per team/助手; the block renders these, not the flat list. */
   waitingGroups: TodayWaitingGroup[]
   running: TodayRunning[]
   upcoming: TodayUpcoming[]
@@ -310,8 +310,8 @@ export function todayWaiting(
 }
 
 /**
- * 等你确认按同事/团队归组。名字取当前投影里的名字（助手可能刚改过名），组按
- * 最长等待倒序，所以最久没人处理的同事排最前。未读只是被动提示：它留在组里，
+ * 等你确认按助手/团队归组。名字取当前投影里的名字（助手可能刚改过名），组按
+ * 最长等待倒序，所以最久没人处理的助手排最前。未读只是被动提示：它留在组里，
  * 但不计入 `actionable`（入口徽标与组计数都只数真正要动手的行）。
  */
 export function todayWaitingGroups(
@@ -349,7 +349,7 @@ export function todayWaitingGroups(
 
 /**
  * 在进行：有 `running` 任务或 `running` 成员的团队，一队一行；有 running /
- * queued 任务的同事，一人一行（任务标题或排队数）。
+ * queued 任务的助手，一人一行（任务标题或排队数）。
  * `waiting_approval` 不算在跑——那是「等你确认」那一块的事。
  */
 export function todayRunning(
