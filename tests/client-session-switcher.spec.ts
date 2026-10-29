@@ -447,7 +447,7 @@ describe('lineage title names the team', () => {
   })
 
   it('stacks up to three faces before the name, and hides the shipped crumb', () => {
-    expect(chromeSource).toContain('sortedMembers(team).slice(0, 3)')
+    expect(chromeSource).toContain('teamAvatarStack(team.members).faces.slice(0, 3)')
     expect(cssSource).toContain('.teamSessionTitleFaces > * + *')
     expect(cssSource).toContain("crumbSeg")
   })

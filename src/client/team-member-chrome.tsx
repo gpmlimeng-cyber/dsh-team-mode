@@ -26,6 +26,7 @@ import {
 } from './agent-preset-label.js'
 import type { AssistantInstanceView, TeamView } from '../transport/contracts.js'
 import { Mascot } from './mascot-view.js'
+import { teamAvatarStack } from './team-avatar.js'
 import { assistantShowsMascot, mascotOptionsFor } from './mascot.js'
 import { assistantInstanceForSession, assistantInstanceName } from './assistant-instances.js'
 
@@ -338,23 +339,22 @@ export function sessionTabRows(
  */
 export function TeamSessionTitle({ lineageSessionId }: { lineageSessionId?: string }): JSX.Element | null {
   const team = useTeamForSession(lineageSessionId)
-  const instances = useAssistantInstancesForTeam()
   if (team === undefined || lineageSessionId === undefined) return null
 
   // The header answers "which team am I in", not "which thread": every Session
   // of a team names the team, so switching members never changes the title.
-  const faces = sortedMembers(team).slice(0, 3)
+  // The same stack the sidebar's team row draws: mascot per member, uploaded
+  // image when there is one, so the header cannot drift from the list.
+  const faces = teamAvatarStack(team.members).faces.slice(0, 3)
   return (
     <span className={css.teamSessionTitle} data-dsh-team-session-title title={team.name}>
       {faces.length > 0 && (
         <span className={css.teamSessionTitleFaces} aria-hidden="true">
-          {faces.map(member => (
-            <span key={member.id} className={css.teamSessionTitleFace}>
-              <SessionFace
-                instance={instances.find(item => item.id === member.assistantInstanceId)}
-                name={member.displayName}
-                avatar={member.assistantSnapshot.avatar}
-              />
+          {faces.map(face => (
+            <span key={face.id} className={css.teamSessionTitleFace}>
+              {face.avatar === undefined
+                ? <Mascot seed={face.mascotSeed} options={{ bodyColor: face.mascotColor }} size={16} avatarShape="rounded" animated={false} />
+                : <MemberAvatar name={face.name} avatar={face.avatar} size={16} />}
             </span>
           ))}
         </span>
@@ -386,43 +386,7 @@ export function TeamSessionTitleHost({
   return null
 }
 
-/** The instances behind the team, so a title can wear the same face the sidebar does. */
-function useAssistantInstancesForTeam(): readonly AssistantInstanceView[] {
-  const [instances, setInstances] = useState<readonly AssistantInstanceView[]>([])
-  useEffect(() => {
-    let live = true
-    const load = (): void => {
-      void callAgentTeam('assistant.instance.list')
-        .then(value => { if (live) setInstances(value.items) })
-        .catch(() => { if (live) setInstances([]) })
-    }
-    load()
-    const unsubscribe = subscribeAgentTeam(load, () => {}, load)
-    return () => {
-      live = false
-      unsubscribe()
-    }
-  }, [])
-  return instances
-}
 
-/** One face for a Session: the mascot the sidebar uses, else the uploaded image. */
-function SessionFace({
-  instance,
-  name,
-  avatar,
-  size = 16,
-}: {
-  instance?: AssistantInstanceView | undefined
-  name: string
-  avatar?: string | undefined
-  size?: number
-}): JSX.Element {
-  if (instance !== undefined && assistantShowsMascot(instance)) {
-    return <Mascot {...mascotOptionsFor(instance)} size={size} avatarShape="rounded" animated={false} />
-  }
-  return <MemberAvatar name={name} avatar={avatar} size={size} />
-}
 
 export function TeamSessionSwitcher({
   sessionId,
