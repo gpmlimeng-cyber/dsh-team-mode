@@ -493,3 +493,17 @@ describe('title opens details', () => {
     expect(source).toContain('aria-label={`查看 ${team.name} 的详情`}')
   })
 })
+
+describe('the title reads as text', () => {
+  const cssSource = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+
+  it('draws no border, fill or ring in any state', () => {
+    const start = cssSource.indexOf('.teamSessionTitleButton {')
+    expect(start).toBeGreaterThan(-1)
+    const rule = cssSource.slice(start, cssSource.indexOf('}', start))
+    expect(rule).toContain('border: 0')
+    expect(rule).toContain('background: none')
+    expect(rule).toContain('box-shadow: none')
+    expect(cssSource).toContain('.teamSessionTitleButton:hover')
+  })
+})

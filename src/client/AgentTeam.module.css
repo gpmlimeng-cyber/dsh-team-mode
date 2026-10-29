@@ -5877,6 +5877,29 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   display: none;
 }
 
+/* The title is a button for the details surface, but it must read as plain
+   text in the header: no border, no fill, no ring — only the pointer. */
+.teamSessionTitleButton {
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  outline: none;
+}
+
+.teamSessionTitleButton:hover,
+.teamSessionTitleButton:focus-visible,
+.teamSessionTitleButton:active {
+  border: 0;
+  background: none;
+  box-shadow: none;
+  outline: none;
+}
+
 .teamSessionTitleName {
   min-width: 0;
   overflow: hidden;
