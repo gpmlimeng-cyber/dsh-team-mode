@@ -3926,6 +3926,165 @@ export class AgentTeamService extends Service {
   }
 
   /**
+   * Set the thread's single owner. Ownership is a member slot, never a Session
+   * or Assistant id: the member can be replaced underneath without changing who
+   * owns the thread. An unknown slot is refused instead of stored, so a thread
+   * can never point at somebody the team does not have.
+   */
+  async assignThread(
+    teamId: string,
+    threadId: string,
+    slotId: string,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    assertRevision('team', team.revision, options.expectedRevision)
+    requireThread(team, threadId)
+    const ownerSlotId = slotId.trim()
+    if (team.members[ownerSlotId] === undefined) {
+      throw new AgentTeamError(
+        'THREAD_OWNER_UNKNOWN',
+        `Unknown thread owner '${ownerSlotId}': a thread owner must be a member of team '${team.id}'`,
+        { teamId, threadId, slotId: ownerSlotId },
+      )
+    }
+    const now = Date.now()
+    const next = await this.store.updateTeam(teamId, current => {
+      const thread = requireThread(current, threadId)
+      return {
+        ...current,
+        threads: { ...(current.threads ?? {}), [threadId]: { ...thread, ownerSlotId, updatedAt: now } },
+        revision: current.revision + 1,
+        updatedAt: new Date(now).toISOString(),
+      }
+    })
+    await this.activity(
+      'team.thread_assigned',
+      teamId,
+      next.revision,
+      `Thread owner set to ${ownerSlotId}`,
+    )
+    this.publish('team', teamId, next.revision, 'team.thread_assigned')
+    return next
+  }
+
+  /**
+   * Pause one thread. Only `pausedAt` is written: its Session, owner, title and
+   * every member Session stay exactly as they are, because stopping marks the
+   * thread as taking no traffic — it never tears a Session down.
+   */
+  async stopThread(
+    teamId: string,
+    threadId: string,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    assertRevision('team', team.revision, options.expectedRevision)
+    requireThread(team, threadId)
+    const now = Date.now()
+    const next = await this.store.updateTeam(teamId, current => {
+      const thread = requireThread(current, threadId)
+      return {
+        ...current,
+        threads: { ...(current.threads ?? {}), [threadId]: { ...thread, pausedAt: now, updatedAt: now } },
+        revision: current.revision + 1,
+        updatedAt: new Date(now).toISOString(),
+      }
+    })
+    await this.activity('team.thread_stopped', teamId, next.revision, 'Thread paused; Session retained')
+    this.publish('team', teamId, next.revision, 'team.thread_stopped')
+    return next
+  }
+
+  /**
+   * Resume a paused thread by clearing `pausedAt`. Nothing else changes, and the
+   * Session is the same one the pause left untouched.
+   */
+  async resumeThread(
+    teamId: string,
+    threadId: string,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    assertRevision('team', team.revision, options.expectedRevision)
+    requireThread(team, threadId)
+    const now = Date.now()
+    const next = await this.store.updateTeam(teamId, current => {
+      const thread = requireThread(current, threadId)
+      const resumed: TeamThread = { ...thread }
+      delete resumed.pausedAt
+      return {
+        ...current,
+        threads: { ...(current.threads ?? {}), [threadId]: resumed },
+        revision: current.revision + 1,
+        updatedAt: new Date(now).toISOString(),
+      }
+    })
+    await this.activity('team.thread_resumed', teamId, next.revision, 'Thread resumed')
+    this.publish('team', teamId, next.revision, 'team.thread_resumed')
+    return next
+  }
+
+  /**
+   * Pull one archived thread back onto the active list. The record moves out of
+   * `retiredThreads` exactly as it went in — same Session, same owner, same
+   * `createdAt` — so restoring is the inverse of archiving and nothing is
+   * re-minted. An already active thread is left alone; an unknown id is refused.
+   */
+  async restoreThread(
+    teamId: string,
+    threadId: string,
+    options: MutationOptions = {},
+  ): Promise<TeamAggregate> {
+    const team = requireTeam(this.store, teamId)
+    assertTeamMutable(team)
+    assertRevision('team', team.revision, options.expectedRevision)
+    if (team.retiredThreads?.[threadId] === undefined) {
+      if (team.threads?.[threadId] !== undefined) return team
+      throw new AgentTeamError('THREAD_NOT_FOUND', `Unknown thread '${threadId}' in team '${team.id}'`, {
+        teamId,
+        threadId,
+      })
+    }
+    const now = Date.now()
+    const next = await this.store.updateTeam(teamId, current => {
+      const thread = current.retiredThreads?.[threadId]
+      if (thread === undefined) {
+        throw new AgentTeamError('THREAD_NOT_FOUND', `Unknown thread '${threadId}' in team '${team.id}'`, {
+          teamId,
+          threadId,
+        })
+      }
+      const retiredThreads = { ...(current.retiredThreads ?? {}) }
+      delete retiredThreads[threadId]
+      return {
+        ...current,
+        threads: { ...(current.threads ?? {}), [threadId]: thread },
+        retiredThreads,
+        revision: current.revision + 1,
+        updatedAt: new Date(now).toISOString(),
+      }
+    })
+    await this.activity('team.thread_restored', teamId, next.revision, 'Thread restored')
+    this.publish('team', teamId, next.revision, 'team.thread_restored')
+    return next
+  }
+
+  /**
+   * The owner a reader sees for one thread. A thread stored before ownership
+   * existed carries no `ownerSlotId` and reads as the Leader's. The fallback
+   * lives on the read path on purpose: writing it back would turn a load into a
+   * mutation and bump the revision of every team that still holds old threads.
+   */
+  threadOwnerSlotId(teamId: string, threadId: string): string {
+    const team = requireTeam(this.store, teamId)
+    return threadOwnerOf(team, requireThread(team, threadId))
+  }
+
+  /**
    * Every Session this team owns: member Sessions, retired member Sessions, and
    * both live and archived thread Sessions. Dissolution sweeps exactly this set,
    * so a thread's Session can never be orphaned by leaving it out.
@@ -6274,6 +6433,15 @@ function requireThread(team: TeamAggregate, threadId: string): TeamThread {
     })
   }
   return thread
+}
+
+/**
+ * One thread's owner as a reader sees it. Threads written before ownership
+ * existed have no `ownerSlotId`; they fall back to the Leader. Read-only by
+ * design — the fallback is never written back to the store.
+ */
+function threadOwnerOf(team: TeamAggregate, thread: TeamThread): string {
+  return thread.ownerSlotId ?? team.leaderSlotId
 }
 
 /** Trim and bound a thread title; an empty title is refused, never stored. */

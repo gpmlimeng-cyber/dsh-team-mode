@@ -763,6 +763,18 @@ export const teamThreadSchema = z.object({
   title: nonEmpty,
   sessionId: nonEmpty,
   speakerSlotId: nonEmpty.optional(),
+  /**
+   * The thread's single owner: a member slot id of this team. Optional on
+   * purpose and added without a schema-version bump: a thread stored before
+   * ownership existed carries no field and reads as the Leader's (the service's
+   * `threadOwnerSlotId` fallback), so loading a record never backfills a write.
+   */
+  ownerSlotId: nonEmpty.optional(),
+  /**
+   * When the thread was paused. Presence is the state — there is no separate
+   * boolean, so stop/resume is one field and an older record reads as running.
+   */
+  pausedAt: z.number().optional(),
   createdAt: z.number(),
   updatedAt: z.number(),
 }).strict()
