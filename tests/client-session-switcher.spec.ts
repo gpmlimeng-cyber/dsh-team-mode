@@ -497,14 +497,16 @@ describe('title opens details', () => {
 describe('the title reads as text', () => {
   const cssSource = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
 
-  it('draws no border, fill or ring in any state', () => {
+  it('stays flat until hover, then washes the name with a rounded fill', () => {
     const start = cssSource.indexOf('.teamSessionTitleButton {')
     expect(start).toBeGreaterThan(-1)
     const rule = cssSource.slice(start, cssSource.indexOf('}', start))
     expect(rule).toContain('border: 0')
     expect(rule).toContain('background: none')
-    expect(rule).toContain('box-shadow: none')
-    expect(cssSource).toContain('.teamSessionTitleButton:hover')
+    const hoverAt = cssSource.indexOf('.teamSessionTitleButton:hover')
+    const hover = cssSource.slice(hoverAt, cssSource.indexOf('}', hoverAt))
+    expect(hover).toContain('border-radius: var(--dsw-radius-sm)')
+    expect(hover).toContain('background: var(--dsw-alias-interactive-bg-hover)')
   })
 })
 

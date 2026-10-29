@@ -763,10 +763,14 @@ describe('assistant identity label in rows, pickers and breadcrumb', () => {
     // Assistant-side field and never leaks into a team slot.
     for (const path of ['team-sidebar-data.ts', 'team-member-chrome.tsx']) {
       const source = readFileSync(new URL(`../src/client/${path}`, import.meta.url), 'utf8')
-      expect(source).not.toContain('assistantInstanceLabel')
       expect(source).not.toContain('assistantSnapshot.title')
       expect(source).not.toContain('assistantSnapshot.blurb')
     }
+    // The team title names the team; only the single-Assistant title may read the
+    // Assistant-side label, because that Session IS that Assistant.
+    const chrome = readFileSync(new URL('../src/client/team-member-chrome.tsx', import.meta.url), 'utf8')
+    const teamTitle = chrome.slice(chrome.indexOf('export function TeamSessionTitle('))
+    expect(teamTitle).not.toContain('assistantInstanceLabel')
   })
 })
 

@@ -5880,8 +5880,9 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
 /* The title is a button for the details surface, but it must read as plain
    text in the header: no border, no fill, no ring — only the pointer. */
 .teamSessionTitleButton {
-  padding: 0;
-  margin: 0;
+  padding: 0 6px;
+  margin-inline-start: -6px;
+  margin-block: 0;
   border: 0;
   background: none;
   box-shadow: none;
@@ -5891,21 +5892,15 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
   outline: none;
 }
 
+/* Hover and keyboard focus share one cue: a soft rounded wash behind the
+   name, so the title reads as pressable without gaining a border. */
 .teamSessionTitleButton:hover,
-.teamSessionTitleButton:focus-visible,
-.teamSessionTitleButton:active {
+.teamSessionTitleButton:focus-visible {
   border: 0;
-  background: none;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-interactive-bg-hover);
   box-shadow: none;
   outline: none;
-}
-
-/* The only hover cue: the name underlines, the row never gains a fill. */
-.teamSessionTitleButton:hover .teamSessionTitleName,
-.teamSessionTitleButton:focus-visible .teamSessionTitleName {
-  text-decoration: underline;
-  text-underline-offset: 2px;
-  text-decoration-thickness: 1px;
 }
 
 .teamSessionTitleName {
