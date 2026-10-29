@@ -97,3 +97,17 @@
 
 - 没跑 `npm run check`：本次只加一份 docs 笔记，未触 `src`/`tests`。
 - 没盘 M2 的团队任务归档/恢复、队列控制面（不在 M1 Exit 里），只在第四节末尾记了团队归档「无恢复 UI」这一条与同事归档对照。
+
+## 八、M1 收口结果（2026-10-29）
+
+本盘点列出的缺口按「归档×团队关联 → 文案 → 归档停主会话 → UI 可见性 → 端到端」的顺序收口，逐条对 Exit 重判：
+
+| Exit 判据 | 收口后 | 证据 |
+|---|---|---|
+| 一个同事从创建到归档到恢复，全流程可用 | **已满足** | 归档现在停主会话与线程（`assistant-runtime.ts:1294` / `stopOwnedConversations:1364`），恢复以原日志 resume 新 Agent；「恢复只恢复可用性、不复活被取消的工作」写进 `assistant-runtime.ts:1294-1303` 与 `dsh-team-mode-service.ts:1384-1392`。端到端场景 `tests/assistant-lifecycle-e2e.spec.ts`：创建 → 加团队 → 归档被拦 → force 归档 → 团队侧「已归档」 → 恢复 → 新会话，一条测试跑完（commit `70f2ad1`、`7c13adf`）。 |
+| 工作区不串、不删 | **已满足（默认路径）** | 场景同时断言：两个独立工作区助手的目录不同、位于 `<base>/.dsh-team-mode/assistants/<slug>-<id8>`、`.gitignore` 为 `*`；归档隔离助手后目录与目录内文件都在（同一 e2e 第 8 步）。创建默认隔离（`assistant-form.ts:134`）。仍然保留的已知边界：用户主动关掉「独立工作区」时助手与 Workspace 共用目录（明示的共享模式），会话级 cwd 不受实例 workspace 约束（本模块未改，另列 backlog）。 |
+| 团队关联冲突明确 | **已满足（UI 入口另开）** | 四类既有冲突话术不变；归档/恢复新增两条明确拒绝：`ASSISTANT_INSTANCE_TEAM_LINKED`（`dsh-team-mode-service.ts:5244`）与 `ASSISTANT_INSTANCE_TEAM_UNAVAILABLE`（`:1387`），都点名团队并给出出口；force 归档在团队侧留「已归档」标记（`assistantInstanceArchivedAt`，`schemas.ts:573`），成员行与总览行都渲染徽标（`labels.ts:87`、`team-overview.tsx:332`、`teams/TeamPanel.tsx:787`），设置面板把服务端拒绝转成「先移除 / 强制归档」二选一（`assistant-settings-pane.tsx:702`）。独立工作区助手入团队会被明确拒绝并说明原因（e2e 第 2 步）。仍缺的只有**关联入口本身**（盘点判为大，另开）：`team.member.setAssistantInstance` 在 `src/client` 仍无调用方，已作为已知缺口写进 `docs/team-management.md`。 |
+
+顺带修掉的文档与文案（原盘点第五节点名）：`docs/assistant.md:90`、`:128` 不再声称「没有恢复入口」，`today-surface.tsx:630` 改为「助手可在「单聊 → 已归档」恢复；团队暂不支持恢复」，模型行补上「已打开的主会话沿用旧模型」的生效范围提示（`assistant-settings-pane.tsx:1262`）。
+
+仍未做（不在 M1 范围）：团队关联选择器、换 Workspace 路径、归档团队的恢复 UI（`team.archive { archived: false }` transport 已有，界面没有）。
