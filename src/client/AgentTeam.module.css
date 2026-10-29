@@ -2893,6 +2893,30 @@ textarea.input {
   margin-left: auto;
 }
 
+/* The switch floats in the window chrome band above the brand row: the sidebar
+   root anchors it, so it sits with the traffic lights instead of taking a slot
+   in the row. macOS keeps its lights on the left, so the switch goes right;
+   Windows puts its window buttons top-right, so the switch dodges to the left
+   of nothing and sits after the shell's own toggle. */
+[data-dsh-team-root] {
+  position: relative;
+}
+
+.surfaceSwitchChrome {
+  position: absolute;
+  top: var(--dsh-surface-switch-top, 8px);
+  inset-inline-end: 10px;
+  z-index: 30;
+  display: inline-flex;
+  -webkit-app-region: no-drag;
+}
+
+[data-windows-titlebar] .surfaceSwitchChrome {
+  top: calc((var(--dsh-windows-titlebar-height, 40px) - 24px) / 2);
+  inset-inline-start: 56px;
+  inset-inline-end: auto;
+}
+
 /* DSH | BOT: a two-segment switch, 24px tall so it sits on the brand row
    without changing the row's height. */
 .surfaceSwitch {

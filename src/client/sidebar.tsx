@@ -1908,7 +1908,11 @@ export function SidebarPortal({
     <>
       {modeRowHost !== undefined && createPortal(
         <>
-          <SurfaceModeSwitch mode={mode} onChange={switchMode} />
+          {/* The switch lives in the window chrome band, not in the row's flow:
+              DSH keeps every shipped control where it was. */}
+          <span className={css.surfaceSwitchChrome}>
+            <SurfaceModeSwitch mode={mode} onChange={switchMode} />
+          </span>
           {searchOpen ? (
             <div className={css.sidebarTeamSearch}>
               <IconSearchOutlineRegular size={14} />
