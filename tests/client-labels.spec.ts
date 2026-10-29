@@ -42,19 +42,25 @@ describe('taskStatusLabel', () => {
   })
 })
 
-describe('task labels on the activity and board surfaces', () => {
-  it('prints Chinese for running and blocked tasks wherever the table is read directly', () => {
-    // The activity rows and the team board index TASK_STATE_LABELS themselves,
+describe('task labels on the board and task-detail surfaces', () => {
+  it('prints Chinese for running and blocked tasks wherever a table is read directly', () => {
+    // The team card and the board/task detail index a status table themselves,
     // so a missing key would leak a raw id there even though taskStatusLabel
-    // was fixed. The one table must cover every status the board can hold.
+    // was fixed. The table must cover every status the board can hold.
     expect(TASK_STATE_LABELS.running).toBe('进行中')
     expect(TASK_STATE_LABELS.blocked).toBe('已阻塞')
     expect(TASK_STATE_LABELS.running).not.toBe('running')
     expect(TASK_STATE_LABELS.blocked).not.toBe('blocked')
 
-    for (const surface of ['team-activity.tsx', 'teams/TeamPanel.tsx']) {
+    const panel = readFileSync(new URL('../src/client/teams/TeamPanel.tsx', import.meta.url), 'utf8')
+    expect(panel).toContain('TASK_STATE_LABELS')
+    expect(panel).not.toMatch(/ALL_TASK_STATUS_LABELS/)
+
+    // The board and the task detail keep their own client mirror; it is the
+    // one table those surfaces read, and it is not a second status list.
+    for (const surface of ['team-board.tsx', 'team-overview.tsx']) {
       const source = readFileSync(new URL(`../src/client/${surface}`, import.meta.url), 'utf8')
-      expect(source).toContain('TASK_STATE_LABELS')
+      expect(source).toContain('TASK_STATUS_LABELS')
       expect(source).not.toMatch(/ALL_TASK_STATUS_LABELS/)
     }
   })

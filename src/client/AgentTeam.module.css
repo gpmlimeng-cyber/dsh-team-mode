@@ -2646,13 +2646,6 @@ textarea.input {
 
 
 
-.workbenchError {
-  flex: none;
-  padding: 7px 14px;
-  background: var(--dsw-alias-interactive-bg-hover-danger);
-  color: var(--dsw-alias-state-error-primary);
-  font-size: 12px;
-}
 
 
 
@@ -5093,232 +5086,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
 
 
 
-/* Team activity board */
-.activityBoard {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  height: 100%;
-  gap: 8px;
-  padding: 8px 10px 10px;
-}
-
-.activityToolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
-  flex: none;
-}
-
-.activityFilterGroup,
-.activityMemberFilter {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-}
-
-.activityFilterLabel {
-  margin-inline-end: 2px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-}
-
-.activityFilter,
-.activityRefresh {
-  min-height: 24px;
-  padding: 0 8px;
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: transparent;
-  color: var(--dsw-alias-label-secondary);
-  font: inherit;
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.activityFilter:hover,
-.activityRefresh:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
-}
-
-.activityFilterActive {
-  border-color: var(--dsw-alias-border-l2);
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-primary);
-}
-
-.activityRefresh {
-  margin-inline-start: auto;
-  border-color: var(--dsw-alias-border-l1);
-}
-
-.activityRefresh:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.activityLanes {
-  display: flex;
-  gap: 10px;
-  min-height: 0;
-  flex: 1;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding-bottom: 2px;
-}
-
-.activityLane {
-  display: flex;
-  flex-direction: column;
-  width: 270px;
-  min-width: 230px;
-  max-width: 320px;
-  min-height: 0;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-1);
-  overflow: hidden;
-}
-
-.activityLaneHeader {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-2);
-  flex: none;
-}
-
-.activityLaneName {
-  color: var(--dsw-alias-label-primary);
-  font-size: 12px;
-  font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.activityLaneCount {
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-}
-
-.activityLaneBody {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  min-height: 0;
-  padding: 8px;
-  overflow-y: auto;
-}
-
-.activityEmpty {
-  padding: 12px 4px;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 11px;
-  text-align: center;
-}
-
-.activityCard {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 9px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 7px;
-  background: var(--dsw-alias-bg-layer-1);
-}
-
-.activityTaskCard {
-  border-inline-start: 2px solid var(--dsw-alias-state-business-primary);
-}
-
-.activityMessageCard {
-  border-inline-start: 2px solid var(--dsw-alias-border-l3);
-}
-
-.activityCardHeader,
-.activityCardFooter {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  flex-wrap: wrap;
-  color: var(--dsw-alias-label-tertiary);
-  font-size: 10px;
-}
-
-.activityCardHeader {
-  min-height: 16px;
-}
-
-.activitySender {
-  color: var(--dsw-alias-label-primary);
-  font-weight: 500;
-}
-
-.activityArrow {
-  color: var(--dsw-alias-label-quaternary);
-}
-
-.activityRecipient {
-  color: var(--dsw-alias-label-secondary);
-}
-
-.activityCardTime {
-  margin-inline-start: auto;
-  font-variant-numeric: tabular-nums;
-}
-
-.activityCardText {
-  margin: 0;
-  color: var(--dsw-alias-label-secondary);
-  font-size: 11px;
-  line-height: 17px;
-  white-space: pre-wrap;
-  display: -webkit-box;
-  -webkit-line-clamp: 5;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.activityTaskTitle {
-  color: var(--dsw-alias-label-primary);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 17px;
-}
-
-.activityTypeBadge,
-.activityStatus {
-  padding: 1px 5px;
-  border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-2);
-  color: var(--dsw-alias-label-secondary);
-  font-size: 10px;
-  line-height: 15px;
-  white-space: nowrap;
-}
-
-.activityStatusDone {
-  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 14%, transparent);
-  color: var(--dsw-alias-state-success-primary);
-}
-
-.activityCard:focus-visible,
-.activityFilter:focus-visible,
-.activityRefresh:focus-visible {
-  outline: 2px solid var(--dsw-alias-brand-primary);
-  outline-offset: 1px;
-}
-
-
 /* Team Mode dialogs: shipped Modal shell, no separate workbench. */
 .teamDialog {
   width: min(948px, calc(100vw - 72px));
@@ -5399,55 +5166,6 @@ html[data-dsh-surface-mode='team'] [data-dsh-team-mode='sidebar'] ~ * {
   color: var(--dsw-alias-state-error-primary);
   font-size: 12px;
   line-height: 18px;
-}
-
-.teamManageTabs {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 10px 20px 0;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
-}
-
-.teamManageTab {
-  position: relative;
-  padding: 0 0 9px;
-  border: 0;
-  background: transparent;
-  color: var(--dsw-alias-label-tertiary);
-  font: inherit;
-  font-size: 13px;
-  line-height: 20px;
-  cursor: pointer;
-}
-
-.teamManageTab:hover {
-  color: var(--dsw-alias-label-secondary);
-}
-
-.teamManageTabActive {
-  color: var(--dsw-alias-label-primary);
-}
-
-.teamManageTabActive::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -1px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--dsw-alias-label-primary);
-}
-
-.teamManageTab:focus-visible {
-  outline: var(--dsw-focus-ring-width, 2px) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
-  outline-offset: 2px;
-}
-
-.teamManageActivity {
-  height: min(60vh, 560px);
-  min-height: 320px;
 }
 
 /* Team task list: each row is a native-Session entry, not a member. */
@@ -6562,20 +6280,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
   line-height: 1;
 }
 
-.activityToggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
-}
 
-.activityHint {
-  margin: 0;
-  padding: 0 12px 6px;
-  font-size: 11px;
-  color: var(--dsw-alias-label-secondary, var(--dsw-alias-label-primary));
-}
 
 .avatarField {
   display: flex;
@@ -10977,6 +10682,10 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 .overviewType[data-tone='warn'] {
   color: var(--dsw-alias-state-warn-label);
+}
+
+.overviewType[data-tone='danger'] {
+  color: var(--dsw-alias-state-error-primary);
 }
 
 .overviewUnread {

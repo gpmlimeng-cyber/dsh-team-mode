@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { AnimatedModal } from './shared.js'
 import { useAgentTeamData, type WorkspaceChoice } from './components.js'
 import { TeamCard, TeamForm } from './teams/TeamPanel.js'
-import { TeamActivityBoard } from './team-activity.js'
 import { callAgentTeam } from './api.js'
 import { closeTeamDialog, useAgentTeamUi } from './store.js'
 import css from './AgentTeam.module.css'
@@ -19,8 +18,6 @@ export function TeamModeDialogs({
   openSession: (sessionId: string) => void
 }): JSX.Element | null {
   const { dialog } = useAgentTeamUi()
-  const [manageTab, setManageTab] = useState<'members' | 'activity'>('members')
-  useEffect(() => { setManageTab('members') }, [dialog])
   const active = dialog !== undefined
   const { catalog, assistants, teams, loading, error, catalogLoading, load } = useAgentTeamData(true, active)
   const team = useMemo(
@@ -65,40 +62,16 @@ export function TeamModeDialogs({
         className={css.teamManageDialog ?? ''}
         contentClassName={css.teamManageDialogContent ?? ''}
       >
-        <div className={css.teamManageTabs} role="tablist" aria-label="团队管理视图">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={manageTab === 'members'}
-            className={`${css.teamManageTab} ${manageTab === 'members' ? css.teamManageTabActive : ''}`}
-            onClick={() => { setManageTab('members') }}
-          >
-            成员
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={manageTab === 'activity'}
-            className={`${css.teamManageTab} ${manageTab === 'activity' ? css.teamManageTabActive : ''}`}
-            onClick={() => { setManageTab('activity') }}
-          >
-            活动
-          </button>
-        </div>
-        {manageTab === 'members'
-          ? <TeamCard
-              team={team}
-              catalog={catalog}
-              assistants={assistants}
-              pickWorkspace={pickWorkspace}
-              onChanged={load}
-              onCloned={async teamId => { await load(); await openTeam(teamId) }}
-              onOpenSession={sessionId => { closeTeamDialog(); openSession(sessionId) }}
-              compact
-            />
-          : <div className={css.teamManageActivity}>
-              <TeamActivityBoard team={team} />
-            </div>}
+        <TeamCard
+          team={team}
+          catalog={catalog}
+          assistants={assistants}
+          pickWorkspace={pickWorkspace}
+          onChanged={load}
+          onCloned={async teamId => { await load(); await openTeam(teamId) }}
+          onOpenSession={sessionId => { closeTeamDialog(); openSession(sessionId) }}
+          compact
+        />
       </AnimatedModal>
     )
   }

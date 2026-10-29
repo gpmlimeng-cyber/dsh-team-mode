@@ -495,8 +495,8 @@ describe('dialog furniture', () => {
     new URL('../src/client/assistant-settings-pane.tsx', import.meta.url),
     'utf8',
   )
-  const activitySource = readFileSync(
-    new URL('../src/client/team-activity.tsx', import.meta.url),
+  const capabilitiesSource = readFileSync(
+    new URL('../src/client/assistant-capabilities.tsx', import.meta.url),
     'utf8',
   )
   const moduleCss = readFileSync(
@@ -527,9 +527,10 @@ describe('dialog furniture', () => {
   })
 
   it('uses the shipped Switch for toggles instead of a checkbox row', () => {
-    expect(activitySource).toContain('Switch')
-    expect((activitySource.match(/<Switch/g) ?? [])).toHaveLength(2)
-    expect(activitySource).not.toContain('type="checkbox"')
+    // The remaining switch surfaces use the shipped control; the deleted team
+    // activity board was the only other two-switch panel.
+    expect(capabilitiesSource).toContain('<Switch')
+    expect(capabilitiesSource).not.toContain('type="checkbox"')
     // The settings pane's only switch was the avatar animation toggle; the avatar
     // block now lives in its own floating editor, which ships no checkbox either.
     const avatarEditorSource = readFileSync(

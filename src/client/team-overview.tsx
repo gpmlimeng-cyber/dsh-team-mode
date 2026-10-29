@@ -15,6 +15,8 @@ import type { TeamView } from '../transport/contracts.js'
 type Tone = 'neutral' | 'business' | 'success' | 'warn' | 'danger'
 
 const INBOX_LIMIT = 5
+/** Task detail shows this many task events before the inline expand-all. */
+const TIMELINE_LIMIT = 20
 const PREVIEW_CHARS = 120
 
 const TASK_STATUS_LABELS: Record<TeamTask['status'], string> = {
@@ -354,9 +356,111 @@ function MemberRow({ team, member, tasks, selectedId, onSelectTask, onOpenSessio
   )
 }
 
-function TaskDetail({ team, tasks, selectedId, selectedTaskId, visibleTaskIds, onSelectTask, onOpenSession }: {
+/**
+ * The task's event timeline: the same loaded team messages, filtered to this
+ * task by `relatedTaskId` (or by a thread that carries its id), oldest first so
+ * the newest event sits at the bottom. The board keeps one `team.message.list`
+ * call and hands it down; opening a task never refetches.
+ */
+function TaskTimeline({ team, task, messages, loading, error }: {
+  readonly team: TeamView
+  readonly task: TeamTask
+  readonly messages: readonly TeamMessage[]
+  readonly loading: boolean
+  readonly error: string | undefined
+}): JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+  const all = messages
+    .filter(message => message.relatedTaskId === task.id || message.threadId === task.id)
+    .map(message => ({ message, at: Date.parse(message.createdAt) || 0 }))
+    .sort((left, right) => left.at - right.at)
+    .map(entry => entry.message)
+  const shown = expanded ? all : all.slice(-TIMELINE_LIMIT)
+  return (
+    <div className={css.overviewDetailGroup} data-overview-region="task-timeline" data-task-timeline={task.id}>
+      <h5 className={css.overviewDetailGroupTitle}>任务动态</h5>
+      {error !== undefined
+        ? <p className={css.overviewErrorText} role="status">任务动态加载失败：{error}</p>
+        : loading && all.length === 0
+          ? <p className={css.overviewEmpty} role="status">正在加载任务动态…</p>
+          : all.length === 0
+            ? <p className={css.overviewEmpty}>暂无任务动态</p>
+            : (
+              <>
+                <ul className={css.overviewInboxList}>
+                  {shown.map(message => {
+                    const sender = senderName(team, message)
+                    return (
+                      <li key={message.id} className={css.overviewInboxItem} data-dsh-task-event={message.id}>
+                        <span
+                          className={css.overviewInboxAvatar}
+                          data-kind={message.sender.kind}
+                          aria-hidden="true"
+                        >
+                          {initial(sender)}
+                        </span>
+                        <div className={css.overviewInboxBody}>
+                          <div className={css.overviewInboxTop}>
+                            <strong className={css.overviewInboxSender}>{sender}</strong>
+                            <span className={css.overviewType} data-tone={messageTone(message.type)}>
+                              {MESSAGE_TYPE_LABELS[message.type]}
+                            </span>
+                            <span className={css.overviewInboxTime} title={formatTime(message.createdAt)}>
+                              {formatTime(message.createdAt)}
+                            </span>
+                          </div>
+                          <p className={css.overviewInboxText}>{messagePreview(message)}</p>
+                          {(message.attachments.length > 0 || message.deliveryState === 'failed') && (
+                            <div className={css.overviewInboxTop}>
+                              {message.attachments.length > 0 && (
+                                <span className={css.overviewType}>
+                                  {message.attachments.length} 个附件
+                                </span>
+                              )}
+                              {message.deliveryState === 'failed' && (
+                                <span className={css.overviewType} data-tone="danger">投递失败</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+                {all.length > TIMELINE_LIMIT && (
+                  <button
+                    type="button"
+                    className={css.overviewInboxMore}
+                    aria-expanded={expanded}
+                    onClick={() => { setExpanded(value => !value) }}
+                  >
+                    {expanded ? '收起' : `展开全部（${all.length}）`}
+                  </button>
+                )}
+              </>
+            )}
+    </div>
+  )
+}
+
+function TaskDetail({
+  team,
+  tasks,
+  messages,
+  messagesLoading = false,
+  messagesError,
+  selectedId,
+  selectedTaskId,
+  visibleTaskIds,
+  onSelectTask,
+  onOpenSession,
+}: {
   readonly team: TeamView
   readonly tasks: readonly TeamTask[]
+  /** The board's one `team.message.list` result; the timeline never refetches. */
+  readonly messages: readonly TeamMessage[]
+  readonly messagesLoading?: boolean
+  readonly messagesError?: string
   readonly selectedId: string | undefined
   readonly selectedTaskId: string | undefined
   readonly visibleTaskIds: ReadonlySet<string>
@@ -530,6 +634,13 @@ function TaskDetail({ team, tasks, selectedId, selectedTaskId, visibleTaskIds, o
         {findings === undefined && selected.error !== undefined && selected.error !== '' && (
           <p className={css.overviewErrorText}><strong>异常</strong>{selected.error}</p>
         )}
+        <TaskTimeline
+          team={team}
+          task={selected}
+          messages={messages}
+          loading={messagesLoading}
+          error={messagesError}
+        />
         {owner !== undefined && (
           <button
             type="button"
@@ -801,6 +912,9 @@ export function TeamOverview(props: TeamOverviewProps): JSX.Element {
           <TaskDetail
             team={team}
             tasks={tasks}
+            messages={messages}
+            messagesLoading={messagesLoading}
+            {...(messagesError === undefined ? {} : { messagesError })}
             selectedId={selectedId}
             selectedTaskId={selectedTaskId}
             visibleTaskIds={visibleTaskIds}

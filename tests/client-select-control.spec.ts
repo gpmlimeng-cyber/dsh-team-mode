@@ -173,7 +173,6 @@ describe('one select implementation', () => {
       'model-control.tsx',
       // The per-group batch dialog picks model/thinking/permission here too.
       'sidebar-group-ui.tsx',
-      'team-activity.tsx',
       'team-board.tsx',
       'teams/TeamPanel.tsx',
       'workbench/ConversationColumn.tsx',

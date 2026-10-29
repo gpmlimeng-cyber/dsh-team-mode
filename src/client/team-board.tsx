@@ -79,14 +79,6 @@ const MEMBER_STATE_LABELS: Record<string, string> = {
   error: '异常',
 }
 
-const MESSAGE_TYPE_LABELS: Record<TeamMessage['type'], string> = {
-  instruction: '指令',
-  progress: '进展',
-  result: '结果',
-  question: '提问',
-  warning: '警告',
-  system: '系统',
-}
 
 interface BoardFilters {
   readonly status: BoardStatusFilter
@@ -107,10 +99,6 @@ interface TeamCache {
 }
 
 const teamCache: TeamCache = { teams: [], loaded: false }
-
-type FeedItem =
-  | { readonly kind: 'message'; readonly id: string; readonly at: number; readonly message: TeamMessage }
-  | { readonly kind: 'task'; readonly id: string; readonly at: number; readonly task: TeamTask }
 
 /**
  * Props accepted by the view.
@@ -317,19 +305,6 @@ function taskTone(status: TaskStatus): Tone {
   }
 }
 
-function messageTone(type: TeamMessage['type']): Tone {
-  switch (type) {
-    case 'warning':
-      return 'warn'
-    case 'question':
-      return 'business'
-    case 'result':
-      return 'success'
-    default:
-      return 'neutral'
-  }
-}
-
 function teamStateView(team: TeamView): { readonly label: string; readonly tone: Tone } {
   switch (team.state) {
     case 'starting':
@@ -396,19 +371,7 @@ function memberName(team: TeamView, slotId: string | undefined): string {
   return team.members[slotId]?.displayName ?? '已移除成员'
 }
 
-function messageSenderName(team: TeamView, message: TeamMessage): string {
-  if (message.sender.kind === 'user') return '你'
-  if (message.sender.kind === 'system') return '系统'
-  return memberName(team, message.sender.id)
-}
 
-function messageRecipientName(team: TeamView, message: TeamMessage): string {
-  if (message.recipient.kind === 'broadcast') return '@全体'
-  if (message.recipient.kind === 'leader') {
-    return memberName(team, message.recipient.slotId ?? team.leaderSlotId)
-  }
-  return memberName(team, message.recipient.slotId)
-}
 
 function taskSessionId(team: TeamView, task: TeamTask): string | undefined {
   if (task.ownerSlotId !== undefined) {
@@ -416,16 +379,6 @@ function taskSessionId(team: TeamView, task: TeamTask): string | undefined {
     if (owner !== undefined) return owner.sessionId
   }
   return team.members[team.leaderSlotId]?.sessionId
-}
-
-function messageSearchText(team: TeamView, message: TeamMessage): string {
-  return [
-    message.content,
-    message.summary ?? '',
-    messageSenderName(team, message),
-    messageRecipientName(team, message),
-    MESSAGE_TYPE_LABELS[message.type],
-  ].join(' ')
 }
 
 function taskSearchText(team: TeamView, task: TeamTask, taskById: ReadonlyMap<string, TeamTask>): string {
@@ -440,17 +393,6 @@ function taskSearchText(team: TeamView, task: TeamTask, taskById: ReadonlyMap<st
     task.id,
     dependencies,
   ].join(' ')
-}
-
-function messageMatchesMember(team: TeamView, message: TeamMessage, member: string): boolean {
-  if (member === 'all') return true
-  if (member === UNASSIGNED) return false
-  if (message.sender.id === member) return true
-  if (message.recipient.kind === 'broadcast') return false
-  const recipient = message.recipient.kind === 'leader'
-    ? message.recipient.slotId ?? team.leaderSlotId
-    : message.recipient.slotId
-  return recipient === member
 }
 
 function taskMatchesMember(task: TeamTask, member: string): boolean {
@@ -746,40 +688,6 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
   ), [messages, messagesTeamId, team])
   const inboxLoading = messagesLoading || (team !== undefined && messagesTeamId !== team.id)
 
-  const feedResult = useMemo(() => {
-    if (team === undefined) return { items: [] as FeedItem[], truncated: false }
-    const messageItems: FeedItem[] = scopedMessages
-      .filter(message => (
-        messageMatchesMember(team, message, activeMember)
-        && matchesQuery(messageSearchText(team, message), filters.query)
-      ))
-      .map(message => ({
-        kind: 'message' as const,
-        id: `m:${message.id}`,
-        at: Date.parse(message.createdAt) || 0,
-        message,
-      }))
-      .sort((left, right) => right.at - left.at)
-    const taskItems: FeedItem[] = baseTasks
-      .map(task => ({
-        kind: 'task' as const,
-        id: `t:${task.id}`,
-        at: Date.parse(task.updatedAt) || 0,
-        task,
-      }))
-      .sort((left, right) => right.at - left.at)
-    const items = [
-      ...messageItems.slice(0, 18),
-      ...taskItems.slice(0, 8),
-    ].sort((left, right) => right.at - left.at).slice(0, 26)
-    return {
-      items,
-      truncated: messageItems.length > 18
-        || taskItems.length > 8
-        || messageItems.length + taskItems.length > 26,
-    }
-  }, [activeMember, baseTasks, filters.query, scopedMessages, team])
-
   const memberColumns = useMemo(() => {
     if (team === undefined) return []
     const order = team.memberOrder ?? Object.keys(team.members)
@@ -835,8 +743,6 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
   const filtersActive = filters.status !== 'all'
     || activeMember !== 'all'
     || filters.query.trim() !== ''
-  const lastUpdated = tasks[0]?.updatedAt
-  const feedLoading = messagesLoading && scopedMessages.length === 0 && feedResult.items.length === 0
 
   return (
     <section className={css.board} aria-label={`${team.name} 团队看板`}>
@@ -933,8 +839,8 @@ export function TeamBoardView(props: TeamBoardViewProps): JSX.Element | null {
             type="search"
             className={css.searchInput}
             value={filters.query}
-            placeholder="搜索任务或动态"
-            aria-label="搜索任务或动态"
+            placeholder="搜索任务"
+            aria-label="搜索任务"
             onChange={event => { setFilters(current => ({ ...current, query: event.target.value })) }}
           />
           {filters.query !== '' && (
@@ -1136,22 +1042,6 @@ function TeamBoardPlaceholder({ known, loading, error, onRetry }: {
             </div>
           </div>
         </div>
-        <aside className={css.activityPanel} aria-hidden="true">
-          <header className={css.activityHeader}>
-            <h3 className={css.panelTitle}>动态</h3>
-          </header>
-          <div className={css.activityList}>
-            {[0, 1, 2].map(index => (
-              <div key={index} className={css.activitySkeleton}>
-                <span className={css.skeletonAvatar} />
-                <span className={css.skeletonBody}>
-                  <span className={`${css.skeletonLine} ${css.skeletonLineShort}`} />
-                  <span className={css.skeletonLine} />
-                </span>
-              </div>
-            ))}
-          </div>
-        </aside>
       </div>
       </div>
     </section>
@@ -1265,90 +1155,6 @@ function TaskCard({ team, task, taskById, now, onSelect, onOpen }: {
           </button>
         </div>
       </div>
-    </li>
-  )
-}
-
-function ActivityRow({ item, team, now, onOpenTask }: {
-  readonly item: FeedItem
-  readonly team: TeamView
-  readonly now: number
-  readonly onOpenTask: (task: TeamTask) => void
-}): JSX.Element {
-  if (item.kind === 'task') {
-    const owner = item.task.ownerSlotId === undefined ? undefined : team.members[item.task.ownerSlotId]
-    const created = item.task.createdAt === item.task.updatedAt
-    return (
-      <li>
-        <button
-          type="button"
-          className={`${css.activityItem} ${css.activityButton}`}
-          onClick={() => { onOpenTask(item.task) }}
-          aria-label={`打开任务「${item.task.title}」的成员会话`}
-        >
-          <span className={css.activityAvatar} data-kind="task" aria-hidden="true">
-            {initialOf(owner?.displayName)}
-          </span>
-          <span className={css.activityBody}>
-            <span className={css.activityTop}>
-              <span className={css.activityActor}>{owner?.displayName ?? '未分配'}</span>
-              <span className={css.activityVerb}>{created ? '创建了任务' : '更新了任务'}</span>
-              <span className={css.activityTime} title={absoluteTime(item.task.updatedAt)}>
-                {relativeTime(item.task.updatedAt, now)}
-              </span>
-            </span>
-            <span className={css.activityTaskTitle}>{item.task.title}</span>
-            <span className={css.activityMeta}>
-              <span className={css.typeBadge} data-tone={taskTone(item.task.status)}>
-                {TASK_STATUS_LABELS[item.task.status]}
-              </span>
-              {item.task.dependencyIds.length > 0 && (
-                <span className={css.relatedBadge}>依赖 {item.task.dependencyIds.length}</span>
-              )}
-            </span>
-          </span>
-        </button>
-      </li>
-    )
-  }
-
-  const sender = messageSenderName(team, item.message)
-  const recipient = messageRecipientName(team, item.message)
-  const content = item.message.summary !== undefined && item.message.summary.trim() !== ''
-    ? item.message.summary
-    : item.message.content
-  return (
-    <li>
-      <article className={css.activityItem} aria-label={`${sender} 发给 ${recipient} 的消息`}>
-        <span className={css.activityAvatar} data-kind={item.message.sender.kind} aria-hidden="true">
-          {initialOf(sender)}
-        </span>
-        <div className={css.activityBody}>
-          <div className={css.activityTop}>
-            <span className={css.activityActor}>{sender}</span>
-            <span className={css.activityArrow} aria-hidden="true">→</span>
-            <span className={css.activityTarget}>{recipient}</span>
-            <span className={css.activityTime} title={absoluteTime(item.message.createdAt)}>
-              {relativeTime(item.message.createdAt, now)}
-            </span>
-          </div>
-          <p className={css.activityText}>{content}</p>
-          <div className={css.activityMeta}>
-            <span className={css.typeBadge} data-tone={messageTone(item.message.type)}>
-              {MESSAGE_TYPE_LABELS[item.message.type]}
-            </span>
-            {item.message.relatedTaskId !== undefined && (
-              <span className={css.relatedBadge}>关联任务</span>
-            )}
-            {item.message.attachments.length > 0 && (
-              <span className={css.relatedBadge}>{item.message.attachments.length} 个附件</span>
-            )}
-            {item.message.deliveryState === 'failed' && (
-              <span className={css.relatedBadge} data-tone="danger">投递失败</span>
-            )}
-          </div>
-        </div>
-      </article>
     </li>
   )
 }

@@ -358,6 +358,110 @@ describe('TeamOverview task detail', () => {
   })
 })
 
+describe('TeamOverview task timeline', () => {
+  const eventAt = (index: number, overrides: Partial<TeamMessage> = {}): TeamMessage => message(
+    `event-${index + 1}`,
+    {
+      relatedTaskId: 'impl',
+      content: `第${index + 1}条`,
+      createdAt: new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString(),
+      ...overrides,
+    },
+  )
+
+  it('shows only the selected task events, oldest first with the newest last', () => {
+    const html = render({
+      team: populated,
+      tasks: [impl],
+      selectedTaskId: 'impl',
+      messages: [
+        message('other-task', { relatedTaskId: 'verify', content: '别的任务' }),
+        message('unrelated', { content: '团队闲聊' }),
+        message('thread-only', {
+          threadId: 'impl',
+          content: '线程事件',
+          createdAt: '2026-01-01T05:00:00.000Z',
+        }),
+        eventAt(0),
+        eventAt(1),
+      ],
+    })
+    const timeline = region(html, 'task-timeline')
+    const view = text(timeline)
+
+    expect(view).toContain('任务动态')
+    expect(view).toContain('第1条')
+    expect(view).toContain('第2条')
+    expect(view).toContain('线程事件')
+    expect(view).not.toContain('别的任务')
+    expect(view).not.toContain('团队闲聊')
+    // Newest-last: the later event prints after the earlier one.
+    expect(timeline.indexOf('第1条')).toBeLessThan(timeline.indexOf('第2条'))
+    expect(timeline.indexOf('第2条')).toBeLessThan(timeline.indexOf('线程事件'))
+  })
+
+  it('caps the collapsed timeline at 20 rows and offers an inline expand-all', () => {
+    const html = render({
+      team: populated,
+      tasks: [impl],
+      selectedTaskId: 'impl',
+      messages: Array.from({ length: 23 }, (_, index) => eventAt(index)),
+    })
+    const timeline = region(html, 'task-timeline')
+    const rows = timeline.match(/data-dsh-task-event=/g) ?? []
+
+    expect(rows).toHaveLength(20)
+    // The collapsed window is the newest 20; the first three scrolled out.
+    expect(text(timeline)).not.toContain('第1条')
+    expect(text(timeline)).not.toContain('第3条')
+    expect(text(timeline)).toContain('第4条')
+    expect(text(timeline)).toContain('第23条')
+    expect(timeline).toContain('aria-expanded="false"')
+    expect(text(timeline)).toContain('展开全部（23）')
+    // Expanding is local state, not a second read.
+    expect(source('team-overview.tsx')).toContain('setExpanded(value => !value)')
+  })
+
+  it('shows sender, type, time, summary, attachments and a failed delivery', () => {
+    const html = render({
+      team: populated,
+      tasks: [impl],
+      selectedTaskId: 'impl',
+      messages: [message('event', {
+        relatedTaskId: 'impl',
+        type: 'result',
+        summary: '摘要行',
+        content: '正文不应出现在摘要里',
+        attachments: [
+          { kind: 'workspace_path', value: '/tmp/a.txt' },
+          { kind: 'url', value: 'https://example.test/b' },
+        ],
+        deliveryState: 'failed',
+        createdAt: '2026-01-01T06:30:00.000Z',
+      })],
+    })
+    const timeline = text(region(html, 'task-timeline'))
+
+    expect(timeline).toContain('小测')
+    expect(timeline).toContain('结果')
+    expect(timeline).toContain('摘要行')
+    expect(timeline).not.toContain('正文不应出现在摘要里')
+    expect(timeline).toContain('2 个附件')
+    expect(timeline).toContain('投递失败')
+    expect(timeline).toMatch(/\d{1,2}:\d{2}/)
+  })
+
+  it('keeps empty, loading and error states explicit', () => {
+    const base = { team: populated, tasks: [impl], selectedTaskId: 'impl' }
+
+    expect(text(region(render(base), 'task-timeline'))).toContain('暂无任务动态')
+    expect(text(region(render({ ...base, messagesLoading: true }), 'task-timeline')))
+      .toContain('正在加载任务动态')
+    expect(text(region(render({ ...base, messagesError: '网络错误' }), 'task-timeline')))
+      .toContain('任务动态加载失败：网络错误')
+  })
+})
+
 describe('TeamOverview leader inbox', () => {
   const mail = [
     message('one', { content: '消息一', createdAt: '2026-01-01T01:00:00.000Z' }),
@@ -447,6 +551,35 @@ describe('board switch and static layout contract', () => {
     expect(board).toContain('<div className={css.memberColumns}')
     expect(board).toContain('<div className={css.toolbar}>')
     expect(board).not.toContain("mode === 'tasks' && (")
+  })
+
+  it('loads team messages once and hands them to the task-detail timeline', () => {
+    const board = source('team-board.tsx')
+    const overview = source('team-overview.tsx')
+
+    // One mailbox read for the whole board; the timeline never refetches.
+    expect(board.match(/callAgentTeam\('team\.message\.list'/g) ?? []).toHaveLength(1)
+    expect(board).toContain('messages={scopedMessages}')
+    expect(board).toContain('messagesLoading={inboxLoading}')
+    expect(board).toContain('messagesError={messagesError}')
+    expect(overview).not.toContain('callAgentTeam(')
+    expect(overview).toContain('function TaskTimeline')
+    expect(overview).toContain('message.relatedTaskId === task.id || message.threadId === task.id')
+    expect(overview).toContain('messages={messages}')
+  })
+
+  it('removed the board feed and the 活动 tab, keeping the Leader inbox', () => {
+    const board = source('team-board.tsx')
+    const dialogs = source('team-dialogs.tsx')
+
+    expect(() => source('team-activity.tsx')).toThrow()
+    expect(board).not.toContain('ActivityRow')
+    expect(board).not.toContain('feedResult')
+    expect(board).not.toContain('FeedItem')
+    expect(dialogs).not.toContain('TeamActivityBoard')
+    expect(dialogs).not.toContain('活动')
+    // The inbox is still the only mailbox surface in the overview.
+    expect(source('team-overview.tsx')).toContain('aria-label="Leader 收件箱"')
   })
 
   it('stacks at narrow widths and lets only the dependency graph scroll horizontally', () => {
