@@ -94,14 +94,15 @@ describe('sidebar surface switch', () => {
   const sidebar = readClientSource('sidebar.tsx')
   const index = readClientSource('index.tsx')
 
-  it('always renders the two surfaces as one segmented control', () => {
+  it('always renders one compact surface drop-down', () => {
     expect(sidebar).toContain('data-dsh-surface-switch')
     expect(sidebar).toContain("label: 'DSH'")
     expect(sidebar).toContain("label: 'BOT'")
-    // Two options, both visible: a radiogroup rather than a menu that hides one.
-    expect(sidebar).toContain('role="radiogroup"')
-    expect(sidebar).toContain('role="radio"')
-    expect(sidebar).toContain('aria-checked={mode === option.id}')
+    // One trigger naming the current surface; the shipped Menu lists both.
+    expect(sidebar).toContain('aria-haspopup="menu"')
+    expect(sidebar).toContain('selectedId={mode}')
+    expect(sidebar).toContain('surfaceSwitchDot')
+    expect(sidebar).toContain('IconChevronsUpDownOutlineRegular')
     const switchAt = sidebar.indexOf('<SurfaceModeSwitch')
     const gateAt = sidebar.indexOf("{mode === 'team' && (")
     expect(switchAt).toBeGreaterThan(-1)

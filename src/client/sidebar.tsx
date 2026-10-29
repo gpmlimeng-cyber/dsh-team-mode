@@ -302,9 +302,9 @@ export function brandCreateItems(hasSteward: boolean, chats: readonly BrandChatE
 }
 
 /**
- * The two surfaces as one segmented control. DSH keeps every shipped control in
- * the row untouched; BOT adds the simplified list. A two-option switch beats a
- * menu here: the choice is binary and always visible.
+ * Surface switch: one compact trigger naming the current surface, with the
+ * other option one click away. A menu keeps the chrome band to a single control
+ * the width of a word — a two-segment row reads as a toolbar, not as a label.
  */
 function SurfaceModeSwitch({
   mode,
@@ -313,33 +313,50 @@ function SurfaceModeSwitch({
   mode: SurfaceMode
   onChange: (mode: SurfaceMode) => void
 }): JSX.Element {
+  const [open, setOpen] = useState(false)
   const options = [
     { id: 'native' as const, label: 'DSH', hint: '原生界面：完整结构' },
     { id: 'team' as const, label: 'BOT', hint: '简洁模式：助手与线程' },
   ]
+  const current = options.find(option => option.id === mode) ?? options[0]!
+
   return (
-    <span
-      className={css.surfaceSwitch}
-      role="radiogroup"
-      aria-label="界面模式"
-      data-dsh-surface-switch
-      data-dsh-surface-mode={mode}
-    >
-      {options.map(option => (
+    <Menu
+      open={open}
+      onClose={() => { setOpen(false) }}
+      items={options.map(option => ({
+        id: option.id,
+        label: (
+          <span className={css.brandModeItem}>
+            <span className={css.brandModeItemLabel}>{option.label}</span>
+            <span className={css.brandModeItemHint}>{option.hint}</span>
+          </span>
+        ),
+      }))}
+      selectedId={mode}
+      onSelect={(id) => {
+        onChange(id as SurfaceMode)
+        setOpen(false)
+      }}
+      align="start"
+      side="bottom"
+      anchor={(
         <button
-          key={option.id}
           type="button"
-          role="radio"
-          aria-checked={mode === option.id}
-          title={option.hint}
-          className={css.surfaceSwitchOption}
-          data-dsh-surface-option={option.id}
-          onClick={() => { onChange(option.id) }}
+          className={css.surfaceSwitchTrigger}
+          aria-label={`界面模式：${current.label}`}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          data-dsh-surface-switch
+          data-dsh-surface-mode={mode}
+          onClick={() => { setOpen(value => !value) }}
         >
-          {option.label}
+          <span className={css.surfaceSwitchDot} aria-hidden="true" data-mode={mode} />
+          <span className={css.surfaceSwitchLabel}>{current.label}</span>
+          <IconChevronsUpDownOutlineRegular size={12} className={css.brandModeCaret} />
         </button>
-      ))}
-    </span>
+      )}
+    />
   )
 }
 

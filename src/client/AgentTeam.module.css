@@ -2917,43 +2917,46 @@ textarea.input {
   inset-inline-end: auto;
 }
 
-/* DSH | BOT: a two-segment switch, 24px tall so it sits on the brand row
-   without changing the row's height. */
-.surfaceSwitch {
+/* DSH | BOT: a sphere, a word and a stacked caret — the shape the row's own
+   workspace switcher uses, so the chrome band reads as one family. */
+.surfaceSwitchTrigger {
   display: inline-flex;
-  flex: none;
   align-items: center;
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--dsw-radius-sm);
-  background: var(--dsw-alias-bg-module-platform);
-}
-
-.surfaceSwitchOption {
-  box-sizing: border-box;
-  height: 20px;
-  padding: 0 8px;
+  gap: 6px;
+  height: 24px;
+  padding: 0 6px;
   border: none;
-  border-radius: calc(var(--dsw-radius-sm) - 2px);
+  border-radius: var(--dsw-radius-sm);
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-primary);
   font: inherit;
-  font-size: 12px;
-  line-height: 20px;
-  letter-spacing: 0.02em;
+  font-size: 13px;
+  font-weight: 510;
   cursor: pointer;
   -webkit-app-region: no-drag;
 }
 
-.surfaceSwitchOption:hover {
-  color: var(--dsw-alias-label-secondary);
+.surfaceSwitchTrigger:hover,
+.surfaceSwitchTrigger[aria-expanded='true'] {
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.surfaceSwitchOption[aria-checked='true'] {
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
-  font-weight: 510;
+.surfaceSwitchDot {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, #9be15d, #2f9e44 62%, #1b6b2f);
 }
+
+.surfaceSwitchDot[data-mode='native'] {
+  background: radial-gradient(circle at 34% 30%, #8ecbff, #3f77c9 62%, #234a86);
+}
+
+.surfaceSwitchLabel {
+  line-height: 1;
+}
+
 
 /* Desktop already has the shell's own collapse control in the title bar, so the
    mode row never shows a second one there; the narrow drawer keeps it, because
