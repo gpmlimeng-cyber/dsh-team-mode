@@ -61,10 +61,10 @@ describe('isolated assistant workspaces in the create form', () => {
     expect(workspaceSelectable({ status: 'ok', isolated: true })).toBe(false)
   })
 
-  it('defaults to an isolated workspace while still skipping private bases', () => {
+  it('defaults to the shared workspace while still skipping private bases', () => {
     const draft = emptyAssistantCreateDraft()
-    // Isolation is on by default; only an explicit off keeps the shared base.
-    expect(draft.workspaceIsolated).toBe(true)
+    // Shared is the default: only a shared coworker can join a team.
+    expect(draft.workspaceIsolated).toBe(false)
 
     const defaults = assistantCreateDefaults(catalog([
       { id: 'private', path: '/work/.dsh-team-mode/assistants/paper', title: 'Paper', status: 'ok', isolated: true },
@@ -72,7 +72,7 @@ describe('isolated assistant workspaces in the create form', () => {
       { id: 'shared', path: '/work', title: 'Work', status: 'ok' },
     ]))
     expect(defaults.workspaceId).toBe('shared')
-    expect(defaults.workspaceIsolated).toBe(true)
+    expect(defaults.workspaceIsolated).toBe(false)
   })
 
   it('sends the isolation default unless the user explicitly chooses shared', () => {
@@ -84,16 +84,19 @@ describe('isolated assistant workspaces in the create form', () => {
       model: 'gpt-5',
       agentPresetId: 'default',
       permissionPresetId: 'read-only',
+      workspaceIsolated: true,
     }
     expect(assistantCreatePayload(on)).toMatchObject({
       workspaceId: 'workspace-1',
       workspaceIsolated: true,
     })
 
+    // Shared is the payload older dialogs sent and the default a new draft
+    // starts from, because only a shared coworker can join a team.
     const off = assistantCreatePayload({ ...on, workspaceIsolated: false })
     expect(off.workspaceIsolated).toBeUndefined()
-    // Shared creation keeps the exact payload older dialogs sent.
     expect(off).toMatchObject({ workspaceId: 'workspace-1', name: 'Paper Bot' })
+    expect(emptyAssistantCreateDraft().workspaceIsolated).toBe(false)
   })
 })
 

@@ -98,12 +98,11 @@ export interface AssistantCreateDraft {
   /** Base workspace: the shared home, or the directory isolation nests under. */
   workspaceId: string
   /**
-   * 独立工作区 switch, on by default. A new coworker gets its own directory
-   * under the chosen base workspace unless the user explicitly turns this off;
-   * old Assistants stay shared because their stored row carries no marker, and
-   * a draft literal without the field still reads as shared. Turn it off when
-   * the Assistant must join a team, because a team's members all run in the
-   * team workspace.
+   * 独立工作区 switch, off by default: a new coworker shares the chosen base
+   * workspace, which is what joining a team requires (every team member runs in
+   * the team workspace). Turning it on gives the coworker a private directory
+   * under that base, at the cost of never being able to join a team. Old
+   * Assistants stay shared because their stored row carries no marker.
    */
   workspaceIsolated?: boolean
   agentPresetId: string
@@ -131,7 +130,7 @@ export function emptyAssistantCreateDraft(): AssistantCreateDraft {
     model: '',
     reasoningEffort: '',
     workspaceId: '',
-    workspaceIsolated: true,
+    workspaceIsolated: false,
     agentPresetId: '',
     permissionPresetId: '',
     group: '',

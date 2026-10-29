@@ -651,9 +651,9 @@ describe('assistantCreateDefaults', () => {
       provider: 'deepseek',
       model: 'flash',
     })
-    // New coworkers default to their own workspace; only an explicit off is shared.
-    expect(draft.workspaceIsolated).toBe(true)
-    expect(emptyAssistantCreateDraft().workspaceIsolated).toBe(true)
+    // New coworkers default to the shared workspace: only that can join a team.
+    expect(draft.workspaceIsolated).toBe(false)
+    expect(emptyAssistantCreateDraft().workspaceIsolated).toBe(false)
   })
 
   it('falls back to the first usable entries when the preferred defaults are absent', () => {
@@ -762,6 +762,8 @@ describe('assistantCreatePayload', () => {
       instructions: '  先读代码  ',
       reasoningEffort: 'high',
       avatar: 'data:image/png;base64,AAAA',
+      // The shape test still covers the isolated payload; the default is shared.
+      workspaceIsolated: true,
     }
     const payload = assistantCreatePayload(draft)
     expect(payload).toEqual({

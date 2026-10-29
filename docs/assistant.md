@@ -131,4 +131,4 @@ worker Session 不会出现在原生侧栏，也不会收到 `assistant_task_*` 
 
 单聊助手与「群聊」里的团队成员是不同实例：单聊助手不占用团队席位，也不参与团队任务和团队消息。单聊助手可以直接创建，不需要先准备助手模板；旧版或通过模板创建的实例仍保留模板关联。助手模板仍可加入团队，但它不再是新建单聊助手的前置条件。
 
-**独立工作区 × 入团队**：创建对话框的「独立工作区」默认开启（`workspaceIsolated: true`），助手会拿到 `<基础目录>/.dsh-team-mode/assistants/<slug>-<id8>` 这个私有目录，因此它**不能**关联到团队——关联会返回 `ASSISTANT_INSTANCE_WORKSPACE_MISMATCH` 并提示「创建时关掉独立工作区」。要在团队里使用的助手，创建时必须关掉该开关，与团队共用同一个 Workspace。两个独立工作区助手不会共享目录，归档/恢复也不会删除它们的目录（`tests/assistant-lifecycle-e2e.spec.ts` 断言了这条路径）。团队关联入口本身仍只有 API，见[团队管理](./team-management.md)的已知缺口。
+**独立工作区 × 入团队**：创建对话框的「独立工作区」**默认关闭**（2026-10-29 起；`false` = 与所选 Workspace 共用目录，能加入团队）。开启后助手会拿到 `<基础目录>/.dsh-team-mode/assistants/<slug>-<id8>` 这个私有目录，因此它**不能**关联到团队——关联会返回 `ASSISTANT_INSTANCE_WORKSPACE_MISMATCH` 并提示「创建时关掉独立工作区」。已存在的独立工作区助手无法改成共享（目前没有「换 Workspace」路径），要在团队里用只能重新创建一个共享工作区的助手。两个独立工作区助手不会共享目录，归档/恢复也不会删除它们的目录（`tests/assistant-lifecycle-e2e.spec.ts` 断言了这条路径）。团队关联入口本身仍只有 API，见[团队管理](./team-management.md)的已知缺口。

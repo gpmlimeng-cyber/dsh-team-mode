@@ -496,8 +496,8 @@ function ModelSection(props: AssistantCreateBodyProps, disabled: boolean): JSX.E
         <SettingsRow
           label="独立工作区"
           hint={draft.workspaceIsolated === true
-            ? '默认开启：在上面所选 Workspace 下分配 .dsh-team-mode/assistants/<助手名>-<id> 作为这个助手的私有目录；旧助手保持共享 Workspace，加入团队需要关闭此项。'
-            : '与所选 Workspace 及其他助手共用同一目录，可以加入团队。'}
+            ? '开启后在上面所选 Workspace 下分配 .dsh-team-mode/assistants/<助手名>-<id> 作为私有目录。独立工作区的助手不能加入团队。'
+            : '默认关闭：与所选 Workspace 及其他助手共用同一目录，可以加入团队。'}
           control={(
             <Switch
               label="独立工作区"
