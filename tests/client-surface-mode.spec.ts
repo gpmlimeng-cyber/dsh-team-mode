@@ -94,14 +94,14 @@ describe('sidebar surface switch', () => {
   const sidebar = readClientSource('sidebar.tsx')
   const index = readClientSource('index.tsx')
 
-  it('always renders one DeepSeek/DeepBot control as a brand-shaped dropdown', () => {
+  it('always renders the two surfaces as one segmented control', () => {
     expect(sidebar).toContain('data-dsh-surface-switch')
-    expect(sidebar).toContain("label: 'DeepSeek'")
-    expect(sidebar).toContain("label: 'DeepBot'")
-    // The popover is the shipped Menu primitive, not a hand-built list.
-    expect(sidebar).toContain('<Menu')
-    expect(sidebar).toContain('aria-haspopup="menu"')
-    expect(sidebar).toContain('selectedId={mode}')
+    expect(sidebar).toContain("label: 'DSH'")
+    expect(sidebar).toContain("label: 'BOT'")
+    // Two options, both visible: a radiogroup rather than a menu that hides one.
+    expect(sidebar).toContain('role="radiogroup"')
+    expect(sidebar).toContain('role="radio"')
+    expect(sidebar).toContain('aria-checked={mode === option.id}')
     const switchAt = sidebar.indexOf('<SurfaceModeSwitch')
     const gateAt = sidebar.indexOf("{mode === 'team' && (")
     expect(switchAt).toBeGreaterThan(-1)

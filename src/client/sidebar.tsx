@@ -302,10 +302,9 @@ export function brandCreateItems(hasSteward: boolean, chats: readonly BrandChatE
 }
 
 /**
- * Brand-shaped mode control: the current surface is bold text with a caret, so
- * the row reads as the product mark. The popover is the shipped `Menu`
- * primitive, which keeps its colours and metrics identical to the rest of the
- * sidebar instead of introducing a second menu style.
+ * The two surfaces as one segmented control. DSH keeps every shipped control in
+ * the row untouched; BOT adds the simplified list. A two-option switch beats a
+ * menu here: the choice is binary and always visible.
  */
 function SurfaceModeSwitch({
   mode,
@@ -314,49 +313,33 @@ function SurfaceModeSwitch({
   mode: SurfaceMode
   onChange: (mode: SurfaceMode) => void
 }): JSX.Element {
-  const [open, setOpen] = useState(false)
   const options = [
-    { id: 'native' as const, label: 'DeepSeek', hint: '原生界面' },
-    { id: 'team' as const, label: 'DeepBot', hint: '团队模式' },
+    { id: 'native' as const, label: 'DSH', hint: '原生界面：完整结构' },
+    { id: 'team' as const, label: 'BOT', hint: '简洁模式：助手与线程' },
   ]
-  const current = options.find(option => option.id === mode) ?? options[0]!
-
   return (
-    <Menu
-      open={open}
-      onClose={() => { setOpen(false) }}
-      items={options.map(option => ({
-        id: option.id,
-        label: (
-          <span className={css.brandModeItem}>
-            <span className={css.brandModeItemLabel}>{option.label}</span>
-            <span className={css.brandModeItemHint}>{option.hint}</span>
-          </span>
-        ),
-      }))}
-      selectedId={mode}
-      onSelect={(id) => {
-        onChange(id as SurfaceMode)
-        setOpen(false)
-      }}
-      align="start"
-      side="bottom"
-      anchor={(
+    <span
+      className={css.surfaceSwitch}
+      role="radiogroup"
+      aria-label="界面模式"
+      data-dsh-surface-switch
+      data-dsh-surface-mode={mode}
+    >
+      {options.map(option => (
         <button
+          key={option.id}
           type="button"
-          className={css.brandModeTrigger}
-          aria-label={`界面模式：${current.label}`}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          data-dsh-surface-switch
-          data-dsh-surface-mode={mode}
-          onClick={() => { setOpen(value => !value) }}
+          role="radio"
+          aria-checked={mode === option.id}
+          title={option.hint}
+          className={css.surfaceSwitchOption}
+          data-dsh-surface-option={option.id}
+          onClick={() => { onChange(option.id) }}
         >
-          <span className={css.brandModeLabel}>{current.label}</span>
-          <IconChevronDownOutlineRegular className={css.brandModeCaret} />
+          {option.label}
         </button>
-      )}
-    />
+      ))}
+    </span>
   )
 }
 

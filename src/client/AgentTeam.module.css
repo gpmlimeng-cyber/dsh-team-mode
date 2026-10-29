@@ -2893,6 +2893,44 @@ textarea.input {
   margin-left: auto;
 }
 
+/* DSH | BOT: a two-segment switch, 24px tall so it sits on the brand row
+   without changing the row's height. */
+.surfaceSwitch {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--dsw-radius-sm);
+  background: var(--dsw-alias-bg-module-platform);
+}
+
+.surfaceSwitchOption {
+  box-sizing: border-box;
+  height: 20px;
+  padding: 0 8px;
+  border: none;
+  border-radius: calc(var(--dsw-radius-sm) - 2px);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 20px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.surfaceSwitchOption:hover {
+  color: var(--dsw-alias-label-secondary);
+}
+
+.surfaceSwitchOption[aria-checked='true'] {
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 510;
+}
+
 /* Desktop already has the shell's own collapse control in the title bar, so the
    mode row never shows a second one there; the narrow drawer keeps it, because
    the rail's control is out of reach. */
