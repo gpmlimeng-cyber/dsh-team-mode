@@ -78,6 +78,7 @@ import {
 import { UsageSection, assistantUsageScope } from './usage.js'
 import css from './AgentTeam.module.css'
 import { isCoordinatorInstance } from '../domain/types.js'
+import { LeaderMark } from './team-member-chrome.js'
 import type {
   AssistantMemory,
   AssistantSession,
@@ -988,6 +989,11 @@ export function AssistantSettingsPane({
             <span className={css.assistantAvatarBadge} aria-hidden="true">
               <IconEditOutlineRegular size={12} />
             </span>
+            {isCoordinatorInstance(assistant) && (
+              <span className={css.assistantAvatarCrown} data-dsh-assistant-avatar-crown aria-hidden="true">
+                <LeaderMark size={11} />
+              </span>
+            )}
           </button>
         </div>
         <div className={css.assistantAvatarWho}>

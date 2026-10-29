@@ -1906,3 +1906,14 @@ describe('coordinator crown', () => {
     expect(crown).toContain('position: absolute')
   })
 })
+
+describe('coordinator crown in the settings hero', () => {
+  const source = readFileSync(new URL('../src/client/assistant-settings-pane.tsx', import.meta.url), 'utf8')
+  const styles = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
+
+  it('marks the hero avatar only for the coordinator', () => {
+    expect(source).toContain('data-dsh-assistant-avatar-crown')
+    expect(source).toContain('isCoordinatorInstance(assistant)')
+    expect(styles).toContain('.assistantAvatarCrown')
+  })
+})

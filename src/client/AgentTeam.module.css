@@ -12142,6 +12142,25 @@ textarea.sidebarGroupBriefInput {
   outline-offset: 2px;
 }
 
+/* Coordinator crown on the settings hero: the 64px avatar has room, so the disc
+   is larger than the sidebar one and sits opposite the edit pencil. */
+.assistantAvatarCrown {
+  position: absolute;
+  inset-block-end: -4px;
+  inset-inline-start: -4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1.5px solid var(--dsw-alias-bg-layer-1);
+  background: var(--dsw-alias-state-warn-primary);
+  color: var(--dsw-alias-bg-layer-1);
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
 .assistantAvatarBadge {
   position: absolute;
   right: -4px;
