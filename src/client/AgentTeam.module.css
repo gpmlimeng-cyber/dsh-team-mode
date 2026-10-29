@@ -2954,6 +2954,15 @@ textarea.input {
   display: none;
 }
 
+/* The simple surface owns that corner: any shipped control that would share it
+   (the rail toggle, the shipped new-session button) is dropped rather than
+   stacked, which is what read as two glyphs on top of each other. */
+[data-dsh-team-root]:has(.surfaceModeRow[data-surface-mode='team']) [class*='_logoRow'],
+[data-dsh-team-root]:has(.surfaceModeRow[data-surface-mode='team']) [class*='_toggle'],
+[data-dsh-team-root]:has(.surfaceModeRow[data-surface-mode='team']) [class*='_newSession'] {
+  display: none;
+}
+
 [data-windows-titlebar] .surfaceSwitchChrome {
   top: calc((var(--dsh-windows-titlebar-height, 40px) - 24px) / 2);
   inset-inline-start: 56px;
