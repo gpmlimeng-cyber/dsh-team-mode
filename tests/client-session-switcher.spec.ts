@@ -444,6 +444,21 @@ describe('lineage title names who is speaking', () => {
     expect(cssSource).toContain('.teamSessionTitleFaces > * + *')
   })
 
+  it('treats a thread Session as its speaker, never as the team', () => {
+    const body = chromeSource.slice(
+      chromeSource.indexOf('export function isTeamLevelSession'),
+      chromeSource.indexOf('export function TeamSessionTitle('),
+    )
+    expect(body).toContain('threadOwns')
+    expect(body).toContain('return !memberOwns && !threadOwns')
+  })
+
+  it('wears the same face and name the sidebar uses', () => {
+    expect(chromeSource).toContain('assistantShowsMascot')
+    expect(chromeSource).toContain('assistantInstanceForSession')
+    expect(chromeSource).toContain('assistantInstanceName')
+  })
+
   it('caps the stack at three faces', () => {
     expect(chromeSource).toContain('sortedMembers(team).slice(0, 3)')
   })

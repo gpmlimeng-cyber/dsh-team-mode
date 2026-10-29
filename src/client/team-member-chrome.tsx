@@ -24,7 +24,10 @@ import {
   knownPresetNames,
   useAgentCatalog,
 } from './agent-preset-label.js'
-import type { TeamView } from '../transport/contracts.js'
+import type { AssistantInstanceView, TeamView } from '../transport/contracts.js'
+import { Mascot } from './mascot-view.js'
+import { assistantShowsMascot, mascotOptionsFor } from './mascot.js'
+import { assistantInstanceForSession, assistantInstanceName } from './assistant-instances.js'
 
 type TeamMember = TeamView['members'][string]
 type TeamThread = NonNullable<TeamView['threads']>[string]
@@ -351,9 +354,14 @@ export function teamSessionOwner(
   }
 }
 
-/** True for the team's own conversation, false for one member's Session. */
+/**
+ * True only for the team's own conversation. A member Session and a thread
+ * Session both name someone, so neither is team level.
+ */
 export function isTeamLevelSession(team: TeamView, sessionId: string): boolean {
-  return !Object.values(team.members).some(member => member.sessionId === sessionId)
+  const memberOwns = Object.values(team.members).some(member => member.sessionId === sessionId)
+  const threadOwns = Object.values(team.threads ?? {}).some(thread => thread.sessionId === sessionId)
+  return !memberOwns && !threadOwns
 }
 
 /**
@@ -362,7 +370,15 @@ export function isTeamLevelSession(team: TeamView, sessionId: string): boolean {
  */
 export function TeamSessionTitle({ lineageSessionId }: { lineageSessionId?: string }): JSX.Element | null {
   const team = useTeamForSession(lineageSessionId)
+  const instances = useAssistantInstancesForTeam()
   if (team === undefined || lineageSessionId === undefined) return null
+
+  // The sidebar never draws a raw snapshot name: it prefers the instance, so the
+  // header must resolve the same way or the two read as different assistants.
+  const instance = assistantInstanceForSession(instances, lineageSessionId)
+  const nameOf = (memberName: string): string =>
+    instance === undefined ? memberName : assistantInstanceName(instance)
+
   if (isTeamLevelSession(team, lineageSessionId)) {
     const faces = sortedMembers(team).slice(0, 3)
     return (
@@ -370,13 +386,13 @@ export function TeamSessionTitle({ lineageSessionId }: { lineageSessionId?: stri
         {faces.length > 0 && (
           <span className={css.teamSessionTitleFaces} aria-hidden="true">
             {faces.map(member => (
-              <MemberAvatar
-                key={member.id}
-                name={member.displayName}
-                avatar={member.assistantSnapshot.avatar}
-                size={16}
-                className={css.teamSessionTitleFace ?? ''}
-              />
+              <span key={member.id} className={css.teamSessionTitleFace}>
+                <SessionFace
+                  instance={instances.find(item => item.id === member.assistantInstanceId)}
+                  name={member.displayName}
+                  avatar={member.assistantSnapshot.avatar}
+                />
+              </span>
             ))}
           </span>
         )}
@@ -384,12 +400,18 @@ export function TeamSessionTitle({ lineageSessionId }: { lineageSessionId?: stri
       </span>
     )
   }
+
   const owner = teamSessionOwner(team, lineageSessionId)
   if (owner === undefined) return null
+  // A member Session names that member; a thread Session names its speaker.
+  const speaker = Object.values(team.members).find(member => member.sessionId === lineageSessionId)
+  const speakerInstance = speaker === undefined
+    ? instance
+    : instances.find(item => item.id === speaker.assistantInstanceId)
   return (
-    <span className={css.teamSessionTitle} data-dsh-team-session-title title={owner.name}>
-      <MemberAvatar name={owner.name} avatar={owner.avatar} size={16} />
-      <span className={css.teamSessionTitleName}>{owner.name}</span>
+    <span className={css.teamSessionTitle} data-dsh-team-session-title title={nameOf(owner.name)}>
+      <SessionFace instance={speakerInstance} name={nameOf(owner.name)} avatar={owner.avatar} />
+      <span className={css.teamSessionTitleName}>{nameOf(owner.name)}</span>
     </span>
   )
 }
@@ -414,6 +436,44 @@ export function TeamSessionTitleHost({
     }
   }, [active])
   return null
+}
+
+/** The instances behind the team, so a title can wear the same face the sidebar does. */
+function useAssistantInstancesForTeam(): readonly AssistantInstanceView[] {
+  const [instances, setInstances] = useState<readonly AssistantInstanceView[]>([])
+  useEffect(() => {
+    let live = true
+    const load = (): void => {
+      void callAgentTeam('assistant.instance.list')
+        .then(value => { if (live) setInstances(value.items) })
+        .catch(() => { if (live) setInstances([]) })
+    }
+    load()
+    const unsubscribe = subscribeAgentTeam(load, () => {}, load)
+    return () => {
+      live = false
+      unsubscribe()
+    }
+  }, [])
+  return instances
+}
+
+/** One face for a Session: the mascot the sidebar uses, else the uploaded image. */
+function SessionFace({
+  instance,
+  name,
+  avatar,
+  size = 16,
+}: {
+  instance?: AssistantInstanceView | undefined
+  name: string
+  avatar?: string | undefined
+  size?: number
+}): JSX.Element {
+  if (instance !== undefined && assistantShowsMascot(instance)) {
+    return <Mascot {...mascotOptionsFor(instance)} size={size} avatarShape="rounded" animated={false} />
+  }
+  return <MemberAvatar name={name} avatar={avatar} size={size} />
 }
 
 export function TeamSessionSwitcher({
