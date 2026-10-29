@@ -526,20 +526,23 @@ describe('an assistant title covers its threads too', () => {
   })
 })
 
-describe('header utilities relocation', () => {
+describe('header utilities seating', () => {
   const source = readFileSync(new URL('../src/client/header-utilities.ts', import.meta.url), 'utf8')
+  const cssSource = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
 
-  it('wraps the host cluster before placing it on the tab row', () => {
-    // dsh-qol's rule: never append a host container straight into a host flex
-    // row; give it our wrapper and style that instead.
-    expect(source).toContain('document.createElement(\'span\')')
-    expect(source).toContain('wrapper.appendChild(cluster)')
-    expect(source).toContain('row.appendChild(wrapper)')
-    expect(source).toContain('margin-inline-start:auto')
+  it('tags the host nodes instead of moving them', () => {
+    // dsh-web-mobile's rule: the slot tree is the host's React; a plugin must not
+    // move nodes, only tag them and let CSS seat them.
+    expect(source).toContain("setAttribute(HEADER_ATTR, '')")
+    expect(source).toContain("setAttribute(UTILITIES_ATTR, '')")
+    expect(source).not.toContain('appendChild')
+    expect(source).not.toContain('insertBefore')
   })
 
-  it('puts the cluster back where it came from', () => {
-    expect(source).toContain('parent.insertBefore(cluster, next)')
-    expect(source).toContain('wrapper.remove()')
+  it('seats the cluster at the tab row edge and releases the tags', () => {
+    expect(cssSource).toContain('[data-dsh-team-header-utilities]')
+    expect(cssSource).toContain('inset-block-end: 0')
+    expect(source).toContain("removeAttribute(HEADER_ATTR)")
+    expect(source).toContain("removeAttribute(UTILITIES_ATTR)")
   })
 })

@@ -1,25 +1,16 @@
 /**
- * Put the shipped header utilities (preset label, subagent picker, job chip) on
- * the view-tab row's right edge without letting their layout fight that row.
+ * Seat the shipped header utilities (preset label, subagent picker, job chip) on
+ * the view-tab row's right edge.
  *
- * Method follows dsh-qol: never append a host container straight into a host
- * flex row — wrap it in our own element first, style the wrapper, and let the
- * host container keep its internal layout inside. Every step is best-effort:
- * a missing marker moves nothing, and the original parent and sibling are
- * restored on cleanup.
+ * Method copied from dsh-web-mobile: the slot tree belongs to the host's React,
+ * so a plugin must not move nodes — it tags the host elements and lets CSS do
+ * the seating with absolute positioning inside the header. That keeps React's
+ * tree intact (no re-render can undo it) and needs no wrapper.
  */
 
 const UTILITY_HINTS = ['子智能体', '后台任务', '定时任务']
-const WRAPPER_ATTR = 'data-dsh-team-header-utilities'
-const MOVED_ATTR = 'data-dsh-team-header-utilities-origin'
-const WRAPPER_CLASS = 'dsh-team-mode-header-utilities'
-
-interface Placement {
-  cluster: HTMLElement
-  wrapper: HTMLElement
-  parent: Node
-  next: Node | null
-}
+const HEADER_ATTR = 'data-dsh-team-header-seat'
+const UTILITIES_ATTR = 'data-dsh-team-header-utilities'
 
 function containsHint(node: Element, hints: readonly string[]): boolean {
   const text = (node.textContent ?? '').trim()
@@ -45,60 +36,39 @@ export function utilitiesCluster(scope: ParentNode, extra: readonly string[] = [
   return candidate
 }
 
-/** The row that carries the view tabs. */
-export function viewTabRow(scope: ParentNode): HTMLElement | null {
-  const list = scope.querySelector<HTMLElement>('[role="tablist"]')
-  return list?.parentElement ?? null
+/** The conversation header: the nearest one above the switcher, else the slot. */
+export function headerElement(): HTMLElement | null {
+  const switcher = document.querySelector<HTMLElement>('[data-dsh-team-session-switcher]')
+  return switcher?.closest<HTMLElement>('header[class*="header"], [class*="header"][class*="root"]')
+    ?? document.querySelector<HTMLElement>('[data-slot="conversation.session.header"]')
+    ?? null
 }
 
-export function placeHeaderUtilities(extraLabels: readonly string[] = []): () => void {
+export function seatHeaderUtilities(extraLabels: readonly string[] = []): () => void {
   if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return () => {}
-  let placement: Placement | undefined
   let frame: number | undefined
   let disposed = false
+  let seated: { header: HTMLElement; cluster: HTMLElement } | undefined
 
-  const restore = (): void => {
-    if (placement === undefined) return
-    const { cluster, wrapper, parent, next } = placement
-    cluster.removeAttribute(MOVED_ATTR)
-    if (wrapper.parentNode !== null) wrapper.remove()
-    if (next !== null && next.parentNode === parent) parent.insertBefore(cluster, next)
-    else parent.appendChild(cluster)
-    placement = undefined
+  const clear = (): void => {
+    if (seated === undefined) return
+    seated.header.removeAttribute(HEADER_ATTR)
+    seated.cluster.removeAttribute(UTILITIES_ATTR)
+    seated = undefined
   }
 
   const apply = (): void => {
     frame = undefined
     if (disposed) return
-    // The slot attribute is the precise scope; a host that renames it still has
-    // exactly one view-tab row and one utility cluster on screen, so the whole
-    // body is the fallback rather than hiding nothing.
-    const precise = document.querySelector<HTMLElement>('[data-slot="conversation.session.header"]')
-    const scope: ParentNode = precise ?? document.body
-    const row = viewTabRow(scope) ?? viewTabRow(document.body)
-    const cluster = utilitiesCluster(scope, extraLabels)
-    if (row === null || cluster === null || cluster.contains(row)) { restore(); return }
-    if (placement?.cluster === cluster && placement.wrapper.parentElement === row) return
-    restore()
-
-    // Our wrapper owns the row's layout; the host container keeps its own inside.
-    const wrapper = document.createElement('span')
-    wrapper.setAttribute(WRAPPER_ATTR, '')
-    wrapper.className = WRAPPER_CLASS
-    wrapper.style.cssText = [
-      'display:inline-flex',
-      'align-items:center',
-      'gap:8px',
-      'min-width:0',
-      'margin-inline-start:auto',
-      'flex:none',
-    ].join(';')
-    const parent = cluster.parentNode as Node
-    const next = cluster.nextSibling
-    wrapper.appendChild(cluster)
-    cluster.setAttribute(MOVED_ATTR, '')
-    row.appendChild(wrapper)
-    placement = { cluster, wrapper, parent, next }
+    const header = headerElement()
+    if (header === null) { clear(); return }
+    const cluster = utilitiesCluster(header, extraLabels)
+    if (cluster === null || cluster === header) { clear(); return }
+    if (seated?.header === header && seated.cluster === cluster) return
+    clear()
+    header.setAttribute(HEADER_ATTR, '')
+    cluster.setAttribute(UTILITIES_ATTR, '')
+    seated = { header, cluster }
   }
 
   const schedule = (): void => {
@@ -113,6 +83,6 @@ export function placeHeaderUtilities(extraLabels: readonly string[] = []): () =>
     disposed = true
     observer.disconnect()
     if (frame !== undefined) window.cancelAnimationFrame(frame)
-    restore()
+    clear()
   }
 }

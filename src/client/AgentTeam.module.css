@@ -5853,6 +5853,26 @@ html:has([data-team-parallel-anchor]) [data-conversation-content]:has([data-team
 
 /* The lineage title names who is speaking: one member's face, or the team's
    stacked faces, always followed by the name. */
+/* Utilities seated on the view-tab row, the way dsh-web-mobile seats the
+   subagent chip: tag the host nodes, position with CSS, never move them. */
+[data-dsh-team-header-seat] {
+  position: relative;
+}
+
+[data-dsh-team-header-utilities] {
+  position: absolute !important;
+  inset-inline-end: 8px;
+  inset-block-end: 0;
+  z-index: 3;
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  height: 21px;
+  min-height: 21px;
+  margin: 0 !important;
+  flex: none;
+}
+
 .teamSessionTitle {
   display: inline-flex;
   align-items: center;
