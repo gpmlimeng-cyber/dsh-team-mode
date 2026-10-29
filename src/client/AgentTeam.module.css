@@ -2905,10 +2905,11 @@ textarea.input {
 .surfaceSwitchChrome {
   position: absolute;
   /* Sits right after the traffic lights, on their line: 78px clears the three
-     buttons, and 8px puts this 24px control's centre on the lights' centre. */
+     buttons; the top offset centres this 24px control on the lights. It is one
+     number to tune per platform, so it stays a variable. */
   inset-inline-start: 78px;
   inset-inline-end: auto;
-  top: var(--dsh-surface-switch-top, 8px);
+  top: var(--dsh-surface-switch-top, 13px);
   z-index: 30;
   display: inline-flex;
   -webkit-app-region: no-drag;
