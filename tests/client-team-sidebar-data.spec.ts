@@ -1864,3 +1864,25 @@ describe('公告 · one editor, team and 分区 scopes', () => {
     expect(block).not.toMatch(/(^|\n)\s*body\b/)
   })
 })
+
+describe('team builder lists coworker instances', () => {
+  const panel = readFileSync(new URL('../src/client/teams/TeamPanel.tsx', import.meta.url), 'utf8')
+  const dialogs = readFileSync(new URL('../src/client/team-dialogs.tsx', import.meta.url), 'utf8')
+
+  it('reads the coworker collection, not just templates', () => {
+    expect(dialogs).toContain("callAgentTeam('assistant.instance.list'")
+    expect(panel).toContain('instances?: readonly AssistantInstanceView[]')
+  })
+
+  it('links a picked coworker to its instance slot', () => {
+    expect(panel).toContain('assistantInstanceId: instance.id')
+    expect(panel).toContain('...(member.assistantInstanceId === undefined')
+    expect(panel).toContain('data-dsh-team-pick-coworker')
+  })
+
+  it('keeps isolated and archived coworkers out, and says why', () => {
+    expect(panel).toContain("instance.status !== 'archived' && instance.workspaceIsolated !== true")
+    expect(panel).toContain('data-dsh-team-pick-isolated')
+    expect(panel).toContain('个同事在独立工作区，不能加入团队')
+  })
+})

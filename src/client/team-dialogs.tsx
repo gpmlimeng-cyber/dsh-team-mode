@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AnimatedModal } from './shared.js'
 import { useAgentTeamData, type WorkspaceChoice } from './components.js'
 import { TeamCard, TeamForm } from './teams/TeamPanel.js'
 import { callAgentTeam } from './api.js'
+import type { AssistantInstanceView } from '../transport/contracts.js'
 import { closeTeamDialog, useAgentTeamUi } from './store.js'
 import css from './AgentTeam.module.css'
 
@@ -20,6 +21,18 @@ export function TeamModeDialogs({
   const { dialog } = useAgentTeamUi()
   const active = dialog !== undefined
   const { catalog, assistants, teams, loading, error, catalogLoading, load } = useAgentTeamData(true, active)
+  // Coworkers are a different collection from Assistant templates: the people
+  // this workspace built are instances, and only an instance can be linked to a
+  // team member slot. Read them alongside the templates the builder also offers.
+  const [instances, setInstances] = useState<readonly AssistantInstanceView[]>([])
+  useEffect(() => {
+    if (!active) return
+    let live = true
+    void callAgentTeam('assistant.instance.list', undefined)
+      .then(value => { if (live) setInstances(value.items) })
+      .catch(() => { if (live) setInstances([]) })
+    return () => { live = false }
+  }, [active])
   const team = useMemo(
     () => (dialog?.kind === 'manage' ? teams.find(entry => entry.id === dialog.teamId) : undefined),
     [dialog, teams],
@@ -91,6 +104,7 @@ export function TeamModeDialogs({
         catalog={catalog}
         catalogLoading={catalogLoading}
         assistants={assistants}
+        instances={instances}
         pickWorkspace={pickWorkspace}
         onAssistantsChanged={load}
         onCancel={closeTeamDialog}

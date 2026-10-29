@@ -14,6 +14,7 @@ import {
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { MenuEntry } from '@deepseek-ai/dsh-client-ui-primitives'
 import type {
+  AssistantInstanceView,
   AssistantView,
   CatalogView,
   TeamView,
@@ -390,6 +391,8 @@ export function TeamCard({
   team: TeamView
   catalog: CatalogView | undefined
   assistants: AssistantView[]
+  /** Coworker instances; the people this workspace already created. */
+  instances?: readonly AssistantInstanceView[]
   pickWorkspace: () => Promise<WorkspaceChoice | null>
   onChanged: () => Promise<void>
   onCloned: (teamId: string) => Promise<void>
@@ -1957,6 +1960,10 @@ function LeaderMark({ size = 15, filled = false }: { size?: number; filled?: boo
 interface DraftMember {
   key: string
   assistantId: string
+  /** Set when the member was picked as a coworker instance, not a template. */
+  assistantInstanceId?: string
+  /** Display name for an instance pick; template picks resolve through `byId`. */
+  name?: string
 }
 
 function workspaceName(path: string): string {
@@ -2041,6 +2048,7 @@ export function TeamForm({
   catalog,
   catalogLoading,
   assistants,
+  instances,
   pickWorkspace,
   onAssistantsChanged,
   onCancel,
@@ -2050,6 +2058,8 @@ export function TeamForm({
   /** The catalog is still in flight: never report a missing provider before it settles. */
   catalogLoading?: boolean | undefined
   assistants: AssistantView[]
+  /** Coworker instances; the people this workspace already created. */
+  instances?: readonly AssistantInstanceView[] | undefined
   pickWorkspace: () => Promise<WorkspaceChoice | null>
   onAssistantsChanged: () => Promise<void>
   onCancel: () => void
@@ -2087,6 +2097,30 @@ export function TeamForm({
     if (!normalized) return pool
     return pool.filter(assistant => assistant.name.toLocaleLowerCase().includes(normalized))
   }, [assistants, query])
+
+  // Coworkers first: an instance is the assistant the user actually built and
+  // named. Templates stay available for teams that only carry a role.
+  const filteredCoworkers = useMemo(() => {
+    const pool = (instances ?? [])
+      .filter(instance => instance.status !== 'archived' && instance.workspaceIsolated !== true)
+      .sort((left, right) => left.assistantSnapshot.name.localeCompare(right.assistantSnapshot.name))
+    const normalized = query.trim().toLocaleLowerCase()
+    if (!normalized) return pool
+    return pool.filter(instance => instance.assistantSnapshot.name.toLocaleLowerCase().includes(normalized))
+  }, [instances, query])
+  const hiddenCoworkers = (instances ?? [])
+    .filter(instance => instance.status !== 'archived' && instance.workspaceIsolated === true).length
+
+  function addCoworker(instance: AssistantInstanceView): void {
+    const member: DraftMember = {
+      key: crypto.randomUUID(),
+      assistantId: instance.assistantSnapshot.assistantId,
+      assistantInstanceId: instance.id,
+      name: instance.assistantSnapshot.name,
+    }
+    setMembers(current => [...current, member])
+    setLeaderKey(current => current ?? member.key)
+  }
 
   async function createDefaultAssistant(): Promise<void> {
     // A click that lands before the catalog resolves is not an empty catalog.
@@ -2198,6 +2232,9 @@ export function TeamForm({
         members: members.map(member => ({
           assistantId: member.assistantId,
           role: member.key === leaderKey ? 'leader' : 'member',
+          ...(member.assistantInstanceId === undefined
+            ? {}
+            : { assistantInstanceId: member.assistantInstanceId }),
         })),
       })
       const started = await callAgentTeam('team.start', { id: draft.id }, draft.revision)
@@ -2323,7 +2360,7 @@ export function TeamForm({
       <div className={css.teamBuilderGrid}>
         <section className={css.assistantPicker}>
           <div className={css.builderSectionHeading}>
-            <strong>所有助手 ({assistants.length})</strong>
+            <strong>所有助手 ({(instances ?? []).filter(instance => instance.status !== 'archived').length + assistants.length})</strong>
           </div>
           <Input
             icon={<IconSearchOutlineRegular size={14} />}
@@ -2335,6 +2372,37 @@ export function TeamForm({
             className={css.teamSearch ?? ''}
           />
           <div className={css.assistantPickList}>
+            {filteredCoworkers.length > 0 && (
+              <>
+                <div className={css.builderSectionHeading}><strong>同事</strong></div>
+                {filteredCoworkers.map(instance => (
+                  <button
+                    key={instance.id}
+                    type="button"
+                    className={css.assistantPickRow}
+                    onClick={() => { addCoworker(instance) }}
+                    aria-label={`添加 ${instance.assistantSnapshot.name}`}
+                    data-dsh-team-pick-coworker={instance.id}
+                  >
+                    <span className={css.assistantPickAvatar} aria-hidden="true">
+                      {instance.assistantSnapshot.name.slice(0, 1).toLocaleUpperCase()}
+                    </span>
+                    <span className={css.assistantPickName}>{instance.assistantSnapshot.name}</span>
+                    <span className={css.assistantAddBox} aria-hidden="true">
+                      <IconPlusOutlineRegular size={16} />
+                    </span>
+                  </button>
+                ))}
+              </>
+            )}
+            {hiddenCoworkers > 0 && (
+              <div className={css.assistantEmpty} role="status" data-dsh-team-pick-isolated={hiddenCoworkers}>
+                <span>{hiddenCoworkers} 个同事在独立工作区，不能加入团队。</span>
+              </div>
+            )}
+            {filteredAssistants.length > 0 && (
+              <div className={css.builderSectionHeading}><strong>助手模板</strong></div>
+            )}
             {filteredAssistants.map(assistant => (
               <button
                 key={assistant.id}
@@ -2402,13 +2470,14 @@ export function TeamForm({
                 )
               : members.map(member => {
                   const assistant = byId.get(member.assistantId)
+                  const memberName = assistant?.name ?? member.name ?? '助手'
                   const leader = member.key === leaderKey
                   return (
                     <div key={member.key} className={css.selectedMemberRow}>
                       <span className={css.selectedMemberAvatar} aria-hidden="true">
-                        {assistant === undefined ? '?' : assistantGlyph(assistant)}
+                        {assistant === undefined ? (member.name?.slice(0, 1).toLocaleUpperCase() ?? '?') : assistantGlyph(assistant)}
                       </span>
-                      <span className={css.selectedMemberName}>{assistant?.name ?? '助手'}</span>
+                      <span className={css.selectedMemberName}>{memberName}</span>
                       {/* Same pattern as the team card: a visible label is the
                           accessible name, so the control never reads differently
                           from what is on screen. */}
@@ -2432,7 +2501,7 @@ export function TeamForm({
                           type="button"
                           className={css.memberRemoveButton}
                           onClick={() => { removeMember(member.key) }}
-                          aria-label={`移除 ${assistant?.name ?? '助手'}`}
+                          aria-label={`移除 ${memberName}`}
                         >
                           <IconCloseOutlineRegular size={16} />
                         </button>
