@@ -549,7 +549,9 @@ export function apply(ctx: AgentTeamClientContext): void {
   slotApi.inject('conversation.session.header.actions', () => slotApi.register({
     name: 'conversation.session.header.actions',
     id: 'dsh-team-mode-session-switcher',
-    order: 20,
+    // Ordered ahead of the shipped preset label and subagent picker so the
+    // topics sit against the title; those controls then move to their right.
+    order: 5,
     label: '团队会话切换',
     inject: () => ({
       openSession: (sessionId: string) => { ctx.uiWorkspace.openSession(sessionId as never) },
