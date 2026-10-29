@@ -1524,7 +1524,7 @@ describe('AssistantRuntime', () => {
     expect(h.resumeMock).not.toHaveBeenCalled()
   })
 
-  it('cancels active tasks and disposes their workers before archive', async () => {
+  it('cancels active tasks, releases their workers, and stops the main Session before archive', async () => {
     const h = createHarness()
     const active = await h.runtime.createTask('instance-1', { title: 'Active', brief: 'Start.' })
     const done = await h.runtime.createTask('instance-1', { title: 'Done', brief: 'Start.' })
@@ -1542,7 +1542,40 @@ describe('AssistantRuntime', () => {
     expect(activeWorker?.cancel).toHaveBeenCalledWith({ kind: 'user' })
     expect(activeWorker?.dispose).toHaveBeenCalledTimes(1)
     expect(doneWorker?.dispose).toHaveBeenCalledTimes(1)
-    expect(main?.dispose).not.toHaveBeenCalled()
+    // The main Session is the person users talk to: archiving stops it too, or
+    // an archived assistant keeps answering in the native sidebar.
+    expect(main?.cancel).toHaveBeenCalledWith({ kind: 'user' }, { keepInbox: false })
+    expect(main?.dispose).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuses to reopen an archived assistant and resumes a fresh main Session only after restore', async () => {
+    const h = createHarness()
+    const task = await h.runtime.createTask('instance-1', { title: 'Active', brief: 'Start.' })
+    const main = h.handles[0]
+    const mainSessionId = String(main?.agent.id)
+
+    await h.runtime.stopForArchive('instance-1')
+
+    expect(main?.dispose).toHaveBeenCalledTimes(1)
+    // Opening the archived assistant must not revive the disposed Session.
+    await expect(h.runtime.ensureInstance('instance-1'))
+      .rejects.toMatchObject({ code: 'ASSISTANT_INSTANCE_ARCHIVED' })
+    expect(h.resumeMock).not.toHaveBeenCalled()
+
+    // Restore brings back availability only. The task archive cancelled stays
+    // cancelled and is not part of the to-do any more; reopening the assistant
+    // resumes the persisted log as a fresh Agent.
+    h.setInstanceStatus('active')
+    const reopened = await h.runtime.ensureInstance('instance-1')
+    expect(reopened.instance.status).toBe('active')
+    expect(reopened.sessionId).toBe(mainSessionId)
+    expect(h.resumeMock).toHaveBeenCalledTimes(1)
+    const resumeOptions = h.resumeMock.mock.calls[0]?.[0] as ResumeAgentOptions
+    expect(String(resumeOptions.resumeSessionId)).toBe(mainSessionId)
+    expect(h.getAssistantSession(task.id).status).toBe('cancelled')
+    expect(h.listAssistantSessions('instance-1').items
+      .filter(row => row.status === 'queued' || row.status === 'running' || row.status === 'needs_input'))
+      .toEqual([])
   })
 
   it('cancels a running worker on archive even when it had no live handle', async () => {

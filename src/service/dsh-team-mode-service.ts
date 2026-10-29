@@ -1312,11 +1312,15 @@ export class AgentTeamService extends Service {
   }
 
   /**
-   * Hide an instance from listings without deleting it or its main Session.
-   * Idempotent: archiving an archived instance returns the stored record.
-   * When the Assistant runtime is attached, active workers are cancelled and
-   * the archived row is persisted while the assistant lock is still held, so
-   * no concurrent worker creation can slip in after the stop pass.
+   * Archive one Assistant: hide it from listings, cancel its in-flight tasks,
+   * and stop every Session it owns, without deleting the main Session log, the
+   * workspace, or its files. Idempotent: archiving an archived instance returns
+   * the stored record. When the Assistant runtime is attached, active workers
+   * are cancelled, the main Session and threads are disposed, and the archived
+   * row is persisted while the assistant lock is still held, so no concurrent
+   * Session or worker creation can slip in after the stop pass. Reopening an
+   * archived Assistant is refused, and a restore resumes the persisted log as a
+   * fresh Agent.
    *
    * A live team that still links this instance blocks the archive: the member
    * row would keep pointing at an archived assistant and its memory read would
@@ -1376,6 +1380,14 @@ export class AgentTeamService extends Service {
    * Bring one archived instance back. This is a row write only: the main Session
    * log, thread Sessions, worker Sessions, the workspace and its files are all
    * left exactly where archive left them. A paused assistant stays paused.
+   *
+   * Restore brings back *availability only*. Archive cancelled the tasks that
+   * were in flight; those rows stay `cancelled` and no restore path revives them,
+   * requeues them, or reopens their Sessions — archive is the user's stop signal
+   * for that work, and silently resurrecting it would spend tokens on a
+   * deliverable the user already abandoned. Reopening the assistant starts a new
+   * conversation; starting new work creates a new task. Do not "fix" this by
+   * mapping `cancelled` back to `queued` or by calling a drain here.
    *
    * A link whose team is archived cannot work again, so restoring silently
    * would hand back an assistant still shown as a member of a dead team. The

@@ -1280,12 +1280,16 @@ export class AssistantRuntime {
   }
 
   /**
-   * Stop every worker of one Assistant and mark the instance archived before
-   * the assistant lock is released. Active tasks are marked cancelled so a
-   * later idle transition cannot resurrect them; a worker mapped for an
-   * already terminal task keeps that status but is still flushed and disposed.
-   * Only workers this runtime owns are interrupted, and the main Session is
-   * never touched by this method.
+   * Stop one Assistant for archive: cancel in-flight tasks, release every
+   * worker, and stop every conversation this runtime owns (main Session and
+   * threads), then mark the instance archived before the assistant lock is
+   * released. Active tasks are marked cancelled so a later idle transition
+   * cannot resurrect them; a worker mapped for an already terminal task keeps
+   * that status but is still flushed and disposed.
+   *
+   * Archive is the user's stop signal for the work as well as the person: the
+   * cancelled tasks are not replayed or requeued by a later restore. Restore
+   * brings back availability only — see {@link AssistantService.restoreAssistantInstance}.
    */
   async stopForArchive(rawAssistantId: string): Promise<AssistantInstance> {
     const assistantId = requireText(rawAssistantId, 'Assistant instance id')
@@ -1334,8 +1338,54 @@ export class AssistantRuntime {
       // Persist while the lock is still held: a createTask queued behind this
       // barrier re-reads the row, sees 'archived', and rejects before it can
       // create a worker, so no worker starts or survives after archive wins.
-      return this.service.persistAssistantArchived(assistantId)
+      const archived = await this.service.persistAssistantArchived(assistantId)
+      // Conversations are stopped after the row is archived, not before: the
+      // archived status makes every later main-Session bind and thread attach
+      // reject (and dispose their own fresh handle), so the set read here is
+      // final and no conversation can be created behind the stop pass.
+      await this.stopOwnedConversations(this.service.getAssistantInstance(assistantId))
+      return archived
     })
+  }
+
+  /**
+   * Stop every conversation Session this runtime owns for one Assistant: its
+   * main Session and any visible thread. Each one takes the stop path a dispose
+   * uses — cancel the current turn, flush the log so a restart can resume it,
+   * dispose the handle — plus two bookkeeping drops: the owned mapping (an
+   * archived instance can never be opened again, and a restore resumes the
+   * persisted log as a *fresh* Agent instead of reusing a disposed handle) and
+   * this Session's pending interactions (an approval nobody can answer must not
+   * outlive the archive).
+   *
+   * A conversation owned by another lifecycle is never touched: it is not in
+   * this runtime's map, exactly like the handoff and ownership-conflict paths.
+   */
+  private async stopOwnedConversations(instance: AssistantInstance): Promise<void> {
+    const sessionIds = [
+      ...(instance.mainSessionId === undefined ? [] : [instance.mainSessionId]),
+      ...(instance.threadSessionIds ?? []),
+    ]
+    for (const sessionId of sessionIds) {
+      const handle = this.owned.get(sessionId)
+      if (handle === undefined) continue
+      this.owned.delete(sessionId)
+      this.interactions.forget(sessionId)
+      this.interactionSessions.delete(sessionId)
+      try {
+        handle.agent.cancel({ kind: 'user' }, { keepInbox: false })
+        await handle.agent.whenIdle()
+        await this.ctx.sessions.flush(handle.agent.session)
+      } catch (error) {
+        // Dispose below anyway: archive must not leave a live conversation even
+        // when the cancel or the log flush fails.
+        this.ctx.logger.warn(
+          `dsh-team-mode: failed to stop assistant Session '${sessionId}' while archiving`,
+          error,
+        )
+      }
+      await this.disposeQuietly(handle, `archived assistant Session '${sessionId}'`)
+    }
   }
 
   /**

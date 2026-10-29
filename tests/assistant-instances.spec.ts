@@ -1436,6 +1436,34 @@ describe('Assistant pause and restore lifecycle', () => {
     expect((await service.restoreAssistantInstance(unbound.id)).status).toBe('idle')
   })
 
+  it('restores availability without reviving work archive cancelled', async () => {
+    const { service, store } = createHarness()
+    const instance = await createInstance(service, 'Interrupted')
+    await service.bindAssistantMainSession(instance.id, 'session-main')
+    const task = await service.createAssistantSession({
+      assistantId: instance.id,
+      sessionId: 'session-worker',
+      title: 'Half done',
+      brief: 'Start.',
+      parentSessionId: 'session-main',
+    })
+    // What the archive path writes: the in-flight row is cancelled, not paused.
+    await service.updateAssistantSession(task.id, { status: 'cancelled' })
+    await service.archiveAssistantInstance(instance.id)
+
+    const restored = await service.restoreAssistantInstance(instance.id)
+    expect(restored.status).not.toBe('archived')
+    // Restore is availability only. The cancelled row is not requeued, not
+    // paused, and no longer shows up as active work to do.
+    const row = service.getAssistantSession(task.id)
+    expect(row.status).toBe('cancelled')
+    expect(row.pausedBy).toBeUndefined()
+    expect(store.getAssistantSession(task.id)).toEqual(row)
+    expect(service.listAssistantSessions(instance.id).items
+      .filter(item => item.status === 'queued' || item.status === 'running' || item.status === 'needs_input'))
+      .toEqual([])
+  })
+
   it('restores an archived thread without deleting its Session', async () => {
     const { service } = createHarness()
     const instance = await createInstance(service, 'Thread owner')
