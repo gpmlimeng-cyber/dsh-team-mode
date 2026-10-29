@@ -11218,7 +11218,7 @@ html:has([data-team-parallel-anchor]) [data-team-pane] [class*="teamMemberHeroHi
 
 /* ── 公告 editor ──────────────────────────────────────────────────────────
    One text field and its counter for both scopes (团队公告 2,000 /
-   分区公告 24,576); the counter turns red past the Host's cap instead of
+   the group announcement 24,576); the counter turns red past the Host's cap instead of
    silently truncating, and the saved/empty notes sit under it. */
 .sidebarGroupBriefForm {
   display: flex;

@@ -526,14 +526,14 @@ export function SidebarGroupDialogs({
   )
 }
 
-/** Header menu of one group: its 分区公告, the batch settings, export/import, rename, delete, and the two order moves. */
+/** Header menu of one group: its 公告, the batch settings, export/import, rename, delete, and the two order moves. */
 export function sidebarGroupMenuItems(
   groups: readonly string[],
   group: string,
 ): MenuEntry[] {
   const index = groups.indexOf(group)
   return [
-    { id: 'brief', label: '分区公告', icon: <IconListPenOutlineRegular size={14} /> },
+    { id: 'brief', label: '分组公告', icon: <IconListPenOutlineRegular size={14} /> },
     { id: 'batch', label: '批量设置…', icon: <IconSlidersTwoOutlineRegular size={14} /> },
     { id: 'export', label: '导出分组', icon: <IconDownloadOutlineRegular size={14} /> },
     { id: 'import', label: '导入分组', icon: <IconFolderOpenOutlineRegular size={14} /> },
@@ -1664,7 +1664,7 @@ function GroupExportDialog({
       open
       onClose={onClose}
       title={`导出分组「${name}」`}
-      description="导出可移植的分组 JSON：分组名称、简报和助手的可移植设定，不含任何会话、记忆或密钥。"
+      description="导出可移植的分组 JSON：分组名称、公告和助手的可移植设定，不含任何会话、记忆或密钥。"
       closeLabel="关闭"
       className={css.sidebarGroupDialog ?? ''}
       contentClassName={css.sidebarGroupDialogContent ?? ''}

@@ -455,7 +455,7 @@ describe('Sidebar groups', () => {
   })
 
   it('labels the brief cap as characters, not bytes', () => {
-    // The 分区公告 editor is the shared announcement dialog now.
+    // The group announcement editor is the shared announcement dialog now.
     const editor = readFileSync(
       new URL('../src/client/announcement-dialog.tsx', import.meta.url),
       'utf8',

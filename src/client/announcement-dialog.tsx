@@ -172,7 +172,7 @@ export function AnnouncementDialog(props: AnnouncementDialogProps): JSX.Element 
     <AnimatedModal
       open
       onClose={() => { if (!busy) onClose() }}
-      title={group ? `「${name}」的分区公告` : '团队公告'}
+      title={group ? `「${name}」的公告` : '团队公告'}
       description={group
         ? '组内团队和助手的下一轮对话都会读到这段公告；它只由你编辑，Agent 没有写入入口。'
         : '写一段全队长期有效的约定。每位成员（含 Leader）的下一轮对话都会读到它；只有你能编辑，Agent 没有写入入口。'}
@@ -210,7 +210,7 @@ export function AnnouncementDialog(props: AnnouncementDialogProps): JSX.Element 
       )}
     >
       {!loaded
-        ? <div className={css.dialogEmpty}>正在读取分区公告…</div>
+        ? <div className={css.dialogEmpty}>正在读取公告…</div>
         : (
           <div className={css.sidebarGroupBriefForm}>
             <div className={css.sidebarGroupBriefHead}>
@@ -232,7 +232,7 @@ export function AnnouncementDialog(props: AnnouncementDialogProps): JSX.Element 
               placeholder={group
                 ? '写下这个分区共享的背景、约定或注意事项…'
                 : '写下全队都要遵守的长期约定，例如：冻结期只提交修复。'}
-              aria-label={group ? '分区公告' : '团队公告'}
+              aria-label={group ? '分组公告' : '团队公告'}
               aria-describedby={hintId}
               aria-invalid={overLimit !== undefined}
               disabled={busy}

@@ -1830,10 +1830,10 @@ describe('公告 · one editor, team and 分区 scopes', () => {
       name: '工作',
       onClose: () => {},
     }))
-    expect(html).toContain('正在读取分区公告…')
+    expect(html).toContain('正在读取公告…')
     expect(html).not.toContain('data-dsh-team-announcement-input')
     // The scope label and the group-only props: no team is required to open it.
-    expect(editor).toContain('`「${name}」的分区公告`')
+    expect(editor).toContain('`「${name}」的公告`')
     expect(editor).toContain("scope: 'group'; name: string; onClose: () => void")
     expect(editor).toContain("callAgentTeam('sidebar.groups.briefs')")
     expect(editor).toContain("callAgentTeam('sidebar.groups.brief.set', {")

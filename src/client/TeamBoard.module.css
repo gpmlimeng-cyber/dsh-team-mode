@@ -484,12 +484,6 @@
   padding: 0 2px;
 }
 
-.panelTitle {
-  color: var(--dsw-alias-label-secondary);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 18px;
-}
 
 .panelCount {
   color: var(--dsw-alias-label-tertiary);

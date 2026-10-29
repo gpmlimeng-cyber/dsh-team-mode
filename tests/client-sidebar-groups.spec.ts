@@ -275,7 +275,7 @@ describe('sidebarGroupBriefError', () => {
   })
 })
 
-describe('分区公告 editor source contract (shared with the team scope)', () => {
+describe('group announcement editor source contract (shared with the team scope)', () => {
   const ui = readFileSync(new URL('../src/client/sidebar-group-ui.tsx', import.meta.url), 'utf8')
   const editor = readFileSync(new URL('../src/client/announcement-dialog.tsx', import.meta.url), 'utf8')
   const css = readFileSync(new URL('../src/client/AgentTeam.module.css', import.meta.url), 'utf8')
@@ -285,7 +285,7 @@ describe('分区公告 editor source contract (shared with the team scope)', () 
   )
 
   it('opens from the existing group ⋯ menu as one more Menu row', () => {
-    expect(ui).toContain("{ id: 'brief', label: '分区公告'")
+    expect(ui).toContain("{ id: 'brief', label: '分组公告'")
     expect(ui).toContain('<AnnouncementDialog scope="group" name={dialog.name} onClose={onClose} />')
     expect(ui).not.toContain('function GroupBriefDialog')
   })
